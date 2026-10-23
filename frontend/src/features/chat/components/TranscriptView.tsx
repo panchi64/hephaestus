@@ -44,25 +44,16 @@ export interface TranscriptViewProps {
 }
 
 /**
- * The scrolling conversation, and what each turn's controls are wired to.
- *
- * Every per-turn affordance the operator has — regenerate, edit, fork, rewind, pin,
- * reattach a dropped run — and the inbox rows queued behind the run resolve here, against the stream
- * for anything about a run and against the thread actions for anything about the
- * conversation. The room around it owns none of that; it owns where this sits.
+ * The scrolling conversation. Per-turn controls and the queued inbox rows are wired here:
+ * to the stream for anything about a run, to the thread actions for anything about the
+ * conversation.
  */
 export function TranscriptView(props: TranscriptViewProps): JSX.Element {
-  // Everything before the newest compaction turn is still in the transcript but
-  // out of what the model replays. The transcript is the only place that knows a
-  // turn's position relative to the fold, so the dim pass is derived here —
-  // presentation only; the backend decided what it folded.
-  //
-  // A fold still *in flight* is skipped, and the guard is load-bearing: the live turn
-  // sits at the tail, so counting it would dim the entire thread the moment a fold
-  // starts — including the recent turns the fold is about to keep verbatim — and then
-  // un-dim them when it lands. It has folded nothing yet.
   const screenshots = createMemo(() => screenshotIndex(props.stream.messages));
 
+  // Turns before the newest compaction turn are dimmed (still shown, no longer replayed).
+  // A fold still in flight is skipped: the live turn sits at the tail, so counting it
+  // would dim the whole thread, including turns the fold keeps verbatim.
   const foldedThrough = createMemo(() => {
     let last = -1;
     props.stream.messages.forEach((m, i) => {
@@ -71,20 +62,14 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
     return last;
   });
 
-  // Take the operator to a fold that just settled. It is seated at the fold boundary
-  // rather than where they were watching it happen, so on a long thread it arrives off
-  // screen above — see `foldAnchor.ts`.
-  //
-  // The scroll goes through the follow (`scrollToMessage`) rather than straight to the
-  // DOM, because a pinned follow would put the operator right back at the bottom on the
-  // next growth. The flash is the same "found it" marker the design system already
-  // carries: scrolling alone puts the turn on screen without saying which was the point.
+  // Scrolls to a fold that just settled; it is seated at the fold boundary, off screen on
+  // a long thread (see `foldAnchor.ts`). Goes through the follow, since a pinned follow
+  // would return to the bottom on the next growth. The flash marks which turn was the point.
   createEffect(() => {
     const id = pendingFoldAnchor();
     if (id === null) return;
     consumeFoldAnchor();
-    // One frame later: the splice that seated the turn has to have rendered before
-    // there is an element to find.
+    // One frame later: the splice that seated the turn has to render first.
     requestAnimationFrame(() => {
       const el = props.scroll.scrollToMessage(id);
       if (!el) return;
@@ -103,24 +88,13 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
           ref={props.scroll.ref}
           tabindex={-1}
           onScroll={props.scroll.onScroll}
-          /* `px-4` is the transcript's gutter inside the scroll container.
+          /* The vertical insets are exactly what clears the overlays: the title block's
+           measured height plus one fade band at the top, one band at the bottom. A larger
+           pad would leave bare page above the composer. Scroll padding matches the top so
+           a scrolled-to turn lands below the title.
 
-           The bright focus outline is gone — the shell's neutral focus halo
-           covers this, and a white rule around the transcript was exactly
-           the kind of border the system dropped.
-
-           THE VERTICAL INSETS ARE THE OVERLAYS', and nothing more. Both ends of
-           this region sit under something — the title laid over the top, the
-           composer dock's fade reaching up over the bottom — and each inset is
-           exactly what clears it: the title block's measured height plus one
-           fade band at the top, one band at the bottom. The last turn's own
-           `py-3` is the breathing room; a pad beyond the band would be a strip
-           of bare page between the conversation and the composer. The scroll
-           padding matches the top so a turn scrolled into view (a settled
-           fold) lands below the title rather than under it.
-
-           Native scroll anchoring is off: `transcriptScroll.ts` keeps its own
-           anchor, and two correcting the same shift would double it. */
+           Native scroll anchoring is off: `transcriptScroll.ts` keeps its own anchor and
+           two would double the correction. */
           class="min-h-0 flex-1 overflow-y-auto px-4 outline-none transition-colors [overflow-anchor:none]"
           style={{
             "padding-top": `calc(${props.insetTop()}px + var(--scroll-fade-band))`,
@@ -128,10 +102,8 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
             "padding-bottom": "var(--scroll-fade-band)",
           }}
         >
-          {/* The measure goes on the CONTENT, not on the scroll container:
-            the container has to keep its full width so its scrollbar sits
-            at the edge of the pane. The room a send reserves sits on this
-            wrapper, not on the observed content inside it. */}
+          {/* The measure goes on the content so the scrollbar stays at the pane edge. The
+            room a send reserves sits on this wrapper, not on the observed content. */}
           <div
             class={props.measure}
             style={{
@@ -142,10 +114,8 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
             }}
           >
             <div ref={props.scroll.contentRef}>
-              {/* One malformed block must not cost the operator the composer,
-              the thread list, or the text they were typing — scope a throw
-              in the message tree to the scroll region. Switching threads
-              resets it. */}
+              {/* Scopes a throw in the message tree to this region so the composer and
+              typed text survive. Switching threads resets it. */}
               <ErrorBoundary
                 message="This conversation failed to render"
                 resetKey={props.conversationId}
@@ -231,8 +201,6 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
                     )}
                   </For>
                 </Show>
-                {/* Queued behind the running turn: dimmed, at the foot, where it will
-                land. */}
                 <InboxRows
                   inbox={props.stream.inbox()}
                   onEdit={(id, text) => void props.stream.editQueued(id, text)}
@@ -250,8 +218,7 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
             size="sm"
             leading="chevron-down"
             onClick={props.scroll.followLatest}
-            // `bottom-8` clears the dock's fade band, which reaches up over this
-            // region's last 28px and would otherwise frost the button's lower half.
+            // `bottom-8` clears the dock's fade band over this region's last 28px.
             class="absolute bottom-8 left-1/2 -translate-x-1/2 bg-surface"
           >
             {props.scroll.newBelow() ? "New text below" : "Jump to latest"}

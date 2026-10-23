@@ -28,18 +28,12 @@ const LABEL: Record<SubagentStatus, string> = {
 };
 
 /**
- * One sub-agent, filling the panel — its brief, its approval if it is stuck on one, and
+ * One sub-agent, filling the panel: its brief, its approval if it is stuck on one, and
  * its transcript.
  *
- * **It takes the whole pane rather than unfolding under its card, and that is the point.**
- * The transcript used to open inline: the list stayed above it and every card below it
- * moved down. For a sub-agent that has finished that is merely untidy, but the card the
- * operator opens is almost always a *live* one — and a live transcript grows on every
- * poll, so the row they wanted to click next kept sliding out from under the cursor. A
- * region that reflows while you are aiming at it is not a list you can use.
- *
- * So the surface swaps: list, or one sub-agent. The way back is a button, not a second
- * click on a row that has since moved.
+ * It takes the whole pane instead of unfolding under its card: a live transcript grows
+ * on every poll and would slide the next row out from under the cursor. The way back is
+ * a button.
  */
 export function SubagentDetail(props: {
   subagent: Subagent;
@@ -70,8 +64,7 @@ export function SubagentDetail(props: {
             {props.subagent.handle}
           </Text>
         </Row>
-        {/* The brief, in full and wrapped. It is the first thing worth reading about a
-            sub-agent that answered the wrong question — see `SubagentTranscript`. */}
+        {/* The brief in full; first thing to read when a sub-agent answered the wrong question. */}
         <Text variant="micro" tone="dim" class="block break-words">
           {props.subagent.name} · {props.subagent.task}
         </Text>
@@ -87,8 +80,7 @@ export function SubagentDetail(props: {
       </Show>
 
       <div class="min-h-0 flex-1 overflow-y-auto">
-        {/* Its commands run in its own thread, so a host allowed from here is allowed
-            for that thread, not for the one the pane sits beside. */}
+        {/* Its commands run in its own thread, so an allowed host applies to that thread. */}
         <AllowHostContext.Provider
           value={async (host) => {
             await allowDomain(props.subagent.conversationId, host);

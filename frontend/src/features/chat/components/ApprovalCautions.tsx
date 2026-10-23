@@ -6,12 +6,10 @@ import type { ApprovalCautions as Cautions } from "../model";
 import { ConversationGrantToggle } from "./ConversationGrantToggle";
 
 /**
- * What makes this approval different from an ordinary one, on the card that asks.
- *
- * The label is the mono `meta` word in the warn accent and the reason follows in dim
- * `micro` sentence form, the pairing `CommandBoundary` uses for an unfenced command: a
- * bare word leaves the operator with nothing to act on, and the accent stays on the one
- * word that names the caution. Renders nothing when neither is set.
+ * What makes this approval different from an ordinary one. The warn-accent `meta` label
+ * is followed by a dim `micro` reason (the pairing `CommandBoundary` uses for an
+ * unfenced command), since a bare word gives the operator nothing to act on. Renders
+ * nothing when no caution is set.
  */
 export function ApprovalCautions(props: { cautions: Cautions }): JSX.Element {
   const lines = () => cautionLines(props.cautions);

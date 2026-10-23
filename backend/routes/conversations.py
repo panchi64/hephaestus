@@ -59,73 +59,44 @@ class ConversationSummary(BaseModel):
     updated_at: datetime
     message_count: int
     preview: str | None = None
-    # Two or three sentences on what the agent did in this thread, written by the deferred
-    # background sweep once the thread has been idle a while and shown in the re-entry band
-    # when the operator comes back to it. Null until a thread has earned one.
-    #
-    # It rides the **listing** payload beside `preview`, deliberately: the band is drawn
-    # over a row the session list already loaded, and a short summary is the same class and
-    # size of payload as the excerpt already sitting next to it — a per-row fetch would be
-    # the same bytes over one round trip each. There is no SSE event for it either, for the
-    # matching reason: the band only shows on a thread that has gone quiet, so the next
-    # listing read is soon enough and a live push would arrive at a client with nothing to
-    # put it on.
+    # Written by the deferred background sweep once the thread has been idle; shown in the
+    # re-entry band. Null until a thread has earned one. It rides the listing beside
+    # `preview` (same class and size of payload; a per-row fetch costs more), and has no SSE
+    # event because the band only shows on a quiet thread, so the next listing read is soon enough.
     work_summary: str | None = None
     model: str | None = None  # the model the conversation last ran on
-    # The live run driving this thread, as its `RunStatus` value (`running`,
-    # `queued`, `awaiting_input`); None when nothing is in flight. Derived from the
-    # run registry rather than persisted — it lets the thread list mark which
-    # conversations are working without opening each one, and keeps the
-    # busy-vs-needs-you distinction the nav rail already draws (an `awaiting_input`
-    # run is parked on the operator's approval decision, not merely streaming).
+    # The live run's `RunStatus` value (`running`, `queued`, `awaiting_input`); None when
+    # idle. Registry-derived, not persisted. Lets the list mark working threads and keep the
+    # rail's busy-vs-needs-you distinction (`awaiting_input` is parked on an approval).
     activity: str | None = None
-    # How the thread's most recent *finished* run ended, as its terminal `RunStatus`
-    # value (`done`, `error`, `blocked`, `cancelled`); None when nothing has finished
-    # that this process still remembers. `activity` covers only the three live statuses,
-    # so without this a thread that failed and a thread that never ran are the same row:
-    # both quiet, both null, and the failure is only discoverable by opening it.
-    #
-    # A sibling rather than a widening of `activity`, because they answer different
-    # questions and can both be true — a thread can be running *now* having errored last
-    # time. The live value is the one that wins on screen; this is what the row falls
-    # back to at rest.
-    #
-    # Registry-derived like `activity`, and therefore **best-effort**: the run registry
-    # is in memory and bounded, so a restart, or enough traffic to age the run out,
-    # leaves this null. Null means "nothing known", never "nothing happened".
+    # How the most recent finished run ended (`done`, `error`, `blocked`, `cancelled`).
+    # Separate from `activity` because both can hold (running now, errored last time); the
+    # live value wins on screen and this is the row's resting state, so a failed thread
+    # differs from one that never ran. Registry-derived and best-effort: the registry is
+    # in-memory and bounded, so null means "nothing known", never "nothing happened".
     last_outcome: str | None = None
     # The agent the thread runs, by name. Null is the default agent.
     agent_name: str | None = None
     # The thread that spawned this one, for an agent's thread the operator opened.
     parent_id: str | None = None
-    # The **basename** of the project directory a thread is filed under, and nothing else
-    # about it. Null for an unfiled thread, and for one whose project has since been
-    # deleted. Deliberately not the path: the rail groups project threads under this, it is
-    # permanently on screen, and a full path across it would spell out the operator's
-    # clients to anyone standing behind them.
+    # Only the basename of the project directory, never the path: the rail shows it
+    # permanently and a full path would expose the operator's clients. Null for an unfiled
+    # thread or a deleted project.
     workspace: str | None = None
-    # The project the workspace above belongs to. On the wire beside the name because the
-    # rail *joins* on it: it lists every directory the operator works in, not only the
-    # ones that already hold threads, and two directories can share a basename. Joining on
-    # the name instead would merge two repositories into one section and point that
-    # section's controls at whichever won. An opaque id names nothing — it is the path
-    # that stays behind.
+    # The rail joins on this id, not the basename: it lists directories with no threads, and
+    # two can share a basename, which would merge two repositories into one section.
     project_id: str | None = None
 
 
 class ToolCallImageOut(BaseModel):
-    """An image the call handed back — base64, scheme added by the renderer. The wire
-    twin of the live stream's ``tool.completed`` images, so a screenshot renders in the
-    work log identically whether the operator watched it happen or reloaded into it."""
+    """An image the call handed back, base64 without scheme; mirrors ``tool.completed``'s images."""
 
     media_type: str
     data: str
 
 
 class ToolCallAnswerOut(BaseModel):
-    """One question an ``ask_user`` call asked, and what the operator said to it. The wire
-    twin of the live stream's ``question.answered`` items, so the card renders identically
-    whether the operator watched themselves answer or reloaded into it."""
+    """One ``ask_user`` question and its answer; mirrors ``question.answered``'s items."""
 
     question: str
     selections: list[str] = Field(default_factory=list)
@@ -142,32 +113,26 @@ class ToolCallOut(BaseModel):
     error: str | None = None
     images: list[ToolCallImageOut] = Field(default_factory=list)
     answers: list[ToolCallAnswerOut] = Field(default_factory=list)
-    # The `run_code` call this one was made from, when a script made it — the same field
-    # the live `tool.*` frames carry, so a reload nests the row where the stream did.
+    # The `run_code` call that made this one, as on the live `tool.*` frames.
     parent_tool_call_id: str | None = None
     # Same as `tool.failed`'s: the failure was the platform's own fault.
     platform: bool = False
 
 
 class ViewVersionRefOut(BaseModel):
-    """An inline View **chip** re-attached to the message that minted it: a ``show``
-    produced a version mid-turn, recoverable from the message's ``view`` tool result
-    (which embeds the version id). The chip just labels + opens the version — its bytes
-    and files come from the conversation-scoped snapshot the panel reads."""
+    """An inline View chip re-attached to the message whose ``view`` tool result embeds its
+    version id. It only labels and opens the version; the files come from the snapshot."""
 
     snapshot_id: str
     title: str | None
     preview_kind: str | None  # "html" | "image" | "text" | "other" | None — the chip icon
-    # The ``show`` call that minted it, so a reload can place the chip right after that
-    # call rather than at the end of the turn.
+    # The ``show`` call that minted it, so a reload places the chip right after that call.
     tool_call_id: str | None = None
 
 
 class ViewSnapshotRefOut(BaseModel):
-    """A View **version** (workspace snapshot) for the conversation's View, mirroring
-    the live ``view.snapshot`` event so a cold read rebuilds the timeline like a warm
-    one. Conversation-scoped (it captures the whole workspace), not tied to one
-    message; carries how it previews."""
+    """A workspace snapshot for the conversation's View, mirroring the live
+    ``view.snapshot`` event. Conversation-scoped, not tied to one message."""
 
     snapshot_id: str
     title: str | None
@@ -205,61 +170,44 @@ class MessageOut(BaseModel):
     versions: list[ViewVersionRefOut] = []
     created_at: datetime | None = None
     model: str | None = None  # the model that produced this assistant turn
-    # Version navigation: position among this turn's siblings and how many exist.
-    # version_count > 1 ⇒ the operator can cycle ‹ k/n › between regenerations/edits.
+    # Position among this turn's siblings; version_count > 1 ⇒ the operator can cycle them.
     version_index: int = 0
     version_count: int = 1
     pinned: bool = False  # the operator's durable bookmark on this turn
     # Upload ids the operator attached to this (user) turn — rendered as file chips.
     attachment_ids: list[str] = []
-    # Workspace-relative paths the operator named with `@` on this (user) turn — chips
-    # beside the attachments. Empty everywhere else.
+    # Workspace-relative paths named with `@` on this (user) turn.
     file_refs: list[str] = []
-    # Set when the run behind this assistant turn ended `outcome: "blocked"` (a
-    # usage/loop/context/time bound) — the human-readable reason, rendered as a
-    # persistent stop marker. None for every other turn.
+    # The reason an assistant turn's run ended `outcome: "blocked"` (usage/loop/context/time
+    # bound), rendered as a persistent stop marker. None otherwise.
     blocked_reason: str | None = None
-    # `role == "compaction"` only — what the fold cost, so the divider can read
-    # "14 messages folded, ~62k → ~4k" with no client-side counting or estimating.
-    # The token figures are the same coarse text-only proxy the live
-    # `conversation.compacted` event carries (render them as approximate). 0 on every
-    # other role.
+    # `role == "compaction"` only (0 elsewhere): what the fold cost, for the divider. Token
+    # figures are the same coarse text-only proxy as the live `conversation.compacted`
+    # event; render them as approximate.
     messages_compacted: int = 0
     tokens_before: int = 0
     tokens_after: int = 0
-    # `role == "compaction"` only — what triggered the fold (`threshold`/`overflow`/
-    # `manual`), matching the live `conversation.compacted` event's `reason`, so a divider
-    # says the same thing after a reload as it did when the operator watched it appear.
-    # `None` on every other role, and on a checkpoint folded before the reason was
-    # recorded — the divider states it as an extra segment and reads correctly without it.
+    # `role == "compaction"` only: the trigger (`threshold`/`overflow`/`manual`), matching
+    # the live event's `reason`. None elsewhere and on checkpoints folded before it was recorded.
     compaction_reason: str | None = None
-    # `role == "compaction"` only — the summary split into the sections the divider
-    # renders, parsed by the same `summary_sections` the live event uses so a reload draws
-    # the divider the operator watched arrive. Carries no fence markers and no model-facing
-    # preamble: those are addressed to the model, not to whoever is reading the thread.
-    # Empty on every other role, and on a checkpoint whose text parses into nothing —
-    # the client falls back to `content` then.
+    # `role == "compaction"` only: the summary split by the same `summary_sections` the live
+    # event uses, without fence markers or the model-facing preamble. Empty elsewhere and
+    # when the text parses into nothing (the client falls back to `content`).
     sections: list[SummarySection] = Field(default_factory=list)
-    # Assistant turns only — the order the model emitted its reasoning, calls and answer
-    # in, which `tools`/`content` flatten into lanes. A reload walks this so the
-    # transcript reads in the order the operator watched it stream. Empty elsewhere.
+    # Assistant turns only: the order the model emitted reasoning, calls and answer, which
+    # `tools`/`content` flatten into lanes. Empty elsewhere.
     segments: list[SegmentOut] = Field(default_factory=list)
 
 
 class ActiveRun(BaseModel):
-    """The in-flight run driving this conversation, when one exists. A streaming
-    answer isn't persisted until its turn finishes, so on a cold read (e.g. a page reload
-    mid-stream) the messages alone show no answer — this points the client at the
-    run whose events it can replay and resume from ``last_seq``.
+    """The in-flight run driving this conversation, when one exists.
 
-    ``kind`` because not every run is an answer being written: a hand-started fold is a
-    run too, and a client reattaching to one must not seed an assistant turn for it.
-
-    ``prompt_message_id`` names the persisted row the run is answering — the operator's
-    prompt, which is written down as the turn begins, or on a regenerate the request being
-    re-answered. The streaming answer belongs directly after that row, so a reattaching
-    client places it there instead of inventing a prompt. ``None`` for a run that answers
-    nothing (a fold), and briefly for a chat run still queued or in its setup."""
+    A streaming answer isn't persisted until its turn ends, so a cold read mid-stream shows
+    no answer; this points the client at the run to replay and resume from ``last_seq``.
+    ``kind`` because a hand-started fold is a run too, and a client reattaching to one must
+    not seed an assistant turn. ``prompt_message_id`` is the persisted row the run answers
+    (the prompt, or on a regenerate the re-answered request); the streaming answer belongs
+    directly after it. ``None`` for a fold, and briefly for a run still queued or in setup."""
 
     id: str
     kind: str
@@ -270,29 +218,21 @@ class ActiveRun(BaseModel):
 
 class ConversationDetail(ConversationSummary):
     messages: list[MessageOut]
-    # How far the model may go in this thread, so a reload restores the control at the
-    # level the operator left it rather than at the default. On the detail and not the
-    # listing: it is a fact about the thread you have open, and the sidebar row has no
-    # use for it. Always populated — a thread that predates the column reads as the
-    # level it was effectively running at.
+    # The thread's permission level, so a reload restores the control as left. On the detail
+    # only; the sidebar row doesn't need it. A thread predating the column reads as the
+    # level it effectively ran at.
     permission_level: str = DEFAULT_PERMISSION
-    # The View's git-style history — workspace snapshots captured per file-changing
-    # turn, newest last. Conversation-scoped; the frontend merges them into the View
-    # timeline alongside the per-message versions.
+    # Workspace snapshots captured per file-changing turn, newest last; the frontend merges
+    # them into the View timeline beside the per-message versions.
     snapshots: list[ViewSnapshotRefOut] = []
-    # The context-window state reconstructed from the last turn's stored usage, so
-    # an existing thread shows its fullness on load — not just after the next turn.
-    # Null when usage or a window is unavailable.
+    # Context-window state rebuilt from the last turn's stored usage. Null when usage or a
+    # window is unavailable.
     context: ContextWindow | None = None
-    # The thread's cumulative readout — turns, steps, tokens, cache, wall-clock —
-    # rebuilt from the stored messages so the line under the composer says the same
-    # thing on a cold load as it did live. Deliberately the **same** `RunMetrics` shape
-    # the run stream emits, for the reason `context` above shares `ContextWindow`: one
-    # shape from either source means the client has one mapper and the two can't drift.
-    # Null for a thread that has never run.
+    # The cumulative readout rebuilt from stored messages, in the same `RunMetrics` shape
+    # the run stream emits (as `context` shares `ContextWindow`) so the client has one
+    # mapper. Null for a thread that has never run.
     stats: RunMetrics | None = None
-    # Present only while a turn is still streaming server-side — lets a reattaching
-    # client resume the live run instead of rendering a reply-less thread.
+    # Present only while a turn is streaming server-side, so a client can reattach.
     active_run: ActiveRun | None = None
 
 
@@ -301,11 +241,11 @@ class TitleUpdate(BaseModel):
 
 
 class RetitleRequest(BaseModel):
-    """The picker selection to name the thread with. The conversation does not
-    persist a per-turn endpoint, so a manual re-title resolves the title model the
-    same way a chat turn does — through the operator's current pick — rather than the
-    bare default ``main``/``utility`` roles (which a picker-driven operator may never
-    have bound). Both optional: an absent pick falls back to those defaults."""
+    """The picker selection to name the thread with.
+
+    No per-turn endpoint is persisted, so a manual re-title resolves the title model as a
+    chat turn does, through the current pick, since a picker-driven operator may never have
+    bound the default ``main``/``utility`` roles. Both optional; absent falls back to them."""
 
     endpoint_id: str | None = None
     model: str | None = None
@@ -322,10 +262,7 @@ class PinUpdate(BaseModel):
 def _activity(request: Request, conversation_id: str) -> str | None:
     """The status of the live run driving ``conversation_id``, or None when idle.
 
-    Reuses `RunRegistry.active_run_for` so the "which run drives this conversation"
-    rule (non-terminal, most recent) lives in exactly one place. Registry-derived,
-    not persisted: an in-flight turn isn't written to the store until it finishes,
-    so the conversation read alone can't tell a working thread from an idle one.
+    An in-flight turn isn't in the store until it finishes, so only the registry can tell.
     """
     run = deps.registry(request).active_run_for(conversation_id, OPERATOR_ID)
     return run.status.value if run is not None else None
@@ -334,12 +271,9 @@ def _activity(request: Request, conversation_id: str) -> str | None:
 def _outcomes(request: Request) -> dict[str, str]:
     """conversation id → how its most recent finished run ended.
 
-    Built in one pass over the registry and handed to a whole listing, rather than
-    scanned per row: the rail re-reads this list on a timer while anything is running,
-    and the registry holds every run this process remembers, not this thread's.
-
-    Terminal runs only. A live run is `activity`'s business, and a conversation with one
-    in flight still reports what the previous one did — the two fields are read together.
+    Built in one pass for a whole listing, since the rail re-reads it on a timer and the
+    registry holds every run, not one thread's. Terminal runs only: a live run is
+    `activity`'s business, and a thread with one in flight still reports the previous one.
     """
     latest: dict[str, Run] = {}
     for run in deps.registry(request).list(OPERATOR_ID):
@@ -352,8 +286,7 @@ def _outcomes(request: Request) -> dict[str, str]:
 
 
 def _ended(run: Run) -> datetime:
-    """When a run stopped, falling back to when it started — a terminal run that
-    somehow carries no end time still has to sort against its siblings."""
+    """When a run stopped, else when it was created, so it still sorts."""
     return run.ended_at or run.created_at
 
 
@@ -363,9 +296,7 @@ def _summary(
     workspaces: Mapping[str, str] | None = None,
     last_outcome: str | None = None,
 ) -> ConversationSummary:
-    """One listing row. ``workspaces`` maps project id → directory basename; a caller
-    with nothing to look up (a single-thread read, where the group heading is not being
-    drawn) passes none and the row simply carries no workspace."""
+    """One listing row. ``workspaces`` maps project id → directory basename; none ⇒ no workspace."""
     return ConversationSummary(
         id=view.id,
         title=view.title,
@@ -385,10 +316,10 @@ def _summary(
 
 
 def message_versions(view: MessageView, by_id: dict[str, SnapshotView]) -> list[ViewVersionRefOut]:
-    """The View versions this turn minted, recovered from its ``view`` tool results
-    (each ``show(file=…)`` embeds the version id). Only a static-preview version folds an
-    inline chip — a live/auto version is already marked by its LIVE chip, matching the
-    warm stream — so the cold read attaches exactly the chips that warmly streamed."""
+    """The View versions this turn minted, recovered from its ``view`` tool results.
+
+    Only static-preview versions get an inline chip (live/auto ones have a LIVE chip), so a
+    cold read attaches the same chips the warm stream did."""
     refs: list[ViewVersionRefOut] = []
     for tool in view.tools:
         if not tool.name.endswith("view_show") or not isinstance(tool.result, str):
@@ -458,10 +389,7 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
 async def _detail(
     request: Request, conversation_id: str, summary: ConversationSummaryView
 ) -> ConversationDetail:
-    """Assemble a conversation's full render-ready detail (active path + the View's
-    static versions + reconstructed context-window state). Shared by the read
-    endpoint and the navigation endpoints that return the post-move thread (version
-    switch, rewind)."""
+    """A conversation's render-ready detail; shared by the read and navigation endpoints."""
     store = deps.store(request)
     messages = await store.messages_view(conversation_id)
     history = await store.history(conversation_id)
@@ -473,11 +401,8 @@ async def _detail(
         settings_store=deps.settings_store(request),
     )
     used, window, context = meter.used, meter.window, meter.context
-    # The same figures the live stream reports, rebuilt from the same messages by the
-    # same function — the counts and tokens off the active path, the wall-clock off the
-    # stored per-response timings (the one thing the messages don't carry). A thread
-    # that has never produced a response has nothing to report and sends null, so the
-    # readout stays absent rather than rendering a row of zeroes.
+    # Wall-clock comes from stored per-response timings, which the messages don't carry. A
+    # thread with no responses sends null rather than a row of zeroes.
     totals = conversation_totals(history)
     stats: RunMetrics | None = None
     if totals.steps:
@@ -509,8 +434,6 @@ async def _detail(
         if run is not None
         else None
     )
-    # The conversation's versions, fetched once: the timeline (snapshots[]) and the
-    # by-id map the cold-read uses to re-attach each turn's inline chips.
     snapshots = await deps.workspace_history(request).list(OPERATOR_ID, conversation_id)
     by_id = {s.id: s for s in snapshots}
     base: dict[str, object] = _summary(
@@ -539,9 +462,8 @@ async def _detail(
             "context": context,
             "stats": stats,
             "active_run": active_run,
-            # Off the thread's own binding, resolved through the registry — so a row written
-            # by an older build, or carrying a value this one has no rule for, opens at the
-            # level that does the least rather than at whatever the string happens to say.
+            # Resolved through the registry, so a row from an older build or with an unknown
+            # value opens at the least-permissive level.
             "permission_level": (await store.binding(conversation_id)).permission,
         }
     )
@@ -552,11 +474,9 @@ async def list_conversations(request: Request) -> list[ConversationSummary]:
     views = await deps.store(request).list_conversations(
         OPERATOR_ID, visible_projects=await deps.project_scope(request)
     )
-    # Resolved once for the whole listing rather than per row: the rail refreshes on a
-    # timer while anything is running, and a decrypt per thread would pay for the same
-    # handful of directories over and over.
+    # Both resolved once per listing: the rail refreshes on a timer, and a per-row decrypt
+    # would repeat the same few directories.
     workspaces = await deps.projects(request).workspace_names(OPERATOR_ID)
-    # Same reasoning for the outcomes: one pass over the registry for the whole listing.
     outcomes = _outcomes(request)
     return [
         _summary(
@@ -601,9 +521,9 @@ class TitleOut(BaseModel):
 
 @router.get("/{conversation_id}/title", response_model=TitleOut)
 async def await_auto_title(conversation_id: str, request: Request) -> TitleOut:
-    """The thread's title, once an auto-title still being generated after its run ended
-    has landed or given up. The run stream is closed by then, so a client that saw the
-    run end untitled holds this one request open instead of polling the listing."""
+    """The thread's title, once an auto-title still generating after the run ended settles.
+
+    The run stream is closed by then, so a client holds this request open instead of polling."""
     await deps.registry(request).settle_afterwork(conversation_id, OPERATOR_ID, late_title_wait_s())
     summary = await _require_owned(request, conversation_id)
     return TitleOut(title=summary.title)
@@ -613,22 +533,12 @@ async def await_auto_title(conversation_id: str, request: Request) -> TitleOut:
 async def retitle_conversation(
     conversation_id: str, request: Request, body: RetitleRequest | None = None
 ) -> ConversationSummary:
-    """Regenerate a thread's title on demand, from every question the operator asked
-    across the whole conversation — not just its opening line (the first-turn
-    auto-titler's input). A manual re-name exists to fix a title that the opening
-    missed or that went stale as the thread drifted, so feeding the full arc is what
-    makes it meaningful. Only the operator's turns are fed in, never assistant or
-    tool output, keeping the small title model off injectable content. Unlike the
-    fill-only-if-blank auto-titler, this overwrites unconditionally — it is a
-    deliberate operator action.
+    """Regenerate a thread's title from every operator question, overwriting unconditionally.
 
-    The title model is resolved exactly as a chat turn resolves its background work
-    (``utility`` → the picked ``main``), requesting reasoning **off** — and it works
-    for a picker-driven operator who has no default role bound. The full-arc input here
-    is longer than the auto-titler's opening-message excerpt, so a model whose runtime
-    ignores the reasoning-off lever (e.g. LM Studio + Qwen) produces a longer ``<think>``
-    block; the wider ``retitle_max_tokens`` budget and ``retitle_timeout_s`` give it room
-    to think *and* emit the title, which :func:`agent.title` then strips clean."""
+    Only operator turns are fed in, never assistant or tool output, keeping the title model
+    off injectable content. The model resolves as a chat turn's background work does
+    (``utility`` → the picked ``main``) with reasoning off; the wider ``retitle_*`` budgets
+    leave room for a ``<think>`` block from runtimes that ignore the lever."""
     store = deps.store(request)
     if await store.get_summary(conversation_id, OPERATOR_ID) is None:
         raise HTTPException(status_code=404, detail="conversation not found")
@@ -704,9 +614,8 @@ async def delete_message(
     teardown = deps.conversation_teardown(request)
     summary = await _require_owned(request, conversation_id)
     await deps.after_restore(request)
-    # Claimed before the orphan lookup's awaits, so a /chat submission can't register a run
-    # between the lookup and the tree mutation. The purge and detail below don't move the
-    # leaf, so the claim is released before them.
+    # Claimed before the orphan lookup so a /chat submission can't register a run between
+    # the lookup and the tree mutation; released before the purge, which doesn't move the leaf.
     deps.claim_conversation(request, conversation_id)
     try:
         orphans = await teardown.message_image_orphans(OPERATOR_ID, conversation_id, message_id)
@@ -727,8 +636,7 @@ async def switch_version(
     store = deps.store(request)
     summary = await _require_owned(request, conversation_id)
     await deps.after_restore(request)
-    # Moves the active leaf — must not race an in-flight turn built from the leaf
-    # this would move away from (or another in-flight claim on this conversation).
+    # Moves the active leaf, so it must not race an in-flight turn or another claim.
     deps.claim_conversation(request, conversation_id)
     try:
         if not await store.switch_version(conversation_id, message_id, body.index):
@@ -756,7 +664,6 @@ async def rewind(conversation_id: str, message_id: str, request: Request) -> Con
     store = deps.store(request)
     summary = await _require_owned(request, conversation_id)
     await deps.after_restore(request)
-    # Moves the active leaf — see switch_version's guard note above.
     deps.claim_conversation(request, conversation_id)
     try:
         if not await store.rewind(conversation_id, message_id):
@@ -770,12 +677,8 @@ async def rewind(conversation_id: str, message_id: str, request: Request) -> Con
 async def fork(conversation_id: str, message_id: str, request: Request) -> ConversationDetail:
     """Start a **new** conversation carrying this thread's history up to this turn.
 
-    Unlike rewind/regenerate/edit — which move the active tip inside one thread's tree —
-    this leaves the source thread untouched and returns the *new* conversation, so the
-    client navigates to it in one round-trip.
-
-    The source is claimed for the duration of the walk: a run appending to it mid-copy
-    would produce a fork of a history that never existed.
+    Leaves the source untouched and returns the new conversation. The source is claimed
+    during the copy: a run appending mid-walk would fork a history that never existed.
     """
     _ = await _require_owned(request, conversation_id)
     await deps.after_restore(request)
@@ -795,14 +698,11 @@ async def fork(conversation_id: str, message_id: str, request: Request) -> Conve
 
 
 async def _branch_the_fork(request: Request, source_id: str, forked_id: str) -> None:
-    """Give a forked **code** thread a branch cut from the source's, not from the
-    project's base ref.
+    """Give a forked code thread a branch cut from the source's, not the project's `base_ref`.
 
-    The copied transcript describes files as they are on the source conversation's branch.
-    Branching the fork from `base_ref` — what a first code turn would otherwise do —
-    would hand it a tree that does not match the history it was given, which is precisely
-    what forking is supposed to preserve. Best-effort: a source that never cut a branch
-    leaves the fork to create one normally on its first code turn.
+    The copied transcript describes the source branch's files, so branching from `base_ref`
+    would give a tree that doesn't match it. Best-effort: with no source branch, the fork
+    cuts its own on its first code turn.
     """
     store = deps.store(request)
     source = await store.binding(source_id)
@@ -826,23 +726,16 @@ class ApprovalGrantOut(BaseModel):
     visible + revocable list."""
 
     tool_name: str
-    #: The command this grant covers, as the leading words it was read as
-    #: (`["uv", "run", "pytest"]`); empty when the grant covers the whole tool. The words,
-    #: not a joined string: this is what identifies the grant to `DELETE` below, and a
-    #: joined form has to be split again by whoever sends it back — which is only
-    #: unambiguous while an invariant two layers down holds. Joining it for a label is the
-    #: client's job, and a label is all a joined form is good for.
+    #: The leading words the grant covers (`["uv", "run", "pytest"]`); empty for a whole-tool
+    #: grant. Kept as words, not a joined string, because it identifies the grant to the
+    #: `DELETE` below and splitting a joined form is only unambiguous by a distant invariant.
     command_prefix: list[str] = []
-    #: Whether this is the operator's wider pick — their answer for the whole tool, which
-    #: the reviewing level takes as the authorization rather than merely weighing. Sent
-    #: because the chip has to be able to say which of the two it is: an empty
-    #: `command_prefix` alone cannot, since it is also the shape a non-command tool's
-    #: ordinary grant and a scheduled task's seed both take.
+    #: The operator's wider pick for the whole tool, which the reviewing level takes as
+    #: authorization rather than weighing. Needed because an empty `command_prefix` also
+    #: fits an ordinary non-command grant and a scheduled task's seed.
     decisive: bool = False
-    #: Whether this tool is one whose grants are scoped to a command at all. Sent so the
-    #: chip can say "any command" where that is a real contrast and stay silent where it
-    #: is not: a tool that runs no command has only one width, and labelling its grant
-    #: against commands it never runs would describe something that does not exist.
+    #: Whether the tool's grants are command-scoped at all, so the chip says "any command"
+    #: only where that is a real contrast.
     command_scoped: bool = False
     expires_at: datetime
 
@@ -873,12 +766,7 @@ class TaskOut(BaseModel):
 
 @router.get("/{conversation_id}/tasks", response_model=list[TaskOut])
 async def read_tasks(conversation_id: str, request: Request) -> list[TaskOut]:
-    """The agent's current task list for this thread.
-
-    The list is streamed as it changes (``tasks.updated``), but a client that opens or
-    reloads a conversation has no stream to replay — this is how it starts from the
-    truth rather than from an empty panel that only fills on the next mutation.
-    """
+    """The agent's task list; the backfill for ``tasks.updated``, which a reload can't replay."""
     _ = await _require_owned(request, conversation_id)
     items = await deps.conversation_tasks(request).items(OPERATOR_ID, conversation_id)
     return [TaskOut(**row) for row in tasks_payload(items)]
@@ -896,12 +784,9 @@ class PlanOut(BaseModel):
 
 @router.get("/{conversation_id}/plan", response_model=PlanOut | None)
 async def read_plan(conversation_id: str, request: Request) -> PlanOut | None:
-    """The written plan for this thread, or ``null`` where there is none.
+    """The written plan, or ``null``; the backfill for ``plan.updated``.
 
-    The backfill half of ``plan.updated``, and the same reasoning as the task list above:
-    a reload has no stream to replay, and a plan awaiting approval is the last thing that
-    should disappear because the operator refreshed the page. ``null`` rather than a 404 —
-    "this thread has no plan" is the ordinary state of nearly every thread, not a miss.
+    ``null`` rather than 404 because having no plan is the ordinary state.
     """
     _ = await _require_owned(request, conversation_id)
     plan = await deps.plan_mode(request).current(OPERATOR_ID, conversation_id)
@@ -917,12 +802,9 @@ async def revoke_grant(
 ) -> None:
     """Revoke one conversation auto-approval — the next call it covered asks again.
 
-    ``command_prefix`` identifies *which* grant on that tool, since a command-running tool
-    can hold several at once (`uv run pytest` and `git commit` are two separate standing
-    yeses). It is repeated once per word — exactly the list the listing handed out, so what
-    the operator sees and what this deletes cannot come apart. Absent revokes the whole-tool
-    grant; a scope that matches nothing is a no-op, like revoking a grant that already
-    lapsed.
+    ``command_prefix`` picks which grant on a command-running tool (it can hold several),
+    repeated once per word exactly as the listing returned it. Absent revokes the whole-tool
+    grant; a scope matching nothing is a no-op.
     """
     _ = await _require_owned(request, conversation_id)
     await deps.approval_grants(request).revoke(
@@ -947,9 +829,7 @@ class CompactionOverrideOut(BaseModel):
 
 
 class FoldStarted(BaseModel):
-    """A hand-started fold, accepted. Deliberately the same two fields ``POST /chat``
-    answers with, because the client does the same thing with them: attach to
-    ``/runs/{id}/events`` and render what arrives."""
+    """A hand-started fold, accepted; the same fields ``POST /chat`` answers with."""
 
     run_id: str
     conversation_id: str
@@ -987,37 +867,20 @@ async def set_auto_compact_override(
     return await _compaction_state(request, conversation_id)
 
 
-#: Why this conversation had nothing to fold. A fold takes everything since the newest
-#: checkpoint, so the only cause is that nothing has been said since the thread began or
-#: since its last fold.
 _NOTHING_TO_FOLD = "Nothing to fold — there are no new turns since the last compaction."
 
 
 async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> None:
     """The operator's own fold, as a run.
 
-    It is a run for one reason and it is not tidiness: :func:`agent.folding.fold` is where
-    a fold announces itself, and announcing means emitting onto a run's stream. Without one
-    this path had nowhere to emit, so it reached past ``fold`` to the summarizer directly —
-    and an operator who pressed the button watched a spinner with nothing behind it for as
-    long as the summary took to write.
+    It is a run because :func:`agent.folding.fold` announces itself by emitting onto a
+    run's stream. The threshold and on/off switch are ignored (the operator asked), and
+    everything downstream is the automatic path's. Failure is reported, not swallowed: an
+    asked-for button that fails like success is worse than one that doesn't work.
 
-    The threshold and the on/off switch are deliberately ignored, and that is the **only**
-    thing this trigger does differently from the automatic one: the operator asked for it
-    explicitly, so there is nothing left for a trigger to decide. Everything downstream —
-    what gets folded, the model that writes it, the never-reach-past-an-earlier-checkpoint rule,
-    the events, the checkpoint that gets written — is the shared path's.
-
-    Failure is reported rather than swallowed, which is the other half of that split. An
-    automatic fold that fails lets the turn carry on, because nobody asked for it; this one
-    was asked for, and a button whose failure looks like success is worse than one that
-    does not work.
-
-    **The summary is written by the thread's own main model** — the picker's selection,
-    resolved exactly as a chat turn resolves it — on the agent a turn would run, composed
-    from the same :class:`~routes.chat.TurnScope`. Never the utility model: the request is
-    the thread's replay plus one message, so the model that served the last turn serves it
-    from the prefix it already holds."""
+    The summary is written by the thread's own main model (the picker's selection, resolved
+    as a chat turn does) on the agent a turn would run, never the utility model, so the
+    model that served the last turn serves it from the prefix it holds."""
     conversation_id = run.conversation_id
     assert conversation_id is not None  # set by the submit below
     try:
@@ -1025,8 +888,8 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
             request, conversation_id, pick.endpoint_id, pick.model
         )
     except HTTPException as exc:
-        # The resolve answers in HTTP because its other callers are routes; here the
-        # response has already gone, so the reason travels as the run's stop detail.
+        # The resolve raises HTTP errors for its route callers; here the response has gone,
+        # so the reason becomes the run's stop detail.
         run.block(str(exc.detail))
         return
     scope = await turn_scope(request, conversation_id, vision=vision)
@@ -1061,22 +924,16 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
 async def compact_conversation_now(
     conversation_id: str, request: Request, body: RetitleRequest | None = None
 ) -> FoldStarted:
-    """Fold this thread's older turns into a summary now, without waiting for it to reach
-    the automatic threshold — for a thread the operator knows is about to need the room.
+    """Fold this thread's older turns into a summary now, before the automatic threshold.
 
-    A fold is a run, answered ``202`` with its id like ``POST /chat``: the summarizer takes
-    tens of seconds, and the run's stream carries the same frames an automatic fold emits
-    (``compaction.started``, the summary as written, ``conversation.compacted``).
+    Answered ``202`` with a run id like ``POST /chat``; the run's stream carries the frames
+    an automatic fold emits.
 
-    **It still takes the claim**, and the claim is not the same guarantee ``submit``
-    gives: ``submit`` refuses a conversation with a live *run*, while a claim also covers a
-    request that is between its check and its act — a regenerate or a rewind repositioning
-    the leaf with awaits still ahead of it. A fold appends to the tree, so it is exactly
-    the thing that must not interleave with one. The claim is released as soon as the run
-    exists, which is the point at which ``submit``'s own guard takes over.
+    The claim is still taken: ``submit`` refuses only a live run, while a claim also covers
+    a regenerate or rewind mid-request, and a fold appends to the tree. It is released once
+    the run exists, when ``submit``'s guard takes over.
 
-    Why the fold declined is on the run's terminal ``detail``, not on this response — it is
-    not known yet when this returns. ``404`` here means only that there is no such thread."""
+    Why a fold declined is on the run's terminal ``detail``; ``404`` means only no such thread."""
     store = deps.store(request)
     if await store.get_summary(conversation_id, OPERATOR_ID) is None:
         raise HTTPException(status_code=404, detail="conversation not found")

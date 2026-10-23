@@ -61,11 +61,11 @@ async def test_sensitive_tool_parks_for_approval():
     run = await _park_a_run(reg)
 
     assert run.status is RunStatus.awaiting_input
-    assert not run.stream.closed  # stream stays open for the resume
+    assert not run.stream.closed
     types = _types(run)
     assert "approval.required" in types
-    assert "tool.completed" not in types  # not executed — only requested
-    assert "run.ended" not in types  # not terminal
+    assert "tool.completed" not in types
+    assert "run.ended" not in types
 
     approval = next(e.body for e in run.stream.replay() if e.body.type == "approval.required")
     assert "delete_thing" in approval.name
@@ -86,10 +86,10 @@ async def test_approved_resume_executes_and_completes():
 
     assert run.status is RunStatus.done
     types = _types(run)
-    assert "tool.completed" in types  # executed after approval
+    assert "tool.completed" in types
     assert types[-1] == "run.ended"
     assert run.stream.closed
-    # tool.started was announced once (defer turn), not duplicated on resume
+    # Announced on the defer turn only, not again on resume.
     assert _types(run).count("tool.started") == 1
 
 
@@ -105,8 +105,6 @@ async def test_denied_resume_completes_without_executing():
     await run.wait()
 
     assert run.status is RunStatus.done
-    # The denial is surfaced to the model as the call's result, but the tool
-    # body never ran — no real side effect.
     completed = bodies_of(run, ToolCompleted)
     assert all("deleted" not in str(dump(b)["result"]) for b in completed)
 
@@ -119,9 +117,6 @@ async def test_cancel_parked_run():
     assert run.status is RunStatus.cancelled
     assert run.stream.closed
     assert _types(run)[-1] == "run.ended"
-
-
-# --- approval_needed notification wiring --------------------------------------------
 
 
 async def _notification_service(tmp_path: Path) -> NotificationService:
@@ -182,13 +177,10 @@ async def test_a_self_gated_tools_metadata_explanation_reaches_the_card():
 
 
 async def test_grant_short_circuit_resolves_a_dangling_notification(tmp_path: Path):
-    # Everything this turn defers is already grant-covered from the start, so the
-    # engine never parks — it continues the same turn inline. That branch is a
-    # defensive `resolve_for_run` call too: this proves it actually fires by seeding a
-    # notification for this exact run id up front and checking it's resolved after.
+    # Every deferred call is grant-covered, so the engine continues inline and never parks.
+    # A notification seeded for this run id proves the defensive `resolve_for_run` fires.
     from tests._helpers import granting_store
 
-    # Learn the real (namespaced) tool name a park reports, rather than guessing it.
     probe_run = await _park_a_run(RunRegistry())
     tool_name = parked_turn(probe_run).requests.approvals[0].tool_name
 
@@ -204,9 +196,7 @@ async def test_grant_short_circuit_resolves_a_dangling_notification(tmp_path: Pa
         categories=_danger_categories(),
         capabilities=ServiceContainer.of(grants, service),
         conversation_id="c1",
-        # Edit rather than the default, which is Auto: there a grant feeds the review
-        # instead of settling the call on its own, and with no utility model bound the
-        # turn would park — which is the branch under test not firing.
+        # Not Auto: there a grant feeds the review, and with no utility model the turn parks.
         binding=ConversationBinding(permission="edit"),
     )
     run = reg.submit(
@@ -218,16 +208,15 @@ async def test_grant_short_circuit_resolves_a_dangling_notification(tmp_path: Pa
     )
     await run.wait()
 
-    assert run.status is RunStatus.done  # grant-covered inline — never parked
+    assert run.status is RunStatus.done
     items, _ = await service.list_notifications("operator")
     assert items[0].resolved_at is not None
     await service.stop()
 
 
 async def test_parked_turn_keeps_parallel_tool_calls_on_resume():
-    # Why the setting sits on the agent and not on `agent.iter(...)`: a park stashes
-    # this agent on the ParkedTurn, so the resume inherits it with nothing threaded
-    # through the payload and nothing to go stale in an older one.
+    # The setting sits on the agent, not `agent.iter(...)`: a park stashes the agent, so the
+    # resume inherits it with nothing threaded through the payload.
     reg = RunRegistry()
     run = await _park_a_run(reg)
     parked = parked_turn(run)
@@ -247,10 +236,8 @@ async def test_parked_turn_keeps_parallel_tool_calls_on_resume():
 
 
 async def test_a_parked_call_does_not_hold_back_the_plain_call_beside_it():
-    """One step, two calls: one the level parks, one it clears. The library runs the plain
-    call while the gated one is set aside, so the operator watching the work log sees it
-    finish *before* being asked about the other — and the park names only the call that is
-    actually waiting, and a resume does not run the finished one a second time."""
+    """One step, two calls: the plain one finishes before the operator is asked about the
+    gated one, the park names only the gated call, and a resume does not rerun the plain one."""
     from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
     ran: list[str] = []
@@ -314,20 +301,14 @@ async def test_a_parked_call_does_not_hold_back_the_plain_call_beside_it():
 
 
 class TestTheOneLineSummary:
-    """`summarize_call` renders a call for a human reading a notification, not for a log.
-
-    The full arguments ride the same event in `args`, untouched. What this string is for is
-    the operator's phone telling them *which* call is waiting — and an uncapped one meant
-    `plan_submit` put an entire markdown plan in that sentence.
-    """
+    """`summarize_call` renders a call for a notification; the full arguments ride `args`."""
 
     def test_an_ordinary_call_is_readable_in_full(self):
         from agent.parking import summarize_call
 
         summary = summarize_call("shell_run", {"command": "rm -rf build/", "timeout": 30})
 
-        # The case the cap must not touch. A shell command the operator is being asked to
-        # approve is unreadable truncated, and every one of them fits.
+        # A shell command the operator is asked to approve is unreadable truncated.
         assert summary == "shell_run(command='rm -rf build/', timeout=30)"
 
     def test_one_enormous_argument_is_elided_rather_than_carried(self):
@@ -336,10 +317,7 @@ class TestTheOneLineSummary:
         summary = summarize_call("plan_submit", {"body": "# Plan\n" + "step. " * 2000})
 
         assert len(summary) <= SUMMARY_MAX_CHARS
-        # Elided, not merely cut: a summary that stopped silently reads as a call with a
-        # shorter argument than the one actually being approved. And the value is cut
-        # *inside* the call rather than the line being chopped after it, so the rendering
-        # still reads as a call.
+        # Elided inside the call, not cut after it: a silent cut reads as a shorter argument.
         assert summary.endswith("…)")
         assert summary.startswith("plan_submit(body='# Plan")
         assert len(summary) > VALUE_MAX_CHARS // 2
@@ -349,9 +327,7 @@ class TestTheOneLineSummary:
 
         summary = summarize_call("write", {"body": "x" * 5_000, "path": "notes.md"})
 
-        # Why each value is elided before the line is assembled rather than the line being
-        # cut at the end: the last argument is as likely as the first to be the one that
-        # says what this call does.
+        # Values are elided before assembly: the last argument may be the one that matters.
         assert "path='notes.md'" in summary
 
     def test_many_small_arguments_are_capped_by_the_line(self):
@@ -359,7 +335,5 @@ class TestTheOneLineSummary:
 
         summary = summarize_call("noisy", {f"k{n}": f"v{n}" for n in range(200)})
 
-        # The other shape: nothing here is individually long, and the line is still a
-        # notification body.
         assert len(summary) <= SUMMARY_MAX_CHARS
         assert summary.endswith("…")

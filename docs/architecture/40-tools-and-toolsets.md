@@ -1,6 +1,7 @@
 # 40 — Tools & Toolsets
 
-> **Detail for Pillar III (the engine's reach).** This expands §2 / §3-pillar-III of the [architecture README](./README.md): how the agent's tools are defined, *which* tools a given run sees, and how the spec's whole access-control story (`AE-2`, `AE-3`) becomes **composition of Pydantic AI primitives keyed on per-run dependencies** rather than bespoke machinery.
+> **Detail for Pillar III (the engine's reach).** Expands §2 Pillar III of the [architecture README](./README.md): how tools are defined, *which* tools a run sees, and how access control (`AE-2`, `AE-3`) is **composition of Pydantic AI primitives keyed on per-run dependencies**.
+
 ---
 
 ## 1. The one idea
@@ -8,9 +9,7 @@
 **A tool is a thin adapter; the catalog the model sees is a policy.** Two ideas, kept apart:
 
 - **What a tool *is*** — a typed function the model can call. It owns *no* logic: it validates args (Pydantic AI does this), reaches a capability through `RunContext.deps`, and shapes the result. The actual work lives in `services/`, where a REST route reaches the same capability directly. A tool is the model's *doorway* to a capability, never the capability itself.
-- **What the model *sees*** — not the raw catalog, but the catalog **after our access policy runs**: namespaced, operator-disabled tools dropped, sensitivity attached. That policy is a short **stack of toolset wrappers** evaluated against the run's deps. It is the single most leveraged mapping in the design.
-
-Everything below is those two ideas worked out.
+- **What the model *sees*** — not the raw catalog, but the catalog **after our access policy runs**: namespaced, operator-disabled tools dropped, sensitivity attached. That policy is a short **stack of toolset wrappers** evaluated against the run's deps.
 
 ---
 
@@ -93,10 +92,10 @@ CombinedToolset(builtin + memory + code + … MCP/integrations as they land)
   #                              the catalog ever outgrows what one prompt should carry.
 ```
 
-Two deliberate omissions, each a settled decision rather than an oversight:
+Two deliberate omissions:
 
-- **No privilege gate.** The spec's README §2 stack shows a `privilege_gate` first. With a single operator there are **no tiers**, so there is nothing to filter on — the line is intentionally absent. The `owner_id` seam carries the *future* multi-user story; when a second human exists, a `.filtered(privilege_gate)` slots in ahead of the enabled gate, keyed on the same deps. The shape is ready; the filter is empty today.
-- **No relevance pre-filter.** `AE-4.1` (pre-select likely-relevant tools) is a waivable SHOULD-performance. On one powerful host with native-tool-call models, the model selects its own tools from the full gated catalog; pre-filtering would add latency and a place to be wrong. `AE-4.2` ("every permitted tool reachable") is then trivially satisfied. The `.prepared()` seam now carries the approval gate, and a relevance step composes onto it if/when the catalog grows past what one context should hold.
+- **No privilege gate.** A single operator has no tiers to filter on. The `owner_id` seam carries the future multi-user story: with a second human, a `.filtered(privilege_gate)` slots in ahead of the enabled gate, keyed on the same deps.
+- **No relevance pre-filter.** `AE-4.1` is a waivable SHOULD. On one powerful host with native-tool-call models, the model selects from the full gated catalog; pre-filtering would add latency and a place to be wrong. `AE-4.2` ("every permitted tool reachable") is then met. A relevance step composes onto the `.prepared()` seam if the catalog outgrows one context.
 
 **Where the permission level acts, and why in two places.** A level narrows the catalog *and* marks what survives. The narrowing is the read-only level's alone (`services/tool_policy.py`): a tool that is not offered cannot be called by a model that decides otherwise, and a read-only turn saves the schemas outright. Every other level offers the full catalog and marks the tools past its write scope, because withholding one from them would tell the model the capability does not exist rather than that it needs permission. Both halves ask the same question — `services/permissions.beyond_scope` — so they cannot draw the line in different places.
 
@@ -170,7 +169,7 @@ Approval is **consent, not containment**: a misjudged click, a destructive comma
 
 The inversion is the point: **routine code-exec has no approval friction at all**, and the approval prompts are the genuine exits — changing the operator's host, and reaching somewhere nobody approved.
 
-**The isolation invariant** (`services/sandbox/base.py`), as it now stands:
+**The isolation invariant** (`services/sandbox/base.py`):
 
 | Invariant | Status | How |
 |---|---|---|
@@ -255,7 +254,7 @@ Four properties are load-bearing and each is there for a reason that is easy to 
 4. A **sensitive** tool does *not* execute — the turn ends with `DeferredToolRequests`. The engine rules on each deferred call: the thread's permission level refuses or parks it, a standing conversation grant answers the levels that would have asked, and at the Auto level the review settles it — with the grant riding into that review as the operator's authorization rather than skipping it (§4.5). What is still unanswered parks (§4.1) and waits for `POST …/approve`.
 5. `code_execute` runs in the conversation's sandbox if the platform VM is up, else reports disabled (§4.2); `code_request_egress` and `code_run_host_command` always park for approval first — the two exits, never the compute.
 
-The result: the spec's entire access-control surface (`AE-2` categories, `AE-3` sensitivity + enable/disable, `AE-4` model-discerns) is a **dozen lines of toolset composition plus a per-tool `requires_approval` flag** — keyed on one deps object, with every harder case (host exec, scheduled tasks, external tools) reusing the *same* deferred-tool pause rather than inventing new control flow.
+The result: access control (`AE-2` categories, `AE-3` sensitivity and enable/disable, `AE-4` model-discerns) is a **dozen lines of toolset composition plus a per-tool `requires_approval` flag**, keyed on one deps object. Every harder case (host exec, scheduled tasks, external tools) reuses the same deferred-tool pause.
 
 ---
 

@@ -61,12 +61,7 @@ _UNAVAILABLE_FIX = (
 @dataclass(frozen=True)
 class HostConfinement:
     """The fence a host command runs under: whether it applies, why not when it
-    doesn't, and what it lets through.
-
-    Resolved before the run rather than reported after it, so the tool can tell the
-    model — and through it the operator — what actually held, instead of implying a fence
-    that was never applied.
-    """
+    doesn't, and what it lets through."""
 
     active: bool
     reason: str = ""
@@ -99,25 +94,14 @@ _resolve_lock = asyncio.Lock()
 def host_scratch_dir() -> Path:
     """The directory an approved host command starts in.
 
-    Neither obvious answer is usable. The server process's own working directory is the
-    application's source tree — its `.env`, its config, its database url — so a command
-    approved to read "a file here" would be reading those, and every relative path the
-    model wrote would mean something in a directory nobody described to it. The run's
-    workspace is no better: a sandbox thread's is inside ``data_dir``, which
-    the fence below denies outright, so a command started there cannot resolve its own
-    working directory, let alone write in it.
+    Neither the server's working directory (the source tree, with its `.env`) nor the run's
+    workspace (inside the fence-denied ``data_dir``) is usable, so host commands get a
+    stable scratch directory under the OS temp root, which the fence allows writing to.
 
-    So host commands get a scratch directory of their own: under the OS temp root, which
-    the fence allows writing to; holding nothing the operator did not put there through
-    this tool; and stable across calls, so one command's output is still there for the
-    next.
-
-    **Stable and predictable under a shared root is a squattable pair**, so the path is
-    claimed rather than merely created — see :func:`_claim_scratch`. This matters on Linux,
-    where ``gettempdir()`` is the world-writable ``/tmp`` (macOS gives each user a private
-    ``TMPDIR`` under ``/var/folders``), and it matters twice over: the directory is both
-    where every approved command starts *and* an entry in the fence's write allowlist, so
-    whoever controls it controls what a relative path in an approved command resolves to.
+    A stable, predictable path under a shared root is squattable, so it is claimed rather
+    than merely created (:func:`_claim_scratch`). It matters on Linux, where
+    ``gettempdir()`` is the world-writable ``/tmp``: the directory is both where every
+    approved command starts and an entry in the fence's write allowlist.
     """
     scratch = scratch_path()
     _claim_scratch(scratch)
@@ -127,11 +111,8 @@ def host_scratch_dir() -> Path:
 def scratch_path() -> Path:
     """Where the scratch directory sits, without creating or checking anything.
 
-    Split from the claim so a *profile* can name the path without a squatted directory
-    taking confinement resolution down with it: the refusal belongs to the command that
-    would have run there, not to the process that configures the fence for every later
-    command. This module's profile allows writing it (it is where an approved host command
-    starts).
+    Split from the claim so a squatted directory refuses the command that would run there
+    instead of taking down confinement resolution for every later command.
     """
     return Path(tempfile.gettempdir()) / f"hephaestus-host-{os.getuid()}"
 
@@ -164,16 +145,12 @@ def _denied_write_paths(deny_read: Iterable[str], allow_write: Iterable[str]) ->
 def _claim_scratch(scratch: Path) -> None:
     """Make ``scratch`` a directory this user owns and nobody else can read, or refuse it.
 
-    ``mkdir(exist_ok=True)`` is not enough on its own: it swallows the "already there" case
-    whenever :meth:`Path.is_dir` is true, and ``is_dir`` follows symlinks — so a symlink
-    planted at this path by another local user is silently accepted, and everything below
-    lands wherever it points. The name carries the uid so two accounts on one host do not
-    contend for the same path in the first place; this then checks what is actually there
-    with :func:`os.lstat`, which does not follow the link.
+    ``mkdir(exist_ok=True)`` follows symlinks, so a symlink planted at this path would be
+    accepted; :func:`os.lstat` checks what is actually there. The name carries the uid so
+    two accounts don't contend for one path.
 
-    A refusal raises rather than falling back to some other directory. There is no safe
-    second choice — the alternatives are the source tree and the denied data directory —
-    and a squatted scratch path is a fact the operator needs to see, not route around.
+    A refusal raises instead of falling back: the only alternatives are the source tree and
+    the denied data directory.
     """
     try:
         scratch.mkdir(mode=0o700, exist_ok=True)
@@ -193,9 +170,7 @@ def _claim_scratch(scratch: Path) -> None:
             + "not this process — refusing to run an approved command in it"
         )
     if info.st_mode & 0o077:
-        # Ours, but wider than it should be — a directory this process created under an
-        # older, laxer version of this function, or under a permissive umask. Tighten it:
-        # the command's output is the operator's, and on a shared host the temp root is not.
+        # Ours but too wide (e.g. created under a permissive umask).
         os.chmod(scratch, 0o700)
 
 
@@ -207,8 +182,6 @@ async def resolve_confinement(settings: Settings) -> HostConfinement:
             return _resolved
         resolved = await configure(settings)
         if not resolved.active:
-            # Worth one line: an operator who believes their host commands are fenced
-            # should not have to read a tool result to discover otherwise.
             logger.warning("host commands are running unconfined: %s", resolved.reason)
         _resolved = resolved
         return resolved
@@ -282,10 +255,6 @@ async def configure(settings: Settings) -> HostConfinement:
             False, f"sandbox-runtime is not installed ({exc}); {_UNAVAILABLE_FIX}"
         )
     if not SandboxManager.check_dependencies():
-        # Name what is actually missing. A generic "unavailable" reads as "your OS can't
-        # do this" and gets ignored, when in practice the usual cause is a single absent
-        # binary the operator can install in one command — and until they do, every
-        # approved host command runs unfenced.
         from sandbox_runtime.utils.platform import get_platform
         from sandbox_runtime.utils.ripgrep import has_ripgrep_sync
 
@@ -306,32 +275,22 @@ async def configure(settings: Settings) -> HostConfinement:
             False, f"the platform's sandbox dependencies are unavailable; {_UNAVAILABLE_FIX}"
         )
     deny_read = list(denied_read_paths(settings))
-    # Writes are deny-by-default in this runtime, so the allow list is not a hardening knob
-    # — it is what keeps an approved command able to do the thing it was approved for. The
-    # runtime's own defaults (`/dev/null`, `/dev/stdout`, the tty) come first: without them
-    # even `echo` into a pipe fails, which would read as the tool being broken.
-    # `gettempdir()` rather than a literal `/tmp`: macOS gives each user a private
-    # `TMPDIR` under `/var/folders`, so a hardcoded path would miss where temp files
-    # actually land (`XC-PORT-1`). The scratch directory is under it and named anyway,
-    # because it is the one path a host command *has* to be able to write: it is where the
-    # command starts. The application's own source tree (`os.getcwd()`) is neither where a
-    # command runs nor anywhere one should write.
-    # Named, not claimed: `host_scratch_dir` does the claiming, on the call that will
-    # actually run there, so a squatted path refuses one command rather than leaving every
-    # later one unfenced.
+    # Writes are deny-by-default. The runtime's defaults (`/dev/null`, `/dev/stdout`, the
+    # tty) come first: without them even `echo` into a pipe fails.
+    # `gettempdir()` not `/tmp`: macOS uses a private `TMPDIR` under `/var/folders`.
+    # The scratch path is named, not claimed: `host_scratch_dir` claims it on the call that
+    # runs there, so a squatted path refuses one command rather than leaving all unfenced.
     allow_write = [
         *get_default_write_paths(),
         *settings.host_command_allow_write,
         tempfile.gettempdir(),
         str(scratch_path()),
     ]
-    # Imported here rather than at module scope: `services.egress` reads `safe_key` out of
-    # this package, so the two only meet at call time.
+    # Function-local: `services.egress` reads `safe_key` out of this package.
     from services.egress import normalise_domain
 
-    # Through the same funnel an approved domain goes through, so what an operator wrote
-    # in the setting means the same thing at both fences. Left raw, `Files.PythonHosted.org`
-    # or a pasted URL would be allowed by the egress gateway and refused here.
+    # Normalised like an approved domain, so `Files.PythonHosted.org` or a pasted URL
+    # means the same at both fences.
     domains = [normalise_domain(d) for d in settings.egress_allowed_domains]
     # The runtime installs its own SIGINT/SIGTERM handlers on first use, which would
     # replace the server's and leave Ctrl+C unable to stop it.
@@ -339,15 +298,10 @@ async def configure(settings: Settings) -> HostConfinement:
     try:
         await SandboxManager.initialize(
             SandboxRuntimeConfig(
-                # The same allowlist the VM's egress gateway reads. An approved command is
-                # still only approved for what the operator read; where it may *reach* is
-                # one installation-wide policy, not a second list that drifts from it.
-                # `allow_local_binding` because a dev server or a test suite opening a
-                # localhost socket is compute, not egress — and it is read off this global
-                # config at wrap time, so a per-call config could not supply it. It is
-                # all-or-nothing (the profile emits one `localhost:*` rule), which is why
-                # the module docstring states the residual rather than the allowlist
-                # covering everything a command can reach.
+                # The allowlist the VM's egress gateway reads: one installation-wide policy.
+                # `allow_local_binding` is read off this global config at wrap time, so a
+                # per-call config cannot supply it; it is all-or-nothing (one
+                # `localhost:*` rule), hence the loopback residual in the module docstring.
                 network=NetworkConfig(allowed_domains=domains, allow_local_binding=True),
                 filesystem=FilesystemConfig(
                     deny_read=deny_read,
@@ -366,9 +320,7 @@ async def configure(settings: Settings) -> HostConfinement:
             if handler is not None:
                 with contextlib.suppress(ValueError):
                     _ = signal.signal(sig, handler)
-    # Carried on the resolution rather than re-derived at the run: `confine` fences each
-    # command individually, and these are the settings half of what it needs — the same
-    # values the global init above was given, so the two cannot drift.
+    # The same values the global init was given, so per-command `confine` cannot drift.
     return HostConfinement(
         True,
         allowed_domains=tuple(domains),
@@ -381,10 +333,8 @@ async def configure(settings: Settings) -> HostConfinement:
 async def shutdown_confinement() -> None:
     """Tear down whatever `resolve_confinement` started, and forget the decision.
 
-    Configuring the confinement starts long-lived proxy listeners inside
-    ``sandbox-runtime``; without this they outlive the app, and under the reloading dev
-    server they accumulate a pair per restart. Registered with the app's lifecycle
-    registry like every other background unit, rather than left to process exit.
+    Configuring starts long-lived proxy listeners inside ``sandbox-runtime`` that otherwise
+    outlive the app, accumulating a pair per restart under the reloading dev server.
     """
     global _resolved
     if _resolved is None:
@@ -417,23 +367,15 @@ async def confine(
     cannot express "every host" (a bare ``*`` is rejected and an empty list still isolates
     the network), so the platform wrapper is called with network restriction off.
 
-    :func:`resolve_confinement` settles the machinery once per process — the platform
-    probe, the proxy listeners — but not where a particular command may write, because
-    callers differ: the approved host command writes wherever the operator allowed, and the
-    host shell writes into one conversation's project folder. Those
-    rules are genuinely per-call, because they go into the wrapper the OS itself enforces.
+    Write rules are per-call because they go into the wrapper the OS enforces;
+    :func:`resolve_confinement` settles only the once-per-process machinery.
 
-    **The network half is coarser, and that is a property of the runtime, not a choice
-    here.** One proxy serves the whole process and filters every request against the
-    configuration installed at initialisation, so ``allowed_domains`` decides only whether
-    this command gets a route out *at all* — an empty set gets no proxy and no network.
-    Which hosts it may then reach is the installation-wide allowlist, identical for every
-    command. Folding a conversation's own grants in would mean writing them into that one
-    shared configuration, where they would widen the fence around every other command
-    running at that moment — a background dev server started by another thread included —
-    and stay there after the granting command exited. That is a per-call approval turned
-    into a process-wide standing grant, so the host fence does not honour them: on the
-    host only ``egress_allowed_domains`` moves the line.
+    **The network half is coarser, a property of the runtime.** One proxy serves the whole
+    process and filters against the configuration installed at initialisation, so
+    ``allowed_domains`` decides only whether this command gets a route out at all (an empty
+    set gets no proxy and no network). Folding a conversation's grants into that shared
+    configuration would widen the fence for every concurrent command and outlive the
+    granting one, so on the host only ``egress_allowed_domains`` moves the line.
     """
     from sandbox_runtime import (
         FilesystemConfig,

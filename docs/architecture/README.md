@@ -1,10 +1,10 @@
 # Hephaestus — Backend Architecture
 
-> **Status: living design.** This describes *how* the backend is built — the structure, abstractions, and seams.
+> **Status: living design.** How the backend is built: structure, abstractions and seams.
 >
-> **The black-box spec that seeded this design has been retired.** It did its job keeping a greenfield rebuild on track and the build has outgrown it; the requirement ids still cited in places below and in the code are historical, and where one disagrees with the code, the code is right. What remains authoritative is this document and the capabilities of **FastAPI** + **Pydantic AI**.
+> The spec that seeded this design is retired. Requirement ids (`AE-*`, `XC-*`, …) still cited here and in the code are historical; where one disagrees with the code, the code is right. This document and the capabilities of **FastAPI** + **Pydantic AI** are authoritative.
 >
-> **Greenfield.** Nothing here references any prior implementation. It is derived from the deployment profile (single operator, one powerful local host, models with native tool-calling) and the two libraries above.
+> The design derives from the deployment profile (single operator, one powerful local host, models with native tool-calling) and those two libraries.
 
 ---
 
@@ -30,9 +30,9 @@ The system separates cleanly into two halves, and almost every design choice fal
   └─────────────────────────────────────────────────────────────┘
 ```
 
-**Pydantic AI is the engine; we are the chassis.** We never re-implement what Pydantic AI does well (the loop, validation, fallback, streaming primitives). We *do* own everything that turns one model run into a durable, observable, multi-user, resumable product feature — because none of that is the library's job.
+**Pydantic AI is the engine; we are the chassis.** We never re-implement what Pydantic AI does well (the loop, validation, fallback, streaming primitives). We own everything that turns one model run into a durable, observable, resumable product feature, which is not the library's job.
 
-This is the answer to "how tightly do we couple to Pydantic AI": **all agentic logic goes through it; all orchestration, transport, and state around it is ours.**
+In short: **all agentic logic goes through Pydantic AI; all orchestration, transport and state around it is ours.**
 
 ---
 
@@ -48,7 +48,7 @@ A Run owns:
 
 - an **id, owner, and status** state machine (`queued → running → {done | blocked | error | cancelled}`, with a parked `awaiting_input` state when a sensitive tool call needs approval),
 - a **typed, sequence-numbered event stream** (Pillar II) published to an in-process broker,
-- an **in-memory event buffer** so a client that disconnects and reconnects can replay what it missed (`AE-7`) — this lives only as long as the server process, which is exactly what the spec requires,
+- an **in-memory event buffer** so a reconnecting client can replay what it missed (`AE-7`); it lives only as long as the server process,
 - a background **asyncio task** tracked in a `RunRegistry`, decoupled from any client connection: closing the browser does not stop the work (`AE-7.1`),
 - **bounds**: a max-step ceiling (`AE-1.5`), optional tool-call ceiling (`AE-1.6`), an inactivity watchdog and an opt-in wall-clock limit (`XC-PERF-2`), and cancellation that takes effect at the next step boundary (`DR-3.3`, `CHAT-5`). The step ceiling and the watchdog apply to every run; the wall clock is off unless the deploy or the operator sets one, since a turn that is merely slow is a turn we want to let finish.
 - **a lane**: concurrency is bounded per lane rather than by one shared pool — `interactive` (the operator's own turn), `background` (a scheduled task), `linked` (a thread the agent opened for itself) — picked from the run's `kind`, so unattended work can never leave a turn somebody is waiting on queued at the gate,
@@ -83,7 +83,7 @@ Three nested concerns:
      #  a .prepared() relevance step can slot in here later if the catalog ever grows too large)
    ```
 
-   This is the single most leveraged mapping in the design: the spec's entire access-control + namespacing story is *composition of library primitives keyed on per-run dependencies*, not bespoke machinery. We deliberately omit relevance pre-filtering (`AE-4.1`, a waivable SHOULD-performance) — capable native-tool-call models on one powerful host select their own tools, and `AE-4.2` is trivially met since every tool is always present.
+   Access control and namespacing are *composition of library primitives keyed on per-run dependencies*, not bespoke machinery. Relevance pre-filtering (`AE-4.1`, a waivable SHOULD) is deliberately omitted: capable native-tool-call models on one powerful host select their own tools, and `AE-4.2` is met because every tool is always present.
 
 3. **Capabilities** (`services/`) are the actual implementations — web search, vector store, memory, embeddings, the model registry, mail — each an async interface with a graceful-degradation story (`XC-DEG-*`). **Tools are thin adapters over capabilities.** The same capability is reused by a tool (agent calls it) and by a plain REST route (user calls it directly). Logic never hides inside a tool.
 
@@ -96,7 +96,8 @@ Three nested concerns:
 - **Platform-agnostic by construction.** The backend MUST run on Linux, macOS, and other POSIX hosts with no OS-specific dependency. Concretely: **no OS keystore** (the encryption key is password-derived and memory-only), filesystem access via `pathlib` not hard-coded separators, no shelling out to platform-only binaries in the core, and all crypto/storage deps chosen for cross-platform wheels (SQLCipher, `argon2-cffi`, pyca `cryptography`, sqlite-vec). Model inference is an HTTP call to a local OpenAI-compatible server, which is itself OS-portable. Any genuinely platform-specific capability (if one ever appears) must sit behind an interface with a portable default.
 - **Topology — origin-agnostic.** The backend is a pure API: **bearer-token** auth (works same-origin or split-origin), CORS configurable, no assumption about who serves the SPA. A deployment may put the API and the built frontend behind one reverse proxy or run them apart; the backend does not care.
 - **Security posture (single-operator).** Auth is enforced **globally** by middleware before any feature is reached (`XC-SEC-1`). The spec's "privilege" is split into three axes: **(A)** authenticate fully even for one user; **(B)** *sensitive capabilities* (shell, Python, fs-write, email-send, vault, config) are gated by **explicit user approval** rather than a vacuous admin-vs-user check — a sensitive tool call **parks the Run and asks** before it executes, which is what actually constrains the autonomous agent; **(C)** multi-tenancy is **seam-only** — every record carries an `owner_id` defaulting to the operator, but isolation enforcement and per-user management are deferred until a second human exists. Reusable secrets encrypted at rest, auth secrets one-way hashed (`XC-SEC-3`). Untrusted external content is wrapped as data, not instructions, before it enters a prompt (`XC-SEC-5`). All user data is encrypted at rest (AES-256, password-derived key, lock-until-unlocked). Agent-invoked **code execution is isolated from the host** — sandboxed on copies, fail-closed when no sandbox runtime is available, with direct host execution reachable only through a distinct, explained, approval-gated tool (`XC-SEC-7`).
-- **Persistence.** SQLite via an async ORM, schema applied/upgraded automatically on startup (`XC-DATA-2`) — no manual migration step. Conversation history uses a **write-behind** model: Pydantic AI's in-memory `ModelMessage` history is the live working set during a turn; completed messages are copied onto a persistence queue that drains to the DB off the hot path, stored in serializable `ModelMessage` form for resume fidelity plus a derived projection for listing/search.- **Config.** Deploy-level secrets/defaults from `.env` before first boot (`XC-CFG-1`); everything else is runtime-mutable settings persisted to the DB (`XC-CFG-2`).
+- **Persistence.** SQLite via an async ORM, schema applied/upgraded automatically on startup (`XC-DATA-2`) — no manual migration step. Conversation history uses a **write-behind** model: Pydantic AI's in-memory `ModelMessage` history is the live working set during a turn; completed messages are copied onto a persistence queue that drains to the DB off the hot path, stored in serializable `ModelMessage` form for resume fidelity plus a derived projection for listing/search.
+- **Config.** Deploy-level secrets/defaults from `.env` before first boot (`XC-CFG-1`); everything else is runtime-mutable settings persisted to the DB (`XC-CFG-2`).
 - **Degradation is designed in, not bolted on.** Vector search, web search, mail, push, and model endpoints are all optional capabilities; their absence degrades the dependent feature to a clear, bounded fallback rather than an error or a hang (`XC-DEG-*`, `DR-4.1`).
 
 → detail: [`00-principles-and-layout.md`](./00-principles-and-layout.md), data model in [`60-data-model.md`](./60-data-model.md)
@@ -138,7 +139,7 @@ Dependency direction is strictly downward: `routes → agent → tools → servi
 6. On the model's final output, the **meta-loop** optionally verifies deliverables and may make one bounded corrective re-attempt; then the orchestrator emits final metrics and an explicit end-of-turn, and persists the updated `ModelMessage` history.
 7. Throughout, the inactivity watchdog — and a wall-clock limit, where one is configured — can cut the run off; a `POST /runs/{id}/cancel` stops it at the next step boundary. Disconnect at any point leaves the run running and resumable.
 
-Deep research is **not** a different skeleton. It was once a rounds-based pipeline of its own, then a mode a conversation could be in, and is now the `research` platform skill that any chat opens: clarify the question, submit a plan of topics for the operator to approve, then launch a `researcher` agent per topic (`agents_spawn`). Each researcher is an ordinary turn in a hidden conversation that reports back and wakes the thread that launched it. The rounds loop's concurrency is now the lane's, and its "stop when comprehensive" is the model's own, checked against `agents_list`.
+Deep research is not a different skeleton. It is the `research` platform skill that any chat opens: clarify the question, submit a plan of topics for the operator to approve, then launch a `researcher` agent per topic (`agents_spawn`). Each researcher is an ordinary turn in a hidden conversation that reports back and wakes the thread that launched it. Concurrency is the lane's; when to stop is the model's own call, checked against `agents_list`.
 
 ---
 
@@ -146,4 +147,4 @@ Deep research is **not** a different skeleton. It was once a rounds-based pipeli
 
 Document streaming with auto-promotion (`AE-6.2/6.4`, `DOC-3`) and attachment/upload ingestion (`CHAT-2`, `UP-*`) are deferred until their features are in scope; the foundation does not depend on them.
 
-The foundation is built — Pillars I–III, approval, memory, auth, at-rest encryption, the model registry, and the code-execution sandbox live under `backend/`. Detail docs written so far: [`40-tools-and-toolsets.md`](./40-tools-and-toolsets.md) (the gating stack, sandbox isolation, scheduled-task pre-authorization, external-tool gating). The spec-coverage matrix is gone with the spec — what is built is what the tests hold. Remaining detail docs (`10-run-substrate.md`, `20-event-protocol.md`, `30-agent-engine.md`, `50-capabilities.md`, `60-data-model.md`) are still to be written.
+The foundation is built: Pillars I–III, approval, memory, auth, at-rest encryption, the model registry and the code-execution sandbox live under `backend/`. What is built is what the tests hold. Detail docs written so far: [`40-tools-and-toolsets.md`](./40-tools-and-toolsets.md) (the gating stack, sandbox isolation, scheduled-task pre-authorization, external-tool gating). Remaining detail docs (`10-run-substrate.md`, `20-event-protocol.md`, `30-agent-engine.md`, `50-capabilities.md`, `60-data-model.md`) are still to be written.

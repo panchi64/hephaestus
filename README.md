@@ -54,10 +54,11 @@ Pydantic AI runs the agent loop; the code around it makes each run durable, resu
 frontend/   SolidStart · TypeScript · Tailwind v4
 backend/    Pydantic AI + FastAPI (Python 3.14, uv)
   agent/ runs/ tools/ services/ harness/ skills/ vm/
-docs/       architecture, decision register, design system
+docs/       architecture, design system
 ```
 
 Design: [`docs/architecture/`](docs/architecture/README.md).
+
 ## Running it
 
 ```bash

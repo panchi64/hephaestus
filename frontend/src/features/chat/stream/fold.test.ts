@@ -13,17 +13,6 @@ import type { ChatMessage, CompactionProgress } from "../model";
 import { FOLD_RUN_KIND, createFolder, type FoldState } from "./fold";
 import { createPatchById } from "./patch";
 
-/**
- * What a fold event does to the transcript.
- *
- * The two compaction frames are the only pair in the protocol where one event *opens*
- * something on screen and a later one settles it, so what is pinned here is the pairing:
- * the row appears when the summarizer starts, stops throbbing when the summary lands,
- * and a turn that folds twice ends up with two rows rather than one that flickered. The
- * divider's own placement rules are older than this change and covered by the backend;
- * what is new is the reason riding across from the event onto the stored message.
- */
-
 function harness(
   seed: ChatMessage[] = [],
   hooks: {
@@ -136,10 +125,7 @@ describe("a fold in flight is a turn in the transcript", () => {
   });
 
   test("it opens even with no assistant turn to hang off", () => {
-    // The whole reason this is a turn rather than a row on the assistant's rail. A fold
-    // the operator starts by hand runs between turns, so there is no assistant message
-    // in flight — and the rail version drew nothing at all on that path, which is the
-    // defect that started this.
+    // A hand-started fold runs between turns, with no assistant message in flight.
     const h = harness([]);
     h.fold(started("manual"));
     expect(live(h.messages).map((c) => c.reason)).toEqual(["manual"]);
@@ -154,9 +140,8 @@ describe("a fold in flight is a turn in the transcript", () => {
   });
 
   test("the summary landing replaces the live turn with the settled one", () => {
-    // The live text is the model's raw working — unstripped, unfenced. Once the real
-    // summary lands, keeping both would show the operator two versions of one fold and
-    // leave the unsafe one on screen.
+    // The live text is the model's raw, unfenced working; keeping both would leave it
+    // on screen beside the settled summary.
     const h = harness(turn());
     h.fold(started("threshold"));
     h.fold(delta("draft"));
@@ -166,9 +151,8 @@ describe("a fold in flight is a turn in the transcript", () => {
   });
 
   test("two folds in one turn are two pauses, one at a time", () => {
-    // Real after the overflow retry landed: the prelude can fold at the threshold and
-    // the same turn can fold again when the provider still refuses the request. Those
-    // are two pauses the operator lived through — and only ever one of them is live.
+    // The prelude can fold at the threshold, then the same turn folds again when the
+    // provider still refuses the request. Only one is ever live.
     const h = harness(turn());
     h.fold(started("threshold"));
     h.fold(compacted("chk-1", "threshold"));
@@ -178,8 +162,7 @@ describe("a fold in flight is a turn in the transcript", () => {
   });
 
   test("a replayed frame does not open a second turn", () => {
-    // A reattach replays the run's buffer from seq 0 over a transcript that already
-    // folded it. The seq high-water mark is what drops the overlap.
+    // A reattach replays the buffer from seq 0; the seq high-water mark drops the overlap.
     const h = harness(turn());
     const ev = started("threshold");
     h.fold(ev);
@@ -198,10 +181,8 @@ describe("the divider records why the fold happened", () => {
   });
 
   test("a backend that sends no reason reads as the ordinary fold", () => {
-    // The field is optional on the wire only so an older backend still renders. Such a
-    // backend has no overflow retry to report, so the threshold is the only thing it
-    // could have meant — and a segment that blinks in and out with the backend version
-    // would be worse than one that is always there.
+    // Optional on the wire only so an older backend still renders; such a backend has no
+    // overflow retry, so threshold is the only thing it could mean.
     const h = harness(turn());
     h.fold(compacted("chk-1"));
     expect(h.messages.find((m) => m.id === "chk-1")?.compactionReason).toBe(
@@ -217,18 +198,15 @@ describe("the divider records why the fold happened", () => {
 });
 
 test("the blocked detail the retry control keys on is the backend's exact string", () => {
-  // `BlockedFooter` offers "Compact and retry" on an equality test against this, live
-  // off `run.ended` and again off the persisted `blocked_reason` after a reload. Drift
-  // by one character and the control silently stops appearing — with no error, because
-  // every other stop legitimately fails the same test.
+  // `BlockedFooter` offers "Compact and retry" on an equality test against this; drift
+  // makes the control silently vanish.
   expect(CONTEXT_OVERFLOW_DETAIL).toBe("context window exceeded");
 });
 
 describe("the context stop's toast", () => {
-  // The toast is the only place the frontend names its own remedy, and there are two
-  // context stops: one the "Compact and retry" control can answer, and one it cannot,
-  // because the fold it would perform is the one that just failed. The notice carries
-  // the same marker the blocked turn does, so the toast and the button agree.
+  // Two context stops: one "Compact and retry" can answer, and one it cannot (the fold
+  // it would run just failed). The notice carries the blocked turn's marker so toast and
+  // button agree.
   const notice = (detail: string): RunEvent => ({
     type: "limit.notice",
     seq: ++seq,
@@ -254,9 +232,8 @@ describe("the context stop's toast", () => {
 });
 
 test("the after-fold blocked detail is the backend's exact string", () => {
-  // `BlockedFooter` offers its control on an equality test against the *other* constant,
-  // so this one must stay distinct from it — one character of drift in either direction
-  // and a turn that already folded starts offering to fold again.
+  // `BlockedFooter` tests equality against the other constant, so this must stay
+  // distinct or a turn that already folded offers to fold again.
   expect(CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL).toBe(
     "context window exceeded after compaction",
   );
@@ -264,10 +241,8 @@ test("the after-fold blocked detail is the backend's exact string", () => {
 });
 
 describe("a review's two frames", () => {
-  // The pair the operator reads when the chassis answered for them. What is pinned here
-  // is that the *grounds* survive the fold, not just the verdict: the declared reach
-  // arrives on the opening frame and the tier and the fence arrive on the closing one,
-  // and a card that showed only "allowed" would tell them nothing to act on.
+  // The grounds must survive the fold, not just the verdict: reach arrives on the
+  // opening frame, tier and fence on the closing one.
   const started = (
     reach: "offline" | "network" | "host" | null,
     detail: string | null = null,
@@ -310,16 +285,13 @@ describe("a review's two frames", () => {
     const block = review(h.messages);
     expect(block?.kind).toBe("review");
     expect(block?.kind === "review" && block.review.reach).toBe("network");
-    // Nothing is decided yet — the row exists so a review that costs a model call reads
-    // as work in flight rather than as a stalled turn.
+    // Nothing is decided yet; the row shows the review in flight.
     expect(block?.kind === "review" && block.review.decision).toBeUndefined();
   });
 
   test("the content the reviewer ruled on lands with it", () => {
-    // For the tools whose act is not written in one line — a delegated task, a skill's
-    // replacement text — the reviewer is given a `detail` beyond the summary. The row is
-    // where the operator checks a decision made in their place, so it is shown the same
-    // material rather than a paraphrase of it.
+    // Tools whose act is not one line (a delegated task, a skill's replacement text)
+    // give the reviewer a `detail`; the row shows the operator the same material.
     const h = harness(turn());
     h.fold(started(null, "task: read the docs"));
     const block = review(h.messages);
@@ -383,8 +355,7 @@ describe("a review's two frames", () => {
     messages.find((m) => m.id === "a1")?.blocks?.find((b) => b.kind === kind);
 
   test("what the review found rides onto the card that asks", () => {
-    // The reviewer's own refusal became a park, so `too_destructive` is a finding the
-    // operator now has to read *while deciding* — not on a collapsed row above the prompt.
+    // The operator reads `too_destructive` while deciding, not on a collapsed row above.
     const h = harness(turn());
     h.fold(started("offline"));
     h.fold(unrecoverable("mail_send"));
@@ -399,9 +370,7 @@ describe("a review's two frames", () => {
   });
 
   test("it rides onto the terminal too, which is where the shell asks", () => {
-    // `git commit --amend` and `rm -rf build` are the acts that earn the word, and every
-    // one of them renders as a terminal rather than as an approval card — so a finding
-    // carried only onto the latter would never be seen on the calls it was written for.
+    // Destructive shell commands render as a terminal, not an approval card.
     const h = harness(turn());
     h.fold(started("offline"));
     h.fold(unrecoverable("shell_run_command"));
@@ -416,8 +385,7 @@ describe("a review's two frames", () => {
   });
 
   test("an approval with no review behind it carries no verdict", () => {
-    // Every level but Auto: nothing ruled on it first, so there is nothing to show and
-    // the card must not imply a review happened.
+    // Every level but Auto: no review ran, so the card must not imply one.
     const h = harness(turn());
     h.fold(asked("mail_send"));
     const block = blockOf(h.messages, "approval");
@@ -428,9 +396,8 @@ describe("a review's two frames", () => {
   });
 
   test("a null tier is an absence, and an unfenced host is a fact worth keeping", () => {
-    // Null on the wire means the model stage settled it, so there is no structural
-    // ground to name; `fenced: false` is the separate, actionable fact that this
-    // machine could not have held the command to what it declared.
+    // Null tier means the model stage settled it; `fenced: false` separately means this
+    // machine could not hold the command to what it declared.
     const h = harness(turn());
     h.fold(started(null));
     h.fold(completed(null, false));
@@ -442,15 +409,9 @@ describe("a review's two frames", () => {
 });
 
 /**
- * A queued message, and whose it is.
- *
- * The operator typing mid-turn and a sub-agent reporting back ride the same road on
- * purpose — the injection point hands a queued message to the *next, not-yet-sent*
- * request, so neither can interrupt a model mid-stream. They must not arrive looking the
- * same. Read as the operator's, a report is words attributed to somebody who has not seen
- * them, offered with edit and withdraw affordances for a message they cannot take back —
- * and a live transcript that disagrees with what the same thread shows after a reload,
- * where the backend labels it from the envelope it was delivered in.
+ * Operator messages and sub-agent reports share the queue, but a report must not render
+ * as the operator's (wrong attribution, edit/withdraw affordances) and must match what
+ * the backend labels after a reload.
  */
 describe("whose queued message it is", () => {
   const queued = (
@@ -489,7 +450,7 @@ describe("whose queued message it is", () => {
     h.messages.filter((m) => m.id !== "u1" && m.role !== "assistant");
 
   test("an unmarked frame is the operator's, as it always was", () => {
-    // An older backend sends no `source` at all, and everything it ever queued was theirs.
+    // An older backend sends no `source`; everything it queued was the operator's.
     const h = harness(turn());
     h.fold(queued("actually, check the tests too"));
     expect(h.inbox().items[0]?.source).toBe("operator");
@@ -557,11 +518,8 @@ describe("whose queued message it is", () => {
 });
 
 describe("a fold that declines still says why", () => {
-  // The whole point of the button is that a fold is no longer silent, and the most
-  // likely way for it to do nothing is the case where it never starts: nothing has been
-  // said since the thread's last fold, so there is nothing to summarize. No
-  // `compaction.started` is emitted then, so there is no live turn to clean up — and
-  // keying the report on that cleanup made this exact case go quiet again.
+  // A fold with nothing to summarize emits no `compaction.started`, so there is no live
+  // turn to clean up; the report must not be keyed on that cleanup.
   const ended = (detail: string): RunEvent =>
     ({
       type: "run.ended",
@@ -590,8 +548,7 @@ describe("a fold that declines still says why", () => {
   });
 
   test("a blocked chat turn does not — it already marks the turn it stopped", () => {
-    // A turn carries a persistent "Stopped:" marker with the same detail on it, so a
-    // toast here would state the same sentence twice for one event.
+    // The turn's persistent "Stopped:" marker already carries the detail.
     const spy = spyOn(toast, "info");
     const h = harness(turn());
     h.fold(startedRun("chat"));
@@ -601,8 +558,8 @@ describe("a fold that declines still says why", () => {
   });
 
   test("the kind is spent at the terminal, so the next run does not inherit it", () => {
-    // A drive attached past its run's `run.started` (a transport resume) never sees one,
-    // and a kind left over from the fold before would report a chat turn's stop twice.
+    // A transport-resume drive never sees `run.started`; a stale kind would report a
+    // chat turn's stop.
     const spy = spyOn(toast, "info");
     const h = harness(turn());
     h.fold(startedRun(FOLD_RUN_KIND));
@@ -632,8 +589,8 @@ describe("an event belongs to the drive that read it", () => {
     }) as unknown as RunEvent;
 
   test("a frame from a superseded drive writes nothing into the thread now bound", () => {
-    // A chunk read just before a thread switch is delivered after it. Folded, it would
-    // write the old thread's task list and queued message into the new one.
+    // A chunk read before a thread switch but delivered after would write the old
+    // thread's state into the new one.
     const seen: TaskItem[][] = [];
     const h = harness(turn(), { setTasks: (items) => seen.push(items) });
     h.state.epoch = 2; // the switch superseded drive 1; drive 2 now owns the fold

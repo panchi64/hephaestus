@@ -1,17 +1,14 @@
 """The project shell on the operator's machine: one persistent working directory, and the
 background processes started from it.
 
-**The behaviour is the harness `Shell`'s on purpose.** The model has been trained on those
-four tools — their names, their arguments, the shape of what they return — and changing any
-of it would cost more than it gains. The shape is copied and the spawn is ours.
-``tools/shell.py`` keeps the model-facing contract; what happens to a process is in
-:mod:`services.sandbox.process`.
+The tool names, arguments and result shape are the harness `Shell`'s on purpose, since the
+model is trained on them; the spawn is ours. ``tools/shell.py`` keeps the model-facing
+contract; process handling is in :mod:`services.sandbox.process`.
 
-The working directory persists between calls because a person's shell does, and because
-the permission judge reads relative paths against it (``services/permissions/judge.py``).
-It is captured out of band, into a temp file whose random name the agent's own command
-cannot address: parsing a sentinel out of stdout would let any command that prints the
-sentinel redirect where the next one runs.
+The working directory persists between calls, and the permission judge reads relative
+paths against it (``services/permissions/judge.py``). It is captured out of band, into a
+temp file whose random name the command cannot address: a sentinel parsed out of stdout
+would let any command that prints it redirect where the next one runs.
 
 A foreground run goes through :func:`~services.sandbox.process.run_on_host`, so it times
 out, reaps its process tree and reports progress the way the approval-gated host command
@@ -45,10 +42,8 @@ from .process import filtered_env, run_on_host, spawn_in_session, terminate_tree
 from .shell_result import BackgroundStatus, ProgressHook, ShellResult
 from .streams import read_text, stream_files, unlink
 
-# Spawning fails with `FileNotFoundError`/`NotADirectoryError` when the working directory
-# is gone — which the model's own last command may well have deleted, and which it can fix.
-# Every other errno (EMFILE, ENOMEM) is the host's, and must keep aborting the run rather
-# than sending the model into a retry loop it cannot win.
+# A spawn fails with these when the model's own last command deleted the working directory,
+# which it can fix. Every other errno (EMFILE, ENOMEM) is the host's and must abort the run.
 _RECOVERABLE_ERRNOS: dict[int | None, str] = {
     errno.ENOENT: "The working directory no longer exists.",
     errno.ENOTDIR: "The working directory is no longer a directory.",
@@ -60,9 +55,7 @@ def _recoverable[R, **P](
 ) -> Callable[Concatenate[HostShell, P], Awaitable[R]]:
     """Turn what the model can correct into `ModelRetry`, and leave the rest alone.
 
-    Pydantic AI feeds only `ModelRetry` back as a retry prompt; anything else aborts the
-    whole run. A refused command and a working directory an earlier command destroyed are
-    both the agent's to act on, so they go back to it rather than ending the turn."""
+    Pydantic AI feeds only `ModelRetry` back as a retry prompt; anything else aborts the run."""
 
     @functools.wraps(fn)
     async def wrapper(self: HostShell, *args: P.args, **kwargs: P.kwargs) -> R:
@@ -191,9 +184,7 @@ class HostShell:
     async def check(self, command_id: str) -> BackgroundStatus | None:
         """How far a background command has got, and everything it has printed.
 
-        ``None`` for an id this shell does not know — which is a fact about the call
-        rather than about a process, so the sentence the model reads about it is composed
-        where the rest of this tool's prose is (``tools/shell.py``).
+        ``None`` for an unknown id; ``tools/shell.py`` words that for the model.
         """
         bg = self._background.get(command_id)
         if bg is None:
@@ -206,9 +197,7 @@ class HostShell:
     async def stop(self, command_id: str) -> BackgroundStatus | None:
         """Stop a background command's whole group and hand back its final output.
 
-        Asked to stop before it is made to: the agent is told to call this on everything
-        it starts, so a server or a compose stack reaches it in the normal course of work
-        and deserves the chance to shut itself down."""
+        Terminated gracefully first, so a server or compose stack can shut itself down."""
         bg = self._background.pop(command_id, None)
         if bg is None:
             return None
@@ -239,10 +228,8 @@ class HostShell:
     async def shutdown(self) -> None:
         """Stop everything still running here, for a shell whose workspace is going away.
 
-        The agent is told to stop what it starts, and one that ran out of time or was
-        cancelled never got there. A shell that outlives its turn can wait for that call;
-        a delegated run's cannot — its ids lived only in a transcript that has ended, and
-        its processes were started in sessions of their own, so nothing else reaps them.
+        A delegated run's ids lived only in a transcript that has ended, and its processes
+        run in sessions of their own, so nothing else reaps them.
         """
         for command_id in list(self._background):
             _ = await self.stop(command_id)
@@ -256,23 +243,17 @@ class HostShell:
         return wrapped, Path(name)
 
     def _apply_captured_cwd(self, cwd_file: Path) -> None:
-        """Move the tracked directory to wherever the command ended up — **while that is
-        still inside the worktree**.
+        """Move the tracked directory to wherever the command ended up, while that is still
+        inside the worktree.
 
-        The containment is the load-bearing half. The permission layer measures every
-        relative path a later command writes against the worktree root
-        (``services/permissions/shell_ast.py``), so a `cd` that moved the tracked directory
-        out of the worktree would leave every later containment claim measured against the
-        wrong place: `cat secrets.txt` would clear as contained while reading some other
-        directory's file.
+        The permission layer measures relative paths against the worktree root
+        (``services/permissions/shell_ast.py``); a tracked directory outside it would make
+        `cat secrets.txt` clear as contained while reading another directory's file. Both
+        sides resolve through symlinks, so an outward link does not count as inside and
+        `/tmp/wt` equals `/private/tmp/wt`.
 
-        Both sides are resolved through symlinks, so a link inside the worktree that points
-        elsewhere does not count as inside, and `/tmp/wt` and `/private/tmp/wt` (one
-        directory on macOS) compare equal.
-
-        The whole read is guarded, not only the open: the command it belongs to already
-        succeeded, so a capture that is not UTF-8 or a path the OS refuses to stat is
-        bookkeeping this can drop, not a tool failure to report."""
+        The command already succeeded, so an undecodable capture or unstattable path is
+        dropped rather than reported."""
         try:
             recorded = cwd_file.read_text(encoding="utf-8").strip()
             if not recorded:
@@ -295,9 +276,6 @@ class HostShell:
         return None
 
     def _capped(self, text: str) -> str:
-        """Trimmed from the front, per stream — the end of a log is what says how it went.
-
-        Per stream rather than over the pair, so a chatty stdout cannot push the stderr
-        that explains the failure out entirely.
-        """
+        """Trimmed from the front, per stream, so a chatty stdout cannot push out the stderr
+        that explains the failure."""
         return truncate_tail(text, self._max_output_chars)

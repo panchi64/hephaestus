@@ -1,11 +1,9 @@
-"""Routines (`TASK-1..6`) — the scheduler, how a routine fires, and the agent's
-`routines_*` tools.
+"""Routines: the scheduler, how a routine fires, and the agent's `routines_*` tools.
 
-An agent routine executes as an ordinary Run in a new thread each time, by the routine's
-agent, reusing the chat turn's own composition so there is no forked
-run-submission path; a reminder fires its prompt verbatim as a notification. The executor
-learns a Run's outcome through a waiter future resolved synchronously at the terminal
-transition — the same dispatch everything else observes a run's outcome through.
+An agent routine runs as an ordinary Run in a new thread each time, by the routine's agent,
+through the chat turn's own composition (no forked submission path); a reminder fires its
+prompt verbatim as a notification. The executor learns a Run's outcome from a waiter future
+resolved synchronously at the terminal transition.
 """
 
 from __future__ import annotations
@@ -56,15 +54,13 @@ from tools.routines import routines_toolset
 
 logger = logging.getLogger(__name__)
 
-# A scheduled task's outcome summary is a short factual line, not a transcript —
-# just enough for the operator to judge at a glance whether to open the conversation.
+# A one-line outcome, enough to judge at a glance whether to open the conversation.
 _TASK_SUMMARY_MAX_CHARS = 280
 
 #: The kind a routine's run is submitted under (``runs/lanes.py``).
 TASK_KIND = "task"
 
-# `TaskRun.outcome` from the Run status it settled at — the three failure-shaped
-# statuses map onto the matching `TaskOutcome` verbatim.
+# `TaskRun.outcome` by the Run status it settled at.
 _TASK_OUTCOME_BY_RUN_STATUS = {
     RunStatus.done: TaskOutcome.OK.value,
     RunStatus.error: TaskOutcome.ERROR.value,
@@ -112,17 +108,15 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
     register_recompose(runs, TASK_KIND, _recompose)
 
-    # Keyed by run id — the executor awaits one of these futures to learn when its
-    # Run reaches a genuinely terminal state, which may be long after an approval
-    # park + operator resume round-trip (`AE-3.2`/`AE-3.5`). Resolved synchronously
-    # at the terminal transition, so a task execution's eventual settle is observed
-    # the same way anything else observes a run's outcome — no polling loop.
+    # By run id: the executor awaits its future for a genuinely terminal state, possibly long
+    # after an approval park and resume. Resolved synchronously at the terminal transition,
+    # so there is no polling loop.
     run_waiters: dict[str, asyncio.Future[Run]] = {}
 
     async def _task_run_summary(run: Run, conversation_id: str | None) -> str | None:
-        """A short, plain factual line about how the run settled — no extra model
-        call. An error/blocked/cancelled run already carries its own operator-legible
-        reason; a `done` run's summary is the start of its final answer."""
+        """A plain one-line summary of how the run settled, with no model call. Error,
+        blocked and cancelled runs carry their own reason; a `done` run's is the start of
+        its final answer."""
         if run.status is RunStatus.error:
             return run.error
         if run.status is RunStatus.blocked:
@@ -138,28 +132,26 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         return None
 
     async def _open_thread(view: ScheduledTaskView) -> str:
-        """A new thread for this run, run by the routine's agent and seeded with its
-        pre-authorizations (`AE-3.5`). A fresh thread is never busy, so nothing in a
-        thread can hold a run back from its time. The routine records it as its latest.
+        """A new thread for this run, by the routine's agent, seeded with its
+        pre-authorizations. A fresh thread is never busy, so nothing holds a run from its
+        time. The routine records it as its latest.
 
-        **The seeds are whole-tool grants, including on a tool that runs commands.** There
-        is no proposed command to scope one to, only a tool name the operator approved on
-        the routine. A seed is left undecisive: it informs the review at the level that
-        reviews rather than answering for it, since nobody is in front of the run."""
+        The seeds are whole-tool grants, even on a tool that runs commands: only a tool name
+        was approved, with no command to scope to. A seed is undecisive: at the reviewing
+        level it informs the review rather than answering for it, as nobody watches the run."""
         conversation_id = await conversations.create_conversation(
             view.owner_id, title=view.title, agent_name=view.agent_name
         )
         for tool_name in view.pre_authorized:
-            # A once-only tool is once-only here too: a standing grant on a per-call gate
-            # does its damage exactly where nobody is reading what it covers.
+            # Once-only stays once-only: a standing grant on a per-call gate does its damage
+            # where nobody reads what it covers.
             if tool_name not in ONCE_ONLY_TOOLS:
                 _ = await grants.grant(view.owner_id, conversation_id, tool_name)
         await routines.attach_thread(view.id, conversation_id)
         return conversation_id
 
     async def _with_last_run(view: ScheduledTaskView) -> str:
-        """The routine's prompt, followed by how its previous run ended, so each run
-        picks up where the last left off without sharing its thread."""
+        """The routine's prompt plus how its previous run ended, so runs continue across threads."""
         try:
             recent = await routines.runs(view.owner_id, view.id, limit=10)
         except NotFoundError:  # deleted since it fired
@@ -188,13 +180,12 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             )
 
     async def _task_executor(view: ScheduledTaskView) -> TaskRunResult:
-        """A routine's fire: a turn in a new thread, run by the routine's agent through
-        the same composition an interactive turn uses (`compose_turn`)."""
+        """A routine's fire: a turn in a new thread by the routine's agent, composed as an
+        interactive turn is (`compose_turn`)."""
         conversation_id = await _open_thread(view)
         thread = await composer.resolve(view.owner_id, conversation_id)
         applied, models = thread.applied, thread.models
-        # Nobody is watching, so tools that stop and wait for someone are withheld, and so
-        # are features never set up.
+        # Nobody watches: tools that wait for someone are withheld, as are unconfigured features.
         disabled = await composer.disabled(
             view.owner_id, kind=TASK_KIND, vision=models.vision, applied=applied, depth=0
         )
@@ -206,8 +197,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         prompt = await _with_last_run(view)
         waiter: asyncio.Future[Run] = asyncio.get_running_loop().create_future()
         run_id = uuid4().hex
-        # Linked before the run exists, so a restored run always finds its row and a failed
-        # link starts nothing.
+        # Linked first so a restored run always finds its row and a failed link starts nothing.
         if view.task_run_id is not None:
             await scheduler.link_task_run(
                 view.task_run_id, run_id=run_id, conversation_id=conversation_id
@@ -245,11 +235,10 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
                 except Exception:
                     logger.exception("tasks: could not unlink TaskRun %s", view.task_run_id)
             raise
-        # Registered before the first await below, so the run cannot reach terminal first.
+        # Registered before the first await so the run can't reach terminal first.
         run_waiters[created.run_id] = waiter
-        # Waits for a terminal outcome: a fire parked for approval stays open until the
-        # operator decides. Shutdown releases the wait while the run is still parked; the
-        # `TaskRun` stays open for whoever settles the restored run.
+        # A parked fire stays open until the operator decides. Shutdown releases the wait
+        # with the run still parked; the `TaskRun` stays open for whoever settles the restored run.
         run = await waiter
         if run.is_parked:
             raise TaskRunSuspended
@@ -265,8 +254,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         )
 
     async def _task_notify(view: ScheduledTaskView) -> None:
-        """A reminder task's fire — its prompt delivered verbatim as the notification
-        body (no AI phrasing in v1); title = the task's own title."""
+        """A reminder's fire: its prompt verbatim as the notification body, task title as title."""
         _ = await notifications.notify(
             view.owner_id,
             "reminder",
@@ -275,11 +263,9 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             task_id=view.id,
         )
 
-    # Single-instance, in-process. Lock-aware like the write-behind drainers (task
-    # prompts are encrypted): it parks its tick loop while the vault is locked and
-    # resumes on unlock. This manifest builds after everything the executor reaches,
-    # so the scheduler also stops before all of it — nothing may submit new runs
-    # into a tearing-down process.
+    # Single-instance, in-process. Prompts are encrypted, so its tick loop parks while the
+    # vault is locked. This manifest builds after everything the executor reaches, so the
+    # scheduler stops before all of it and nothing submits runs into a tearing-down process.
     scheduler = SchedulerService(
         ctx.engine,
         ctx.vault,
@@ -289,9 +275,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     await ctx.lifecycle.start("scheduler", start=scheduler.start, stop=scheduler.stop)
 
     def _release_parked_fires() -> None:
-        """A fire still parked at shutdown is kept for the next process, so the executor
-        waiting on it is let go, leaving its `TaskRun` open, instead of holding the
-        scheduler's stop for the whole drain."""
+        """A fire parked at shutdown is kept for the next process, so its waiting executor is
+        released (leaving the `TaskRun` open) rather than holding the scheduler's stop."""
         for run_id, waiter in list(run_waiters.items()):
             run = runs.get(run_id)
             if run is not None and run.is_parked and not waiter.done():
@@ -303,8 +288,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     settling: set[asyncio.Task[None]] = set()
 
     async def _settle_restored(run: Run) -> None:
-        """A routine run restored after a restart has no executor waiting on it, so its
-        end finalizes the `TaskRun` linked to it here."""
+        """A restored routine run has no waiting executor; its end finalizes its `TaskRun` here."""
         try:
             outcome = _TASK_OUTCOME_BY_RUN_STATUS.get(run.status, TaskOutcome.ERROR.value)
             summary = await _task_run_summary(run, run.conversation_id)
@@ -374,8 +358,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
 MANIFEST = FeatureManifest(
     name="tasks",
-    # The executor composes the full interactive capability set, so the features
-    # providing it must have built (and their services registered) first.
+    # The executor composes the full interactive capability set, so those features build first.
     after=(
         "agents",
         "calendar",
@@ -401,9 +384,8 @@ MANIFEST = FeatureManifest(
     ),
     gated_tools=ROUTINES_GATED,
     api_scopes=(ScopeClaim("tasks", ("/tasks",)),),
-    # The inbound webhook trigger is auth-exempt: the per-task unguessable token in
-    # the path is the credential, so an external caller can fire a task without the
-    # operator's session. Every other `/tasks` route stays behind the gate.
+    # The webhook trigger is auth-exempt: the per-task unguessable path token is the
+    # credential. Every other `/tasks` route stays behind the gate.
     public_prefixes=("/tasks/hooks",),
     build=_build,
 )

@@ -23,18 +23,14 @@ import { createComposerSend } from "./useComposerSend";
 /**
  * Message input. ⌘/Ctrl+Enter sends; Enter and Shift+Enter insert a newline, so a
  * stray Enter can never split one message into two sends. Drafts auto-save to
- * localStorage (per `storageKey`) and restore on return, so an interrupted or
- * resumed message is never lost. Cosmetic difference between the docked bar and
- * the hero field is the `size` prop — never a forked component. When an
- * `attachments` controller is supplied, files can be attached (drop, paste or
- * pick) and ride along with the message; a send with files still uploading is
- * held until they land rather than sent without them.
+ * localStorage (per `storageKey`) and restore on return. The docked bar and the hero
+ * field differ only by the `size` prop. With an `attachments` controller, files can be
+ * attached (drop, paste or pick); a send with files still uploading is held until they land.
  */
 export function Composer(props: ComposerProps): JSX.Element {
   const [text, setText] = createSignal("");
-  // What the field shows: a recalled message while one is open, else the operator's own
-  // draft. Two values rather than one swapped in and out, so the draft never has to be
-  // stashed, restored or kept from being persisted over — it is simply not on screen.
+  // A recalled message while one is open, else the draft. Kept as two values so the
+  // draft never needs stashing or protecting from persistence; it is just not shown.
   const recalled = () => props.recall?.draft() ?? null;
   const recalling = () => recalled() !== null;
   const value = () => recalled() ?? text();
@@ -42,11 +38,9 @@ export function Composer(props: ComposerProps): JSX.Element {
   const getField = () => field;
   const lg = () => props.size === "lg";
 
-  // ── The `/` and `@` menu ────────────────────────────────────────────────────────
-  // Its state and keys are `composerMenuController`'s; what the rows *are*, and what
-  // picking one means, is the feature's, through `props.menu`. A recalled message is
-  // edited as the words it was sent with — a `/` in it is text, not a command, since
-  // the edit goes back to the queue rather than through a send.
+  // Menu state and keys belong to `composerMenuController`; rows and pick meaning come
+  // from the feature via `props.menu`. A `/` in a recalled message is text, since the
+  // edit goes back to the queue rather than through a send.
   const menuCtl = createComposerMenuController({
     menu: () => props.menu,
     field: getField,
@@ -57,8 +51,7 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   const items = () => props.attachments?.items() ?? [];
 
-  // Files arrive by drop and paste only while the attach button would take them. Mid-run
-  // they ride a queued send, which becomes a turn of its own after the live one.
+  // Drop and paste work only while the attach button would. Mid-run files ride a queued send.
   const drop = useFileDrop(
     (files) => props.attachments?.attach(files),
     () => !props.disabled && !recalling(),
@@ -89,31 +82,22 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   const hasDraft = () => Boolean(text().trim());
 
-  // `+`, then the caller's two groups, as the unit's receded strip — with the commit
-  // keys at its end, so the strip is always drawn: Send lives there.
-  // Each slot resolved once, for the same reason as the header's.
+  // Each slot is resolved once, like the header's.
   const controls = children(() => props.controls);
   const trailing = children(() => props.trailing);
 
   const dropAttrs = () => (props.attachments ? drop.dropHandlers : {});
 
-  /* ONE layout for both sizes, and ONE ruled unit (§10.12): a square `line-strong`
-     frame holding, top to bottom, the plate (what the thread is doing), the field
-     (the full width — nothing sits beside it, so it never wraps around a button),
-     the attachment chips, and the receded strip: `+`, the caller's pickers, then
-     the caller's thread state and the commit keys. Only padding
-     differs between the sizes.
+  /* One layout and one ruled `line-strong` unit for both sizes (only padding differs):
+     plate, full-width field, attachment chips, then the receded strip (`+`, pickers,
+     thread state, commit keys; always drawn since Send lives there).
 
-     The unit is marked as the point of action AT REST, not on hover or focus (§6):
-     its opaque fill and its `line-strong` frame. No corner ticks, no shadow and no
-     light — its separation from the transcript is the fill and the ruled edge (§13,
-     shadows are for things that float). A live run is said in the plate, which
-     turns info with a blinking square. */
-  // `class` lands on the unit — it is layout glue, and the thing being placed is the
-  // whole unit. `heph-framed`: on a page carrying the dot field the composer's fill
-  // goes glass, so the field reads *through* the screen's focal object instead of
-  // stopping dead at its edge (§11.1). A bare composer has no fill to trade. The whole
-  // unit is the drop target: it is where the operator is already looking.
+     The point of action is marked at rest by the opaque fill and ruled edge: no ticks,
+     shadow or light, since shadows are for things that float. A live run turns the
+     plate info with a blinking square. */
+  // `class` is layout glue for the whole unit. `heph-framed` makes the fill glass on a
+  // page with the dot field so it reads through the composer; a bare composer has no
+  // fill to trade. The whole unit is the drop target.
   return (
     <div
       class={cx(
@@ -132,10 +116,8 @@ export function Composer(props: ComposerProps): JSX.Element {
         attachments={props.attachments}
         dragging={drop.isDragging()}
       />
-      {/* Portalled to the body by `FloatingPanel`, so it sits outside the composer's
-          own stacking context and outside the transcript's `overflow-auto` — the two
-          things that would otherwise clip it. Mounted inside the card only so it
-          shares the card's lifetime. */}
+      {/* `FloatingPanel` portals it to the body, clear of the composer's stacking context
+          and the transcript's `overflow-auto`; mounted here for the card's lifetime. */}
       <Show when={props.menu}>
         <ComposerMenu
           open={menuCtl.open()}

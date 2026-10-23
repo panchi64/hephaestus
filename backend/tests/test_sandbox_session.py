@@ -69,10 +69,7 @@ def _manager(
 
 
 def _legacy_archive(tmp_path: Path, vault: Vault, files: dict[str, str]) -> bytes:
-    """An archive in the format the sealing build wrote, so the one-way adoption path
-    can be tested against real bytes. Built here rather than imported because the code
-    that produced these is gone — this is the last spelling of that format, and it is a
-    test fixture rather than a seam."""
+    """An archive in the retired sealing format, whose writer is gone."""
     staging = tmp_path / f"legacy-{len(list(tmp_path.iterdir()))}"
     staging.mkdir(parents=True)
     for rel, text in files.items():
@@ -86,7 +83,6 @@ def _legacy_archive(tmp_path: Path, vault: Vault, files: dict[str, str]) -> byte
     return vault.encrypt_bytes(buf.getvalue())
 
 
-# --- naming + exclusion ------------------------------------------------------
 def test_safe_key_is_path_safe():
     key = safe_key("conv/../weird id!")
     assert key.startswith("s")
@@ -101,7 +97,6 @@ def test_excluded_drops_envs_and_caches_only():
     assert not excluded("output/chart.png", _EXCLUDES)
 
 
-# --- write_file: staging a file into the workspace (no VM needed) -------------
 async def test_write_file_round_trips_through_read_file(tmp_path: Path):
     vault = await _vault(tmp_path)
     session = await _manager(tmp_path, vault).acquire("conv-x")
@@ -125,16 +120,14 @@ async def test_written_file_survives_a_reap(tmp_path: Path):
     session = await _manager(tmp_path, vault).acquire("conv-x")
     session.write_file("attachments/keep.txt", b"hold onto me")
 
-    await session.shutdown()  # wipes the guest copy; the files are not its business
+    await session.shutdown()
 
     assert session.workspace.exists()
     assert session.read_file("attachments/keep.txt") == b"hold onto me"
 
 
-# --- what a reap leaves alone ------------------------------------------------
 async def test_a_reap_keeps_the_dependencies_and_history_a_run_built(tmp_path: Path):
-    """A reap that dropped `.venv`, `node_modules`, `dist` or `.git` would send the next
-    turn back to a tree missing exactly what the last one spent minutes building."""
+    """Dropping `.venv`, `node_modules`, `dist` or `.git` would discard minutes of build work."""
     vault = await _vault(tmp_path)
     session = await _manager(tmp_path, vault).acquire("conv-x")
     work = session.ensure_workspace()
@@ -161,8 +154,7 @@ async def test_a_reap_writes_no_archive(tmp_path: Path):
 
 
 async def test_the_reaper_runs_with_the_vault_locked(tmp_path: Path):
-    """Reaping wipes a guest copy and touches no file, so a locked vault — the state a
-    machine sits in for hours — does not keep every idle guest copy alive."""
+    """Reaping touches no file, so a locked vault must not keep idle guest copies alive."""
     vault = Vault(tmp_path / "k.json")
     await vault.setup("pw")
     vault.lock()
@@ -172,8 +164,8 @@ async def test_the_reaper_runs_with_the_vault_locked(tmp_path: Path):
 
     await manager.sweep()
 
-    assert not manager.sessions  # reaped, key or no key
-    assert session.read_file("f.txt") == b"data"  # and the files are untouched
+    assert not manager.sessions
+    assert session.read_file("f.txt") == b"data"
 
 
 async def test_the_cap_is_enforced_with_the_vault_locked(tmp_path: Path):
@@ -191,7 +183,6 @@ async def test_the_cap_is_enforced_with_the_vault_locked(tmp_path: Path):
     assert first.read_file("f.txt") == b"data"
 
 
-# --- errors surface legibly, never as a crash --------------------------------
 async def test_run_wraps_an_unexpected_error_as_sandbox_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -202,7 +193,7 @@ async def test_run_wraps_an_unexpected_error_as_sandbox_error(
         raise ValueError("something deep broke")
 
     monkeypatch.setattr(session, "_ensure_workspace", boom)
-    with pytest.raises(SandboxError):  # the agent gets a sandbox failure, not a ValueError
+    with pytest.raises(SandboxError):
         _ = await session.run(SandboxSpec(command=["echo", "hi"]))
 
 
@@ -214,7 +205,6 @@ async def test_adopting_a_damaged_archive_raises_sandbox_error(tmp_path: Path):
         _ = adopt_legacy_archive(archive, tmp_path / "out", vault)
 
 
-# --- archives written by the sealing build are read back once, then retired ---
 async def test_a_sealing_era_archive_is_adopted_and_deleted(tmp_path: Path):
     vault = await _vault(tmp_path)
     archive = tmp_path / "old.tar.enc.gz"
@@ -224,16 +214,12 @@ async def test_a_sealing_era_archive_is_adopted_and_deleted(tmp_path: Path):
     assert adopt_legacy_archive(archive, work, vault) is True
 
     assert (work / "report.md").read_text() == "the work"
-    # Left in place it would be a second copy nothing updates, which the next cold open
-    # would silently prefer over everything done since.
+    # A leftover archive would be a stale second copy the next cold open prefers.
     assert not archive.exists()
 
 
 async def test_an_archive_a_materialised_workspace_outlived_is_retired(tmp_path: Path):
-    """Adoption unlinks the archive as its last step, so a process dying in the window
-    between the extract finishing and that unlink leaves both on disk — and the
-    workspace being complete means adoption is never reached again. This is the only
-    other place that can notice."""
+    """A crash between extract and unlink leaves both on disk; adoption is never reached again."""
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     session = await manager.acquire("conv-old")
@@ -244,7 +230,7 @@ async def test_an_archive_a_materialised_workspace_outlived_is_retired(tmp_path:
     _ = session.ensure_workspace()
 
     assert not session.sealed.exists()
-    assert session.read_file("live.txt") == b"the work since"  # the live copy wins
+    assert session.read_file("live.txt") == b"the work since"
     assert not (session.workspace / "stale.txt").exists()
 
 
@@ -273,12 +259,11 @@ async def test_adopting_an_archive_needs_the_key(tmp_path: Path):
 
     with pytest.raises(SandboxError):
         _ = adopt_legacy_archive(archive, tmp_path / "w", vault)
-    assert archive.exists()  # refused, never destroyed
+    assert archive.exists()
 
 
 async def test_a_fragment_beside_an_archive_is_thrown_away_not_kept(tmp_path: Path):
-    """A sealing-era restore that died mid-extract left a directory holding *less* than
-    the archive beside it. The archive is the whole copy, so it is what wins."""
+    """A restore that died mid-extract leaves less than the archive beside it, which wins."""
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     session = await manager.acquire("conv-old")
@@ -295,20 +280,17 @@ async def test_a_fragment_beside_an_archive_is_thrown_away_not_kept(tmp_path: Pa
     assert not partial_marker(session.workspace).exists()
 
 
-# --- lazy acquisition --------------------------------------------------------
 async def test_acquire_is_lazy_and_idempotent_per_key(tmp_path: Path):
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     first = await manager.acquire("conv-a")
     again = await manager.acquire("conv-a")
     other = await manager.acquire("conv-b")
-    assert first is again  # same conversation reuses its session
+    assert first is again
     assert other is not first
-    # Lazy: no guest copy or workspace exists yet, just the bookkeeping object.
     assert not first.workspace.exists()
 
 
-# --- driving the platform VM -------------------------------------------------
 async def test_a_command_runs_in_the_vm_and_its_files_come_back(tmp_path: Path):
     vault = await _vault(tmp_path)
     vm = _vm(tmp_path)
@@ -324,7 +306,7 @@ async def test_a_command_runs_in_the_vm_and_its_files_come_back(tmp_path: Path):
     assert session.read_file("out.txt") == b"x\n"
     key, _argv, env, stdin = vm.runs[0]
     assert (key, stdin, env["FOO"]) == (session.key, "in", "x")
-    assert env["HOME"] == "/work/.home"  # the package-manager defaults reach the command
+    assert env["HOME"] == "/work/.home"
 
 
 async def test_a_nonzero_exit_is_a_result_and_a_timeout_is_marked(tmp_path: Path):
@@ -358,7 +340,7 @@ async def test_the_workspace_and_credentials_are_in_place_before_the_command_run
     assert ops.index("grant") < ops.index("push") < ops.index("run")
     env = vm.runs[0][2]
     assert env["HTTPS_PROXY"].endswith(f"@{WORKSPACE_PROXY}")
-    assert env["https_proxy"] == env["HTTPS_PROXY"]  # curl reads this one
+    assert env["https_proxy"] == env["HTTPS_PROXY"]
 
 
 def test_proxy_env_carries_the_credentials_in_both_spellings():
@@ -377,7 +359,7 @@ async def test_an_edit_made_on_the_host_between_commands_is_pushed_in(tmp_path: 
     pushes = len(vm.pushes)
 
     _ = await session.run(SandboxSpec(command=["true"]))
-    assert len(vm.pushes) == pushes  # nothing changed, nothing crosses
+    assert len(vm.pushes) == pushes
 
     session.write_file("edited.txt", b"x")
     _ = await session.run(SandboxSpec(command=["true"]))
@@ -392,7 +374,7 @@ async def test_a_rebuilt_vm_gets_the_workspace_again(tmp_path: Path):
     _ = await session.run(SandboxSpec(command=["true"]))
 
     vm.restart()
-    assert not session.is_warm  # the guest copy went with the VM
+    assert not session.is_warm
     _ = await session.run(SandboxSpec(command=["true"]))
 
     assert session.is_warm
@@ -466,7 +448,6 @@ async def test_the_manager_reports_a_vm_that_is_still_starting(tmp_path: Path):
     assert not manager.vm_starting
 
 
-# --- the idle reaper ---------------------------------------------------------
 async def test_reaper_drops_an_idle_session_and_keeps_its_files(tmp_path: Path):
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, idle_ttl_s=0.0)
@@ -475,10 +456,9 @@ async def test_reaper_drops_an_idle_session_and_keeps_its_files(tmp_path: Path):
 
     await manager.sweep()
 
-    assert not manager.sessions  # reaped from the registry
-    assert session.workspace.exists()  # the guest copy went; the files did not
+    assert not manager.sessions
+    assert session.workspace.exists()
 
-    # Resuming the conversation finds them exactly where it left them.
     revived = await manager.acquire("conv-a")
     assert (revived.ensure_workspace() / "notes.txt").read_text() == "keep me"
 
@@ -488,7 +468,7 @@ async def test_start_stop_manages_the_reaper_task(tmp_path: Path):
     manager = _manager(tmp_path, vault)
     await manager.start()
     assert manager.reaper.running
-    await manager.stop()  # cancels the reaper and tears down any live sessions
+    await manager.stop()
     assert not manager.reaper.running
 
 
@@ -497,19 +477,18 @@ async def test_reaper_spares_fresh_and_busy_sessions(tmp_path: Path):
     fresh_mgr = _manager(tmp_path / "a", vault, idle_ttl_s=3600.0)
     _ = await fresh_mgr.acquire("conv-a")
     await fresh_mgr.sweep()
-    assert fresh_mgr.sessions  # within TTL → spared
+    assert fresh_mgr.sessions
 
     busy_mgr = _manager(tmp_path / "b", vault, idle_ttl_s=0.0)
     session = await busy_mgr.acquire("conv-b")
     _ = await session.lock.acquire()  # simulate a call in flight
     try:
         await busy_mgr.sweep()
-        assert busy_mgr.sessions  # never reaped mid-run, even past TTL
+        assert busy_mgr.sessions
     finally:
         session.lock.release()
 
 
-# --- the live-session cap: a ceiling in count, not only in time --------------
 async def test_a_new_session_displaces_the_least_recently_used_one_at_the_cap(tmp_path: Path):
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, max_sessions=2)
@@ -523,8 +502,6 @@ async def test_a_new_session_displaces_the_least_recently_used_one_at_the_cap(tm
 
     assert set(manager.sessions) == {safe_key("conv-a"), safe_key("conv-c")}
     assert third is manager.sessions[safe_key("conv-c")]
-    # Displaced, not discarded: torn down exactly as an idle reap tears down, and the
-    # files are still there the next time that conversation runs code.
     assert second.workspace.exists()
     revived = await manager.acquire("conv-b")
     assert (revived.ensure_workspace() / "notes.txt").read_text() == "keep me"
@@ -537,41 +514,37 @@ async def test_the_cap_never_displaces_a_session_with_a_call_in_flight(tmp_path:
     _ = await busy.lock.acquire()  # simulate a call in flight
     try:
         _ = await manager.acquire("conv-b")
-        # Over the cap rather than failing the tool call the operator is watching; the
-        # idle sweep collects the overflow once the work finishes.
+        # Over the cap rather than failing the call; the idle sweep collects the overflow.
         assert set(manager.sessions) == {safe_key("conv-a"), safe_key("conv-b")}
     finally:
         busy.lock.release()
 
 
 class _Work:
-    """A stand-in for the ``Run`` a session is claimed by — the sandbox only ever asks
-    whether the work is over."""
+    """A stand-in for the ``Run`` a session is claimed by."""
 
     def __init__(self) -> None:
         self.is_terminal: bool = False
 
 
 async def test_the_cap_never_displaces_a_session_a_live_run_is_working_in(tmp_path: Path):
-    # The lock is held for one exec; a turn is a dozen of them with the model thinking in
-    # between. Displacing in one of those gaps wipes the guest copy — and with it the
-    # interpreter, servers and shell state the run's next tool call expects to find.
+    # The lock covers one exec, not the gaps between a turn's calls; displacing in a gap
+    # would wipe the interpreter, servers and shell state the next call expects.
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, max_sessions=1)
     turn = _Work()
     working = await manager.acquire("conv-a", holder=turn)
     (working.workspace / "node_modules").mkdir(parents=True, exist_ok=True)
 
-    _ = await manager.acquire("conv-b")  # thinking, not executing: the lock is free
+    _ = await manager.acquire("conv-b")  # the lock is free: the model is thinking
 
-    assert not working.is_busy  # the old signal says "reap me"
+    assert not working.is_busy
     assert set(manager.sessions) == {safe_key("conv-a"), safe_key("conv-b")}
     assert (working.workspace / "node_modules").exists()
 
 
 async def test_the_claim_lasts_exactly_as_long_as_the_run_does(tmp_path: Path):
-    # And no longer: a claim released only by a hand-back would be leaked by every
-    # cancelled turn, and the cap would decay into no cap at all.
+    # A claim released only by a hand-back would leak on every cancelled turn.
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, max_sessions=1)
     turn = _Work()
@@ -579,7 +552,7 @@ async def test_the_claim_lasts_exactly_as_long_as_the_run_does(tmp_path: Path):
     working.write_file("notes.txt", b"keep me")
     _ = await manager.acquire("conv-b")
 
-    turn.is_terminal = True  # stopped, failed or answered — the sandbox cannot tell
+    turn.is_terminal = True  # stopped, failed or answered
 
     assert working.is_displaceable
     _ = await manager.acquire("conv-c")
@@ -588,10 +561,8 @@ async def test_the_claim_lasts_exactly_as_long_as_the_run_does(tmp_path: Path):
 
 
 async def test_the_cap_never_displaces_a_conversation_serving_a_live_preview(tmp_path: Path):
-    # Reaping drops the token the proxy resolves, so the page the operator is watching
-    # turns into a 404 — with the server killed out from under an iframe that has no
-    # reason to expect it. The idle sweep may still collect a preview nobody has loaded
-    # in half an hour; that is the difference between a deadline and a ceiling.
+    # Reaping drops the proxy token, turning a page the operator is watching into a 404.
+    # The idle sweep may still collect a long-unloaded preview.
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, max_sessions=1)
     serving = await manager.acquire("conv-a")
@@ -604,13 +575,10 @@ async def test_the_cap_never_displaces_a_conversation_serving_a_live_preview(tmp
     assert manager.preview_status("tok-live") == "running"
 
 
-# --- an evicted session's teardown belongs to the manager, not to whoever triggered it ---
 async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Stop is the operator's most-used control, and at the cap the acquiring run is
-    tearing down somebody *else's* conversation. Cancelled partway, its guest copy would
-    be left out of every map — no sweep can find them and no purge names them."""
+    """Cancelling the acquiring run must not strand the displaced guest copy outside every map."""
     vault = await _vault(tmp_path)
     vm = _vm(tmp_path)
     manager = _manager(tmp_path, vault, vm=vm, max_sessions=1)
@@ -639,8 +607,6 @@ async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown
     resume.set()
     _ = await asyncio.gather(*in_flight)
 
-    # The teardown finished on the manager's own task, and the conversation's files
-    # were never what it was reclaiming.
     assert not displaced.is_warm
     assert ("wipe", displaced.key) in vm.events
     assert displaced.read_file("notes.txt") == b"keep me"
@@ -650,9 +616,7 @@ async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown
 async def test_a_failed_teardown_leaves_the_session_live_for_the_sweeper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    # A session dropped from the map on a failed teardown is a guest copy nothing will
-    # ever reap. Put it back and let the idle
-    # sweep try again.
+    # A session dropped on a failed teardown is a guest copy nothing would ever reap.
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, max_sessions=1)
     displaced = await manager.acquire("conv-a")
@@ -665,11 +629,10 @@ async def test_a_failed_teardown_leaves_the_session_live_for_the_sweeper(
     _ = await manager.acquire("conv-b")
 
     assert manager.sessions[safe_key("conv-a")] is displaced
-    assert not manager.tearing_down  # and not wedged behind a tombstone either
+    assert not manager.tearing_down
     assert await manager.acquire("conv-a") is displaced
 
 
-# --- a sweep's sealing must not stall unrelated conversations (sandbox-02) ---
 async def test_sweep_does_not_block_acquire_for_an_unrelated_conversation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -690,8 +653,6 @@ async def test_sweep_does_not_block_acquire_for_an_unrelated_conversation(
     sweep_task = asyncio.create_task(manager.sweep())
     _ = await asyncio.wait_for(seal_started.wait(), timeout=1.0)
 
-    # A different conversation must proceed immediately — it must not wait on
-    # the manager lock for the sum of every in-flight seal.
     other = await asyncio.wait_for(manager.acquire("conv-other"), timeout=1.0)
     assert other is not None
 
@@ -721,13 +682,13 @@ async def test_acquire_for_a_mid_seal_key_waits_for_its_own_teardown(
 
     acquire_task = asyncio.create_task(manager.acquire("conv-a"))
     await asyncio.sleep(0.05)
-    assert not acquire_task.done()  # same key mid-seal — must wait for it specifically
+    assert not acquire_task.done()
 
     release_seal.set()
     revived = await asyncio.wait_for(acquire_task, timeout=1.0)
     _ = await asyncio.wait_for(sweep_task, timeout=1.0)
-    assert revived is not original  # a fresh session, minted only once teardown finished
-    assert not manager.tearing_down  # the tombstone is cleared afterward
+    assert revived is not original
+    assert not manager.tearing_down
 
 
 async def test_purge_waits_for_an_in_flight_sweep_seal_on_the_same_key(
@@ -752,7 +713,7 @@ async def test_purge_waits_for_an_in_flight_sweep_seal_on_the_same_key(
 
     purge_task = asyncio.create_task(manager.purge("conv-a"))
     await asyncio.sleep(0.05)
-    assert not purge_task.done()  # waits for the sweep's seal before deleting anything
+    assert not purge_task.done()
 
     release_seal.set()
     _ = await asyncio.wait_for(purge_task, timeout=1.0)
@@ -760,7 +721,6 @@ async def test_purge_waits_for_an_in_flight_sweep_seal_on_the_same_key(
     assert not manager.tearing_down
 
 
-# --- purge: deleting a conversation removes its sandbox outright -------------
 async def test_purge_drops_the_session_and_deletes_its_workspace(tmp_path: Path):
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
@@ -770,13 +730,12 @@ async def test_purge_drops_the_session_and_deletes_its_workspace(tmp_path: Path)
 
     await manager.purge("conv-a")
 
-    assert not manager.sessions  # evicted from the registry
-    assert not session.workspace.exists()  # plaintext deleted, not sealed
-    assert not session.sealed.exists()  # nothing preserved
+    assert not manager.sessions
+    assert not session.workspace.exists()
+    assert not session.sealed.exists()
 
 
 async def test_purge_deletes_a_cold_sealed_archive_with_no_live_session(tmp_path: Path):
-    # A sealed-but-unloaded conversation: an archive on disk and no session object.
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     safe = safe_key("conv-cold")
@@ -787,7 +746,7 @@ async def test_purge_deletes_a_cold_sealed_archive_with_no_live_session(tmp_path
     work.mkdir(parents=True, exist_ok=True)
     _ = (work / "leftover.txt").write_text("x")
 
-    await manager.purge("conv-cold")  # nothing in the registry to stop
+    await manager.purge("conv-cold")
 
     assert not sealed.exists()
     assert not work.exists()
@@ -796,11 +755,10 @@ async def test_purge_deletes_a_cold_sealed_archive_with_no_live_session(tmp_path
 async def test_purge_is_safe_when_there_is_nothing_to_remove(tmp_path: Path):
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
-    await manager.purge("never-existed")  # must not raise
+    await manager.purge("never-existed")
     assert not manager.sessions
 
 
-# --- live-preview status: reap/purge leave a legible "stopped" signal --------
 def _fake_preview(token: str) -> PreviewHandle:
     return PreviewHandle(token=token, host_port=1, server_port=2, command=("srv",))
 
@@ -822,9 +780,6 @@ async def test_preview_status_is_running_while_the_preview_is_live(tmp_path: Pat
 
 
 async def test_idle_reap_marks_the_running_previews_token_stopped(tmp_path: Path):
-    # The failure this guards: an idle-reaped preview used to vanish with no signal
-    # at all — `preview_status` now lets a client learn the head died, not just that
-    # its URL 404s.
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, idle_ttl_s=0.0)
     session = await manager.acquire("conv-a")
@@ -835,8 +790,8 @@ async def test_idle_reap_marks_the_running_previews_token_stopped(tmp_path: Path
 
     await manager.sweep()
 
-    assert not manager.sessions  # the session itself was reaped, as before
-    assert manager.preview_status("tok-1") == "stopped"  # but the token now says why
+    assert not manager.sessions
+    assert manager.preview_status("tok-1") == "stopped"
 
 
 async def test_purge_marks_the_running_previews_token_stopped(tmp_path: Path):
@@ -865,8 +820,7 @@ async def test_stopped_tokens_are_pruned_after_their_ttl(
     await manager.sweep()
     assert manager.preview_status("tok-1") == "stopped"
 
-    # Fast-forward past the tombstone's TTL, then force a prune via another mark
-    # (mirrors real usage — the map is pruned lazily on the next stop/reap/purge).
+    # Tombstones are pruned lazily, on the next stop/reap/purge after the TTL.
     frozen_future = time.monotonic() + preview_tokens.STOPPED_TTL_S + 1
     monkeypatch.setattr("time.monotonic", lambda: frozen_future)
     other = await manager.acquire("conv-b")
@@ -875,14 +829,12 @@ async def test_stopped_tokens_are_pruned_after_their_ttl(
     manager.preview_tokens.index("tok-2", other.key)
     await manager.purge("conv-b")
 
-    assert manager.preview_status("tok-1") == "unknown"  # aged out
-    assert manager.preview_status("tok-2") == "stopped"  # freshly tombstoned
+    assert manager.preview_status("tok-1") == "unknown"
+    assert manager.preview_status("tok-2") == "stopped"
 
 
-# --- what an unclean shutdown leaves behind ----------------------------------
 async def test_sweep_leaves_a_stranded_conversation_workspace_alone(tmp_path: Path):
-    """A workspace no session owns is not residue — it is that conversation's files,
-    waiting for its next turn. Collecting it would be deleting the agent's work."""
+    """A workspace no session owns is that conversation's files, not residue."""
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     orphan = manager.work_root / safe_key("conv-orphan")
@@ -892,7 +844,7 @@ async def test_sweep_leaves_a_stranded_conversation_workspace_alone(tmp_path: Pa
     await manager.sweep()
 
     assert (orphan / "notes.txt").read_text() == "the last process died before it could finish"
-    assert not manager.sessions  # and nothing was revived as a session either
+    assert not manager.sessions
 
 
 async def test_sweep_does_not_touch_a_workspace_its_own_session_still_holds(tmp_path: Path):
@@ -908,7 +860,6 @@ async def test_sweep_does_not_touch_a_workspace_its_own_session_still_holds(tmp_
     assert manager.existing("conv-live") is session
 
 
-# --- the real guest scripts (only where confinement is available) -------------
 confined = pytest.mark.skipif(not can_confine(), reason="needs root and bubblewrap")
 
 

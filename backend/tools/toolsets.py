@@ -1,38 +1,24 @@
-"""The toolset access-policy stack — *our* policy over Pydantic AI primitives.
+"""The toolset access-policy stack over Pydantic AI primitives.
 
-Which tools a run sees is composition, not bespoke machinery (the most leveraged
-mapping in the design). Each category toolset is namespaced for stable
-``category_tool`` names, combined, then passed through the **enabled gate** so an
-operator-disabled tool is never offered. With a single operator (no privilege tiers)
-there is no privilege gate.
+Each category toolset is namespaced to ``category_tool`` names, combined, then passed
+through the **enabled gate** so an operator-disabled tool is never offered. There is no
+relevance pre-filter: a category a manifest declares dormant is offered with its schemas
+withheld until the model asks for the group by name (``tool_search.py``).
 
-Nor is there a **relevance pre-filter**: nothing here guesses at what this turn will
-want. What some categories do carry is **deferral** — a category a manifest declares
-dormant is offered with its schemas withheld until the model asks for the group by
-name (``tool_search.py``), which is the same posture stated the other way round. The
-chassis withholds and says so; the model, not a heuristic, decides what to load.
+This module owns only the **core** categories (builtin tools and the sandbox code runner,
+wired by ``app.py``). Every feature category arrives from its manifest's ``toolsets``
+export and is folded in at app assembly.
 
-The category registry is not a central list: this module owns only the **core**
-categories (the builtin starter tools and the sandbox code runner, both wired by
-``app.py`` itself). Every feature category arrives from its own manifest's
-``toolsets`` export and is folded in at app assembly — the assembled mapping is
-what production passes down as ``categories``.
+Sensitive-action gating is not a filter: those tools pause for operator approval at
+execution time. The **approval gate** marks every tool that reaches past the permission
+level's write scope as needing approval, so the call returns to the engine undone. A
+tool's own marking is left alone; the gate only adds (``services/permissions``).
 
-Sensitive-action gating is *not* a filter here — those tools pause for operator
-approval at execution time, handled by the engine, not dropped from the catalog. What
-*is* here is the **approval gate**: the run's permission level marks every tool that
-reaches past its write scope as needing approval, so the model's request for one comes
-back to the engine undone instead of running. A tool's own marking is left alone — the
-gate only ever adds (``services/permissions``).
-
-Last comes the **describing stage** (``describe.py``), which owns no policy at all: it
-rewrites each definition's model-facing text into the namespaced names this stack has
-just produced, and drops the library scaffolding and unreachable schema a
-harness-supplied tool arrives with. It runs after the gates so a description can never
-decide whether a tool is offered. It is also where every tool is offered its
-``narration`` argument — one sentence of the model's own reason for a call, for
-the work log to show beside the arguments — which ``tools/narration.py`` takes back off
-before anything validates it.
+Last is the **describing stage** (``describe.py``), which owns no policy: it rewrites each
+definition's model-facing text into the namespaced names and drops library scaffolding.
+It runs after the gates so a description cannot decide whether a tool is offered. It also
+offers every tool a ``narration`` argument (the model's reason for a call, shown in the
+work log), which ``tools/narration.py`` strips before validation.
 """
 
 from __future__ import annotations
@@ -69,29 +55,23 @@ from .shell import GATED_TOOLS as _SHELL_GATED
 from .shell import shell_toolset
 from .tasks import tasks_toolset
 
-#: Conditionally-gated names the **core** categories contribute — the ones that raise
-#: `ApprovalRequired` from inside the call rather than carrying `requires_approval=True`,
-#: which no amount of inspection can discover. A feature category declares its own on its
-#: manifest; the core ones have no manifest, so they are collected here and seeded into
-#: `app.state.gated_tools` at assembly. A name missing from that union is missing from the
-#: operator's approval-scope vocabulary, which is what makes a grant possible.
+#: Names of core tools that raise `ApprovalRequired` from inside the call, which inspection
+#: cannot discover. Core categories have no manifest, so they are seeded into
+#: `app.state.gated_tools` at assembly; a name missing there cannot be granted.
 CORE_GATED_TOOLS: frozenset[str] = _SHELL_GATED | _PLAN_GATED | _FILES_GATED
 
 
 def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
     """Withheld tools are not offered to or invoked by the agent.
 
-    ``disabled_tools`` is the union of everything settled for the whole turn
-    (``services/tool_policy.py``), and ``tool_access`` is what the run's agent is offered at
-    all. The **level** can move inside a turn (``tools/plan.py`` narrows and widens it), so
-    it is read live on every request rather than folded into that union, where it could be
-    added and never correctly taken back out.
+    ``disabled_tools`` is settled for the whole turn (``services/tool_policy.py``) and
+    ``tool_access`` is what the run's agent is offered at all. The level can move inside a
+    turn (``tools/plan.py``), so it is read live rather than folded into that union.
     """
     name = tool_def.name
     deps = ctx.deps
     if name == REPORT_TOOL:
-        # A contract rather than a capability: no setting or level may take away the way a
-        # spawned agent finishes, and no other thread has anyone to report to.
+        # No setting or level may take away how a spawned agent finishes.
         return deps.reports_to_parent
     return (
         name not in deps.disabled_tools
@@ -105,20 +85,16 @@ def _approval_gate(
 ) -> list[ToolDefinition]:
     """Mark every tool that reaches past this run's permission level as needing approval.
 
-    The level's half of the enforcement. Pydantic AI defers a call to an ``unapproved``
-    tool rather than executing it — the same mechanism a tool's own
-    ``requires_approval=True`` uses — so the engine gets the call, with its arguments,
-    before anything happens, and rules on it (``services/permissions/decide.py``).
+    Pydantic AI defers a call to an ``unapproved`` tool, as it does for
+    ``requires_approval=True``, so the engine rules on the call and its arguments before
+    anything happens (``services/permissions/decide.py``).
 
-    **Rewriting the definition rather than filtering it out** is what separates this from
-    the enabled gate above. A withheld tool tells the model the capability does not exist;
-    a gated one tells it the capability needs permission, which is the true statement at
-    every level except Plan — and Plan does its withholding in the catalog, where the
-    saving in schema tokens is real.
+    The definition is rewritten, not filtered out: a withheld tool says the capability does
+    not exist, a gated one says it needs permission, which is true at every level except
+    Plan, and Plan withholds in the catalog to save schema tokens.
 
-    Only ``function`` tools are touched. An ``output`` tool ends the run and an
-    ``external`` one is already deferred to someone else; making either "unapproved" would
-    change what the deferral *means* rather than merely when it happens.
+    Only ``function`` tools are touched. An ``output`` tool ends the run and an ``external``
+    one is already deferred; marking either would change what the deferral means.
     """
     return [
         replace(tool_def, kind="unapproved")
@@ -134,25 +110,16 @@ def _approval_gate(
 
 
 def _narrated(tool_def: ToolDefinition) -> ToolDefinition:
-    """Offer this tool a ``narration`` argument — every tool, reads included.
+    """Offer this tool a ``narration`` argument, reads included: a name and arguments say
+    what a call does, never why, and the work log leads with the latest reason. The
+    property is charged on every request (``tests/test_tool_schema_cost.py``).
 
-    Reads used to be left silent, on the theory that a read's name and arguments already
-    say what it is doing. They say *what*, never *why*, and the work log now leads with the
-    run's most recent reason: a turn that spends ten calls reading would show no reason at
-    all for most of its length. The property is charged on every request whether or not the
-    model writes one (``tests/test_tool_schema_cost.py`` records the price).
+    Unconditional, so there is no second sensitivity list to rot beside the catalog.
 
-    Unconditional on purpose: a gate here keyed on sensitivity would be a second list of
-    which tools explain themselves, rotting separately from the catalog.
-
-    **Except a tool that already declares a ``narration`` of its own** — an MCP server's or
-    an integration's, which this repo does not write. Overwriting it would hand the model
-    our description for their argument, and the strip would then take the value away from
-    a tool that needed it. Such a tool keeps its own; ``tools/narration.py`` recognises ours
-    by its exact subschema and leaves every other one alone.
-
-    The property comes off again before validation (``tools/narration.py``); a tool function
-    never sees it.
+    **Except a tool that already declares its own ``narration``** (an MCP server's or an
+    integration's). Overwriting it would give the model our description for their argument
+    and the strip would take the value from a tool that needed it; ``tools/narration.py``
+    recognises ours by its exact subschema. The property comes off before validation.
     """
     if NARRATION_ARG in (tool_def.parameters_json_schema.get("properties") or {}):
         return tool_def
@@ -168,10 +135,9 @@ def _alone(_ctx: RunContext[RunDeps], tool_defs: list[ToolDefinition]) -> list[T
     """Run each tool that runs a command alone: calls before it in the batch finish first,
     it runs by itself, and calls after it start once it is done.
 
-    The guard judges a relative path against the directory the shell stands in, and a
-    command that changes it (`cd`) would otherwise race the call next to it. This orders
-    calls in a batch only. These tools are never folded into `run_code`, because they
-    carry `code_arg_name`.
+    The guard judges a relative path against the directory the shell stands in, which a
+    `cd` would otherwise race. This orders calls in a batch only; these tools are never
+    folded into `run_code`, because they carry `code_arg_name`.
     """
     return [
         replace(tool_def, sequential=True) if tool_def.name in COMMAND_TOOLS else tool_def
@@ -180,13 +146,13 @@ def _alone(_ctx: RunContext[RunDeps], tool_defs: list[ToolDefinition]) -> list[T
 
 
 def core_categories() -> dict[str, AbstractToolset[RunDeps]]:
-    """The categories the harness itself contributes — everything else is a manifest's."""
+    """The categories the harness itself contributes; everything else is a manifest's."""
     return {
         "builtin": builtin_toolset(),
         "code": code_toolset(),
         "files": files_toolset(),
-        # The two halves of the split: `tasks` is the running checklist the agent keeps at
-        # every level, `plan` the written document a Plan-level turn submits for approval.
+        # `tasks` is the checklist kept at every level, `plan` the document a Plan-level
+        # turn submits for approval.
         "tasks": tasks_toolset(),
         "plan": plan_toolset(),
         "shell": shell_toolset(),
@@ -201,19 +167,16 @@ def build_agent_toolsets(
 ) -> list[AbstractToolset[RunDeps]]:
     """Compose the gated, namespaced toolset stack handed to the Agent.
 
-    ``categories`` is the assembled mapping (core + every manifest's export);
-    ``None`` — a stateless/test turn that passed nothing — composes the core
-    categories only. ``dormant`` names the categories whose schemas are withheld until
-    the model reveals them (``tool_search.py``); an unknown name is ignored rather than
-    fatal, since a category can be absent for reasons this layer cannot see.
+    ``categories`` is the assembled mapping (core + every manifest's export); ``None`` (a
+    stateless/test turn) composes the core categories only. ``dormant`` names categories
+    whose schemas are withheld until revealed (``tool_search.py``); an unknown name is
+    ignored, since a category can be absent for reasons this layer cannot see.
 
-    **Deferral is marked innermost, before every gate**, and the order is the whole
-    point. The enabled filter runs outside it, so a tool the operator switched off never
-    enters the search corpus and cannot be revealed by naming its group; the approval
-    gate and the describing pass run outside it too, so a tool that arrives on reveal
-    carries the same ``unapproved`` kind and the same rewritten description it would
-    have carried had it never been dormant. ``call_timeout_s`` bounds each call
-    (``recover.py``).
+    **Deferral is marked innermost, before every gate.** The enabled filter runs outside
+    it, so a switched-off tool never enters the search corpus and cannot be revealed by
+    naming its group; the approval gate and describing pass also run outside it, so a
+    revealed tool carries the same ``unapproved`` kind and description it would have had
+    undeferred. ``call_timeout_s`` bounds each call (``recover.py``).
     """
     cats = dict(categories) if categories is not None else core_categories()
     deferred = frozenset(dormant)
@@ -229,29 +192,23 @@ def build_agent_toolsets(
     def _describe(
         _ctx: RunContext[RunDeps], tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition]:
-        """Restate each tool in the names and vocabulary this catalog actually offers, offer
-        each one a place to say why, and stamp the owner its events are attributed to.
+        """Restate each tool in this catalog's names, offer it a place to say why, and stamp
+        the owner its events are attributed to.
 
-        The stamp goes on every tool rather than only the harness-derived ones, because the
-        alternative is a per-category list that silently rots: a lifted harness toolset whose
-        events nobody owns does not fail at assembly, it fails mid-turn on the first mutation.
-        It is safe to apply broadly — both places `capability_id` gates a tool require its
-        owning capability to declare `defer_loading`, which this owner never does — and it
-        yields to a definition that already names an owner (`tools/harness_events.py`).
+        The stamp goes on every tool: a per-category list would rot, and a lifted harness
+        toolset whose events nobody owns fails mid-turn on its first mutation. It is safe
+        broadly (both `capability_id` gates require `defer_loading`, which this owner never
+        declares) and yields to a definition that names an owner (`tools/harness_events.py`).
 
-        The narration argument is added last of the three, after the rewrite rather than
-        before it: its text is ours, written against the namespaced catalog already, and
-        sending it through a pass that resolves cross-references would be asking a rewrite
-        to check a string this repo controls.
+        Narration is added after the rewrite: its text is already written against the
+        namespaced catalog.
         """
         return [own_harness_events(_narrated(describe(tool_def, names))) for tool_def in tool_defs]
 
-    # Namespaced, then filtered, then gated, then described — in that order because each
-    # step needs the one before it: the gate classifies by the `category_tool` name the
-    # prefixing produces, there is no point gating a tool the filter already took away,
-    # and the rewrite resolves a description's cross-references against those same
-    # namespaced names (`describe.py`). Recovery wraps all of it, so a call that raises is
-    # reported to the model whatever layer it raised in; the guard sits just inside it.
+    # Namespaced, filtered, gated, then described: the gate classifies by the prefixed name,
+    # and the rewrite resolves cross-references against those names (`describe.py`).
+    # Recovery wraps all of it, so a call that raises is reported to the model from any
+    # layer; the guard sits just inside it.
     stack = combined.filtered(_enabled_gate).prepared(_approval_gate).prepared(_describe)
     stack = stack.prepared(_alone)
     return [RecoveringToolset(GuardedToolset(stack), call_timeout_s=call_timeout_s)]

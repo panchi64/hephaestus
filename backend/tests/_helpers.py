@@ -51,14 +51,9 @@ _STUB_PROVIDER_ID = "test-stub"
 class _StubProvider(Provider):
     """A provider adapter that reports a context window and no other limit.
 
-    Exists so a stubbed resolution still travels the real discovery path. A test that
-    hard-coded `context_window=` onto its `ResolvedModel` would satisfy the chat
-    route's window requirement while skipping the code that satisfies it in
-    production — the provider lookup, the manual-value-wins precedence, and the
-    memoization — leaving all of it unexercised by any route test.
-
-    Request settings are the OpenAI-compatible adapter's. Anything that would reach the
-    network fails the test: resolution is stubbed before a model is ever built."""
+    A stubbed resolution travels the real discovery path (provider lookup, manual-value
+    precedence, memoization) instead of hard-coding `context_window=`. Anything that
+    would reach the network fails the test."""
 
     id: str = _STUB_PROVIDER_ID
     display_name: str = "Test stub"
@@ -103,11 +98,7 @@ class _StubProvider(Provider):
 async def stub_resolution(
     registry: ModelRegistry, model: Model, *, reasoning_off: ModelSettings | None = None
 ) -> ResolvedModel:
-    """A ``ResolvedModel`` whose window was **discovered**, for a test that stubs
-    resolution but still wants the window to arrive the way it really does.
-
-    ``registry`` is the ``ModelRegistry`` the patched method was called on, so the
-    lookup runs against the same instance (and the same cache) production uses."""
+    """A ``ResolvedModel`` whose window was discovered through ``registry``'s own cache."""
     from services.registry import ResolvedModel
 
     spec = _stub_spec()
@@ -135,9 +126,7 @@ def _stub_spec() -> EndpointSpec:
 def register_stub_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     """Add the stub adapter to the provider registry for one test.
 
-    Through ``monkeypatch`` on the built registry dict, so it is removed afterwards —
-    a provider id leaking across tests would make `all_providers()` (and the
-    `/models/providers` listing it serves) depend on test order."""
+    Patched through ``monkeypatch`` so the id cannot leak into `all_providers()` in other tests."""
     from services import providers
 
     registry = dict(providers.registry())
@@ -160,9 +149,7 @@ def is_fold_request(messages: Sequence[ModelMessage]) -> bool:
 
 
 def fold_aware_model(*, answer: str = "the answer", summary: str = "FOLDED AWAY") -> FunctionModel:
-    """A main model that writes ``summary`` when asked to fold the thread and ``answer``
-    to anything else — the summary is written by the thread's own model now, so a test
-    driving a turn that folds needs one model that can tell the two requests apart."""
+    """A main model that writes ``summary`` for a fold request and ``answer`` for anything else."""
     from pydantic_ai import ModelResponse, TextPart
 
     def _text(messages: Sequence[ModelMessage]) -> str:
@@ -205,12 +192,11 @@ def fold_with(
 def patch_model_resolution(
     monkeypatch: pytest.MonkeyPatch, *, output_text: str = "hi", call_tools: Sequence[str] = ()
 ) -> None:
-    """Point registry resolution at a ``TestModel`` so route tests run without a live
-    model server. One patch covers every caller: ``resolve_detailed`` is the single
-    entry point that builds a chat model, and ``resolve_background`` delegates to it,
-    so the chat route's ``main`` and the background (verify/title) model both come
-    through here. ``call_tools=()`` keeps it a plain text turn — the default catalog
-    has an approval-gated tool that would otherwise park the run."""
+    """Point registry resolution at a ``TestModel`` so route tests run without a live model.
+
+    ``resolve_detailed`` is the single entry point, so the ``main`` and background models
+    both come through it. ``call_tools=()`` keeps a plain text turn: the default catalog
+    has an approval-gated tool that would park the run."""
     from services.registry import ModelRegistry
 
     register_stub_provider(monkeypatch)
@@ -227,10 +213,8 @@ def patch_model_resolution(
 async def granting_store(
     owner: str, conv: str, *tool_names: str, ttl_s: float = 3600
 ) -> ApprovalGrantStore:
-    """An ``ApprovalGrantStore`` on a throwaway DB that pre-grants ``tool_names`` in
-    ``conv``. Lets a ``TestModel``-driven wiring test (which calls every offered tool)
-    drive an AE-3.8-gated recall tool through to its service — the active grant makes the
-    engine auto-approve it inline instead of parking on the approval prompt."""
+    """An ``ApprovalGrantStore`` on a throwaway DB that pre-grants ``tool_names`` in ``conv``,
+    so a gated tool runs inline instead of parking."""
     from core.db import init_db, make_engine
     from services.approval_grants import ApprovalGrantStore
 
@@ -243,19 +227,15 @@ async def granting_store(
 
 
 def swap_tool_catalog(app: FastAPI, categories: Mapping[str, AbstractToolset[RunDeps]]) -> None:
-    """Replace the booted app's assembled tool catalog **in place**. The mapping is one
-    shared object — the chat route, the approval-resume path, and the scheduler's
-    executor all hold the same dict the app assembled — so mutating its contents (not
-    rebinding `app.state.tool_categories`) is what reaches every path."""
+    """Replace the booted app's tool catalog **in place**: the chat route, the resume path
+    and the scheduler share one dict, so rebinding `app.state.tool_categories` would miss them."""
     current = app_state(app).tool_categories
     current.clear()
     current.update(categories)
 
 
 def full_tool_categories() -> dict[str, AbstractToolset[RunDeps]]:
-    """The complete category mapping a real app assembles — core plus every manifest's
-    `toolsets` export, via the same discovery the app uses — for tests that measure
-    the whole catalog without booting an app."""
+    """The category mapping a real app assembles (core plus manifest `toolsets`), unbooted."""
     from harness.discovery import discover_manifests
     from tools.toolsets import core_categories
 
@@ -275,10 +255,8 @@ async def client_app(
 ) -> AsyncGenerator[tuple[httpx.AsyncClient, FastAPI]]:
     """A booted app + async client, backed by a throwaway in-memory DB.
 
-    An in-memory SQLite URL plus a temp data dir (for the keyfile) keep tests off
-    the real ``data/`` dir. By default auth is off and a passphrase unlocks the
-    vault at boot, so feature endpoints are reachable without a token; the auth
-    tests pass ``auth_enabled=True, passphrase=None`` to exercise setup/login.
+    By default auth is off and a passphrase unlocks the vault at boot; the auth tests pass
+    ``auth_enabled=True, passphrase=None`` to exercise setup/login.
 
     ``home`` swaps the throwaway for a directory the caller owns, with a file database
     in it, so a second app booted on the same ``home`` is the first one restarted.
@@ -288,21 +266,16 @@ async def client_app(
         settings = Settings(
             db_url="sqlite:///:memory:" if home is None else f"sqlite:///{root / 'app.db'}",
             data_dir=root,
-            # Coding-mode worktrees live *outside* `data_dir` by design (the host-command
-            # fence denies reads of the whole data directory), so they need their own
-            # redirect here or a test cuts real git worktrees into the operator's home.
+            # Worktrees live outside `data_dir` (the host fence denies it), so they need their
+            # own redirect or a test cuts real worktrees into the operator's home.
             worktrees_dir=root / "worktrees",
             auth_enabled=auth_enabled,
             unlock_passphrase=passphrase,
-            # No VM side effects in tests, regardless of the host: the managed
-            # SearXNG / web-fetch browser would start in the platform VM at boot, and
-            # the sandbox would otherwise depend on it. Tests that need
-            # any of these inject it directly (e.g. app.state.sandbox = a fake).
+            # No VM side effects at boot; tests that need one inject a fake (app.state.sandbox).
             searxng_enabled=False,
             web_fetch_enabled=False,
             sandbox_enabled=False,
-            # Assume online without touching the network, so the offline-mode monitor's
-            # boot probe doesn't make a real connection (and the web rows stay nominal).
+            # Assume online so the offline monitor's boot probe makes no real connection.
             offline_check_enabled=False,
         )
         app = create_app(settings)

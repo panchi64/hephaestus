@@ -1,13 +1,10 @@
 """What a walk of a workspace counts as part of it.
 
-One question, asked by every reader that lists a workspace: the history snapshot and the
-per-turn workspace block the model reads, among them. A walk that kept a different set
-from another's would have the block advertising a file the snapshot does not carry.
+Every reader that lists a workspace (the history snapshot, the per-turn block the model
+reads) shares this one answer, so the block never advertises a file the snapshot lacks.
 
-The exclusions here are **cosmetic only — nothing in this module deletes anything.** A
-workspace's files stay on disk for as long as the conversation does; what these names
-decide is which of them are worth *reporting*: a virtualenv and a `node_modules` are
-thousands of files the agent did not write.
+The exclusions are cosmetic: nothing here deletes anything. They decide which files are
+worth reporting; a virtualenv or `node_modules` is thousands the agent did not write.
 """
 
 from __future__ import annotations
@@ -21,11 +18,8 @@ from pathlib import Path
 def excluded(arcname: str, excludes: Iterable[str]) -> bool:
     """Whether a walk skips ``arcname``.
 
-    Every *part* of the path is matched, not just its last one — so ``build`` skips
-    ``packages/x/build/`` as readily as a top-level ``build/``. That breadth was a
-    hazard while this list also decided what a reap threw away; now that a walk only
-    decides what gets *reported*, it is simply the reading that keeps a nested
-    virtualenv out of the block.
+    Every part of the path is matched, so ``build`` skips ``packages/x/build/`` as well as a
+    top-level ``build/``, keeping nested virtualenvs out of the block.
     """
     parts = Path(arcname).parts
     return any(fnmatch(part, pat) for part in parts for pat in excludes)

@@ -5,8 +5,6 @@ import { Input } from "./Input";
 import { Stack } from "../primitives/Stack";
 import { Text } from "../primitives/Text";
 
-/** Promise-based confirmation gate for destructive / consequential actions.
- *  Built on Modal + Button so every guard looks and behaves the same. */
 export type ConfirmTone = "alert" | "default";
 
 export interface ConfirmOptions {
@@ -17,10 +15,8 @@ export interface ConfirmOptions {
   cancelLabel?: string;
   /** alert => danger confirm button (destructive). default => primary. */
   tone?: ConfirmTone;
-  /** When set, the confirm button stays disabled until the operator types this
-   *  word exactly. For the small class of actions where a mis-click is
-   *  unrecoverable — not a general "are you sure" upgrade, which would only
-   *  train the reflex it exists to interrupt. */
+  /** The confirm button stays disabled until the operator types this word exactly.
+   *  Only for actions where a mis-click is unrecoverable; routine use trains the reflex it interrupts. */
   requireText?: string;
   /** Rendered under the detail line, for a body the plain sentence cannot carry. */
   content?: () => JSX.Element;
@@ -73,8 +69,7 @@ function settle(choice: ConfirmChoice): void {
   c.resolve(choice);
 }
 
-/** The gate word as typed so far. Held beside `current` rather than inside it so
- *  opening a dialog can't inherit the previous one's progress. */
+/** Held beside `current` so a new dialog can't inherit the previous one's progress. */
 const [typed, setTyped] = createSignal("");
 
 const gated = (): boolean => {

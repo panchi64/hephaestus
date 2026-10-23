@@ -1,18 +1,13 @@
-"""RunDeps — the per-run dependency object the agent hands to its tools.
+"""RunDeps, the per-run dependency object the agent hands to its tools.
 
-Lives in ``tools/`` because it is the agent↔tools contract and ``tools`` sits
-below ``agent`` in the dependency order (agent → tools → services → core), so
-both layers import it without a cycle. It becomes ``RunContext.deps`` inside
-Pydantic AI: a tool reaches the Run (to emit its own ``tool.progress`` events),
-the owner, the per-run enabled-tool policy, and — through ``caps`` — every
-capability handle, never via globals.
+It lives in ``tools/`` so both ``agent`` and ``tools`` import it without a cycle. It
+becomes ``RunContext.deps``: a tool reaches the Run, the owner, the enabled-tool policy
+and, through ``caps``, every capability handle, never via globals.
 
-``caps`` is the **agent-facing capability bag**: a typed container each feature
-manifest exports its tool-reachable services into (``FeatureRuntime.capabilities``),
-assembled once at startup. A tool resolves its capability with
-``ctx.deps.caps.get_optional(SomeStore)`` and **degrades** — returns an
-"unavailable" result — when the handle is absent; a new capability is one export
-on its own manifest, never a new field here or a new argument at any call site.
+``caps`` is a typed container each feature manifest exports its tool-reachable services
+into (``FeatureRuntime.capabilities``). A tool resolves a capability with
+``ctx.deps.caps.get_optional(SomeStore)`` and returns an "unavailable" result when the
+handle is absent; a new capability is one manifest export, never a new field here.
 """
 
 from __future__ import annotations
@@ -38,14 +33,12 @@ from services.workspace import RunWorkspace, scratch_key
 
 
 def default_workspace_key(conversation_id: str | None, run: Run | None) -> str:
-    """The key a run's workspace hangs off when nothing hands it one: the conversation
-    when there is one, else the run itself (a stateless turn).
+    """The key a run's workspace hangs off when nothing hands it one: the conversation,
+    else the run itself (a stateless turn).
 
-    A function rather than a line written out at each site because the turn prelude
-    resolves a workspace of its own — to stage attachments into — before any tool has
-    run, and the two derivations drifting apart would stage the operator's files into a
-    different workspace from the one the agent then works in. Empty for a run-less
-    ``RunDeps``, which only tests construct."""
+    Shared with the turn prelude, which stages attachments before any tool runs; two
+    derivations drifting apart would stage files into the wrong workspace. Empty for a
+    run-less ``RunDeps``, which only tests construct."""
     if run is None:
         return ""
     return conversation_id or run.id
@@ -59,84 +52,61 @@ NO_DISABLED_TOOLS: frozenset[str] = frozenset()
 class RunDeps:
     run: Run
     owner_id: str
-    # The capability handles this run's tools may reach (see the module docstring).
-    # Empty ⇒ every capability-backed tool degrades — the same contract as a single
-    # missing handle, applied uniformly.
     caps: ServiceContainer = field(default_factory=ServiceContainer)
-    # Operator-disabled tools, by namespaced name. Empty ⇒ all enabled. Carries the
-    # union of every reason a tool is withheld this run — the operator's own set,
-    # offline mode's web suspension, and the rest of `services/tool_policy.py`'s union.
+    # Namespaced names withheld this run, by any reason in `services/tool_policy.py`'s union.
     disabled_tools: frozenset[str] = field(default_factory=frozenset)
     # The tools this run's agent is offered at all (`services/agents`).
     tool_access: ToolAccess = UNRESTRICTED
     # The furthest this run's agent may reach. A level raised mid-turn stays under it.
     permission_ceiling: PermissionLevel | None = None
     conversation_id: str | None = None
-    # The project this run works in, or None for unfiled. Resolved from the
-    # *conversation's* stored binding, never from the live request — switching the
-    # active project must not change what an already-running thread is doing.
+    # Resolved from the conversation's stored binding, never the live request: switching
+    # the active project must not change a running thread.
     project_id: str | None = None
-    # Whether this run works on its project in a worktree of its own. Mutable:
-    # `project_open_worktree` opens one mid-turn.
+    # Mutable: `project_open_worktree` opens one mid-turn.
     worktree: bool = False
     # Whose write leases this run works under (`ConversationBinding.leases_from`).
     leases_from: str | None = None
-    # Whether the operator's checkout is read-only to this run because the thread whose
-    # leases it holds works in a worktree (`ConversationBinding.checkout_read_only`).
+    # Whether the checkout is read-only to this run because the thread whose leases it
+    # holds works in a worktree (`ConversationBinding.checkout_read_only`).
     checkout_read_only: bool = False
-    # The launching turn's prompt id, under which a spawned agent's file changes are filed
-    # when they land in the launcher's ledger. Ignored by a run that works in its own
-    # thread, which files under its own `run.prompt_message_id` (`tools/home.py`).
+    # Where a spawned agent's file changes are filed in the launcher's ledger. A run in its
+    # own thread files under its own `run.prompt_message_id` (`tools/home.py`).
     ledger_prompt_message_id: str | None = None
     # The most model requests this run's turn may make; None is unbounded.
     max_requests: int | None = None
-    # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or
-    # "yolo" — the last of which is the operator saying it never has to.
-    # Here because a tool is offered and executed inside a Run,
-    # long after the request that chose the level is gone — and read by the toolset stack,
-    # which marks every tool reaching past the level's write scope as needing approval so
-    # the engine sees the call before it runs (`services/permissions`).
+    # "plan", "manual", "edit", "auto" or "yolo". Read by the toolset stack, which marks
+    # every tool reaching past the level's write scope as needing approval before the
+    # engine runs it (`services/permissions`).
     permission: PermissionLevel = DEFAULT_PERMISSION
-    # This run's resolved workspace, memoised by `tools/workspace.py` on first use.
-    # Never set by a construction site: it is a per-run cache, not an input, and it lives
-    # here so it dies with the run instead of in a module-level dict.
+    # A per-run cache memoised by `tools/workspace.py`, never set by a construction site.
     workspace: RunWorkspace | None = field(default=None, repr=False, compare=False)
-    # This run's home, memoised by `tools/home.py` and replaced when a write lease widens it.
+    # Memoised by `tools/home.py` and replaced when a write lease widens it.
     home: RunHome | None = field(default=None, repr=False, compare=False)
-    # The queries this run has already searched and the pages it has already fetched, so
-    # the web tools can refuse a repeat before it costs a round trip. Per-run for the same
-    # reason as `workspace` — and deliberately per *run* rather than per conversation:
-    # "I already read this" is a fact about the investigation in flight, not a durable one.
+    # Queries searched and pages fetched this run, so the web tools refuse a repeat. Per
+    # run, not per conversation: "I already read this" is about the investigation in flight.
     web_dedupe: DedupeSets = field(default_factory=DedupeSets, repr=False, compare=False)
     # Whether another agent spawned this thread, so it is offered `subagent_report` and owes
     # its parent a report (`tools/report.py`).
     reports_to_parent: bool = False
-    # Set once this run has filed its report, and once it has been sent back for ending
-    # without one, so the reminder is given once and the next answer stands.
+    # Set once the report is filed, and once the run was sent back for ending without one,
+    # so the reminder is given once.
     reported: bool = field(default=False, repr=False, compare=False)
     report_reminded: bool = field(default=False, repr=False, compare=False)
     # The projects and worktrees whose instruction files this run has handed over
     # (`tools/briefing.py`).
     briefed: set[Place] = field(default_factory=set[Place], repr=False, compare=False)
-    # The key everything about this run's workspace hangs off: its sandbox session,
-    # its preview, its staged artifacts. The conversation when there is one, else the
-    # run (a stateless turn). A real field rather than a derived property because a
-    # child workspace is a *fork* of its parent's, and delegation has to be able to
-    # hand a sub-agent a different one; left empty at construction it fills itself in
-    # below, so the ordinary case still needs no argument at any call site.
+    # Keys the run's sandbox session, preview and staged artifacts. A field, not a derived
+    # property, because a child workspace is a fork and delegation hands a sub-agent a
+    # different one; empty at construction it fills itself in below.
     workspace_key: str = ""
-    # Whether this run is a delegate whose work the operator already approved as one act.
-    # A tool whose whole job is to ask the operator something has nobody to ask inside such
-    # a run — the conversation belongs to the parent — so it is withheld from one rather
-    # than offered and left to strand the child on a question no one will see.
+    # A delegate whose work the operator approved as one act. Tools that ask the operator
+    # have nobody to ask there (the conversation is the parent's) and are withheld.
     delegated_approved: bool = False
-    # The two things the Auto review needs that belong to the *turn* rather than to one
-    # batch of deferred calls: where this turn's own messages begin, so the reviewer reads
-    # the request that opened it, and the ceiling on model reviews the turn may spend.
-    # `agent/turn.py` rules on a top-level batch with its own copies; these are here for
-    # the one ruling that happens *inside* a tool call, where the turn's locals cannot
-    # reach — a call a `run_code` script made (`agent/code_mode.py`). The same objects,
-    # so a script cannot spend a review budget of its own. None on a run no turn built.
+    # Where this turn's own messages begin and the turn's cap on model reviews. They are
+    # here for the one ruling made inside a tool call, where the turn's locals cannot
+    # reach: a call a `run_code` script made (`agent/code_mode.py`). The same objects as the
+    # turn's, so a script cannot spend a review budget of its own. None on a run no turn built.
     turn_start: TurnBoundary | None = field(default=None, repr=False, compare=False)
     review_budget: ReviewBudget | None = field(default=None, repr=False, compare=False)
 
@@ -151,11 +121,8 @@ class RunDeps:
         return scratch_key(self.workspace_key)
 
 
-# A feature-contributed dynamic instruction (a manifest's `instructions` export): the
-# engine registers each on the agent, it re-resolves fresh every turn, reaches its
-# capability through the run's bag, and returns "" to no-op when the capability is
-# absent. Part of the deps contract for the same reason `RunDeps` is — both the engine
-# and the feature layer must name the shape without a cycle.
+# A manifest's `instructions` export, re-resolved every turn; returns "" when its capability
+# is absent. Here so the engine and the feature layer name the shape without a cycle.
 type AsyncInstructionProvider = Callable[[RunContext[RunDeps]], Awaitable[str]]
 type InstructionProvider = Callable[[RunContext[RunDeps]], str] | AsyncInstructionProvider
 
@@ -164,13 +131,8 @@ type InstructionProvider = Callable[[RunContext[RunDeps]], str] | AsyncInstructi
 class PromptContextRequest:
     """What a per-turn context block is resolved against.
 
-    A struct rather than a widening argument list because these providers are
-    contributed by manifests and by both sub-agent paths, so every field added here
-    would otherwise be a signature break across all of them. It carries the same
-    handles a tool would reach the same facts through — the capability bag, and the
-    three things that decide *which* workspace this turn is working in — but not a
-    `RunContext`, because these resolve before the agent starts and there is no run to
-    read them off.
+    A struct so a new field is not a signature break across every manifest and sub-agent
+    provider. It has no `RunContext`: these resolve before the agent starts.
     """
 
     caps: ServiceContainer
@@ -184,12 +146,7 @@ class PromptContextRequest:
     workspace_key: str
 
 
-# A feature-contributed per-turn context block (a manifest's `prompt_context` export):
-# like an InstructionProvider it re-resolves fresh each turn and is never persisted, but
-# the engine delivers it at the *tail* of the current turn's user prompt instead of the
-# instructions block at the head of the request — volatile content at the head would
-# invalidate the inference engine's prompt-prefix cache from byte 0 on every change,
-# while a tail part leaves the whole history byte-stable. Called outside a live run
-# (before the agent starts), so it takes a `PromptContextRequest` rather than a
-# RunContext, and returns "" to no-op.
+# A manifest's `prompt_context` export. Delivered at the tail of the turn's user prompt, not
+# the instructions head: volatile content at the head would invalidate the prompt-prefix
+# cache from byte 0. Called before the agent starts, so it takes a `PromptContextRequest`.
 type PromptContextProvider = Callable[[PromptContextRequest], Awaitable[str]]

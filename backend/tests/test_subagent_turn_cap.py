@@ -170,13 +170,11 @@ async def test_a_capped_child_ends_blocked_and_its_wake_is_capped_too(
         assert _ended(first).code == "turn_limit"
         assert first.detail == TURN_LIMIT_DETAIL
 
-        # The parent is told it did not finish, and why.
         queued = app_state(app).runs.inbox(parent, OWNER).messages
         assert any("did not finish" in m.text and "request limit" in m.text for m in queued)
         release.set()
         await _quiet(app)
 
-        # A message that wakes it starts another turn, capped the same way.
         _ = await launcher_of(app).message(OWNER, parent, "worker-one", "carry on")
         await _quiet(app)
         runs = [
@@ -261,7 +259,6 @@ async def test_a_wake_files_under_the_senders_turn_or_else_the_launching_one(
         assert len(second) == 2
         assert await _filed(app, tmp_path, parent, "T2") == set()
 
-        # One sent by a running turn files under that turn.
         _ = await launcher_of(app).message(
             OWNER,
             parent,

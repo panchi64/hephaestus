@@ -1,7 +1,7 @@
-"""Spawned agents — the runtime behind the `agents` category's delegation tools.
+"""Spawned agents: the runtime behind the `agents` category's delegation tools.
 
-A spawned agent is a hidden conversation composed by the same ``compose_turn`` an
-operator's message goes through, so this manifest contributes no engine:
+A spawned agent is a hidden conversation composed by the same ``compose_turn`` as an
+operator's message, so this manifest adds no engine:
 
 - the **launcher** (``_subagents.py``), which tools resolve by its abstract type because
   turn composition sits above ``tools/``;
@@ -31,8 +31,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     records = SubagentStore(ctx.engine, ctx.vault)
     wake = SubagentWake(ctx, records, ctx.services.get(InboxDispatcher))
     launcher = ConversationSubagents(ctx, records, wake)
-    # Waits for the key like every other startup pass that touches sealed rows, and does
-    # nothing on an installation that has never run a sub-agent.
+    # Waits for the key, like every startup pass touching sealed rows.
 
     async def reconcile() -> None:
         _ = await records.reconcile_stranded()
@@ -40,30 +39,27 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     _ = ctx.lifecycle.track("subagent-reconcile", reconcile())
     return FeatureRuntime(
         services=(records, launcher),
-        # On the app as well, because the register is what the panel's own routes read —
-        # a card list and a transcript are not agent capabilities, and a route resolves
-        # its handles from `app.state` rather than from the agent's bag.
+        # On the app too: the panel's routes read the register from `app.state`, not the
+        # agent's bag.
         state={"subagent_records": records, "subagent_wake": wake},
-        # Registered under the abstract type so `tools/subagents.py` can resolve it
-        # without importing this wiring layer, which sits above `tools/`.
+        # Under the abstract types so `tools/subagents.py` resolves it without importing this
+        # wiring layer, which sits above `tools/`.
         capabilities=((launcher, SubagentLauncher), (launcher, SubtreeStopper)),
-        # Carries a finished sub-agent's report back to the thread that launched it.
+        # Carries a finished report back to the launching thread.
         run_terminal=(wake.settled,),
     )
 
 
 MANIFEST = FeatureManifest(
     name="subagents",
-    # One read, under `/conversations` — a thread's sub-agents are a property of the
-    # thread, reached with the same grant that reads it, which is why this claims no scope
-    # of its own (see the note on `api_scopes` below).
+    # A thread property under `/conversations`, reached with the grant that reads the
+    # thread, so no scope of its own.
     routers=(subagents_router,),
-    # Its own category so it stays out of the dormant `agents` group: a spawned agent
-    # always has the tool it finishes with in front of it.
+    # Its own category so it stays out of the dormant `agents` group: a spawned agent always
+    # has the tool it finishes with.
     toolsets=(("subagent", report_toolset),),
-    # Launching one composes a full interactive turn, so every feature contributing to
-    # that turn's capability set must have built first — the same list the scheduler's
-    # task executor works under, and for the same reason.
+    # Launching composes a full interactive turn, so contributing features build first (as for
+    # the scheduler's executor).
     after=(
         "agents",
         "inbox",
@@ -79,7 +75,5 @@ MANIFEST = FeatureManifest(
         "views",
         "web",
     ),
-    # No scope of its own: a spawned agent is a conversation, reached through `/chat` and
-    # `/conversations` like every other. Its tools are the `agents` category's.
     build=_build,
 )

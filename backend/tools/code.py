@@ -2,20 +2,16 @@
 widening what the agent's machine may reach.
 
 ``code_execute`` runs Python in the thread's scratch (``/work``, which is ``~/scratch``),
-contained in the platform VM, so the agent computes freely. Shell commands are the
-``shell`` category's, in every thread.
+contained in the platform VM. Shell commands belong to the ``shell`` category.
 
-``code_run_host_command`` runs on the real host under the host fence, so its request
-must carry a plain-language ``explanation`` the operator can judge without reading the
-command.
+``code_run_host_command`` runs on the real host under the host fence; its request carries
+a plain-language ``explanation`` the operator can judge without reading the command.
 
-``code_request_egress`` widens the agent's machine: compute is free inside the box, but
-reaching a host the allowlist does not name is an exit, so it is asked for by name and
-approved per call.
+``code_request_egress`` is asked per call: reaching a host the allowlist does not name is
+an exit from the box.
 
-The execution mechanics live in ``services/sandbox``. When no sandbox runtime is
-available ``code_execute`` reports the capability is disabled and the model adapts; it
-never silently falls back to the host.
+Execution mechanics live in ``services/sandbox``. Without a sandbox runtime ``code_execute``
+reports the capability disabled and never falls back to the host.
 """
 
 from __future__ import annotations
@@ -45,9 +41,8 @@ from services.sandbox.refusals import host_refusal, is_egress_denied, vm_refusal
 from .deps import RunDeps
 from .emit import RunEventEmitted
 
-# Hitting the pids-limit surfaces as a failed fork/thread-create *inside* the process —
-# unlike the OOM killer, there is no distinct signal for it, so this is
-# a crude heuristic over the OS errors that failure mode typically prints.
+# The pids limit surfaces as a failed fork inside the process with no distinct signal, so
+# this heuristic matches the OS errors it typically prints.
 _PID_CAP_MARKERS = (
     "resource temporarily unavailable",
     "cannot allocate memory",
@@ -55,8 +50,6 @@ _PID_CAP_MARKERS = (
     "fork failed",
 )
 
-# A Python import of a package that isn't installed — the single most common sandbox
-# failure, and the one worth deterministic install mechanics at the failure point.
 _MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([^']+)'")
 
 
@@ -76,12 +69,9 @@ def _failure_hint(
     sandboxed: bool,
     delegated: bool = False,
 ) -> str:
-    """A short, plain reason for a failed run, naming the actual configured cap that
-    was most likely hit — stderr is often empty for a hard kill, so being precise
-    matters more here than for an ordinary non-zero exit. For the two recoverable
-    sandbox failures (a missing package, a host off the allowlist) it states the exact
-    next call to make, because the fix lives in *another call*, not in the code the
-    model would otherwise keep mutating."""
+    """A short reason for a failed run, naming the configured cap most likely hit (stderr
+    is often empty for a hard kill). A missing package or a host off the allowlist gets the
+    exact next call, since the fix is another call, not different code."""
     if timed_out:
         return "It exceeded the time limit and was killed; reduce the work or raise timeout_s."
     if exit_code == 137:  # SIGKILL
@@ -106,9 +96,7 @@ def _failure_hint(
         )
     if sandboxed and is_egress_denied(stderr + "\n" + stdout):
         if delegated:
-            # A delegate has no egress request to make — it is withheld, because there is
-            # nobody in its run to answer one. Sending it after the tool anyway costs it
-            # turns on a name that does not resolve.
+            # `code_request_egress` is withheld from a delegate; naming it would cost turns.
             return (
                 "That host is not on your egress allowlist, so the connection was refused "
                 "before it left your machine — the code itself is fine. You cannot widen "
@@ -139,14 +127,10 @@ def _failure_hint(
 def exec_result(
     result: SandboxResult, settings: Settings, *, sandboxed: bool, delegated: bool = False
 ) -> dict[str, object]:
-    """Shape an execution result for the model: an explicit success flag, stdout and
-    stderr **whole**, and on failure a legible hint naming which configured cap was
-    likely hit.
+    """Shape an execution result for the model: a success flag, stdout and stderr whole,
+    and on failure a hint naming the cap likely hit.
 
-    The output is not trimmed. A blanket cap fired on every run whether or not the
-    context was under any pressure, and it cost the model the middle of exactly the
-    output it had just asked for; the turn's own context-overflow stop is what catches
-    a genuinely pathological run."""
+    Output is not trimmed; the turn's context-overflow stop catches a pathological run."""
     payload: dict[str, object] = {
         "ok": result.ok,
         "exit_code": result.exit_code,
@@ -181,15 +165,10 @@ def exec_result(
 
 
 def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
-    """The `execute` tool's description, generated fresh per toolset build (an
-    explicit `description=` override — see `FunctionToolset.tool`) so it always states
-    the sandbox's *actual* configured resource caps rather than a guess the model has
-    no way to verify, and is precise enough to self-diagnose a 137/pid-cap failure.
+    """The `execute` tool's description, stating the sandbox's configured resource caps.
 
-    ``delegated`` swaps the two sentences that name *other* tools. A delegated run is
-    composed straight from the categories, so nothing is namespaced there and the tools
-    that ask the operator something are withheld — the ordinary wording would send a
-    worker calling names that do not resolve.
+    ``delegated`` swaps the two sentences that name other tools: a delegated run's tools
+    are not namespaced and the ones that ask the operator are withheld.
     """
     files = (
         "Your file tools and shell reach this same directory as `~/scratch`"
@@ -245,13 +224,9 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
 
 
 def code_toolset() -> FunctionToolset[RunDeps]:
-    # Read once per toolset build (this factory runs fresh per turn, see
-    # `tools/toolsets.py`) so the `execute` description below states the sandbox's
-    # actual configured caps, not a value baked in at import time.
     settings = get_settings()
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
-    # Both wordings, built once: which of them a run is offered depends on who is running
-    # it, and that is only known per call.
+    # Which wording a run gets depends on who is running it, known only per call.
     described = {
         False: _execute_description(settings),
         True: _execute_description(settings, delegated=True),
@@ -263,10 +238,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         """Describe this tool in terms of the tools the run actually has."""
         return replace(tool_def, description=described[ctx.deps.delegated_approved])
 
-    # `code_arg_name` marks a tool whose argument *is* a program. It is what renders that
-    # argument as code, and it is what keeps the tool out of `run_code`
-    # (`agent/code_mode.py`): a script passing a second script as a string literal is
-    # two code surfaces nested, where the model should see them side by side.
+    # `code_arg_name` renders the argument as code and keeps the tool out of `run_code`
+    # (`agent/code_mode.py`), where a script passing a script would nest two code surfaces.
     @toolset.tool(
         description=described[False],
         prepare=_worded_for_who_is_running,
@@ -286,9 +259,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             timeout_s: Seconds before the run is killed. Default 30; raise it for a long
                 computation rather than splitting the work.
         """
-        # The tool's own description is `_execute_description`, registered through
-        # `description=` so it can state the live caps; this docstring supplies only the
-        # parameter text. Keep both in sync when the shape changes.
+        # The description is `_execute_description`; this docstring supplies only the
+        # parameter text.
         sessions = ctx.deps.caps.get_optional(SandboxSessionManager)
         if sessions is None:
             return {
@@ -304,10 +276,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         )
         try:
             session = await sessions.acquire(ctx.deps.scratch_key, holder=ctx.deps.run)
-            # A cold workspace takes a beat to bring into the VM — longer still while
-            # the VM itself is starting (the first boot builds its image). Announce that
-            # wait so the run reads as the environment starting, not the model stalling;
-            # a warm session runs at once and needs no notice.
+            # Announce a cold start so the wait reads as the environment starting, not the
+            # model stalling.
             if ctx.tool_call_id and not session.is_warm:
                 partial = (
                     "Starting the platform VM, this first run can take a few minutes…"
@@ -334,11 +304,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
     ) -> ToolDefinition | None:
         """Withhold a tool that has to ask from a delegated run.
 
-        A delegate has nobody to ask: its work was approved as one act, in a conversation
-        that belongs to its parent, and a child run has no output type for a deferred
-        call, so the question would end it outright. Withheld, the child says in its
-        report which host it could not reach, or which change to the operator's own
-        machine it could not make.
+        A child run has nobody to ask and no output type for a deferred call, so the
+        question would end it; it reports what it could not do instead.
         """
         return None if ctx.deps.delegated_approved else tool_def
 
@@ -368,7 +335,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
                 host.
             reason: What you are fetching from these hosts and what it is for.
         """
-        del reason  # Read by the approval card from the call's arguments, not by this body.
+        del reason  # The approval card reads it from the call's arguments.
         policy = ctx.deps.caps.get_optional(EgressPolicy)
         if policy is None:
             return {
@@ -379,8 +346,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         try:
             allowed = await policy.allow(ctx.deps.scratch_key, domains)
         except InvalidInputError as exc:
-            # The operator has already approved by the time a domain is parsed, so a
-            # malformed one must come back as something to fix rather than fail the turn.
+            # Approval precedes parsing, so a malformed domain must come back as something
+            # to fix rather than fail the turn.
             return {"ok": False, "error": str(exc)}
         return {"allowed": sorted(allowed)}
 
@@ -417,16 +384,14 @@ def code_toolset() -> FunctionToolset[RunDeps]:
                 computer.
             timeout_s: Seconds before the command is killed. Default 120.
         """
-        del explanation  # Read by the approval card from the call's arguments, not by this body.
-        # The installation-wide allowlist, not this conversation's grants: one proxy
-        # serves every confined process on the host, so a grant folded in here would
-        # widen the fence around every other command running at the same moment and
-        # outlive this one (`services/sandbox/fence.confine`).
+        del explanation  # The approval card reads it from the call's arguments.
+        # The installation-wide allowlist, not this conversation's grants: one proxy serves
+        # every confined host process, so a grant here would widen them all and outlive this
+        # command (`services/sandbox/fence.confine`).
         confinement = await resolve_confinement(settings)
-        # Not the server process's own directory, which is the application's source tree:
-        # a relative path the model wrote would land among this backend's own files, and
-        # `cat .env` would read its keys. The home is not on the host at all, which is also
-        # why the permission layer measures a host command's paths against no root.
+        # Not the server's own directory, the application's source tree: `cat .env` would
+        # read its keys. The home is not on the host, so the permission layer measures a
+        # host command's paths against no root.
         try:
             result = await run_on_host(
                 command,
@@ -437,8 +402,6 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         except HostExecutionError as exc:
             return {"ok": False, "error": f"The host command could not be launched: {exc}"}
         payload = exec_result(result, settings, sandboxed=False)
-        # State the fence plainly: the operator approved the command, and whether it ran
-        # fenced changes what that approval actually permitted.
         payload["fenced"] = confinement.active
         payload["reach"] = "host"
         if not confinement.active:

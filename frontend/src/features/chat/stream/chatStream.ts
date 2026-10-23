@@ -1,29 +1,17 @@
 /**
- * The thread controller — one conversation's live state, and the ops the room drives it
- * with.
+ * The thread controller: one conversation's live signals and the ops that start and stop
+ * a turn, wiring together driving a run's transport (`drive.ts`), folding frames
+ * (`fold.ts`), the queued-message inbox (`steering.ts`), parked-call decisions
+ * (`approvals.ts`), reconciling with persisted rows (`resume.ts`), edits to recorded
+ * turns (`branching.ts`) and thread switching (`binding.ts`).
  *
- * What is left here after the split is the *assembly*: the signals a thread's UI reads,
- * the ops that start and stop a turn, and the wiring that lets seven single-purpose modules
- * behave as one object. Each of those modules answers a question this file deliberately no
- * longer does — driving a run's transport (`drive.ts`), what a frame changes on screen
- * (`fold.ts`), the conversation's inbox of queued messages (`steering.ts`), deciding the
- * calls a run parked on (`approvals.ts`), reconciling with what was persisted (`resume.ts`),
- * acting on a turn already recorded (`branching.ts`), and being pointed at a different
- * thread (`binding.ts`).
+ * The store is authoritative for the live thread, the backend for what a turn was. The
+ * prompt is persisted when a turn begins but the answer only when it finishes, so a
+ * mid-stream refetch lacks the reply: `binding.ts` refuses to re-seed a live thread, and
+ * `resume.ts` reseats from the backend's rows once the run ends.
  *
- * **The store is authoritative for the thread it is on, and the backend is authoritative
- * for what a turn was.** The operator's prompt is persisted the moment a turn begins, but
- * its answer only when it finishes, so a refetch mid-stream reads the prompt and none of
- * the streaming reply. That is why `binding.ts` refuses to re-seed a live thread — and why,
- * once the run ends, `resume.ts` reseats the transcript from the backend's rows: the
- * optimistic echo and the streamed bubble give way to the ids the backend minted, with no
- * positional guesswork about which is which.
- *
- * **The ops form a cycle, and it is a real one.** A run's teardown reconciles the thread,
- * and reconciling can discover a live run and start a drive. Two of the wirings below
- * therefore reach the drive at *call* time rather than holding its handle, which is what
- * makes the cycle two named edges instead of one closure in which every part can reach
- * every other.
+ * Teardown reconciles the thread and reconciling can start a drive, so two wirings reach
+ * the drive at call time rather than holding its handle.
  */
 
 import { batch, createEffect, createSignal, on, untrack } from "solid-js";
@@ -72,50 +60,36 @@ export interface ChatStreamOptions {
   onConversationStarted?: (id: string) => void;
   /** Fired when a turn finishes (done or errored) — refresh the session list. */
   onTurnComplete?: () => void;
-  /** Override the model this stream's turns run on, instead of the global picker
-   *  selection. Used by the compare panes, which each own a per-pane model. */
+  /** Per-instance model override instead of the global picker (compare panes). */
   selection?: () => ModelSelection | null;
-  /** Mark a freshly-created conversation as scratch (hidden from the sidebar
-   *  listing). Used by compare panes — throwaway threads, not saved history. */
+  /** Mark a new conversation as scratch, hidden from the sidebar (compare panes). */
   ephemeral?: boolean;
-  /** The project the *next new* conversation is scoped to, if any. Read only when a
-   *  send creates the conversation — the binding is immutable afterwards, and the
-   *  backend owns it from then on. */
+  /** Project for the next new conversation; read only on the send that creates it. */
   projectId?: () => string | undefined;
-  /** How far the model may go this turn — and from this turn onwards. Unlike the
-   *  project, sent on **every** send: the level is the operator's live control, so
-   *  switching it mid-thread is a plain message rather than a separate call, and the
-   *  backend persists whatever the last send named. */
+  /** Sent on every send, unlike the project: the level is a live control the backend
+   *  persists from whichever send named it last. */
   permission?: () => PermissionLevel;
-  /** The custom agent to name in this send, if the operator changed it. Asked with
-   *  whether the send creates the thread, since the default is only worth naming on
-   *  an existing one. Omitted fields leave the thread's agent as it is. */
+  /** The custom agent to name in this send; asked with whether the send creates the
+   *  thread. Omitted leaves the thread's agent as it is. */
   agent?: (isNewThread: boolean) => string | undefined;
   /** Fired once a send that named an agent was accepted. */
   onAgentSent?: (name: string) => void;
-  /** Fired when the **run** moved the level — `plan_enter` narrowing it, or an approved
-   *  plan raising it. Necessary rather than informational: the level above is sent back
-   *  on every message, so a caller that did not hear this would write the stale one over
-   *  the change on the operator's next send. */
+  /** Fired when the run moved the level (`plan_enter` narrowing, an approved plan
+   *  raising). Required: the level is sent on every message, so a caller that missed
+   *  this would overwrite the change on the next send. */
   onPermissionChanged?: (level: PermissionLevel) => void;
   /** Fired when the run reports the agent attaching a browser to the thread. */
   onBrowserOpened?: () => void;
-  /** The loaded conversation's context-window state, seeded alongside its history
-   *  so an existing thread shows window fullness before its next turn runs. */
+  /** Context-window state seeded with history so the meter shows before the next turn. */
   initialContext?: () => ContextUsage | null | undefined;
-  /** The loaded conversation's cumulative readout, seeded the same way. The backend
-   *  rebuilds it from the stored messages, so the line under the composer says the
-   *  same thing after a reload as it did while the thread was live. */
+  /** Cumulative readout seeded the same way; rebuilt by the backend from stored messages. */
   initialStats?: () => ConversationStats | null | undefined;
-  /** The loaded conversation's in-flight run, if a turn is still streaming
-   *  server-side. Seeds a reattach on a cold read (e.g. a page reload mid-stream)
-   *  so the live answer continues instead of the thread rendering reply-less. */
+  /** The in-flight run of a loaded conversation; seeds a reattach on a cold read. */
   activeRun?: () => ActiveRun | null | undefined;
   /** Whether the loaded conversation has no stored title yet: a reattached run on it
    *  may be the first turn, whose auto-title can land after the run ends. */
   untitled?: () => boolean | undefined;
-  /** The loaded conversation's workspace snapshots (git-style history), seeded
-   *  alongside its messages so the viewport shows them before the next turn. */
+  /** Workspace snapshots seeded with the messages. */
   initialSnapshots?: () => ViewSnapshotRef[] | undefined;
 }
 
@@ -125,48 +99,29 @@ export function createChatStream(
   options: ChatStreamOptions = {},
 ) {
   const [messages, setMessages] = createStore<ChatMessage[]>([]);
-  // Conversation-level workspace snapshots (git-style history). Unlike versions/
-  // live (which fold onto message blocks), snapshots are conversation-scoped, so
-  // they live here beside the messages rather than in the transcript.
+  // Conversation-scoped, so they sit beside the messages rather than on message blocks.
   const [snapshots, setSnapshots] = createSignal<ViewSnapshotRef[]>([]);
   const [sending, setSending] = createSignal(false);
-  // True when this room's last run ended in `run.error`; cleared when the next run
-  // starts (in the drive). The main room mirrors it to the global `runErrored` echo
-  // so the favicon can flag a failed run — compare panes keep it local.
+  // True when the last run ended in `run.error`; the main room mirrors it to the global
+  // `runErrored` echo for the favicon, compare panes keep it local.
   const [errored, setErrored] = createSignal(false);
-  // A brand-new thread is auto-named during its first turn; this drives a "working"
-  // throbber on the title from that turn's start until the name lands
-  // (`conversation.titled`, which the reveal then animates), or, when naming outlasts
-  // the turn, until the backend says it has finished (`awaitLateTitle` in the drive).
-  // Backend-owned outcome — the frontend only reflects the in-flight window.
+  // Drives the title throbber from a new thread's first turn until `conversation.titled`
+  // lands, or until `awaitLateTitle` in the drive reports naming finished.
   const [titlePending, setTitlePending] = createSignal(false);
-  // The latest run's context-window state, as derived by the backend. Null until
-  // a run reports it against a known window (loaded history carries none), which
-  // is when the context meter first appears.
+  // Null until a run reports it against a known window (loaded history carries none).
   const [usage, setUsage] = createSignal<ContextUsage | null>(null);
-  // What the thread has cost — the composer's stats panel. One signal, because the
-  // backend sends one shape: the live `run.metrics` frame and the conversation load's
-  // `stats` are the same payload, so a reload continues the same numbers rather than
-  // blanking them. (This was three signals off one event; the counts and the token
-  // counts were never separate facts.)
+  // One signal: the live `run.metrics` frame and the conversation load's `stats` are the
+  // same payload, so a reload continues the same numbers.
   const [stats, setStats] = createSignal<ConversationStats | null>(null);
-  // The agent's task list for this thread. Conversation-level rather than a message
-  // block: one list belongs to the thread and is rewritten in place as work proceeds,
-  // so pinning it to the turn that happened to create it would strand it.
-  // `tasks.updated` carries the whole list, so applying an event is a replace, never a
-  // merge.
+  // Conversation-level, not a message block: one list is rewritten in place, and
+  // `tasks.updated` carries the whole list, so applying it is a replace, never a merge.
   const [tasks, setTasks] = createSignal<TaskItem[]>([]);
-  // The written plan this thread is working to, when it has one. One per thread and
-  // replaced on every revision, so — like the list above — it is a signal rather than
-  // anything pinned to a message.
+  // One plan per thread, replaced on every revision.
   const [plan, setPlan] = createSignal<PlanDocument | null>(null);
-  // The streaming run's start instant and step, for the composer's header — read off
-  // the run's own events, so the clock it drives measures the backend's run.
   const [runClock, setRunClock] = createSignal<RunClock | null>(null);
   const [runQueue, setRunQueue] = createSignal<RunQueue | null>(null);
-  // The run-scoped bookkeeping the fold advances and the drive resets: the high-water
-  // seq, the bubble events land on, the two backfill-race counters, and the run
-  // currently streaming. One object, shared by reference with the folder.
+  // Run-scoped bookkeeping the fold advances and the drive resets, shared by reference
+  // with the folder.
   const foldState: FoldState = {
     maxFoldedSeq: 0,
     foldTarget: null,
@@ -177,27 +132,17 @@ export function createChatStream(
     epoch: 0,
     replayThrough: 0,
   };
-  // The last run a cold-read reattach was kicked off for, so the load effect fires
-  // at most once per run even if the session resource re-emits the same value.
+  // Makes the cold-read reattach effect fire at most once per run.
   let reattachedRunId: string | null = null;
-  // The conversation this stream is currently bound to (tracked separately from
-  // the screen's `key`, which only updates once a new thread is persisted).
-  //
-  // **Held twice on purpose: a plain `let` and a signal, written together.** Almost
-  // everything here reads it synchronously, mid-callback, where a signal read would
-  // register a dependency in whatever effect happens to be running — so the `let`
-  // stays. But the room has to be able to *render* against it: a thread created
-  // during its first turn has a real id from the moment `POST /chat` answers, and
-  // anything the screen keys on `key()` alone (the header's name, the rail's
-  // selection) sits blank until the turn ends. `boundConversationId` is that same
-  // fact, reactive.
+  // The bound conversation, held twice and written together: a plain `let` for
+  // synchronous reads mid-callback (a signal read would subscribe the running effect),
+  // and a signal so the screen can render against a new thread's id as soon as
+  // `POST /chat` answers, before `key()` catches up.
   let activeConversationId: string | null = key();
   const [boundConversationId, setBoundConversationId] = createSignal<
     string | null
   >(activeConversationId);
-  /** Write both halves. Every assignment to `activeConversationId` goes through
-   *  here — a bare write would leave the reactive copy behind, which is exactly the
-   *  class of bug this pairing exists to fix. */
+  /** All writes to `activeConversationId` go through here, or the signal goes stale. */
   const bindConversation = (id: string | null): void => {
     activeConversationId = id;
     setBoundConversationId(id);
@@ -206,8 +151,8 @@ export function createChatStream(
   const store: TranscriptStore = { setMessages, setUsage, setSnapshots };
   const reseat = (detail: ConversationDetailDTO) =>
     reseatFromDetail(store, detail);
-  // The reseat after a run: the finished turn takes the backend's ids in place first,
-  // so reconciling updates it rather than remounting it.
+  // The finished turn takes the backend's ids in place first, so reconciling updates
+  // it rather than remounting it.
   const reseatMessages = (detail: ConversationDetailDTO) => {
     const next = detail.messages.map(toMessage);
     const renames = adoptLiveIdentity(messages, next);
@@ -224,8 +169,7 @@ export function createChatStream(
 
   const patchById = createPatchById(messages, setMessages);
 
-  // The conversation's inbox: everything queued behind the running turn. Declared before
-  // the fold, which keeps it current from the run's `message.*` events.
+  // Declared before the fold, which keeps the inbox current from `message.*` events.
   const steering = createSteeringOps({
     conversationId: () => activeConversationId,
     // Reached at call time, like the resume ops it goes through.
@@ -240,9 +184,7 @@ export function createChatStream(
     setSnapshots,
     setTasks,
     setPlan,
-    // The one fact the run can change that the client also holds and sends back, so
-    // the caller has to hear about it — see `FoldDeps.setPermission`. Absent for a
-    // caller with no level of its own (the compare pane), where a no-op is right.
+    // See `FoldDeps.setPermission`; a no-op for callers with no level (compare pane).
     setPermission: (level) => options.onPermissionChanged?.(level),
     setUsage,
     setStats,
@@ -250,15 +192,14 @@ export function createChatStream(
     setTitlePending,
     setRunClock,
     setRunQueue,
-    // A checkpoint that names a turn this transcript does not hold: the persisted
-    // thread is ahead of it, so take its word rather than a guessed position. Reached
-    // at call time — the resume ops are built below, and need the drive that needs this.
+    // A checkpoint names a turn this transcript lacks, so the persisted thread wins.
+    // Reached at call time: the resume ops are built below.
     onFoldMisplaced: () => void resume.reconcileStaleDecision(),
     onBrowserOpened: options.onBrowserOpened,
   });
 
-  // The inbox is bound to the thread, not to a run: read it whenever the thread changes,
-  // because messages queued while no run is live emit no events.
+  // The inbox belongs to the thread, not a run: messages queued while no run is live
+  // emit no events, so read it on every thread change.
   createEffect(
     on(boundConversationId, (id) => {
       steering.reset();
@@ -266,11 +207,8 @@ export function createChatStream(
     }),
   );
 
-  // Everything that reconciles the optimistic store with what the backend persisted.
-  // It lives next door because all four are one move — read the detail, act on it only
-  // if the operator is still on that thread — and that guard belongs in one place.
-  // Same call-time edge to the drive, for the same reason: reconciling can discover a
-  // run that is still live and hand it straight back to be driven.
+  // Reconciles the optimistic store with persisted rows. Reaches the drive at call time:
+  // reconciling can discover a live run and hand it back to be driven.
   const resume = createResumeOps({
     conversationId: () => activeConversationId,
     fetchDetail: (id) => api.get<ConversationDetailDTO>(`/conversations/${id}`),
@@ -301,7 +239,6 @@ export function createChatStream(
     onTurnComplete: () => options.onTurnComplete?.(),
   });
 
-  // Deciding the calls a run parked on, and whether anything is still parked.
   const approvals = createApprovalOps({
     messages,
     patchById,
@@ -317,19 +254,13 @@ export function createChatStream(
     messages,
     boundTo: () => activeConversationId,
     onBind: (id) => {
-      // Forget which run we've already reattached-to: leaving this thread (still
-      // detached/mid-stream) and returning later must let the cold-reattach effect
-      // fire again for the same run id, rather than permanently ignoring a run it
-      // saw once, in some earlier visit, before this stream instance existed.
+      // Returning to a still-streaming thread must let the cold-reattach effect fire
+      // again for the same run id.
       reattachedRunId = null;
       bindConversation(id);
-      // The auto-title throbber belongs to the thread being named, and a switch
-      // supersedes the drive that would otherwise clear it (`drive.ts` skips teardown
-      // for a superseded run, deliberately) — so without this the first turn's
-      // throbber follows the operator onto every thread they open next.
+      // A switch supersedes the drive that would clear these (`drive.ts` skips teardown
+      // for a superseded run), so reset them here.
       setTitlePending(false);
-      // The clock is the run's, and the run is the thread's: a switch supersedes the
-      // drive whose `run.ended` would have cleared it.
       setRunClock(null);
       setRunQueue(null);
     },
@@ -347,41 +278,30 @@ export function createChatStream(
     initialSnapshots: options.initialSnapshots,
   });
 
-  /** Start a turn, or queue one into the live run. Resolves **false** as soon as the
-   *  send is known not to have been taken — refused here or by the backend — so the
-   *  composer can put the text back; **true** once an accepted turn's run has been
-   *  driven to its end (callers such as Compare await the whole run through this). A
-   *  caller that only wants the refusal reads the `false` and ignores the timing. */
+  /** Start a turn, or queue one into the live run. Resolves false as soon as the send is
+   *  known not to have been taken (refused here or by the backend) so the composer can
+   *  restore the text; true once an accepted turn's run has been driven to its end. */
   async function send(
     text: string,
     attachmentIds: string[] = [],
-    /** Everything else this send carries. An options object rather than more
-     *  positional parameters: the third slot was `continuesMessageId`, called
-     *  positionally by `continueTurn`, and appending to it would have made every
-     *  later addition a place where two unrelated facts could be swapped. */
     extras: {
-      /** Set only by `continueTurn`: the branch node id of the stopped turn this
-       *  send resumes, so the backend retires that turn's stop marker for good. */
+      /** Set by `continueTurn`: the stopped turn's branch node id, whose stop marker the
+       *  backend retires. */
       continuesMessageId?: string;
-      /** The slash command this turn was started from. `text` is still the
-       *  operator's literal `/name …`; this says which command that token was, so
-       *  the backend can resolve and expand it. */
+      /** The slash command `text` started from; the backend resolves and expands it. */
       command?: { name: string; argument: string } | null;
-      /** Workspace-relative paths the operator named with `@`. A reference only —
-       *  the backend names them to the model, which reads what it wants. */
+      /** Workspace-relative paths named with `@`; references only, the model reads them. */
       fileRefs?: string[];
     } = {},
   ): Promise<boolean> {
     const { continuesMessageId, command, fileRefs } = extras;
-    // A turn needs either prompt text or at least one attachment to send.
     if (!text.trim() && attachmentIds.length === 0) return false;
-    // A send while a turn is going is queued by the backend, whatever it carries. This
-    // client draws no optimistic row for it: the inbox shows it once the backend has it.
+    // The backend queues a send made during a turn; no optimistic row is drawn, the
+    // inbox shows it once the backend has it.
     const live = sending();
     if (live && activeConversationId === null) {
-      // The first turn's POST hasn't resolved yet, so there is no conversation to
-      // queue against. The composer already cleared itself — hand the text back
-      // rather than dropping it. Handed back already, so this counts as taken.
+      // The first turn's POST hasn't resolved, so there is no conversation to queue
+      // against. Hand the text back to the composer, which already cleared itself.
       steering.stash(text);
       return true;
     }
@@ -389,8 +309,6 @@ export function createChatStream(
     const wasNew = activeConversationId === null;
     if (!live) {
       setSending(true);
-      // A fresh, non-ephemeral thread gets auto-named during this turn; show the
-      // working throbber on the title until it lands. Ephemeral threads aren't titled.
       if (wasNew && !options.ephemeral) setTitlePending(true);
     }
     const userMsg: ChatMessage = {
@@ -400,9 +318,8 @@ export function createChatStream(
       createdAt: new Date().toISOString(),
       attachmentIds: attachmentIds.length ? attachmentIds : undefined,
     };
-    // `override` is a genuine per-instance model (the compare panes); the default
-    // path sends none, so the backend resolves the stored `main` binding — the same
-    // source research/tasks/titling resolve. `selection` is only the display label.
+    // Only a per-instance override (compare panes) is sent; otherwise the backend
+    // resolves the stored `main` binding. `selection` is just the display label.
     const override = options.selection?.();
     const selection = override ?? effectiveSelection();
     const assistantId = nextId("a");
@@ -438,28 +355,20 @@ export function createChatStream(
         endpoint_id: override?.endpointId,
         model: override?.model,
         attachment_ids: attachmentIds,
-        // Only meaningful when this turn creates the conversation; the backend
-        // ignores it when continuing one.
+        // Only meaningful on the send that creates the conversation.
         ephemeral: wasNew && options.ephemeral ? true : undefined,
-        // Likewise: a thread's project is set once, at creation. The backend
-        // re-reads it off the conversation for every later turn, so sending it again
-        // would be a second source for one fact.
+        // Set once at creation; the backend re-reads it off the conversation after.
         project_id: wasNew ? options.projectId?.() : undefined,
-        // The level, on the other hand, is sent every time: it is the one binding
-        // fact that moves, and the composer's control moves it by being read here on
-        // the next send rather than by a write of its own.
+        // Sent every time; the composer's control takes effect by being read here.
         permission_level: options.permission?.(),
         agent,
         continues_message_id: continuesMessageId,
-        // Never an expansion — what a command *means* is the backend's to decide, and a
-        // client that sent one would be sending a turn the operator never wrote.
+        // Never an expansion: the backend decides what a command means.
         command: command ?? undefined,
         file_refs: fileRefs?.length ? fileRefs : undefined,
       });
     } catch (err) {
-      // Not accepted: a send the backend did not take is not a turn, so the optimistic
-      // turn comes back out of the transcript and the `false` hands its text back to
-      // the composer. A queued send drew nothing, and the live run is not ours to end.
+      // A queued send drew nothing, and the live run is not ours to end.
       if (!live) hideTurn();
       toast.error(
         (err as { detail?: string })?.detail ?? "Unable to reach Talos.",
@@ -469,31 +378,25 @@ export function createChatStream(
     bindConversation(created.conversation_id);
     if (agent !== undefined) options.onAgentSent?.(agent);
     if ("queued_message_id" in created) {
-      // The conversation was busy, so the backend queued this send instead of
-      // starting a turn.
+      // The conversation was busy, so the backend queued this send.
       if (!live) hideTurn();
       await steering.refresh();
-      // A live run this client is not driving (another tab, or one that started
-      // between the room's last read and the send) becomes visible by attaching.
+      // Attach to a live run this client is not driving (another tab, or one started
+      // between the room's last read and the send).
       if (created.run_id && created.run_id !== foldState.activeRunId)
         void resume.reattachToLiveRun(created.conversation_id);
       return true;
     }
-    // The run `live` saw ended before the POST landed: the backend started a fresh turn
-    // for this send, which is driven like any other.
+    // The run `live` saw ended before the POST landed, so the backend started a fresh
+    // turn for this send.
     if (live) {
       showTurn();
       setSending(true);
     }
-    // A brand-new thread exists the moment the backend accepts the send. The list read
-    // fired when `sending` flipped went out before this id did, so it cannot have
-    // listed the thread; read it again now so the row (and its running echo) appears
-    // for the length of the first turn instead of at its end.
+    // The list read fired when `sending` flipped predates the new thread's id; re-read
+    // so its row appears for the length of the first turn.
     if (wasNew && !options.ephemeral) refreshSessions();
-    // Accepted — so the backend has retired the stop marker this turn resumes.
-    // Echo that now rather than waiting for the run to finish: the warning is about
-    // a turn the operator has visibly just resumed, and leaving it up for the length
-    // of the new run reads as the Continue press having done nothing.
+    // The backend has retired the stop marker; echo that now rather than at run end.
     if (continuesMessageId !== undefined)
       patchById(continuesMessageId, (m) => {
         m.blocked = false;
@@ -503,46 +406,23 @@ export function createChatStream(
     return true;
   }
 
-  /** Resume a turn a bound stopped (inactivity/wall-clock timeout or cancel) by
-   *  sending a fresh "Continue." turn on the same conversation. Reuses the ordinary
-   *  send path, so a small "Continue." bubble appears in the transcript and the
-   *  model picks up where the prior turn left off.
-   *
-   *  ``messageId`` is the stopped turn's branch node id — the backend retires that
-   *  turn's stop marker when it accepts the turn, so the warning doesn't linger
-   *  under a turn the operator already resumed, and a reload reads the retirement
-   *  back from the store rather than resurrecting it. */
+  /** Resume a stopped turn (timeout or cancel) by sending a fresh "Continue." turn.
+   *  `messageId` is the stopped turn's branch node id, whose stop marker the backend
+   *  retires on accept. */
   async function continueTurn(messageId?: string): Promise<void> {
-    // A blocked turn is settled, so this is a fresh turn — but if a run is already
-    // in flight (the operator started a new one), don't inject "Continue." as a
-    // steering message; just no-op.
+    // No-op while a run is in flight, so "Continue." is not injected as steering.
     if (activeConversationId === null || sending()) return;
     await send(CONTINUE_PROMPT, [], { continuesMessageId: messageId });
   }
 
-  /** Fold this thread's earlier turns, then resume the turn the model's context window
-   *  stopped — the two ops the operator would otherwise run by hand, in the order that
-   *  makes the second one able to succeed.
+  /** Fold earlier turns, then resume the turn the context window stopped. Offered only
+   *  on a context-overflow block, where a plain Continue would resend the same too-large
+   *  request; the chassis tries this pair itself, and this is the manual fallback.
    *
-   *  Offered only on a turn blocked with the context-overflow detail, because that is
-   *  the one stop where a plain Continue is guaranteed to fail: the request that was
-   *  too large is the request that would be sent again. The chassis attempts this pair
-   *  itself inside the turn; this is the hand-operated version for when it could not —
-   *  compaction switched off for the thread, no background model bound, or a fold that
-   *  freed too little.
-   *
-   *  Sequential and unconditional on purpose: `compactNow` reports its own failure and
-   *  the send below re-blocks on the same bound if nothing was freed, so the operator
-   *  ends up where they started rather than somewhere new. Nothing here decides whether
-   *  the fold was enough — that judgement is the backend's, on the next request.
-   *
-   *  The thread is captured before the fold and checked after it, because the fold holds
-   *  a summarizer call — seconds on a local model — and the operator is free to leave
-   *  mid-flight. `continueTurn` re-reads the bound id, so without this the pair would
-   *  send a "Continue." turn into whichever thread the room had moved to, carrying the
-   *  *old* thread's `continuesMessageId` and retiring a stop marker on a branch node that
-   *  does not exist there. The turn the operator asked to resume is still resumable from
-   *  its own thread when they come back to it. */
+   *  Unconditional on purpose: `compactNow` reports its own failure, and the send
+   *  re-blocks if nothing was freed. The thread is checked after the fold because
+   *  `continueTurn` re-reads the bound id and would otherwise send into a thread the
+   *  operator moved to, with the old thread's `continuesMessageId`. */
   async function compactAndContinue(messageId?: string): Promise<void> {
     const conversationId = activeConversationId;
     if (conversationId === null) return;
@@ -562,37 +442,31 @@ export function createChatStream(
     if (read === null || sending()) return;
     if (read.run_id === null && (!due || read.waiting_for_operator)) return;
     await resume.reconcileStaleDecision();
-    // A turn that ran to its end before it was found has no drive to report it, so the
-    // thread's outcome in the list (and the plate reading it) would stay at the last one.
+    // A turn that ended before it was found has no drive to report it.
     options.onTurnComplete?.();
   }
 
-  /** Cancel the in-flight run for real: tell the backend to stop it (it keeps
-   *  running even when the SSE is dropped), then abort the local stream and clear
-   *  the streaming state. Safe to call with no active run. */
+  /** Tell the backend to stop the run (it survives a dropped SSE), then abort the local
+   *  stream and clear streaming state. Safe with no active run. */
   async function cancel(): Promise<void> {
     const runId = foldState.activeRunId;
     if (runId) {
       try {
-        // Stop holds the inbox: nothing queued starts a turn until the operator's next
-        // send or an explicit resume.
+        // Stop holds the inbox until the next send or an explicit resume.
         await api.post(`/runs/${runId}/cancel`, { hold_inbox: true });
       } catch (err) {
-        // The local abort below still stops the UI; surface but don't block.
+        // The local abort below still stops the UI.
         toast.error(
           (err as { detail?: string })?.detail ?? "Unable to cancel the run.",
         );
       }
     }
     foldState.activeRunId = null;
-    // `stop`, not `supersede`: the turn really is over, so the drive still has to
-    // run its own teardown and reconcile what was persisted.
+    // `stop`, not `supersede`: the drive must still run its teardown and reconcile.
     drive.stop();
     setMessages(
       produce((m) => {
-        // A cancelled turn may currently be `streaming` (normal in-flight) or
-        // `detached` (transport gave up, but we still guarded it as in-flight)
-        // — either is the one this cancel is aimed at.
+        // `detached` (transport gave up) counts as in-flight too.
         const target = m.find((x) => x.streaming || x.detached);
         if (target) {
           target.streaming = false;
@@ -602,18 +476,12 @@ export function createChatStream(
       }),
     );
     setSending(false);
-    // The cancel moved the inbox to "waiting for you"; the drive's teardown reads it
-    // too, but a detached drive skips that.
+    // The drive's teardown also reads the inbox, but a detached drive skips it.
     void steering.refresh();
-    // Whatever was half-answered in the dock goes with the run it was answering. Kept
-    // any longer it would be seeded into the *next* park — a different question wearing
-    // the last one's answers.
+    // A kept draft would be seeded into the next park under a different question.
     approvals.clearParkDraft();
   }
 
-  // Branching, version-cycling and the rest of what can be done to a recorded turn.
-  // They act on the conversation tree rather than on the run in flight, so they take
-  // this controller's handles rather than living inside it.
   const branching = createBranchingOps({
     messages,
     setMessages,
@@ -630,18 +498,11 @@ export function createChatStream(
     onTurnComplete: () => options.onTurnComplete?.(),
   });
 
-  // Cold-read reattach: a thread loaded mid-stream carries its in-flight run
-  // (`options.activeRun`), so resume it — fold the full replay onto a freshly
-  // seeded assistant turn and continue live — instead of rendering the thread
-  // reply-less. The source is withheld (→ undefined) while history loads, so this
-  // never fires on an empty seed; it runs once per run (`reattachedRunId`) and not
-  // for a run we're already driving.
-  //
-  // It is also how a run started out of sight is picked up (another tab, a scheduled
-  // task): the room re-reads the thread when the rail reports it busy, and the new
-  // `activeRun` lands here. A run this transcript already holds a settled turn for is
-  // one this stream drove to its end — the backend can still list it for a moment
-  // after — and replaying its buffer over that turn would double every delta.
+  // Cold-read reattach: a thread loaded mid-stream replays its in-flight run onto a
+  // seeded assistant turn. `activeRun` is undefined while history loads, so it never
+  // fires on an empty seed. It also picks up runs started out of sight (another tab, a
+  // scheduled task). A run with a settled turn here was driven to its end by this
+  // stream, and replaying its buffer would double every delta.
   createEffect(() => {
     const ar = options.activeRun?.();
     if (!ar || ar.id === reattachedRunId || ar.id === foldState.activeRunId)
@@ -656,12 +517,8 @@ export function createChatStream(
 
   return {
     messages,
-    /** The thread this stream is writing into — the screen's `key` once it is caught
-     *  up, and the backend's brand-new id from the moment `POST /chat` answers, which
-     *  is well before the room adopts it. Anything that *names the thread on screen*
-     *  has to read this: keyed on `key()` alone, a first turn's header and rail row
-     *  have no id to resolve against and stay blank for the length of the run, which
-     *  is why an auto-generated title used to land only once the stream ended. */
+    /** The thread being written into: the new id from the moment `POST /chat` answers,
+     *  before `key()` catches up. Anything naming the thread on screen must read this. */
     conversationId: boundConversationId,
     /** The conversation's workspace snapshots (git-style history), newest last. */
     snapshots,
@@ -672,11 +529,10 @@ export function createChatStream(
      *  exhausted) — the run may still be alive server-side, awaiting a
      *  manual/automatic re-attach rather than being over. */
     detached: drive.detached,
-    /** True while this run is parked on the operator — a sensitive tool call awaiting
-     *  their decision, or a question awaiting their answer. The main room mirrors it to
-     *  the global `awaitingInput` echo (nav rail warn tone, favicon attention tint). */
+    /** True while the run is parked on a decision or question. The main room mirrors it
+     *  to the global `awaitingInput` echo (nav rail warn tone, favicon tint). */
     awaitingInput: approvals.awaitingInput,
-    /** What the live turn is parked on, or null. The dock over the composer renders it. */
+    /** What the live turn is parked on, or null; rendered by the dock. */
     park: approvals.park,
     titlePending,
     reattaching: drive.reattaching,
@@ -684,10 +540,9 @@ export function createChatStream(
     stats,
     /** The agent's running checklist for this thread. */
     tasks,
-    /** The written plan it is working to, when there is one — the document the operator
-     *  approves, which is a different thing from the list above. */
+    /** The written plan the operator approves, distinct from the task list. */
     plan,
-    /** When the streaming run started and which step it is on, or null between runs. */
+    /** Run start and current step, or null between runs. */
     runClock,
     /** Where the run waits for its model endpoint, or null when it is not waiting. */
     runQueue,
@@ -710,17 +565,14 @@ export function createChatStream(
     holdQueued: (id: string, held: boolean) => steering.hold(id, held),
     /** Release a Stop's hold so the waiting messages are delivered. */
     resumeInbox: steering.resume,
-    /** Text handed back to the composer (`stashDraft`) — the screen prefills the
-     *  composer with it, then clears it. */
+    /** Text handed back to the composer; the screen prefills it, then clears it. */
     undeliveredDraft: steering.undeliveredDraft,
     clearUndeliveredDraft: steering.clearUndeliveredDraft,
-    /** Hand text back to the composer through the same prefill — for a send made on
-     *  the operator's behalf, outside the composer, that the backend refused. */
+    /** Hand back text from a refused send made outside the composer. */
     stashDraft: steering.stash,
     reattachRun: drive.reattachRun,
     resolvePark: approvals.resolvePark,
-    /** What the operator has entered into the dock but not yet submitted — held here
-     *  rather than in the dock, which a re-derived park unmounts. */
+    /** Unsubmitted dock input, held here because a re-derived park unmounts the dock. */
     parkDraft: approvals.parkDraft,
     patchParkDraft: approvals.patchParkDraft,
     resolveHostCommands: approvals.resolveHostCommands,
@@ -729,12 +581,8 @@ export function createChatStream(
     switchVersion: branching.switchVersion,
     rewind: branching.rewind,
     compactNow: branching.compactNow,
-    /** True while a hand-started fold is in flight on the thread the room is showing.
-     *
-     *  Composed here rather than inside the branching ops because the answer needs the
-     *  *reactive* half of the bound id: the ops read `activeConversationId` imperatively,
-     *  and a `compacting` built on that would never re-run on a thread switch — it would
-     *  keep reporting the thread the operator left. */
+    /** True while a hand-started fold runs on the shown thread. Composed here because it
+     *  needs the reactive bound id; the branching ops read the plain `let`. */
     compacting: (): boolean => {
       const id = boundConversationId();
       return id !== null && branching.isCompacting(id);

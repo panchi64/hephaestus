@@ -28,14 +28,12 @@ class RunQueued(Body):
 
 
 class RunEnded(Body):
-    """The closing frame for a run that reached an *expected* end.
+    """The closing frame for a run that reached an expected end.
 
-    A run closes with exactly one of `run.ended` or `run.error`, never both — the
-    terminal frame has two shapes because the two carry different payloads, and a
-    failure has a message and an exception kind where an expected end has an outcome
-    and a detail. Readers treat either as end-of-stream (`isTerminal` on the client).
-    `error` is deliberately absent from ``outcome`` for that reason: it is not an
-    outcome this frame ever carries. Both are preceded by `run.metrics`.
+    A run closes with exactly one of `run.ended` or `run.error`: the payloads differ (a
+    failure has a message and exception kind; an expected end an outcome and detail), and
+    readers treat either as end-of-stream (`isTerminal` on the client). `error` is
+    therefore not an ``outcome``. Both are preceded by `run.metrics`.
     """
 
     type: Literal["run.ended"] = "run.ended"
@@ -46,8 +44,7 @@ class RunEnded(Body):
 
 
 class RunError(Body):
-    """The closing frame for a run that failed. See :class:`RunEnded` — these two are
-    the same terminal position in the protocol, not a frame plus an extra."""
+    """The closing frame for a run that failed; the same terminal position as :class:`RunEnded`."""
 
     type: Literal["run.error"] = "run.error"
     message: str
@@ -87,12 +84,12 @@ class AnswerRetracted(Body):
 class LimitNotice(Body):
     type: Literal["limit.notice"] = "limit.notice"
     # "time" | "loop" | "verify" | "context" | "turn_limit" | "continue" (not a stop: a
-    # transient model error is being retried). "context" means the model's context window
-    # was exceeded; "turn_limit" that the agent's request cap was reached.
+    # transient model error is being retried). "context" means the context window was
+    # exceeded; "turn_limit" that the agent's request cap was reached.
     limit: str
     message: str
-    # The stop marker this notice announces, when the bound also blocked the turn — the
-    # same string the turn persists as its `blocked_reason`. It is here so the toast and
-    # the marker on the stopped turn can offer the *same* remedy: two context stops share
-    # one `limit` value but not one answer, and prose is not something a client can key on.
+    # The stop marker this notice announces when the bound also blocked the turn, the same
+    # string persisted as `blocked_reason`. Lets the toast and the stopped turn's marker offer
+    # the same remedy: two context stops share one `limit` but not one answer, and a client
+    # can't key on prose.
     detail: str | None = None

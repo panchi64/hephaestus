@@ -1,19 +1,16 @@
 """The seam that lets an agent spawn, message and stop other agents.
 
-Composing a chat turn happens *above* ``tools/`` in the dependency order, so a tool cannot
-import it.
-What a tool can do is resolve a capability by type out of the run's bag, and this is the
-type it resolves — declared down here in ``services/``, implemented at the wiring layer
-(``harness/manifests/_subagents.py``), and registered under this abstract type so the
-concrete implementation is never named below its own layer.
+Composing a chat turn sits above ``tools/``, so a tool cannot import it. A tool instead
+resolves this abstract type from the run's bag; it is declared here, implemented at the
+wiring layer (``harness/manifests/_subagents.py``) and registered under this type.
 
 **A spawned agent is an ordinary conversation**, composed by the same ``compose_turn`` an
-operator's message goes through. What sets it apart: it starts hidden from the session list
-(until the operator opens it), it belongs to its spawner's delegation tree, and every turn
-it finishes is reported back to the thread that spawned it.
+operator's message goes through. It starts hidden from the session list until the operator
+opens it, belongs to its spawner's delegation tree, and has every finished turn reported
+back to the spawning thread.
 
-No call here waits on another run. Spawning and messaging return at once, and results
-arrive as wakes, so a parent and its child can never deadlock on one another.
+No call here waits on another run: spawning and messaging return at once and results arrive
+as wakes, so parent and child cannot deadlock.
 """
 
 from __future__ import annotations
@@ -30,10 +27,8 @@ from services.agents.definition import AgentDefinition
 class SubagentUnavailableError(Exception):
     """A sub-agent cannot be launched right now, with an agent-legible reason.
 
-    Distinct from a bug: a misconfigured model registry, a workspace that cannot be forked,
-    a cap the operator set — these are states the system can be in, and the launch tool
-    turns this into a result the model can act on (do the work itself, wait for a running
-    sub-agent, tell the operator what to switch on) rather than a failed turn.
+    Not a bug but a state (misconfigured registry, unforkable workspace, operator cap); the
+    launch tool turns it into a result the model can act on rather than a failed turn.
     """
 
 
@@ -74,11 +69,9 @@ class LaunchedSubagent:
     conversation_id: str
     run_id: str
     name: str
-    #: The handle this sub-agent actually ended up with, which is **not** necessarily the
-    #: one the caller asked for: handles are unique within the launching thread, so a
-    #: second ``explorer`` comes back as ``explorer-2``. Returned rather than assumed for
-    #: exactly that reason — a caller that echoed its own request back to the model would
-    #: hand it a name that addresses the *first* one.
+    #: The handle it ended up with, not necessarily the one requested: handles are unique
+    #: within the launching thread, so a second ``explorer`` becomes ``explorer-2``. Echoing
+    #: the request back would name the first one.
     handle: str
     task: str
     #: The operator's name for it, and its class's key. Empty for a class with no pool.

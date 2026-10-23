@@ -2,27 +2,23 @@
 
 Four tools: `run_command` (blocking), `start_command` / `check_command` / `stop_command`
 (background), so a dev server or a long test run is a process the agent checks on rather
-than a turn that blocks for ten minutes. This file is the contract the model sees, and the
-one place that turns what the model *said* into where a command runs.
+than a turn that blocks. This file is the contract the model sees, and turns what the
+model said into where a command runs.
 
 **Commands run in the platform VM, in the home** (``services/sandbox/home_shell.py``).
 The thread's scratch is always there; a project is brought in when the working directory
 is in it or the command names it, and what the command changed is brought back after. A
 project the thread may only read is mounted read-only. The working directory persists per
-thread (``services/sandbox/thread_shells.py``) and starts in the thread's own place: its
-project, or its scratch.
+thread (``services/sandbox/thread_shells.py``) and starts in the thread's own place.
 
-**The executing tools take a `reach`.** The model states how far a command needs to go,
-and this file holds it to that:
+**The executing tools take a `reach`**, which this file holds the command to:
 
 - `offline` runs in the VM with no network at all;
 - `network` runs in the VM with the conversation's egress credentials, reaching the
   domains the operator has allowed (``services/egress.py``);
-- `host` runs on the operator's machine itself, for a command that has to act on that
-  machine — which is what the approver was shown. It starts in the host folder of the
-  project the working directory is in, else in the host scratch directory. What it
-  changes there is not recorded for revert (``services/home/changes.py``): it writes the
-  folder directly rather than coming back through the VM.
+- `host` runs on the operator's machine, starting in the host folder of the project the
+  working directory is in, else in the host scratch directory. It writes that folder
+  directly, so its changes are not recorded for revert (``services/home/changes.py``).
 
   It runs inside the host fence (``services/sandbox/fence.py``): writes are limited to the
   home, the temp directories and the host scratch directory, minus a hardcoded floor (shell
@@ -31,18 +27,13 @@ and this file holds it to that:
   cannot be read. The network is open. With the fence disabled in Settings, or unavailable
   on this machine, it runs unfenced, and the result says so.
 
-The same declaration is what the permission layer rules on
-(``services/permissions/judge.py``), so what a command was cleared for and where it runs
-are one statement. An `offline` declaration the command contradicts (it names a URL, or
-installs or clones) was approved in the words it was read in, so it gets the network it
-plainly needs rather than failing.
+The permission layer rules on the same declaration (``services/permissions/judge.py``). An
+`offline` declaration the command contradicts (it names a URL, or installs or clones) was
+approved as read, so it gets the network it plainly needs rather than failing.
 
-**Refused while the VM is down.** Without the VM there is nowhere to run a fenced
-command, and running one on the operator's machine instead is not something this tool
-will do.
+**Refused while the VM is down**, never run on the operator's machine instead.
 
-**Output streams while the command runs.** `run_command` passes a progress hook and each
-new piece of output goes out as `tool.progress`.
+`run_command` passes a progress hook; new output goes out as `tool.progress`.
 """
 
 from __future__ import annotations
@@ -77,30 +68,26 @@ from .emit import RunEventEmitted
 from .home import change_log, resolve_run_home
 from .workspace import unavailable
 
-#: The `reach` argument as the model may send it: an old spelling copied from the
-#: thread's history is read as its current one rather than refused.
+#: An old spelling of `reach` copied from the thread's history is read as the current one.
 DeclaredReach = Annotated[Reach, BeforeValidator(renamed_reach)]
 
-#: Long enough for a real build or test suite; short enough that a hung command doesn't
-#: hold the turn open indefinitely. The agent can pass its own timeout per call, and any
-#: genuinely long-running thing belongs in `start_command`.
+#: Long enough for a real build or test suite; anything longer belongs in `start_command`.
 SHELL_TIMEOUT_S = 300.0
 
-#: A memory cap on one command's captured output, not a limit on what the model reads:
-#: large results are spilled to a file for the context (``tools/spill.py``).
+#: A memory cap on captured output, not on what the model reads: large results are spilled
+#: to a file (``tools/spill.py``).
 SHELL_MAX_OUTPUT_CHARS = 2_000_000
 
-#: The two tools that execute something new. `check_command` and `stop_command` act on a
-#: process that was already approved into existence, so re-asking would be noise.
+#: The tools that execute something new; `check_command` and `stop_command` act on a process
+#: already approved into existence.
 EXECUTING_TOOLS = frozenset({"run_command", "start_command"})
 
-#: The same two, namespaced: the conditionally-gated names this category contributes to
-#: the approval-scope vocabulary. A name absent from `app.state.gated_tools` could not be
-#: granted for the conversation, so the operator would be asked on every command.
+#: The same, namespaced. A name absent from `app.state.gated_tools` cannot be granted for the
+#: conversation, so the operator would be asked on every command.
 GATED_TOOLS = frozenset(f"shell_{name}" for name in EXECUTING_TOOLS)
 
-#: The prefix `tools/toolsets.py` puts in front of these names; the capability extraction
-#: is keyed on the namespaced name and this file only ever sees the bare one.
+#: The prefix `tools/toolsets.py` adds; the capability extraction is keyed on the namespaced
+#: name and this file only sees the bare one.
 _NAMESPACE = "shell_"
 
 
@@ -130,8 +117,7 @@ class _Boundary:
 
 
 def boundary(name: str, command: str, reach: Reach, home: RunHome, cwd: str) -> _Boundary:
-    """Where this command runs, built from the declaration rather than from a judgement:
-    the permission layer answers *who must approve*, and this answers *where it runs*.
+    """Where this command runs, built from the declaration, not from a judgement.
 
     Only an explicit `host` declaration leaves the VM. An `offline` declaration the
     command contradicts, by naming an address or by installing or cloning, gets the
@@ -187,8 +173,8 @@ def _host_fence() -> ConfinementState:
 
 def _progress_hook(ctx: RunContext[RunDeps]) -> ProgressHook | None:
     """Put this command's output on the operator's stream as it arrives, or None where
-    there is no call to attribute a frame to. Each frame carries the *next* piece of
-    output; the completed result is still the record a reload reads."""
+    there is no call to attribute a frame to. The completed result is the record a reload
+    reads."""
     tool_call_id = ctx.tool_call_id
     if not tool_call_id:
         return None

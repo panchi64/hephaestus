@@ -1,21 +1,17 @@
 """The set of live sandboxes — who owns one, how many may exist, and when each goes.
 
 One :class:`~services.sandbox.session.SandboxSession` is a single conversation's
-workspace and guest copy, and knows nothing about the others. Everything that is a
-*policy over the set* lives here instead: mapping a conversation to its session,
-the live-session cap, the idle reaper, the preview token index and purging a deleted
-conversation.
+workspace and guest copy. The policy over the set lives here: mapping a conversation to
+its session, the live-session cap, the idle reaper, the preview token index and purging a
+deleted conversation.
 
-The split follows the lock. A session's lock spans one call on one workspace; this
-manager's lock guards the maps that decide which session a key even names, and the
-tombstone protocol (``_tearing_down``) that keeps a second session from being minted
-onto a workspace a teardown is still working through. Two locks with two jobs, and
-neither file has a reason to change when the other's job does.
+A session's lock spans one call on one workspace; this manager's lock guards the maps that
+decide which session a key names, and the tombstone protocol (``_tearing_down``) that
+keeps a second session from being minted onto a workspace a teardown is still working
+through.
 
-Reaping is about guest copies and nothing else. A conversation's workspace is left on
-disk untouched, so a stranded *directory* is not a problem to solve — it is simply that
-conversation's files, waiting. What a crash leaves in the VM is gone at the next boot,
-which starts from the clean image.
+Reaping removes guest copies only; the workspace stays on disk. What a crash leaves in the
+VM is gone at the next boot.
 """
 
 from __future__ import annotations
@@ -40,27 +36,22 @@ from .preview import PreviewHandle
 from .preview_tokens import PreviewTokens
 from .session import LiveWork, SandboxSession
 
-if TYPE_CHECKING:  # `services.egress` reads `safe_key` from this package — importing it
-    # for real here would close the loop, and the type is all this module needs.
+if TYPE_CHECKING:  # `services.egress` reads `safe_key` from this package; a real import loops.
     from services.egress import EgressPolicy
 
 logger = logging.getLogger(__name__)
 
-# How many reaped sessions are torn down concurrently — each one pulls a workspace out
-# of the VM and wipes it, so a mass reap is bounded rather than left to thrash the
-# host, but no longer serial, so unrelated conversations aren't
-# stalled behind one another. Shared by both reasons a session is reaped: the idle
-# sweep, and a new session displacing an old one at the live-session cap.
+# Bounds teardowns, each of which pulls a workspace out of the VM and wipes it; shared by
+# the idle sweep and the live-session cap.
 _TEARDOWN_CONCURRENCY = 3
 
-#: The longest app shutdown spends on any one session's guest copy (and on waiting for the
-#: reaper's in-flight teardowns). A teardown that has not returned by now is not going
-#: to, and the process exiting is worth more than the one stop.
+#: The longest app shutdown spends on any one session's guest copy and on the reaper's
+#: in-flight teardowns.
 _SESSION_STOP_TIMEOUT_S = 10.0
 
 
 #: A session taken out of the live map and awaiting its teardown, with the event that
-#: releases whoever is waiting on *that* key's teardown. See ``_detach``.
+#: releases whoever is waiting on that key's teardown. See ``_detach``.
 type _Detached = tuple[str, SandboxSession, asyncio.Event]
 
 
@@ -86,28 +77,22 @@ class SandboxSessionManager:
     ) -> None:
         self._vm: SessionHost = vm
         self._vault: Vault = vault
-        # What each workspace may reach. The manager holds it (rather than each session)
-        # because writing the file the gateway reads is a *per-key* act that has to happen
-        # before that key's first command runs — see `acquire`.
+        # Held here, not per session: the file the gateway reads must be written per key
+        # before that key's first command runs (see `acquire`).
         self._egress: EgressPolicy = egress
         self._work_root: Path = data_dir / "sandbox" / "work"
         self._sealed_root: Path = data_dir / "sandbox" / "sealed"
         self._idle_ttl: float = idle_ttl_s
         self._excludes: tuple[str, ...] = tuple(excludes)
         self._preview_startup_timeout_s: float = preview_startup_timeout_s
-        # How many conversations may hold a guest copy at once. The idle TTL bounds a
-        # session in *time*; this bounds the set in *count*, which the TTL alone never does
-        # — a dozen threads worked on in rotation all stay inside the window. See
-        # `_over_cap`.
+        # Bounds the set in count; the idle TTL alone bounds only time, so a dozen threads
+        # worked in rotation would all stay live. See `_over_cap`.
         self._max_sessions: int = max(1, max_sessions)
         self._sessions: dict[str, SandboxSession] = {}
-        # Which token names which preview, and which ones we killed — see
-        # :mod:`services.sandbox.preview_tokens`. Manipulated under this manager's lock
-        # wherever it has to be atomic against the reaper.
+        # Mutated under this manager's lock wherever it must be atomic against the reaper.
         self._preview_tokens: PreviewTokens = PreviewTokens()
-        # safe key → set once its (former) session's teardown (a sweep's reap, or
-        # a purge) is in flight. A concurrent acquire()/purge() for THIS key waits
-        # on it; every other key is unaffected (sandbox-02).
+        # safe key → set once its session's teardown (a reap or a purge) finishes; a
+        # concurrent acquire()/purge() for that key waits on it, other keys don't.
         self._tearing_down: dict[str, asyncio.Event] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
         self._reaper: PeriodicTask = PeriodicTask(
@@ -116,15 +101,12 @@ class SandboxSessionManager:
             work=self.sweep,
             logger=logger,
         )
-        # Teardowns in flight, owned by the manager rather than by whoever triggered
-        # them — see `_tear_down`. Held so they are not garbage-collected halfway
-        # through and so `stop` can drain them.
+        # Held so in-flight teardowns aren't garbage-collected and `stop` can drain them.
         self._teardowns: set[asyncio.Task[None]] = set()
 
     @property
     def vm_starting(self) -> bool:
-        """Whether the platform VM is still coming up — lets a caller (e.g. the
-        ``code_execute`` tool) tell an ordinary cold start from one waiting on the VM."""
+        """Whether the platform VM is still coming up, as opposed to an ordinary cold start."""
         return not self._vm.available and self._vm.failure is None
 
     @property
@@ -167,52 +149,40 @@ class SandboxSessionManager:
         return self._reaper
 
     def existing(self, key: str) -> SandboxSession | None:
-        """The live session for a conversation if one exists, **without creating** it,
-        so a turn that never touched the sandbox triggers no workspace/history work."""
+        """The live session for a conversation if one exists, without creating it."""
         return self._sessions.get(safe_key(key))
 
     @property
     def walk_excludes(self) -> tuple[str, ...]:
         """What a walk of any workspace here skips — reporting only.
 
-        Exposed because :mod:`services.sandbox.walk` is one answer its readers have to
-        agree on, and the per-turn block is the one reader that has no session to ask.
-        Re-reading the setting instead would make it a second source that only happens
-        to match.
+        The per-turn block has no session to ask, and :mod:`services.sandbox.walk` must give
+        one answer to all its readers.
         """
         return self._excludes
 
     def settled_workspace(self, key: str) -> Path | None:
-        """This key's workspace directory if it is already on disk, else ``None`` —
-        **creating nothing**, neither a session nor a directory.
+        """This key's workspace directory if it is already on disk, else ``None``.
 
-        A live session is not the question. A conversation reaped an hour ago has no
-        session and all of its files, which is exactly the case the caller here cares
-        about: the per-turn block that tells the model what it already built. Going
-        through `acquire`/`ensure_workspace` to answer it would mint a session and an
-        empty directory for every turn that never touches a file — the cost the whole
-        lazy design exists to avoid.
+        Creates neither a session nor a directory: the per-turn block that tells the model
+        what it already built calls this on every turn, including for conversations reaped
+        long ago and for turns that never touch a file.
         """
         workspace = self._work_root / safe_key(key)
         return workspace if workspace.is_dir() else None
 
     async def acquire(self, key: str, *, holder: LiveWork | None = None) -> SandboxSession:
         """The session for a conversation, created (object only) on first use. If this
-        key is mid-teardown from a concurrent sweep/purge, waits for THAT teardown
-        specifically rather than racing a second session onto the same workspace
-        path; every other key proceeds immediately (sandbox-02).
+        key is mid-teardown, waits for that teardown rather than racing a second session
+        onto the same workspace; other keys proceed immediately.
 
-        ``holder`` is the run asking, and claiming it here is what makes the cap safe:
-        without it the only "in use" signal is the exec lock, which is held for one call
-        out of the dozens a turn makes. See :attr:`SandboxSession.is_claimed`. Optional
-        because not every caller is a turn — a proxy request resolving a preview, a route,
-        a test — and those genuinely have no lifetime to tie a guest copy to.
+        ``holder`` is the run asking; claiming it makes the cap safe, since the exec lock
+        is held for one call out of the dozens a turn makes (see
+        :attr:`SandboxSession.is_claimed`). Optional for callers with no lifetime to tie a
+        guest copy to, such as a preview proxy request.
 
-        Admitting a new session is also where the **cap** is applied (:meth:`_over_cap`):
-        a new arrival reaps the least-recently-used idle sessions back down to the ceiling
-        before it returns, which makes the ceiling a policy instead of an accident. Nothing
-        is lost by the reap: a reaped session's files stay on disk and are there the next
-        time that conversation runs code, exactly as after an idle reap."""
+        A new arrival applies the cap (:meth:`_over_cap`): it reaps the least-recently-used
+        idle sessions down to the ceiling before returning. Their files stay on disk."""
         safe = safe_key(key)
         evicted: list[_Detached] = []
         while True:
@@ -224,9 +194,7 @@ class SandboxSessionManager:
                     if other is None:
                         session = self._new_session(safe, self._egress.allow_dir(key))
                         self._sessions[safe] = session
-                        # Only a *new* arrival applies the cap: finding a session already
-                        # live is the steady state, and re-reaping on every tool call
-                        # would make the cap a per-call sweep.
+                        # Only a new arrival applies the cap, not every tool call.
                         evicted = self._detach(self._over_cap(keep={safe}))
                 if session is not None:
                     session.touch()
@@ -235,14 +203,10 @@ class SandboxSessionManager:
             assert other is not None
             _ = await other.wait()
         if not session.is_warm:
-            # The allowlist has to be on disk before the first command can reach the
-            # gateway, or it would refuse everything the operator has already allowed. A
-            # warm session already has it, and every later grant rewrites the file.
+            # On disk before the first command reaches the gateway, or it would refuse
+            # everything already allowed. Later grants rewrite the file.
             _ = await self._egress.materialise(key)
-        # Awaited rather than backgrounded, because the caller is about to bring a
-        # workspace in: returning before the ones it displaced are actually gone would leave
-        # the host over the cap at exactly the moment the cap matters. On a task of the
-        # manager's own, because those sessions are *other* conversations' — `_tear_down`.
+        # Awaited so the host is under the cap before the caller brings a workspace in.
         await self._tear_down(evicted)
         return session
 
@@ -250,17 +214,13 @@ class SandboxSessionManager:
         """The session keys to reap so the live set fits under the cap, longest-idle
         first. Called under the manager lock.
 
-        ``keep`` is what the admission is *about* and must survive it: the arriving
-        session. Beyond that, only a session nobody is using is a
-        candidate — see :attr:`SandboxSession.is_displaceable` for the three ways that is
-        decided. The cap is a resource ceiling, not a deadline: if everything live is in use
-        the set simply runs over and the idle sweep collects the overflow once the work
-        finishes — the same choice ``ConversationStore._trim_cache`` makes for pinned trees.
+        ``keep`` (the arriving session) always survives. Otherwise only a session nobody is
+        using is a candidate (:attr:`SandboxSession.is_displaceable`). The cap is a ceiling,
+        not a deadline: if everything live is in use the set runs over and the idle sweep
+        collects the overflow afterwards.
 
-        The vault is not consulted. Displacing a session wipes its guest copy and
-        leaves its files where they are, so there is nothing here that needs a key — and
-        a locked vault used to mean the cap stopped being enforced at all, which is the
-        one state in which guest copies accumulate unchecked."""
+        The vault is not consulted: displacing wipes only the guest copy, and a locked vault
+        must not stop the cap being enforced."""
         overflow = len(self._sessions) - self._max_sessions
         if overflow <= 0:
             return []
@@ -277,14 +237,11 @@ class SandboxSessionManager:
 
     def _detach(self, keys: Iterable[str]) -> list[_Detached]:
         """Take sessions out of the live map, leaving a per-key teardown tombstone
-        behind. Called under the manager lock, by both reasons a session is reaped: the
-        idle sweep and the live-session cap.
+        behind. Called under the manager lock, by the idle sweep and the cap.
 
-        Detaching and tearing down are separate halves on purpose. The map mutation has
-        to be atomic against a concurrent ``acquire()``/``purge()`` — otherwise a second
-        session is minted onto a workspace mid-teardown — while the teardown itself is
-        slow and must not hold the lock for the sum of every one (sandbox-02). The events
-        are what the *same* key's acquire/purge waits on; every other key proceeds."""
+        Detaching is separate from tearing down: the map mutation must be atomic against a
+        concurrent ``acquire()``/``purge()``, while the slow teardown must not hold the
+        lock. The events are what the same key's acquire/purge waits on."""
         detached: list[_Detached] = []
         for key in keys:
             session = self._sessions.pop(key, None)
@@ -298,12 +255,9 @@ class SandboxSessionManager:
         return detached
 
     async def _reattach(self, detached: list[_Detached]) -> None:
-        """Undo a :meth:`_detach` whose teardown must not happen after all — a teardown
-        that failed. Dropped there instead, a session is
-        lost where neither sweep nor purge can find it: a guest copy in nobody's map over
-        a live workspace, behind a tombstone every later ``acquire()`` for that key waits
-        on forever. Nothing can have taken the key meanwhile — holding acquire and purge
-        off is what that tombstone is for."""
+        """Undo a :meth:`_detach` whose teardown failed. Dropped instead, the session would be
+        a guest copy in nobody's map behind a tombstone that every later ``acquire()`` for
+        the key waits on forever. The tombstone keeps anything else from taking the key."""
         async with self._lock:
             for key, session, _event in detached:
                 _ = self._sessions.setdefault(key, session)
@@ -312,20 +266,13 @@ class SandboxSessionManager:
             event.set()
 
     async def _tear_down(self, detached: list[_Detached]) -> None:
-        """Tear detached sessions down on a task the *manager* owns, and wait for it.
+        """Tear detached sessions down on a task the manager owns, and wait for it.
 
-        The waiting is the caller's; the teardown is not. Both reasons a session is
-        detached tear down somebody else's conversation — the cap displaces whoever was
-        least-recently-used, the sweep collects whoever went idle — and neither should
-        die because the task that happened to trigger it was cancelled. A teardown is
-        several VM round trips, so the window is wide: the operator presses Stop,
-        the acquiring task unwinds, and an unrelated conversation is left with a live
-        guest copy in nobody's map, behind a tombstone every later acquire waits on.
-
-        ``shield`` is what separates the two: a cancelled caller stops waiting, and the
-        teardown it started finishes regardless. :meth:`stop` drains what is still in
-        flight rather than cancelling it — a guest copy half brought out is the one
-        outcome worse than a slow shutdown."""
+        The sessions belong to other conversations, so a cancelled caller (the operator
+        pressing Stop) must not abort the teardown and strand a guest copy behind a
+        tombstone. ``shield`` lets the caller stop waiting while the teardown finishes;
+        :meth:`stop` drains it, since a half-brought-out guest copy is worse than a slow
+        shutdown."""
         if not detached:
             return
         task = asyncio.create_task(self._tear_down_detached(detached))
@@ -334,10 +281,9 @@ class SandboxSessionManager:
         await asyncio.shield(task)
 
     async def _tear_down_detached(self, detached: list[_Detached]) -> None:
-        """Tear detached sessions down off the manager lock, a few at a time, then
-        release each one's tombstone. One failed teardown must not strand the others
-        — or, worse, leave a tombstone set forever and hang every later acquire for that
-        conversation — so each leg isolates its own failure and releases in a ``finally``."""
+        """Tear detached sessions down off the manager lock, a few at a time, then release
+        each tombstone. Each leg isolates its own failure so one cannot strand the others or
+        leave a tombstone set forever."""
 
         async def down(key: str, session: SandboxSession, event: asyncio.Event) -> None:
             torn_down = False
@@ -356,8 +302,7 @@ class SandboxSessionManager:
                         _ = self._tearing_down.pop(key, None)
                     event.set()
                 else:
-                    # A teardown that did not happen must not lose the session with it —
-                    # put it back and let the next idle sweep try again.
+                    # Put it back for the next idle sweep to retry.
                     await self._reattach([(key, session, event)])
 
         _ = await gather_bounded([down(*item) for item in detached], _TEARDOWN_CONCURRENCY)
@@ -378,8 +323,8 @@ class SandboxSessionManager:
         session = await self.acquire(key)
         safe = safe_key(key)
         token = secrets.token_urlsafe(32)
-        # Launch outside the manager lock — the readiness wait must not stall other
-        # conversations; the session's own lock marks it busy so the reaper defers.
+        # Outside the manager lock so the readiness wait doesn't stall other conversations;
+        # the session's own lock marks it busy so the reaper defers.
         handle = await session.start_preview(
             command, port, token=token, startup_timeout_s=self._preview_startup_timeout_s
         )
@@ -389,9 +334,8 @@ class SandboxSessionManager:
         return handle
 
     def resolve_preview(self, token: str) -> PreviewHandle | None:
-        """The running preview a proxy request names, or None. Touches the session
-        so active viewing keeps it warm (the idle reaper won't evict it). Sync (no
-        await) so it reads the maps atomically against the reaper."""
+        """The running preview a proxy request names, or None. Touches the session so
+        viewing keeps it from the idle reaper. Sync so it reads the maps atomically."""
         safe = self._preview_tokens.owner(token)
         if safe is None:
             return None
@@ -402,11 +346,11 @@ class SandboxSessionManager:
         return session.preview
 
     def preview_status(self, token: str) -> str:
-        """Whether a `view.live` token still names a running preview, was torn down
-        without an explicit stop (idle-reaped or the conversation was purged), or is
-        unrecognized. Read-only — unlike `resolve_preview`, a status check must not
-        itself keep an otherwise-idle preview warm. Lets the frontend tell "the
-        sandbox went idle and killed it" apart from a merely-still-loading iframe."""
+        """Whether a `view.live` token names a running preview ("running"), was torn down
+        without an explicit stop ("stopped"), or is unrecognized ("unknown").
+
+        Unlike `resolve_preview` it does not touch the session, so a status poll can't keep
+        an idle preview warm."""
         safe = self._preview_tokens.owner(token)
         if safe is not None:
             session = self._sessions.get(safe)
@@ -431,17 +375,13 @@ class SandboxSessionManager:
                 await session.stop_preview()
 
     async def purge(self, key: str) -> None:
-        """Delete a conversation's sandbox outright — stop any live session and remove
-        its workspace from disk, along with any sealing-era archive still sitting beside
-        it. Called when the conversation is deleted, so nothing is kept. Idempotent and
-        safe for a conversation with no live session, and works while the vault is
-        locked (it only destroys).
+        """Delete a conversation's sandbox outright: stop any live session and remove its
+        workspace and any leftover sealed archive. Idempotent, and works while the vault is
+        locked.
 
-        Registers itself in ``_tearing_down`` (the same gate a sweep's reap uses)
-        for the duration of its own teardown+delete: if a sweep is already mid-reap
-        for this key we wait for that first, and a concurrent ``acquire()`` for
-        this key waits for us in turn — so nothing ever recreates a session onto
-        files we're in the middle of removing (sandbox-02)."""
+        Registers in ``_tearing_down`` like a reap: it waits for a reap already mid-flight
+        for this key, and a concurrent ``acquire()`` waits for it, so nothing recreates a
+        session onto files being removed."""
         safe = safe_key(key)
         my_event = asyncio.Event()
         session: SandboxSession | None = None
@@ -476,19 +416,14 @@ class SandboxSessionManager:
         await self._reaper.start()
 
     async def stop(self) -> None:
-        # The reaper owns its own cancel-and-await; the warm-up is a one-shot task with no
-        # loop behind it, so it stays hand-rolled rather than being bent into a timer.
         await self._reaper.stop()
-        # Drained, never cancelled: a teardown interrupted partway leaves a guest copy
-        # half brought out. Drained *before* taking the lock, which is
-        # what each of them needs to release its own tombstone.
+        # Drained, never cancelled (an interrupted teardown leaves a half-brought-out guest
+        # copy), and before taking the lock, which each needs to release its tombstone.
         if self._teardowns:
             _ = await asyncio.wait(self._teardowns, timeout=_SESSION_STOP_TIMEOUT_S)
         async with self._lock:
-            # In parallel and each bounded: serially, N sessions at up to 30s apiece was a
-            # shutdown measured in minutes. A session cut off by its cap is left behind
-            # (its guest copy is gone at the next VM boot) rather than allowed to hold the
-            # process open.
+            # Parallel and each bounded, so shutdown isn't N serial timeouts. A session
+            # cut off by its cap is left behind; its guest copy is gone at the next boot.
             async def _stop(session: SandboxSession) -> None:
                 try:
                     await asyncio.wait_for(session.shutdown(), _SESSION_STOP_TIMEOUT_S)
@@ -502,21 +437,15 @@ class SandboxSessionManager:
     async def sweep(self) -> None:
         now = time.monotonic()
         async with self._lock:
-            # Reaping is lossless — the guest copy goes, the files stay — so the sweep
-            # ignores who holds what, down to a run parked on an unanswered approval.
+            # Reaping is lossless (the guest copy goes, the files stay), so who holds the
+            # session is ignored, down to a run parked on an unanswered approval.
             stale = [
                 key
                 for key, s in self._sessions.items()
                 if not s.is_busy and s.idle_seconds(now) >= self._idle_ttl
             ]
-            # Snapshot + detach under the lock (so a concurrent acquire() can't
-            # mint a second session onto the same workspace mid-teardown), but the
-            # teardown itself (several VM round trips, potentially slow) runs
-            # OUTSIDE the lock, a few at a time — a mass reap must not stall unrelated
-            # conversations' acquire()/start_preview()/purge() for the sum of all of
-            # them (sandbox-02). A per-key tombstone in `_tearing_down` lets that *same*
-            # key's acquire/purge wait for its own teardown specifically, never anyone
-            # else's.
+            # Detach under the lock so a concurrent acquire() can't mint a second session
+            # onto the workspace; the slow teardown runs outside it.
             detached = self._detach(stale)
 
         await self._tear_down(detached)

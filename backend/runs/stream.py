@@ -1,26 +1,20 @@
-"""Pillar I — the per-run event stream: in-memory buffer + broker.
+"""The per-run event stream: in-memory buffer and broker.
 
-One :class:`RunStream` per Run owns the sequence-numbered event buffer and the
-set of live subscribers. It does two jobs at once:
+One :class:`RunStream` per Run owns the sequence-numbered event buffer and the live
+subscribers. The buffer keeps every event in ``seq`` order for the run's lifetime so a
+reconnecting client can replay what it missed; each emit also fans out to every
+subscriber's queue.
 
-- **buffer** — every event is appended in ``seq`` order and kept for the run's
-  lifetime, so a client that disconnects and reconnects can replay what it
-  missed on reconnect.
-- **broker** — each emit fans out to every live subscriber's queue.
+The buffer dies with the process. A run parked on the operator is the exception: it is
+rebuilt with a stream seeded past its last id and the events it waits on replayed
+(``RunRegistry.restore_parked``).
 
-The buffer is in-memory and dies with the process ("continuity need not survive a
-server restart"). A run parked on the operator is the exception: it is rebuilt with a
-stream seeded past its last id and the events it waits on replayed (``RunRegistry.restore_parked``).
+``emit`` is synchronous and ``subscribe`` registers then snapshots with no ``await``
+between, which is atomic under single-threaded asyncio: every event lands in exactly one
+of backlog or live queue, with no gap or duplicate.
 
-Correctness note: ``emit`` is synchronous and ``subscribe`` does its
-register-then-snapshot with no ``await`` in between. Under single-threaded
-asyncio that window is atomic, so every event lands in exactly one of {backlog,
-live queue} — no gap, no duplicate, for any subscriber at any time.
-
-Backpressure: each subscriber queue is bounded. A consumer that stops draining
-(a stalled or wedged client) is dropped rather than allowed to grow without
-limit — it can reconnect with ``Last-Event-ID`` and replay the gap from the
-buffer, so dropping it is lossless, not data loss.
+Each subscriber queue is bounded; a consumer that stops draining is dropped, and can
+reconnect with ``Last-Event-ID`` and replay the gap, so nothing is lost.
 """
 
 from __future__ import annotations
@@ -32,7 +26,7 @@ from core.shutdown import STOPPED, get_unless_shutdown
 
 from .events import Event, EventBody, now_utc
 
-# Per-subscriber backlog cap before we treat the consumer as wedged and drop it.
+# Backlog past which a subscriber is treated as wedged and dropped.
 SUBSCRIBER_QUEUE_MAX = 1024
 
 
@@ -55,12 +49,10 @@ class RunStream:
 
     @property
     def subscriber_count(self) -> int:
-        """How many live subscribers are attached right now — the run-terminal emit
-        policy's "was anyone watching" check (see ``RunRegistry``'s injected
-        ``on_terminal`` hook). Read this *before* ``close()``: closing signals every
-        subscriber's queue but doesn't discard them itself — each subscriber's own
-        generator removes itself once it wakes to the sentinel, so a count taken after
-        ``close()`` can race that cleanup."""
+        """Live subscribers attached now, for the terminal "was anyone watching" check
+        (``RunRegistry``'s ``on_terminal`` hook). Read before ``close()``: each subscriber's
+        generator removes itself only after waking to the sentinel, so a later count races
+        that cleanup."""
         return len(self._subscribers)
 
     def emit(self, body: EventBody) -> Event:

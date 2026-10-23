@@ -25,7 +25,6 @@ from services.sandbox.base import contained_file, contained_path
 from services.sandbox.fence import configure, confine
 
 
-# --- paths stay inside the workspace ----------------------------------------
 def test_contained_path_resolves_inside_the_root(tmp_path: Path):
     assert contained_path(tmp_path, "a/b.txt") == tmp_path.resolve() / "a" / "b.txt"
 
@@ -58,14 +57,12 @@ def test_contained_file_answers_none_instead_of_raising(tmp_path: Path):
     assert contained_file(tmp_path, "a\0b") is None
 
 
-# --- result/value types ------------------------------------------------------
 def test_result_ok_only_when_clean_exit():
     assert SandboxResult(exit_code=0, stdout="", stderr="").ok
     assert not SandboxResult(exit_code=1, stdout="", stderr="").ok
     assert not SandboxResult(exit_code=0, stdout="", stderr="", timed_out=True).ok
 
 
-# --- the deliberate host escape hatch ----------------------------------------
 async def test_run_on_host_executes_and_reports_exit():
     ok = await run_on_host("echo hostran")
     assert ok.ok and "hostran" in ok.stdout
@@ -74,18 +71,15 @@ async def test_run_on_host_executes_and_reports_exit():
 
 
 async def test_a_host_command_runs_where_the_caller_says(tmp_path: Path):
-    # Without a `cwd` a subprocess inherits the *server process's* working directory —
-    # wherever the backend was started — and every relative path in the command means
-    # something among this application's own files instead.
+    # Without a `cwd` the subprocess inherits the server's working directory, so relative
+    # paths would resolve among the application's own files.
     _ = (tmp_path / "here.txt").write_text("found")
     result = await run_on_host("cat here.txt", cwd=tmp_path)
     assert result.ok and "found" in result.stdout
 
 
 async def test_the_scratch_directory_exists_and_is_not_the_application_itself():
-    # It has to be usable the moment a command is approved (nothing else creates it), and
-    # it must not be the directory the server was started in, which is the source tree the
-    # relative paths in an approved command used to land in.
+    # Nothing else creates it, so it must be usable the moment a command is approved.
     scratch = host_scratch_dir()
     assert scratch.is_dir()
     assert scratch != Path(os.getcwd())
@@ -94,10 +88,8 @@ async def test_the_scratch_directory_exists_and_is_not_the_application_itself():
 
 
 def test_the_scratch_directory_is_this_user_s_alone():
-    # On Linux `gettempdir()` is the shared `/tmp`, so a fixed name under it is a path any
-    # local account can reach. The uid in the name keeps two accounts from contending for
-    # one directory, and 0700 keeps the output of an approved command — which is the
-    # operator's — from being readable by everyone else on the host.
+    # On Linux `gettempdir()` is the shared `/tmp`: the uid in the name avoids contention
+    # between accounts, and 0700 keeps approved-command output unreadable to them.
     scratch = host_scratch_dir()
     assert str(os.getuid()) in scratch.name
     assert stat.S_IMODE(scratch.lstat().st_mode) == 0o700
@@ -106,10 +98,8 @@ def test_the_scratch_directory_is_this_user_s_alone():
 def test_a_scratch_path_someone_else_planted_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    # `Path.mkdir(exist_ok=True)` swallows the already-there case whenever `is_dir()` is
-    # true, and `is_dir()` follows symlinks — so before this, a link planted at the scratch
-    # path was silently adopted, and it is both the cwd of every approved host command and
-    # an entry in the fence's write allowlist.
+    # `mkdir(exist_ok=True)` accepts a symlink to a directory, and the scratch path is both
+    # the cwd of every approved host command and a fence write-allowlist entry.
     elsewhere = tmp_path / "attacker"
     elsewhere.mkdir()
     planted = tmp_path / "tmproot"
@@ -124,8 +114,7 @@ def test_a_scratch_path_someone_else_planted_is_refused(
 def test_a_scratch_directory_this_process_owns_is_tightened_rather_than_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    # The ordinary case for an existing install: our own directory, created before it was
-    # created narrowly. Refusing it would break the tool over a mode we can simply fix.
+    # An existing install's own directory predates the 0700 mode; fix it rather than refuse.
     root = tmp_path / "tmproot"
     root.mkdir()
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(root))
@@ -145,7 +134,7 @@ async def test_host_timeout_kills_the_whole_process_group(tmp_path: Path):
     result = await run_on_host(cmd, timeout_s=0.4)
     assert result.timed_out and result.exit_code == 124
     await asyncio.sleep(2.5)  # past when an orphaned child would have written
-    assert not marker.exists()  # the whole group was killed — no survivor
+    assert not marker.exists()
 
 
 async def test_confinement_is_off_when_the_operator_disables_it():
@@ -155,17 +144,15 @@ async def test_confinement_is_off_when_the_operator_disables_it():
 
 
 async def test_a_disabled_confinement_still_runs_the_command():
-    # The inverse of the sandbox rule, on purpose: the operator approved *this* command,
-    # so a missing (or switched-off) fence means it runs unconfined and says so — not
-    # that an approved command silently refuses. (The project-folder shell is the other way
-    # round; see `test_shell_fence.py`.)
+    # Unlike the sandbox, an approved host command runs unconfined when the fence is
+    # missing or off. The project-folder shell refuses instead (`test_shell_fence.py`).
     result = await run_on_host("echo ran", confinement=HostConfinement(False, "disabled"))
     assert result.ok and "ran" in result.stdout
 
 
 async def test_the_hatch_runs_where_and_with_what_it_was_told(tmp_path: Path):
-    # `cwd` and `env` exist so the project-folder shell can share this spawn; the hatch itself
-    # passes neither, and a regression that dropped them would be silent there.
+    # The hatch itself passes neither, so dropping `cwd`/`env` would only break the shared
+    # project-folder shell spawn.
     result = await run_on_host(
         "pwd; echo $HEPHAESTUS_TEST_MARKER",
         cwd=tmp_path,
@@ -182,10 +169,8 @@ async def test_the_hatch_runs_where_and_with_what_it_was_told(tmp_path: Path):
 async def test_the_hatch_does_not_hand_the_operators_model_keys_to_the_command(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # The fence denies the paths those keys are *stored* at and says nothing about the
-    # environment, so an inherited one puts them in the transcript of the single command
-    # the operator approved without ever being shown that it could read them. The
-    # project-folder shell already filters; the hatch is the more guarded path of the two.
+    # The fence covers where keys are stored, not the environment, so an inherited key
+    # would reach the transcript of the approved command.
     monkeypatch.setenv("OPENAI_API_KEY", "sk-not-for-the-command")
     monkeypatch.setenv("HEPHAESTUS_TEST_MARKER", "kept")
     result = await run_on_host("echo [$OPENAI_API_KEY] [$HEPHAESTUS_TEST_MARKER]")
@@ -197,11 +182,8 @@ async def test_the_hatch_does_not_hand_the_operators_model_keys_to_the_command(
 async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # One proxy serves every confined process here, and it filters each request against
-    # the *process-global* configuration. So teaching it a caller's domains would widen
-    # the fence around everything else running at that moment — another conversation's
-    # background server included — and leave it widened after this command exited: a
-    # per-call approval turned into a process-wide standing grant.
+    # One proxy filters every confined process against the process-global configuration,
+    # so adding a caller's domains would turn a per-call approval into a standing grant.
     from sandbox_runtime import (
         FilesystemConfig,
         NetworkConfig,
@@ -210,8 +192,7 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
     )
 
     seen: list[SandboxRuntimeConfig | None] = []
-    # The installed configuration lives behind the runtime's public accessors, stubbed so
-    # nothing leaks into the process-global one other tests share.
+    # Stubbed so nothing leaks into the process-global configuration other tests share.
     installed = SandboxRuntimeConfig(
         network=NetworkConfig(allowed_domains=["pypi.org"], allow_local_binding=True),
         filesystem=FilesystemConfig(deny_read=["/keys"], allow_write=["/tmp"]),
@@ -231,8 +212,7 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
     async def wrap(
         command: str, *, custom_config: SandboxRuntimeConfig | None = None, **_kwargs: object
     ) -> str:
-        # Stubbed rather than run: what a real wrap produces is seatbelt's or bubblewrap's
-        # business, and only on the machines that have them.
+        # Stubbed: a real wrap needs seatbelt or bubblewrap.
         seen.append(custom_config)
         return command
 
@@ -247,20 +227,15 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
         allow_write=["/work"],
         deny_read=["/keys"],
     )
-    # The filesystem half is per-call, because the OS wrapper is what enforces it...
     [config] = seen
     assert config is not None
     assert config.filesystem.allow_write == ["/work"]
-    # ...and the installation's allowlist is still the only thing the proxy will filter
-    # against for anything else on this host: neither replaced nor edited in place.
     assert replaced == []
     assert SandboxManager.get_config() is installed
     assert installed.network.allowed_domains == ["pypi.org"]
 
 
 async def test_confinement_denies_reading_the_data_directory(tmp_path: Path):
-    # The one path whose exposure would undo at-rest encryption wholesale: the vault,
-    # the sealed workspaces and the database all live under it.
     # Enabled explicitly: conftest switches host confinement off for the rest of the suite.
     settings = Settings(data_dir=tmp_path, host_command_sandbox_enabled=True)
     from sandbox_runtime import SandboxManager
@@ -274,5 +249,5 @@ async def test_confinement_denies_reading_the_data_directory(tmp_path: Path):
         result = await run_on_host(f"cat {secret}", confinement=confinement)
         assert "SEALEDKEYMATERIAL" not in result.stdout
     finally:
-        # The runtime is process-global; leave it unconfigured for the next test on this worker.
+        # The runtime is process-global; reset it for the next test on this worker.
         await SandboxManager.reset()

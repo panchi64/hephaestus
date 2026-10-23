@@ -1,9 +1,7 @@
 """What a shell command hands back: structure, not a rendered string.
 
-A run returns :class:`ShellResult` — exit code, the two streams apart, whether it was killed
-on a timeout, and how long it took — and a background command returns
-:class:`BackgroundStatus`. The prose a *model* reads is composed one layer up
-(``tools/shell.py``) from these fields; nothing here decides how a result is worded.
+A run returns :class:`ShellResult` and a background command :class:`BackgroundStatus`.
+The prose a model reads is composed one layer up (``tools/shell.py``).
 """
 
 from __future__ import annotations
@@ -13,9 +11,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 #: Called with everything a running command has newly printed and how long it has been
-#: running. One string per tick, stdout ahead of stderr — the two are separate files and
-#: nothing records how they interleaved. The finished :class:`ShellResult` is where they are
-#: apart.
+#: running. One string per tick, stdout ahead of stderr, since nothing records how the two
+#: files interleaved.
 type ProgressHook = Callable[[str, float], Awaitable[None]]
 
 
@@ -23,11 +20,9 @@ type ProgressHook = Callable[[str, float], Awaitable[None]]
 class ShellResult:
     """One finished command, as fields.
 
-    ``exit_code`` is **None only when the command was killed on its timeout** — there was
-    no status to collect, and a zero there would read as success. The streams are whole
-    and unlabelled, ``duration_ms`` is wall clock measured around the spawn, and a command
-    that printed nothing carries two empty strings rather than a sentence saying so. A
-    timed-out command keeps what it managed to print.
+    ``exit_code`` is None only when the command was killed on its timeout, since a zero
+    would read as success. ``duration_ms`` is wall clock around the spawn. A timed-out
+    command keeps what it printed.
     """
 
     exit_code: int | None

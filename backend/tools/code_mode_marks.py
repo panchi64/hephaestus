@@ -17,10 +17,8 @@ RUN_CODE = "run_code"
 def script_call_of(ctx: RunContext[RunDeps]) -> str | None:
     """The ``run_code`` call a tool hook's call was made from, or None for a direct call.
 
-    The sandbox dispatches through a ``ToolManager`` of its own whose context *is* the
-    ``run_code`` call's, and the library hands each call a context carrying the manager
-    executing it. So a call is nested exactly when its manager's context names
-    ``run_code``; a direct call's manager is the run's, whose context names no tool.
+    The sandbox dispatches through its own ``ToolManager`` whose context is the ``run_code``
+    call's; a direct call's manager is the run's, whose context names no tool.
     """
     manager = ctx.tool_manager
     outer = manager.ctx if manager is not None else None

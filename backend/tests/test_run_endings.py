@@ -63,9 +63,6 @@ def _ended(run: Run) -> RunEnded:
     return body
 
 
-# --- ending codes -----------------------------------------------------------
-
-
 async def test_wall_clock_bound_sets_its_code_and_stop_cause() -> None:
     reg = RunRegistry(wall_clock_timeout_s=0.05, inactivity_timeout_s=None)
 
@@ -184,9 +181,6 @@ async def test_a_retry_wait_longer_than_the_inactivity_bound_does_not_stop_the_r
     assert attempts == 2
 
 
-# --- the turn cap -----------------------------------------------------------
-
-
 async def test_the_request_cap_blocks_the_run_and_keeps_the_partial_turn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -245,9 +239,6 @@ async def test_without_a_cap_a_long_turn_is_not_stopped(monkeypatch: pytest.Monk
     assert run.status is RunStatus.done
 
 
-# --- Retry-After ------------------------------------------------------------
-
-
 def _http(headers: dict[str, str] | None) -> ModelHTTPError:
     return ModelHTTPError(status_code=429, model_name="m", body="slow down", headers=headers)
 
@@ -299,9 +290,6 @@ def test_without_a_usable_header_the_backoff_step_is_jittered_within_twenty_perc
 
 def test_a_transport_error_uses_the_backoff() -> None:
     assert 1.6 <= transient_wait_s(RuntimeError("cut"), 1) <= 2.4
-
-
-# --- save failures are visible ----------------------------------------------
 
 
 async def test_a_save_failure_is_announced_once_per_conversation_per_window(

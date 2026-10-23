@@ -1,18 +1,15 @@
-"""Spawning agents, and reaching them afterwards — the implementation.
+"""Spawning agents and reaching them afterwards: the implementation.
 
 The abstraction lives in ``services/subagents/``, where ``tools/`` can name it; this half
-composes actual chat turns, and so sits up here with the wiring. Private module (the
-leading underscore keeps manifest discovery from mistaking it for a feature).
+composes real chat turns. Private (the underscore keeps manifest discovery from taking it
+for a feature).
 
-There is no agent engine here. Spawning one is: make a conversation, decide how far it may
-reach and which files it works on, and submit the turn a route would have submitted.
-Everything else — messages, reports, stops — rides runs that already exist or wakes that
-start new ones (``_subagent_wake.py``).
+Spawning is: make a conversation, decide its reach and files, and submit the turn a route
+would. Messages, reports and stops ride existing runs or wakes (``_subagent_wake.py``).
 
-**Trees.** Every spawned agent belongs to the delegation tree of the thread that spawned
-it, rooted at the operator's own thread. A handle is unique within a tree, and a tree is
-the boundary of who may address whom: an agent can message, read or list anything in its
-own tree and nothing outside it, and can stop only what is below it.
+Every spawned agent belongs to the delegation tree of the spawning thread, rooted at the
+operator's thread. A handle is unique within a tree, which bounds who may address whom: an
+agent can message, read or list anything in its tree and stop only what is below it.
 """
 
 from __future__ import annotations
@@ -232,15 +229,13 @@ class ConversationSubagents(SubagentLauncher):
         except Exception as exc:
             raise SubagentUnavailableError(f"No usable model is configured: {exc}") from exc
 
-        # What the definition asks for, capped by what the spawning thread may do: one
-        # approved launch must not buy a level the operator never chose.
+        # Capped by the spawning thread: one approved launch must not buy an unchosen level.
         permission = permission_level(agent.permission_ceiling or DEFAULT_PERMISSION)
         if parent.permission is not None:
             permission = stricter_permission(parent.permission, permission)
 
         depth = position.depth + 1
-        # Nobody is in the agent's conversation, so it is not offered the tools that would
-        # stop and wait for someone.
+        # No one is in its conversation, so it isn't offered tools that wait for someone.
         disabled = await self._composer.disabled(
             owner_id,
             kind=SUBAGENT_KIND,
@@ -248,8 +243,8 @@ class ConversationSubagents(SubagentLauncher):
             applied=as_thread(agent, ConversationBinding()),
             depth=depth,
         )
-        # Refuse rather than degrade: an agent missing the one capability its job rests on
-        # still answers, from memory, and reads as though it had done the work.
+        # Refuse rather than degrade: without its core capability an agent answers from
+        # memory and reads as though it did the work.
         withheld = {
             tool for tool in agent.required if tool in disabled or not agent.tools.permits(tool)
         }
@@ -290,8 +285,7 @@ class ConversationSubagents(SubagentLauncher):
             # Hidden from the session list until the operator opens it.
             ephemeral=True,
         )
-        # Read back the way every later turn of it reads it, so the worktree and leases
-        # it works under are one rule (`ConversationBinding.leases_from`).
+        # Read back as every later turn reads it (`ConversationBinding.leases_from`).
         stored = await self._conversations.binding(conversation_id)
         binding = replace(
             stored,
@@ -323,8 +317,8 @@ class ConversationSubagents(SubagentLauncher):
             auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             owner_id=owner_id,
             kind=SUBAGENT_KIND,
-            # Nobody is watching, and a streaming model keeps the inactivity watchdog fed,
-            # so only a wall clock can end a wedged one.
+            # A streaming model keeps the inactivity watchdog fed; only a wall clock ends a
+            # wedged one.
             wall_clock_timeout_s=lower_of(
                 agent.wall_clock_timeout_s,
                 self._ctx.settings.subagent_wall_clock_timeout_s,
@@ -401,11 +395,10 @@ class ConversationSubagents(SubagentLauncher):
     async def _names_for(
         self, owner_id: str, root: str, requested: str, agent: AgentDefinition
     ) -> tuple[str, str]:
-        """The handle and callsign this agent will answer to, unique in its tree and claimed
-        before this returns, so concurrent launches cannot both take them. A handle is
-        suffixed rather than refused on a clash — ``explorer-2`` is legible, and a failed
-        launch costs a retry. Handles and callsigns share one namespace, so a reference
-        never fits one agent's handle and another's callsign."""
+        """The handle and callsign this agent answers to, unique in its tree and claimed before
+        returning so concurrent launches can't both take them. A clashing handle is suffixed
+        (``explorer-2``), not refused. Handles and callsigns share one namespace, so a
+        reference never fits one agent's handle and another's callsign."""
         try:
             base = normalize_agent_name(requested) if requested.strip() else agent.name
         except AgentNameError as exc:
@@ -446,8 +439,7 @@ class ConversationSubagents(SubagentLauncher):
             return handle, callsign
 
     async def _check_capacity(self, owner_id: str, root: str) -> None:
-        """Refuse a launch that would put this tree over the operator's cap. An agent parked
-        on an approval still counts: what it waits for is a person, not a slot."""
+        """Refuse a launch over the operator's cap. A parked agent counts: it waits on a person."""
         limit = await get_subagent_limit(self._settings, owner_id) or DEFAULT_MAX_CONCURRENT
         running = len(await self._records.live(owner_id, root_conversation_id=root))
         if running < limit:
@@ -462,8 +454,8 @@ class ConversationSubagents(SubagentLauncher):
     async def _cut_worktree(
         self, owner_id: str, parent: SubagentParent, base: str, delegation_id: str
     ) -> str:
-        """Cut a sub-agent's worktree from where its parent works, returning the commit
-        it starts at: the parent's own worktree, or the checkout as it stands."""
+        """Cut a worktree from where the parent works (its own worktree, else the checkout),
+        returning the commit it starts at."""
         projects = self._ctx.services.get_optional(ProjectStore)
         worktrees = self._ctx.services.get_optional(WorktreeManager)
         if not parent.project_id:
@@ -599,8 +591,7 @@ class ConversationSubagents(SubagentLauncher):
         position = await self._position(owner_id, conversation_id)
         view = self._live_view(await self._resolve(owner_id, position.root, handle))
         if view.summary is None and view.status in {"running", "blocked"}:
-            # Its latest answer, so a parent checking on a long-running agent sees where it
-            # has got to. A current best, explicitly not a report.
+            # Its latest answer: a current best for a parent checking in, not a report.
             view = replace(view, summary=await self._latest_answer(view.conversation_id))
         return view
 
@@ -626,8 +617,8 @@ class ConversationSubagents(SubagentLauncher):
             if row.status in LIVE_STATUSES
             or self._runs.active_run_for(row.child_conversation_id, owner_id) is not None
         ]
-        # An agent that already finished is not stopped, so a report from below it would
-        # wake it; its inbox waits for the operator instead.
+        # A finished agent isn't stopped, so a report from below would wake it; its inbox
+        # waits for the operator instead.
         stopping = {row.id for row in rows}
         for row in below:
             if row.id not in stopping:
@@ -641,16 +632,14 @@ class ConversationSubagents(SubagentLauncher):
             _ = self._stop_marks.popitem(last=False)
 
     def _stopped_since(self, conversation_id: str, since: float) -> StopCause | None:
-        """Who stopped this thread after ``since``, which a launch still in flight at the
-        time would have missed."""
+        """Who stopped this thread after ``since``, which a launch in flight would have missed."""
         marked = self._stop_marks.get(conversation_id)
         return marked[1] if marked is not None and marked[0] >= since else None
 
     async def _stop_rows(
         self, owner_id: str, rows: list[SubagentRecord], cause: StopCause
     ) -> list[str]:
-        # Marked stopped before any run is cancelled, so the reports the cancellations
-        # produce do not wake an agent that is itself being stopped.
+        # Marked before any cancel so the resulting reports don't wake an agent being stopped.
         for each in rows:
             self._mark_stop(each.child_conversation_id, cause)
             await self._records.settle(each.id, status="cancelled")
@@ -679,8 +668,8 @@ class ConversationSubagents(SubagentLauncher):
 
     @override
     async def awaiting_reports(self, owner_id: str, conversation_id: str) -> bool:
-        # Off the live runs, not the stored status: a row settled as `blocked` waits on
-        # this thread, and a row whose settle failed reads `running` until a restart.
+        # Live runs, not stored status: a `blocked` row waits on this thread, and a failed
+        # settle leaves `running` until a restart.
         rows = await self._records.children(conversation_id, owner_id)
         return any(
             self._runs.active_run_for(row.child_conversation_id, owner_id) is not None
@@ -803,9 +792,9 @@ def _isolation(declared: WorkspacePolicy, *, worktree: bool) -> WorkspacePolicy:
 
 
 def _workspace_key(base: str, policy: WorkspacePolicy, delegation_id: str) -> str:
-    """The key naming the workspace this agent works in. ``own`` is the empty key, which
-    every run reads as "my own conversation's"; a worktree of its own is named under the
-    thread at the top of the parent's workspace, whose scratch it shares."""
+    """The key naming this agent's workspace. ``own`` is the empty key (every run reads it
+    as its own conversation's); a worktree is named under the thread atop the parent's
+    workspace, whose scratch it shares."""
     if policy == "own":
         return ""
     if policy == "shared":

@@ -1,24 +1,14 @@
 /**
- * What the operator can do to a turn that has already been recorded.
+ * Operations on already-recorded turns (regenerate, edit, versions, rewind, compact,
+ * delete, pin, snapshot keeper). Each is a thin relay to an endpoint that returns the new
+ * active path, and the store is reseated from it.
  *
- * Regenerate, edit, cycle versions, rewind, compact, delete, pin, bookmark a snapshot —
- * all of them act on the *conversation tree* rather than on the run in flight, which is
- * why they live apart from the controller that drives a run. Each is a thin relay to a
- * live endpoint, and each ends the same way: the backend returns the new active path and
- * the store is reseated from it, so what the transcript shows after the action is exactly
- * what a cold read would give.
+ * Reseat, don't patch: regenerate/edit optimistically reset the path before streaming,
+ * the rest wait for the backend. None compute the resulting tree locally.
  *
- * **Reseat, don't patch.** The two ops that stream (regenerate/edit) optimistically reset
- * the path *before* the run so the operator sees the turn clear immediately; the rest wait
- * for the backend's answer. Neither tries to compute the resulting tree locally — a second
- * implementation of the branch arithmetic is exactly the kind of thing that agrees with the
- * backend until the day it doesn't.
- *
- * **Never while a run is live.** A live fold keeps patching the message it was streaming
- * into, so an op that replaces the store while a run is open would leave the fold writing
- * to a message that no longer exists. Every one of these declines instead, the controls
- * are disabled with the same condition, and nothing here cancels a run on the operator's
- * behalf. A run this client is not driving reaches the backend's 409, which shows it.
+ * Every op declines while a run is live, since a live fold would keep writing to a
+ * replaced message. The controls are disabled on the same condition and nothing here
+ * cancels a run; a run this client is not driving reaches the backend's 409.
  */
 
 import { reconcile, type SetStoreFunction } from "solid-js/store";
@@ -47,34 +37,25 @@ export interface TranscriptStore {
   setSnapshots: Setter<ViewSnapshotRef[]>;
 }
 
-/** Replace the transcript with the backend's active path, through the same mapper the
- *  cold read uses, so a reload, a version switch and a recovered stale decision all land
- *  on the identical shape. */
+/** Replace the transcript with the backend's active path, via the cold read's mapper. */
 export function reseatFromDetail(
   store: TranscriptStore,
   detail: ConversationDetailDTO,
 ): void {
   store.setMessages(reconcile(detail.messages.map(toMessage)));
-  // The active path moved (version switch / rewind / delete), so the window
-  // state moves with it.
   store.setUsage(detail.context);
-  // Re-seed the conversation-level snapshot history from the same detail.
   store.setSnapshots((detail.snapshots ?? []).map(toViewSnapshotRef));
 }
 
-/** Everything the branching ops need from the controller they belong to. Passed in
- *  rather than closed over, so the ops read as relays to the backend instead of as
- *  another part of the run-driving closure. */
+/** What the branching ops need from their controller. */
 export interface BranchingContext extends TranscriptStore {
   messages: ChatMessage[];
-  /** The conversation the stream is bound to right now — a getter, because `send`
-   *  adopts a freshly-created thread's id mid-flight. */
+  /** A getter, because `send` adopts a new thread's id mid-flight. */
   conversationId: () => string | null;
   sending: () => boolean;
   setSending: (value: boolean) => void;
   patchById: (id: string, fn: (m: ChatMessage) => void) => void;
-  /** The per-instance model override (the compare panes), or undefined when this
-   *  stream follows the global picker. */
+  /** Per-instance model override (compare panes), or undefined to follow the picker. */
   overrideSelection: () => ModelSelection | null | undefined;
   driveRun: (runId: string, assistantId: string) => Promise<void>;
   reattachToLiveRun: (conversationId: string) => Promise<void>;
@@ -94,17 +75,9 @@ export function createBranchingOps(ctx: BranchingContext) {
   const reseat = (detail: ConversationDetailDTO) =>
     reseatFromDetail(ctx, detail);
 
-  /**
-   * Reseat, but only while the room is still on the thread the op was aimed at.
-   *
-   * A reseat is a whole-store replacement, so it has to be aimed. Every op here holds at
-   * least one round trip, and the ones that stop a live run first hold a cancel as well
-   * — long enough for the operator to pick another thread from the rail. Reseating then
-   * writes the answering thread's transcript, its window reading and its snapshots over
-   * whichever thread is now on screen, which reads as the room silently swapping its
-   * contents. The backend still did the work; the thread that was left reads it back
-   * when it is opened again.
-   */
+  /** Reseat only while the room is still on the thread the op targeted; the round trip
+   *  is long enough for the operator to switch threads, and a late reseat would
+   *  overwrite whichever thread is now on screen. */
   const reseatIfCurrent = (
     conversationId: string,
     detail: ConversationDetailDTO,
@@ -112,23 +85,14 @@ export function createBranchingOps(ctx: BranchingContext) {
     if (ctx.conversationId() === conversationId) reseat(detail);
   };
 
-  /** The threads a hand-started fold is running against.
-   *
-   *  Every other op here either streams (so the transcript animates) or returns in a
-   *  round trip. A fold does neither: it holds a summarizer call inside it — seconds on
-   *  a local model — and until it lands there is nothing anywhere in the room that has
-   *  changed. Without this the operator picks "Compact now", the menu closes, and the
-   *  product looks like it dropped the request.
-   *
-   *  Keyed by conversation, because this controller outlives every thread it binds to,
-   *  so the fold belongs to a conversation rather than to the stream. That is the shape
-   *  `createInFlight` exists for, and it also owns the claim-before-the-first-await
-   *  ordering the fold depends on. */
+  /** Threads with a hand-started fold running. A fold holds a summarizer call (seconds
+   *  on a local model) with nothing else visibly changing, so the room needs this to
+   *  show it is working. Keyed by conversation because the controller outlives threads;
+   *  `createInFlight` also owns the claim-before-first-await ordering. */
   const compacting = createInFlight<string>();
 
-  /** A 409 is a turn this client is not driving (one the inbox started, another tab):
-   *  the controls only know this client's own runs. Say so, and show that turn rather
-   *  than leaving the click unanswered. */
+  /** A 409 means a turn this client is not driving (inbox-started, another tab); warn
+   *  and attach to it. */
   function surfaceBusy(err: unknown): boolean {
     if (!isApiError(err) || err.status !== 409) return false;
     toast.warn("A turn is running in this thread. Stop it first.");
@@ -141,9 +105,9 @@ export function createBranchingOps(ctx: BranchingContext) {
   /** Set while a regenerate or edit is choosing about files, before `sending` is. */
   let offering = false;
 
-  /** Post a regenerate or edit, offering to put the turn's file changes back first.
-   *  Resolves null when the operator cancelled. `sending` is set only once the post is
-   *  on its way, so the room is not locked while a dialog is open. */
+  /** Post a regenerate or edit after offering to restore the turn's file changes;
+   *  null when cancelled. `sending` is set only once the post starts, so a dialog does
+   *  not lock the room. */
   async function postOffering(
     conversationId: string,
     messageId: string,
@@ -172,9 +136,8 @@ export function createBranchingOps(ctx: BranchingContext) {
     }
   }
 
-  /** Re-answer an assistant turn from the preceding request, using the current
-   *  model selection; the new answer becomes a sibling version. `messageId` is
-   *  the assistant message's id. */
+  /** Re-answer an assistant turn (`messageId`) as a sibling version, using the current
+   *  model selection. */
   async function regenerate(messageId: string): Promise<void> {
     const conversationId = ctx.conversationId();
     if (conversationId === null || ctx.sending() || offering) return;
@@ -214,10 +177,8 @@ export function createBranchingOps(ctx: BranchingContext) {
     }
   }
 
-  /** Re-ask an edited user turn as a new version; a fresh answer streams in.
-   *  `messageId` is the user message's id. Resolves true once the edit was submitted,
-   *  false when it was not (cancelled at the file dialog, refused, or failed) so the
-   *  caller keeps the draft. */
+  /** Re-ask an edited user turn (`messageId`) as a new version. False when not submitted
+   *  (cancelled, refused or failed) so the caller keeps the draft. */
   async function edit(
     messageId: string,
     newText: string,
@@ -230,7 +191,6 @@ export function createBranchingOps(ctx: BranchingContext) {
     );
     if (j < 0 || conversationId === null || ctx.sending() || offering)
       return false;
-    // Reuse the turn's existing attachments unless the caller supplies a new set.
     const ids = attachmentIds ?? ctx.messages[j].attachmentIds ?? [];
     if (!newText.trim() && ids.length === 0) return false;
     const override = selection ?? ctx.overrideSelection();
@@ -278,23 +238,19 @@ export function createBranchingOps(ctx: BranchingContext) {
     }
   }
 
-  /** Switch a turn to a sibling version; reseat the store from the returned
-   *  active path and refresh the sidebar. */
+  /** Switch a turn to a sibling version and refresh the sidebar. */
   async function switchVersion(
     messageId: string,
     index: number,
   ): Promise<void> {
     const conversationId = ctx.conversationId();
-    // The reseat below replaces the store, and a still-streaming foldEvent would keep
-    // patching a message it removed; the controls are disabled while a run is live.
     if (conversationId === null || ctx.sending()) return;
     try {
       const detail = await api.post<ConversationDetailDTO>(
         `/conversations/${conversationId}/messages/${messageId}/version`,
         { index },
       );
-      // `onTurnComplete` stays unconditional: it refreshes the rail, which is about
-      // the thread that answered rather than the one on screen.
+      // Unconditional: the rail refresh concerns the thread that answered.
       reseatIfCurrent(conversationId, detail);
       ctx.onTurnComplete?.();
     } catch (err) {
@@ -313,44 +269,30 @@ export function createBranchingOps(ctx: BranchingContext) {
       );
       reseatIfCurrent(conversationId, detail);
       ctx.onTurnComplete?.();
-      // The toast is unconditional for the same reason the refresh is: the rewind
-      // happened, and the operator asked for it, whichever thread they are looking at
-      // by the time it lands.
+      // Unconditional, like the refresh: the rewind happened whichever thread is on screen.
       toast.success("Rewound — your next message starts a new branch");
     } catch (err) {
       toastError(err, "Unable to rewind the conversation.");
     }
   }
 
-  /** Fold this thread's older turns into a summary now, rather than waiting for it to
-   *  reach the automatic threshold — for a thread the operator knows is about to need the
-   *  room.
-   *
-   *  It drives a run, like a turn does, so the frames an automatic fold produces stream
-   *  here too and `fold.ts` renders them without knowing which trigger fired.
-   *
-   *  Nothing is reseated afterwards. `conversation.compacted` carries the checkpoint and
-   *  where it goes, so the transcript is already right; refetching it would replace a
-   *  store the operator just watched fill with an identical one. */
+  /** Fold older turns into a summary now instead of at the automatic threshold.
+   *  It drives a run, so `fold.ts` renders its frames whichever trigger fired. Nothing is
+   *  reseated afterwards: `conversation.compacted` already carries the checkpoint. */
   async function compactNow(): Promise<void> {
     const conversationId = ctx.conversationId();
     if (conversationId === null || ctx.sending()) return;
-    // The claim is taken before the first await: a guard read after an await is not a
-    // guard. The failure is reported inside the task so `run` resolves rather than
-    // rejecting — every caller of a fold treats it as fire-and-forget.
+    // The claim is taken before the first await. Failure is reported inside the task so
+    // `run` resolves; callers treat a fold as fire-and-forget.
     await compacting.run(conversationId, async () => {
       try {
-        // Guarded like any other run the room drives, so a send during the fold
-        // queues instead of starting a turn.
+        // A send during the fold queues instead of starting a turn.
         ctx.setSending(true);
         const started = await api.post<ChatCreatedDTO>(
           `/conversations/${conversationId}/compact`,
           {},
         );
-        // No anchor message: a fold emits no answer and no thinking, so nothing it
-        // sends is addressed to a turn. The compaction frames seat their own turn in
-        // the transcript, which is exactly what lets this path have no assistant
-        // bubble to hang off.
+        // No anchor message: the compaction frames seat their own turn.
         await ctx.driveRun(started.run_id, "");
       } catch (err) {
         ctx.setSending(false);
@@ -359,8 +301,7 @@ export function createBranchingOps(ctx: BranchingContext) {
     });
   }
 
-  /** Delete a turn and everything after it; reseat from the returned active path
-   *  (the DELETE returns the post-delete detail, like version-switch/rewind). */
+  /** Delete a turn and everything after it. */
   async function removeMessage(messageId: string): Promise<void> {
     const conversationId = ctx.conversationId();
     if (conversationId === null || ctx.sending()) return;
@@ -375,8 +316,7 @@ export function createBranchingOps(ctx: BranchingContext) {
     }
   }
 
-  /** Pin/unpin a turn. The backend owns the flag; this optimistically echoes the
-   *  toggle and reverts if the POST fails. */
+  /** Pin/unpin a turn, optimistically; reverts if the POST fails. */
   async function toggleMessagePin(messageId: string): Promise<void> {
     const conversationId = ctx.conversationId();
     if (conversationId === null) return;
@@ -399,9 +339,8 @@ export function createBranchingOps(ctx: BranchingContext) {
     }
   }
 
-  /** Flip a snapshot's keeper bookmark: optimistically replace the array element
-   *  (a spread copy — never mutate the stored ref in place), then confirm against
-   *  the backend, reverting the same way on failure. */
+  /** Flip a snapshot's keeper bookmark optimistically (replace the element with a
+   *  copy, never mutate in place); reverts on failure. */
   async function toggleSnapshotKeeper(
     snapshotId: string,
     keeper: boolean,
@@ -427,8 +366,7 @@ export function createBranchingOps(ctx: BranchingContext) {
     switchVersion,
     rewind,
     compactNow,
-    /** True while a hand-started fold is running against that conversation. The stream
-     *  turns it into the room's own boolean by pairing it with the reactive bound id. */
+    /** True while a hand-started fold is running against that conversation. */
     isCompacting: compacting.has,
     removeMessage,
     toggleMessagePin,

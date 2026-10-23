@@ -1,5 +1,5 @@
 """The /tasks REST surface: CRUD + validation, manual run_now (incl. non-overlap and
-outcome mapping), the inbound webhook trigger (+ its auth exemption), and the AE-3.5
+outcome mapping), the inbound webhook trigger (+ its auth exemption), and the
 park/approve/resume path for a task-driven agent run."""
 
 from __future__ import annotations
@@ -100,9 +100,6 @@ def _grants(app: FastAPI) -> ApprovalGrantStore:
     return app_state(app).approval_grants
 
 
-# --- CRUD + validation -------------------------------------------------------------
-
-
 async def test_create_list_patch_delete_round_trip():
     async with client_app() as (client, _app):
         created = await create_task(client, title="Morning digest")
@@ -116,7 +113,7 @@ async def test_create_list_patch_delete_round_trip():
         assert schedule["cron"] is None
         assert created["enabled"] is True
         assert created["webhookUrl"] is None
-        assert created["nextRunAt"] is not None  # computed at creation
+        assert created["nextRunAt"] is not None
 
         listed = response_items(await client.get("/tasks"))
         assert [obj(t)["id"] for t in listed] == [task_id]
@@ -124,7 +121,7 @@ async def test_create_list_patch_delete_round_trip():
         patched = await client.patch(f"/tasks/{task_id}", json={"title": "Evening digest"})
         assert patched.status_code == 200
         assert json_body(patched)["title"] == "Evening digest"
-        assert json_body(patched)["prompt"] == "do the thing"  # unedited fields untouched
+        assert json_body(patched)["prompt"] == "do the thing"
 
         assert (await client.delete(f"/tasks/{task_id}")).status_code == 204
         assert response_items(await client.get("/tasks")) == []
@@ -207,9 +204,6 @@ async def test_webhook_schedule_has_no_next_run_and_gets_a_url():
         assert s(created["webhookUrl"]).startswith("/tasks/hooks/")
 
 
-# --- run_now: non-overlap + happy path with seeded grants --------------------------
-
-
 async def test_run_now_creates_conversation_run_and_seeds_grants(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="All set, nothing else to do.")
     async with client_app() as (client, app):
@@ -228,21 +222,16 @@ async def test_run_now_creates_conversation_run_and_seeds_grants(monkeypatch: py
 
         granted = await _grants(app).list("operator", s(row["conversationId"]))
         assert {g.tool_name for g in granted} == {"platform_search", "agents_write"}
-        # Whole-tool by shape, but never the operator's wider pick: nobody was in front of
-        # this run to make it, and the thread it opened is one they can reopen later. A
-        # seed promoted by its shape would go on answering past this single execution.
+        # Seeds must not be decisive: nobody chose a wider scope, and the thread is reopenable.
         assert not any(g.decisive for g in granted)
 
-        # The task's own bookkeeping reflects the fire too.
         refreshed = obj(response_items(await client.get("/tasks"))[0])
         assert refreshed["lastRunAt"] is not None
 
 
 async def test_a_fire_drops_a_once_only_pre_authorization(monkeypatch: pytest.MonkeyPatch):
-    # The route refuses to store such a scope, but a row written before that rule — or by
-    # anything else with the table — still reaches the fire. This is the second writer of
-    # conversation grants, and the unattended run is exactly where a standing grant on a
-    # per-call gate would do its damage: nobody is reading what it covers.
+    # The route refuses to store such a scope, but a row written any other way still reaches
+    # the fire, and an unattended run must not get a standing grant on a per-call gate.
     patch_model_resolution(monkeypatch, output_text="All set, nothing else to do.")
     async with client_app() as (_client, app):
         view = ScheduledTaskView(
@@ -287,7 +276,7 @@ async def test_run_now_starts_alongside_a_still_live_execution():
             if len(calls) == 2:
                 break
             await asyncio.sleep(0.01)
-        assert len(calls) == 2  # both running at once
+        assert len(calls) == 2
 
         release.set()
         _ = await asyncio.wait_for(_wait_finished(client, task_id, first_id), timeout=2.0)
@@ -310,9 +299,6 @@ async def _wait_finished(
 async def test_run_now_unknown_task_404s():
     async with client_app() as (client, _app):
         assert (await client.post("/tasks/nope/run_now")).status_code == 404
-
-
-# --- outcome mapping ----------------------------------------------------------------
 
 
 def _orchestrator_factory(orch: Orchestrator) -> Callable[..., Orchestrator]:
@@ -353,9 +339,6 @@ async def test_run_now_outcome_mapping_error_and_blocked(monkeypatch: pytest.Mon
         )
         assert row2["outcome"] == "blocked"
         assert row2["summary"] == "hit a limit"
-
-
-# --- reminders + task_outcome notifications -----------------------------------------
 
 
 async def test_reminder_task_fires_reminder_notification_verbatim():
@@ -414,9 +397,6 @@ async def test_agent_task_with_chat_output_does_not_fire_task_outcome(
         assert [n for n in items if n.kind == "task_outcome"] == []
 
 
-# --- delete cascades its runs --------------------------------------------------------
-
-
 async def test_delete_task_cascades_its_runs():
     async with client_app() as (client, app):
         created = await create_task(client)
@@ -436,9 +416,6 @@ async def test_delete_task_cascades_its_runs():
 
         remaining = await in_session(app_state(app).db_engine, work)
         assert remaining == []
-
-
-# --- webhook: fire, bad token, rotation ---------------------------------------------
 
 
 async def test_webhook_fires_bad_token_404s_and_rotation_invalidates_old(
@@ -464,10 +441,8 @@ async def test_webhook_fires_bad_token_404s_and_rotation_invalidates_old(
 
 
 async def test_webhook_does_not_fire_once_the_task_is_disabled(monkeypatch: pytest.MonkeyPatch):
-    # security-02: disabling a task is the operator's only way to "pause" a webhook
-    # trigger — the token itself stays unguessable and unrotated, so this must be
-    # what actually stops it firing. Still 202 (no info leak to whoever holds the
-    # token either way), but no TaskRun is ever recorded.
+    # Disabling is the only way to pause a webhook. It still answers 202, so the token
+    # holder learns nothing, but records no TaskRun.
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, _app):
         created = await create_task(client, schedule={"type": "webhook"})
@@ -484,19 +459,15 @@ async def test_webhook_does_not_fire_once_the_task_is_disabled(monkeypatch: pyte
 
 
 async def test_a_webhook_token_cannot_fire_another_owners_task(monkeypatch: pytest.MonkeyPatch):
-    """The hook route is auth-exempt, so the candidate scan is the *only* place ownership
-    can be enforced — `scheduler.fire_now` does none of its own, its docstring assuming
-    the route already did. An unscoped scan would let a token minted under one owner match
-    another owner's row the moment the `owner_id` seam carries more than one operator, so
-    the predicate is asserted now rather than discovered then."""
+    """The hook route is auth-exempt and `scheduler.fire_now` checks no owner, so the
+    candidate scan is the only ownership check."""
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, app):
         created = await create_task(client, schedule={"type": "webhook"})
         task_id = s(created["id"])
         token = s(created["webhookUrl"]).rsplit("/", 1)[-1]
 
-        # Hand the row to somebody else, leaving the token itself untouched: the caller
-        # still holds a genuine, unrotated credential — it just isn't for this owner.
+        # The token stays genuine and unrotated; only the owner changes.
         def reassign(session: Session) -> None:
             row = session.get(ScheduledTask, task_id)
             assert row is not None
@@ -505,7 +476,7 @@ async def test_a_webhook_token_cannot_fire_another_owners_task(monkeypatch: pyte
 
         await in_session(app_state(app).db_engine, reassign)
 
-        # 404, exactly as an unknown token does — no way to tell the two apart.
+        # 404, indistinguishable from an unknown token.
         assert (await client.post(f"/tasks/hooks/{token}")).status_code == 404
         await asyncio.sleep(0.05)
 
@@ -516,9 +487,7 @@ async def test_a_webhook_token_cannot_fire_another_owners_task(monkeypatch: pyte
 
 
 async def test_run_now_refuses_a_disabled_task():
-    # security-04: the same gate as the webhook path, but for the authenticated
-    # manual-fire route — a clear 409 rather than silently running (or the
-    # misleading generic 404 "not found").
+    # The webhook path's disabled gate, on the manual route: 409, not a silent run or a 404.
     async with client_app() as (client, _app):
         created = await create_task(client, enabled=False)
         resp = await client.post(f"/tasks/{created['id']}/run_now")
@@ -527,12 +496,9 @@ async def test_run_now_refuses_a_disabled_task():
 
 async def test_rotate_webhook_token_rejected_for_non_webhook_task():
     async with client_app() as (client, _app):
-        created = await create_task(client)  # schedule type "once"
+        created = await create_task(client)
         resp = await client.patch(f"/tasks/{created['id']}", json={"rotateWebhookToken": True})
         assert resp.status_code == 422
-
-
-# --- auth exemption: exactly /tasks/hooks/ ------------------------------------------
 
 
 async def test_hooks_route_is_auth_exempt_but_rest_of_tasks_is_not():
@@ -552,13 +518,8 @@ async def test_hooks_route_is_auth_exempt_but_rest_of_tasks_is_not():
         assert (await client.post(f"/tasks/hooks/{token}")).status_code == 202
 
 
-# --- AE-3.5: a task run hitting an out-of-scope sensitive tool parks + notifies ------
-
-
 def install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Mirrors `test_approval_routes.py`'s own helper: a TestModel that always calls
-    one approval-required tool, so a task's unattended run parks exactly like an
-    interactive one when the action falls outside its pre-authorization. Pair with
+    """A TestModel that always calls one approval-required tool; pair with
     ``swap_tool_catalog(app, danger_categories())`` after boot."""
 
     async def fake_resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object):
@@ -589,7 +550,7 @@ async def test_task_run_hitting_sensitive_tool_outside_grants_parks_and_notifies
     install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
-        created = await create_task(client, pre_authorized=[])  # no standing grant
+        created = await create_task(client, pre_authorized=[])
         task_id = s(created["id"])
 
         run_now = await client.post(f"/tasks/{task_id}/run_now")
@@ -598,17 +559,13 @@ async def test_task_run_hitting_sensitive_tool_outside_grants_parks_and_notifies
         run = await await_parked_task_run(app)
         assert run.conversation_id is not None
 
-        # The park notifies exactly like an interactive run's would.
         items, _ = await _notifications(app).list_notifications("operator", limit=50)
         approval_notifs = [n for n in items if n.kind == "approval_needed"]
         assert any(n.conversation_id == run.conversation_id for n in approval_notifs)
 
-        # The TaskRun is still unfinished while parked — not silently marked done.
         pending = response_items(await client.get(f"/tasks/{task_id}/runs"))
         assert next(obj(r) for r in pending if obj(r)["id"] == task_run_id)["finishedAt"] is None
 
-        # Approving from the (notification-driven) approval route resumes the run —
-        # and the resume settles the TaskRun.
         call_id = parked_call_id(run)
         approve = await client.post(
             f"/runs/{run.id}/approve",

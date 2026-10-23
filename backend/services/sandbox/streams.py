@@ -4,10 +4,8 @@ Files rather than pipes: a pipe has to be drained while the process runs or it f
 deadlocks, and the same files serve a background command's `check` without a second
 mechanism for it.
 
-**Nothing here may end a command.** The progress hook belongs to a caller and the files
-belong to a process; a failure in either is logged and the loop carries on, because a
-command that ran perfectly well must not be reported as failed by the thing that was only
-watching it.
+**Nothing here may end a command.** A failure in the progress hook or the files is logged
+and the loop carries on, so a command that ran well is never reported failed by its watcher.
 """
 
 from __future__ import annotations
@@ -26,9 +24,8 @@ from .shell_result import ProgressHook
 
 logger = logging.getLogger(__name__)
 
-#: How often a running command's new output is handed to the progress hook. Half a second
-#: is under the threshold at which a build stops reading as live, and well above the rate
-#: at which a chatty command would turn one tool call into thousands of stream frames.
+#: How often a running command's new output is handed to the progress hook; frequent enough
+#: to read as live, rare enough that a chatty command isn't thousands of stream frames.
 _PROGRESS_INTERVAL_S = 0.5
 
 
@@ -58,11 +55,8 @@ def unlink(*paths: str) -> None:
 class _StreamTail:
     """One output file, read forward from wherever the last read stopped.
 
-    Decoding is **incremental** rather than a decode per chunk: a read lands wherever the
-    command happened to have written to, which is regularly the middle of a multi-byte
-    character, and decoding each chunk on its own would turn every one of those into two
-    replacement characters in the operator's terminal. The decoder holds the remainder
-    until the rest of it arrives.
+    Decoding is incremental: a read often ends mid multi-byte character, and decoding each
+    chunk alone would emit replacement characters. The decoder holds the remainder.
     """
 
     __slots__: ClassVar[tuple[str, ...]] = ("_path", "_offset", "_decoder")
@@ -75,11 +69,8 @@ class _StreamTail:
         )
 
     def read(self) -> str:
-        """Whatever has been written since the last call, or "" — including on an error.
-
-        A file that cannot be read is a command whose output the operator will still see
-        in full when it finishes; it is never a reason to interrupt one that is running.
-        """
+        """Whatever has been written since the last call, or "" — including on an error,
+        since the full output is still returned when the command finishes."""
         try:
             with open(self._path, "rb") as handle:
                 _ = handle.seek(self._offset)
@@ -93,9 +84,8 @@ class _StreamTail:
 class Tail:
     """Both of a command's streams, polled while it runs and handed to a progress hook.
 
-    It stops on a signal rather than on a cancellation, so the caller gets one final read
-    after the process is gone — the output of a command's last half-second is exactly the
-    part that says why it ended.
+    It stops on a signal rather than a cancellation, so there is one final read after the
+    process is gone; a command's last output says why it ended.
     """
 
     __slots__: ClassVar[tuple[str, ...]] = (
@@ -137,9 +127,8 @@ class Tail:
             chunk = self._out.read() + self._err.read()
             if not chunk:
                 return
-            # The budget bounds the *tick* as well as the total: a command that printed a
-            # megabyte between two reads would otherwise put all of it on the stream in
-            # one frame, having never exceeded the budget on any earlier one.
+            # The budget bounds each tick too: a megabyte printed between two reads must
+            # not go out in one frame.
             self._streamed += len(chunk)
             await self._hook(chunk[:remaining], time.monotonic() - self._started)
         except asyncio.CancelledError:

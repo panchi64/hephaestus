@@ -17,7 +17,7 @@ export interface RewindPreview {
   conflicts: RewindConflict[];
   /** Too large for their original to have been kept. */
   unrestorable: RewindFile[];
-  /** Names the planned set and what each file holds now. */
+  /** Identifies the planned set and what each file holds now. */
   previewToken: string;
 }
 

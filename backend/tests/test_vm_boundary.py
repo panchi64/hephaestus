@@ -266,9 +266,6 @@ async def test_a_preview_is_reached_through_the_mux(vm: PlatformVM, tmp_path: Pa
     assert not (await vm.job("preview-s-web")).running
 
 
-# --- what the host accepts back ---------------------------------------------------------
-
-
 def _archive(tmp_path: Path, *members: tuple[tarfile.TarInfo, bytes | None]) -> Path:
     path = tmp_path / "out.tar"
     with tarfile.open(path, "w") as archive:

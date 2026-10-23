@@ -73,9 +73,6 @@ def _work(tmp_path: Path) -> Path:
     return root
 
 
-# --- the floor ------------------------------------------------------------------------
-
-
 def test_a_settings_list_cannot_remove_a_floor_entry(home: Path, tmp_path: Path):
     settings = Settings(data_dir=tmp_path / "data", host_command_deny_read=())
     denied = denied_read_paths(settings)
@@ -152,9 +149,6 @@ def test_nested_globs_cover_repositories_below_a_root(tmp_path: Path):
     )
 
 
-# --- the state ------------------------------------------------------------------------
-
-
 def test_the_state_reports_each_of_its_three_values(monkeypatch: pytest.MonkeyPatch):
     from services.sandbox.fence import HostConfinement
 
@@ -186,9 +180,6 @@ async def test_a_missing_dependency_resolves_as_unavailable_with_a_fix(
     resolved = await fence_mod.configure(Settings(host_command_sandbox_enabled=True))
     assert not resolved.active and not resolved.disabled
     assert "Settings" in resolved.reason
-
-
-# --- the host shell under the fence ----------------------------------------------------
 
 
 @pytest.mark.usefixtures("fenced")
@@ -405,9 +396,6 @@ async def test_a_fenced_background_command_runs_and_is_denied_like_a_foreground_
     await shell.shutdown()
 
 
-# --- cwd tracking --------------------------------------------------------------------
-
-
 @pytest.mark.usefixtures("unfenced")
 async def test_a_cd_through_a_symlink_out_of_the_root_is_not_tracked(tmp_path: Path):
     root = _work(tmp_path)
@@ -418,9 +406,6 @@ async def test_a_cd_through_a_symlink_out_of_the_root_is_not_tracked(tmp_path: P
     result = await shell.run("cd link")
     assert result.ok
     assert shell.cwd == root
-
-
-# --- backend git is pinned ------------------------------------------------------------
 
 
 async def test_the_backend_does_not_run_a_hook_a_repository_names(tmp_path: Path):

@@ -1,23 +1,14 @@
 """What links a sub-agent's transcript back to the thread that launched it.
 
-The transcript itself needs no table. A sub-agent *is* a conversation — its messages are
-ordinary ``Message`` rows, and an ephemeral conversation is hidden from the session list
-but never reaped — so what it did is already durable. What is not durable without this row
-is the **link**: which thread launched it, under what name, on what task, and how it ended.
+A sub-agent is a conversation: its messages are ordinary ``Message`` rows in an ephemeral
+conversation that is hidden but never reaped, so the transcript is already durable. This
+row holds the link: which thread launched it, under what name, on what task, and how it
+ended. Kept in memory it would die with the process, leaving unreachable conversations.
 
-Held only in memory, that link dies with the process, and the operator is left with a set
-of unreachable conversations nothing can name. This row is what makes "show me what that
-sub-agent did, and whether anything went wrong" answerable an hour later and a restart
-later — which is the whole reason the transcripts are kept at all.
+It is also the single source for the cap (how many are live), the parent's wake (where to
+deliver a report) and the panel, so no copy can go stale.
 
-It is also the single source for three other readers that would otherwise each keep their
-own count: the cap (how many are live), the parent's own wake (where to deliver a report),
-and the panel (what to draw, live and finished). A second copy of any of those would be the
-one that goes stale.
-
-No ``__backup__``: like conversations themselves, a sub-agent's work is session history
-rather than an operator preference, and it is exported — if at all — with the thread it
-belongs to.
+No ``__backup__``: a sub-agent's work is session history, exported if at all with its thread.
 """
 
 from __future__ import annotations
@@ -34,72 +25,57 @@ from models._table import Table
 class SubagentRecord(Table, table=True):
     __tablename__: ClassVar[str] = "subagent_records"
 
-    #: The same id that rides the wire as ``subagent_id`` and keys a card in the panel. Not
-    #: shown to the *model*, which addresses a sub-agent by ``handle`` below.
+    #: Rides the wire as ``subagent_id`` and keys a panel card. The model addresses a
+    #: sub-agent by ``handle`` instead.
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
-    #: The thread that launched this one — what the panel queries, and where a report is
-    #: delivered when the sub-agent finishes. Indexed because every read is by parent.
+    #: The launching thread: what the panel queries and where a report is delivered. Indexed
+    #: because every read is by parent.
     parent_conversation_id: str = Field(index=True)
     #: The thread at the top of the delegation tree, which bounds who may address whom.
     root_conversation_id: str = Field(default="", index=True)
     #: How far below the root thread this agent runs; its direct children are depth 1.
     depth: int = Field(default=1)
-    #: The sub-agent's own (ephemeral) conversation: where its transcript lives.
+    #: The sub-agent's own (ephemeral) conversation, where its transcript lives.
     child_conversation_id: str = Field(index=True)
-    #: Its Run — the live event stream while it works, and the approve endpoint while it
-    #: is parked. Stale once the run is gone, which is what ``status`` is for.
+    #: Its Run: the live event stream while it works and the approve endpoint while parked.
+    #: Stale once the run is gone (see ``status``).
     #:
-    #: Indexed because *every* run in the process asks this table "was that one of mine?"
-    #: at its terminal transition — the ordinary chat turns included — so an unindexed
-    #: lookup is a full scan of every sub-agent ever launched, per run that ever ends.
+    #: Indexed because every run in the process, chat turns included, asks this table "was
+    #: that one of mine?" at its terminal transition; unindexed that is a full scan per run.
     run_id: str = Field(index=True)
-    #: The run that launched it, so a card ties back to the turn that asked.
+    #: The run that launched it, so a card ties back to the asking turn.
     parent_run_id: str | None = Field(default=None)
-    #: Which sub-agent this is — a roster name, built-in or project-declared. A plain
-    #: string for the same reason a conversation's mode is one: a row written by another
-    #: build, or naming a sub-agent a project has since deleted, must still load.
+    #: A roster name, built-in or project-declared. A plain string so a row from another
+    #: build, or naming a since-deleted project sub-agent, still loads.
     spec_name: str
-    #: The name the launching model gave *this* sub-agent — ``helper-function-finder`` for
-    #: one of possibly three ``explorer``s — unique within the parent thread, and the only
-    #: identifier the model is ever shown or ever addresses it by. The id above stays the
-    #: primary key and the wire id; a uuid is the right thing for a database and the wrong
-    #: thing to ask a model to carry across four tool calls and a fifty-thousand-token gap.
+    #: The name the launching model gave this sub-agent (``helper-function-finder`` for one
+    #: of several ``explorer``s), unique within the parent thread and the only identifier the
+    #: model is shown or addresses it by; a uuid is wrong to ask a model to carry across many
+    #: tool calls. The id stays the primary key and wire id.
     #:
-    #: Stored rather than derived because there is nothing to derive it from: it is a
-    #: *choice* the launching turn made about this piece of work, and it has to outlive
-    #: that turn — the panel labels a card with it, a report names it, and a parent
-    #: addressing a sub-agent an hour later must land on the same one it launched.
-    #: Indexed because every one of those reads is a lookup by (parent thread, handle).
+    #: Stored because it is a choice the launching turn made, and the panel label, a report
+    #: and a parent addressing it an hour later must all land on the same sub-agent. Indexed
+    #: for lookup by (parent thread, handle). Rows predating handles were backfilled to
+    #: ``spec_name``, the launcher's fallback when a launch names none.
     #:
-    #: Rows written before handles existed were backfilled to their ``spec_name``, which is
-    #: what the launcher falls back to anyway when a launch names no handle of its own — so
-    #: an old card is addressable rather than merely legible.
-    #:
-    #: Not sealed, unlike the task beside it, and the difference is deliberate: this is
-    #: looked *up* by, which an encrypted column cannot be, and the name rule holds it to a
-    #: short identifier rather than a sentence. It is the one place a handle differs from
-    #: the task it describes, and it is why ``helper-function-finder`` is a handle and "find
-    #: the helper that normalises the customer's billing address" is not.
+    #: Not sealed, unlike the task: it is looked up by, which an encrypted column can't
+    #: support, and the name rule holds it to a short identifier rather than a sentence.
     handle: str = Field(default="", index=True)
-    #: Its class's key in ``prompts.voice.CLASSES``, and the callsign drawn from that
-    #: class's pool for the operator to know it by. Empty on rows written before either.
+    #: Its class's key in ``prompts.voice.CLASSES`` and the callsign drawn from that class's
+    #: pool. Empty on rows written before either.
     agent_class: str = Field(default="")
     callsign: str = Field(default="")
-    #: What it was asked to do. User content (the agent's words about the operator's
-    #: work), so sealed like every other piece of it.
+    #: What it was asked to do. User content, so sealed.
     task_enc: str
     #: ``running`` | ``blocked`` | ``done`` | ``failed`` | ``cancelled``.
     #:
-    #: ``blocked`` is a sub-agent parked on an approval the operator has not answered: not
-    #: finished, not progressing, and the one state where the thing it waits for is a
-    #: person. A row still ``running`` at startup is reconciled to ``cancelled``, because
-    #: the run that would have finished it died with the process.
+    #: ``blocked`` is parked on an approval the operator has not answered. A row still
+    #: ``running`` at startup is reconciled to ``cancelled``: its run died with the process.
     status: str = Field(default="running", index=True)
-    #: Its report, sealed. Present on a sub-agent that finished; null on one that has not.
+    #: Its report, sealed; null until it finishes.
     summary_enc: str | None = Field(default=None)
-    #: Why it failed, sealed for the same reason the report is — a failure message quotes
-    #: the work as readily as a success does.
+    #: Why it failed, sealed like the report (a failure message quotes the work too).
     error_enc: str | None = Field(default=None)
     #: Where the sub-agent works, and the names its worktree is found by: (the owner half
     #: of ``workspace_key``, ``delegation_id``). Stored because the parent merges or
@@ -111,12 +87,11 @@ class SubagentRecord(Table, table=True):
     #: The commit the sub-agent's worktree was cut at, so a merge carries only its own work.
     base_ref: str | None = Field(default=None)
     #: The launching turn's prompt, under which this agent's file changes are filed in the
-    #: launcher's ledger. Stored because a wake long after the launch still files there.
+    #: launcher's ledger; stored because a later wake still files there.
     ledger_prompt_message_id: str | None = Field(default=None)
-    #: The child's own context footprint, written when it settles. The *live* figure comes
-    #: off the running Run's metrics; this is what a card shows for a sub-agent that
-    #: finished before the page was opened, and it is deliberately not written on every
-    #: progress frame — that would be a database write per token.
+    #: The child's context footprint, written when it settles, for a card of a sub-agent that
+    #: finished before the page opened. The live figure comes from the Run's metrics; not
+    #: written per progress frame, which would be a database write per token.
     context_used: int | None = Field(default=None)
     context_window: int | None = Field(default=None)
     started_at: datetime = Field(default_factory=utcnow)

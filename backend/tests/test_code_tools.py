@@ -190,14 +190,9 @@ async def _run_one_tool(
     egress: object | None = None,
     delegated_approved: bool = False,
 ) -> Run:
-    """Drive a single code tool through an agent and return the finished Run.
+    """Drive one code tool through an agent, approving the deferred call, and return the Run.
 
-    Two passes, because running a program reaches past every permission level's write
-    scope: the first pass comes back with the call deferred rather than executed, and the
-    second supplies the approval the operator would give. These tests are about what the
-    tool *does* once it runs, so the helper approves and carries on — the same two steps
-    the approve route drives in production, with one `announced` set across both so a
-    deferred call is still announced exactly once.
+    One `announced` set spans both passes so the call is announced exactly once.
     """
     agent = _one_tool_agent(tool)
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
@@ -223,11 +218,9 @@ async def _run_one_tool(
     return run
 
 
-# --- sandboxed execution (contained, and still the level's to permit) --------
 async def test_sandboxed_execution_is_deferred_before_it_runs():
-    """The container is a fence around the blast radius, not a reason to treat running
-    arbitrary code as a workspace write — so the working permission level defers the call
-    and the operator (or, at Auto, the review) says whether it happens."""
+    """The container does not make running arbitrary code a workspace write, so the call
+    is deferred for the operator (or, at Auto, the review)."""
     manager = FakeSessionManager()
     agent = _one_tool_agent("code_execute")
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
@@ -238,32 +231,25 @@ async def test_sandboxed_execution_is_deferred_before_it_runs():
 
     assert isinstance(output, DeferredToolRequests)
     assert [c.tool_name for c in output.approvals] == ["code_execute"]
-    assert manager.session.specs == []  # requested, not executed
+    assert manager.session.specs == []
 
 
 async def test_execute_code_runs_in_the_conversation_session():
     manager = FakeSessionManager()
     run = await _run_one_tool("code_execute", sessions=manager)
 
-    # The session was keyed by the conversation (so follow-up calls reuse it) and claimed
-    # by the run, so the live-session cap cannot displace the container between this call
-    # and the next one — the seal drops `node_modules`, `.venv` and `.git` by design.
+    # Holding the session by run keeps the live-session cap from displacing the container.
     assert manager.acquired == "conv-1"
     assert manager.holder is run
-    # It ran in that session, via the python interpreter.
     assert len(manager.session.specs) == 1
     spec = manager.session.specs[0]
     assert spec.command[:2] == ["python", "-c"]
-    # The result reached the model, once the call was approved.
     assert _result(run)["stdout"] == "hello from box"
-    # Announced once across both passes, not re-announced on the continuation.
     assert len(bodies_of(run, ToolStarted)) == 1
 
 
 async def test_cold_session_announces_the_spin_up():
-    # A cold workspace emits a tool.progress so the wait reads as the environment
-    # starting up, not the model stalling.
-    manager = FakeSessionManager()  # FakeSession.is_warm is False ⇒ cold start
+    manager = FakeSessionManager()
     run = await _run_one_tool("code_execute", sessions=manager)
 
     progress = bodies_of(run, ToolProgress)
@@ -273,8 +259,6 @@ async def test_cold_session_announces_the_spin_up():
 
 
 async def test_cold_session_announces_the_vm_boot_when_the_vm_is_still_starting():
-    # Distinguishes an ordinary cold start from one that is waiting on the platform VM
-    # itself, so a minutes-long first boot reads truthfully.
     manager = FakeSessionManager()
     manager.vm_starting = True
     run = await _run_one_tool("code_execute", sessions=manager)
@@ -286,14 +270,12 @@ async def test_cold_session_announces_the_vm_boot_when_the_vm_is_still_starting(
 
 
 async def test_execute_code_fails_closed_without_a_runtime():
-    # No sandbox wired in ⇒ the tool reports unavailable and does NOT touch host.
     run = await _run_one_tool("code_execute", sessions=None)
     result = _result(run)
     assert result["ok"] is False
     assert "unavailable" in s(result["error"]).lower()
 
 
-# --- failures feed back to the model (the iterate-fix loop) -------------------
 def _result(run: Run) -> dict[str, JsonValue]:
     return obj(dump(first_body(run, ToolCompleted))["result"])
 
@@ -317,27 +299,22 @@ async def test_failed_run_feeds_stderr_and_a_hint_back():
     failing = SandboxResult(exit_code=1, stdout="", stderr="Traceback: NameError: x")
     result = await _run_canned(result=failing)
     assert result["ok"] is False
-    assert "NameError" in s(result["stderr"])  # the real error reaches the model
-    assert "non-zero" in s(result["error"])  # plus a plain-language hint
+    assert "NameError" in s(result["stderr"])
+    assert "non-zero" in s(result["error"])
 
 
 async def test_timeout_and_oom_get_legible_hints():
     timed = SandboxResult(exit_code=124, stdout="", stderr="", timed_out=True)
     assert "time limit" in await _hint(timed)
 
-    killed = SandboxResult(exit_code=137, stdout="", stderr="")  # SIGKILL, empty stderr
+    killed = SandboxResult(exit_code=137, stdout="", stderr="")
     assert "memory" in await _hint(killed)
 
 
 async def test_sandbox_failure_feeds_back_instead_of_crashing_the_run():
-    # A SandboxError (container won't start, damaged seal, …) becomes a result the
-    # model can act on — the run completes, it does not error out.
     result = await _run_canned(error=SandboxError("container would not start"))
     assert result["ok"] is False
     assert "container would not start" in s(result["error"])
-
-
-# --- sandbox-07: failure hints name the actual configured cap ----------------
 
 
 async def test_sigsegv_hint_is_distinguished_from_oom_and_pid_cap():
@@ -361,13 +338,11 @@ async def test_pid_cap_hint_is_distinguished_from_plain_nonzero(monkeypatch: pyt
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
     hint = await _hint(failing)
     assert "processes/threads" in hint
-    assert "64" in hint  # the actual configured pids_limit, not a guess
+    assert "64" in hint
 
 
 async def test_missing_module_hint_states_the_exact_install_mechanics():
-    # The failure mode this guards: the model knows it must install but botches the
-    # mechanics (hallucinated pip flags, an install folded into the failing call). The
-    # install is a shell command, which needs the `network` reach to fetch the package.
+    # Guards models botching the install (invented pip flags, folding it into the failing call).
     stderr = (
         "Traceback (most recent call last):\n"
         '  File "<string>", line 1, in <module>\n'
@@ -381,8 +356,7 @@ async def test_missing_module_hint_states_the_exact_install_mechanics():
 
 
 async def test_a_blocked_host_points_at_the_egress_request():
-    # The proxy's own refusal. The hint has to name the recoverable next call, because
-    # the code is fine and a model told only "connection refused" rewrites it instead.
+    # The hint must name the recoverable call, or the model rewrites code that is fine.
     denied = SandboxResult(
         exit_code=1,
         stdout="",
@@ -394,8 +368,7 @@ async def test_a_blocked_host_points_at_the_egress_request():
 
 
 async def test_a_resolution_failure_points_at_the_same_egress_request():
-    # The other spelling of one refusal: a client that never reaches the proxy prints a
-    # name-resolution or connection error, and it must not read as a different problem.
+    # A client that never reaches the proxy prints a resolution error instead of the marker.
     stderr = (
         "WARNING: Retrying... Temporary failure in name resolution\n"
         "ERROR: No matching distribution found for internal-mirror\n"
@@ -407,10 +380,7 @@ async def test_a_resolution_failure_points_at_the_same_egress_request():
 
 
 async def test_a_refused_tunnel_points_at_the_same_egress_request():
-    # HTTPS is the common case, and there the marker never reaches the client: a refused
-    # CONNECT carries no body, so all urllib prints is the tunnel failure. Seen on a
-    # real proxy sidecar — the plain-HTTP marker test alone would leave this hint silent
-    # for most of what the agent actually fetches.
+    # A refused HTTPS CONNECT carries no body, so the marker never reaches the client.
     stderr = "urllib.error.URLError: <urlopen error Tunnel connection failed: 403 Forbidden>\n"
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
     hint = await _hint(failing)
@@ -418,10 +388,7 @@ async def test_a_refused_tunnel_points_at_the_same_egress_request():
 
 
 async def test_a_misspelled_package_is_not_diagnosed_as_a_blocked_host():
-    # The registries are reachable, so pip's resolution summary is what a typo prints
-    # against an index it reached perfectly well. Reading it as a fence would send the
-    # model to spend an operator approval on a domain it already has, and it would never
-    # learn the package name is wrong.
+    # The index was reached, so reading pip's summary as a fence would waste an approval.
     stderr = (
         "ERROR: Could not find a version that satisfies the requirement pandsa "
         "(from versions: none)\n"
@@ -430,12 +397,11 @@ async def test_a_misspelled_package_is_not_diagnosed_as_a_blocked_host():
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
     hint = await _hint(failing)
     assert "code_request_egress" not in hint
-    assert "stderr" in hint  # the ordinary non-zero hint, pointing at the real error
+    assert "stderr" in hint
 
 
 async def test_fallback_hint_points_at_the_stream_that_holds_the_error():
-    # Some runtimes print their error to stdout with an empty stderr — "see
-    # stderr" would send the model looking at nothing.
+    # Some runtimes print errors to stdout with an empty stderr.
     stdout_only = SandboxResult(exit_code=128, stdout="something exploded", stderr="")
     hint = await _hint(stdout_only)
     assert "stdout" in hint
@@ -458,61 +424,42 @@ async def test_execute_description_states_the_live_config_caps(monkeypatch: pyte
     assert "256m" in description
     assert "0.5" in description
     assert "64" in description
-    # The resource caps are real and worth stating; there is no output cap to state.
     assert "come back whole" in description
 
 
 async def test_execute_describes_a_reachable_machine_and_the_one_way_to_widen_it():
-    """The blast-radius model, said where the model decides whether to call: compute and
-    installing are free, and the only thing that has to be asked for is a host off the
-    allowlist. A description still offering a `network` flag would send the model looking
-    for an argument that no longer exists."""
+    """Only a host off the allowlist has to be asked for; no `network` flag is offered."""
     description = _execute_description()
 
     assert "code_request_egress" in description
     assert "network=True" not in description
     assert "read-only" not in description.lower()
-    # apt cannot work under `--user` with every capability dropped, whatever else changes.
     assert "apt" in description and "not an option" in description
 
 
 async def test_execute_points_at_the_file_tools_without_reciting_them():
-    """The catalog already hands the model every `files_*` tool with its own description;
-    naming all six again here bought a second copy of that text on every turn. What the
-    model cannot get elsewhere — that those tools reach *this* directory — is one
-    sentence."""
+    """The catalog already describes each `files_*` tool, so this one doesn't."""
     description = _execute_description()
 
     assert "files_*" in description
     for recited in ("files_read_file", "files_edit_file", "files_list_directory"):
         assert recited not in description
-    # The machine itself is still described only here.
     assert "/work" in description and "pip" in description
 
 
-# --- asking for a host off the allowlist -------------------------------------
-
-
 async def test_request_egress_records_and_returns_domains():
-    # The one exit the fence actually guards, and the whole of what the tool does: hand
-    # the named domains to the policy under *this workspace's* key, and answer with
-    # everything reachable afterwards so the model doesn't have to ask a second time.
     policy = FakeEgressPolicy()
     run = await _run_one_tool("code_request_egress", egress=policy)
 
     assert len(policy.granted) == 1
     key, domains = policy.granted[0]
-    assert key == "conv-1"  # the workspace key, so a fork's grant lands on the fork
+    assert key == "conv-1"
     assert _result(run)["allowed"] == sorted({"pypi.org", *domains})
 
 
 async def test_the_tools_that_ask_are_not_offered_inside_a_delegation():
-    # A delegate's run was approved as one act, so there is no operator left to ask —
-    # for a host off the allowlist or for the operator's own machine. Whether a call
-    # pauses is settled from the tool definition before the function runs, so a body that
-    # refused would refuse only *after* the operator had been stopped, and a child run has
-    # nowhere to put a deferred call at all. Both are withheld instead, and the child
-    # reports what it could not do.
+    # Pausing is decided before the body runs and a child run cannot park a call, so the
+    # asking tools are withheld rather than refused.
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     toolset = code_toolset()
     asking = {"request_egress", "run_host_command"}
@@ -527,17 +474,14 @@ async def test_the_tools_that_ask_are_not_offered_inside_a_delegation():
 
 
 async def test_a_delegate_is_not_sent_after_tools_it_was_never_offered():
-    # The other half of withholding them. A delegated run is composed straight from the
-    # categories, so nothing is namespaced and the asking tools are gone — text telling a
-    # worker to call `code_request_egress` or the `files_*` tools spends its budget on
-    # names that do not resolve, instead of on reporting the host it could not reach.
+    # A delegate has no namespaced names, so text naming withheld tools would not resolve.
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     toolset = code_toolset()
 
     delegated = _one_tool_deps(run, None, delegated_approved=True)
     ctx = RunContext(deps=delegated, model=TestModel(), usage=RunUsage())
     described = (await toolset.get_tools(ctx))["execute"].tool_def.description or ""
-    assert "Your file tools" in described  # the wording it did get
+    assert "Your file tools" in described
     assert "code_request_egress" not in described
     assert "files_*" not in described
 
@@ -546,11 +490,10 @@ async def test_a_delegate_is_not_sent_after_tools_it_was_never_offered():
     child = await _run_one_tool("code_execute", sessions=manager, delegated_approved=True)
     hint = s(_result(child)["error"])
     assert "code_request_egress" not in hint
-    assert "report" in hint  # what it does instead
+    assert "report" in hint
 
 
 async def test_request_egress_degrades_without_a_policy():
-    # Same contract as a missing sandbox runtime: the tool says so and the model adapts.
     run = await _run_one_tool("code_request_egress")
 
     result = _result(run)
@@ -558,14 +501,11 @@ async def test_request_egress_degrades_without_a_policy():
     assert "allowlist" in s(result["error"])
 
 
-# --- long output is spilled ---------------------------------------------------
-
-
 async def test_long_stdout_is_spilled_to_a_pageable_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     monkeypatch.setattr(code_module, "get_settings", Settings)
-    big = "".join(f"{i:04d}\n" for i in range(10_000))  # 50,000 chars
+    big = "".join(f"{i:04d}\n" for i in range(10_000))
     result = await _run_canned(
         result=SandboxResult(exit_code=0, stdout=big, stderr="world"), workspace=tmp_path
     )
@@ -602,7 +542,6 @@ def test_an_ordinary_failure_in_the_vm_carries_no_refusal_fields():
 
 
 async def test_host_command_output_is_returned_whole():
-    # run_host_command shares `exec_result`, so it gets the same untrimmed output.
     reg = RunRegistry()
     orch = build_chat_orchestrator(
         "change the host",
@@ -613,7 +552,7 @@ async def test_host_command_output_is_returned_whole():
     await run.wait()
     parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
-    big_echo = "x" * 20_000  # comfortably over what the retired cap would have trimmed
+    big_echo = "x" * 20_000
     decision = {
         call_id: ToolApproved(override_args={"command": f"echo {big_echo}", "explanation": "x"})
     }
@@ -623,7 +562,6 @@ async def test_host_command_output_is_returned_whole():
     assert s(_result(run)["stdout"]).strip() == big_echo
 
 
-# --- host execution (the deliberate, approval-gated escape hatch) ------------
 async def test_host_command_parks_with_an_explanation():
     reg = RunRegistry()
     orch = build_chat_orchestrator(
@@ -634,11 +572,9 @@ async def test_host_command_parks_with_an_explanation():
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
 
-    # It paused for approval instead of running on the host.
     assert run.status is RunStatus.awaiting_input
     approval = first_body(run, ApprovalRequired)
     assert "run_host_command" in approval.name
-    # The plain-language explanation rides as a distinct field for the operator.
     assert approval.explanation is not None
     assert "tool.completed" not in [b.type for b in run_bodies(run)]
 
@@ -655,7 +591,6 @@ async def test_approved_host_command_runs_on_host():
     parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
 
-    # Approve with safe override args so the host path runs a harmless echo.
     safe = {"command": "echo HOSTRAN", "explanation": "x"}
     decision = {call_id: ToolApproved(override_args=safe)}
     _ = await reg.resume(run.id, build_resume_orchestrator(parked, decision))
@@ -668,10 +603,7 @@ async def test_approved_host_command_runs_on_host():
 async def test_the_hatch_is_fenced_with_the_installations_allowlist_not_the_threads(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """One proxy serves every confined process on the host, and it filters against the
-    configuration installed at boot. A domain granted to *this* thread could only reach an
-    approved host command by being written there — where it would also widen the fence
-    around every other command running at that moment and outlive this one."""
+    """One proxy fences every confined host process, so a thread's grant must not widen it."""
     egress = FakeEgressPolicy()
     _ = await egress.allow("conv-1", ["files.example.com"])
     seen: list[HostConfinement | None] = []
@@ -702,20 +634,14 @@ async def test_the_hatch_is_fenced_with_the_installations_allowlist_not_the_thre
     [confinement] = seen
     assert confinement is not None
     assert set(confinement.allowed_domains) == {"pypi.org"}
-    assert confinement.allow_write == ("/tmp",)  # nothing else was disturbed
+    assert confinement.allow_write == ("/tmp",)
 
 
 async def test_an_approved_host_command_runs_in_its_own_scratch_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """Not the server process's working directory, which is this backend's source tree.
-
-    That is where a host command used to start, so every relative path the model wrote
-    meant something among the application's own files — `cat .env` read its keys. The
-    run's workspace is not the answer either: in the modes this tool exists in it lives
-    under `data_dir`, which the host fence denies outright, so a command started there
-    cannot even resolve its own working directory.
-    """
+    """Not the backend's source tree (`cat .env` would read its keys), and not the run's
+    workspace, which sits under `data_dir` where the host fence denies access."""
     monkeypatch.setattr(code_module, "host_scratch_dir", lambda: tmp_path)
     _ = (tmp_path / "here.txt").write_text("IN THE SCRATCH DIRECTORY")
 

@@ -65,9 +65,6 @@ def _values(**more: object) -> dict[str, object]:
     return {"title": "Morning brief", "prompt": "Summarize my inbox.", "schedule": DAILY, **more}
 
 
-# --- schedules ------------------------------------------------------------------------
-
-
 def test_a_cron_is_read_in_its_zone_across_daylight_saving():
     summer = upcoming(DAILY, NOW, 1)[0]
     winter = upcoming(DAILY, datetime(2026, 12, 10, 9, 0, tzinfo=UTC), 1)[0]
@@ -126,9 +123,6 @@ async def test_a_misread_cron_is_refused_rather_than_saved():
         _ = await _parser(type="cron", cron="whenever").parse("now and then", timezone="UTC")
 
 
-# --- drafts and approval -----------------------------------------------------------------
-
-
 async def test_an_agents_draft_never_fires_until_approved(store: RoutineStore):
     draft = await store.create(OWNER, _values(), approved=False)
 
@@ -160,9 +154,6 @@ async def test_only_taking_reach_away_counts_as_narrowing(store: RoutineStore):
     assert narrows(routine, {"enabled": False, "pre_authorized": ("web_fetch",)})
     assert not narrows(routine, {"pre_authorized": ("web_fetch", "mail_send")})
     assert not narrows(routine, {"prompt": "Delete my inbox."})
-
-
-# --- the agent's tools ---------------------------------------------------------------------
 
 
 class _Scheduler:
@@ -282,9 +273,6 @@ async def test_running_an_approved_routine_fires_it(store: RoutineStore):
     scheduler = _Scheduler()
     result = await _call(_ctx(store, scheduler), "run_now", {"routine_id": routine.id})
     assert result["ok"] and scheduler.fired == [routine.id]
-
-
-# --- the REST surface and the routine's thread -------------------------------------------
 
 
 def _routine_body(**more: object) -> dict[str, object]:

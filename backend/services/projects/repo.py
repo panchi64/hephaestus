@@ -1,10 +1,8 @@
 """The git primitives every worktree operation is built out of.
 
-One invocation, the identity the chassis commits under, the branch namespace, and the
-commit that has to happen before anything *reads* a branch. Split out of
-``worktree.py`` because forking (``fork.py``) needs exactly these and nothing else of
-what the manager knows — and importing them back out of the manager's module would be a
-cycle between the two halves of one layer.
+One invocation, the commit identity, the branch namespace, and the commit that must
+happen before anything reads a branch. Split from ``worktree.py`` so forking
+(``fork.py``) can import them without a cycle.
 """
 
 from __future__ import annotations
@@ -19,12 +17,10 @@ from services.sandbox.gitenv import GIT_ARG_PINS, git_config_pins
 
 logger = logging.getLogger(__name__)
 
-#: Branch namespace. One per worktree conversation, so a branch is self-describing and a
-#: stale one is obvious.
+#: Branch namespace, one branch per worktree conversation.
 BRANCH_PREFIX = "heph/"
 
-#: The identity every commit this layer makes is attributed to. It is the chassis
-#: committing on the agent's behalf, and it should read that way in `git log`.
+#: The identity of every commit this layer makes: the chassis committing for the agent.
 AUTHOR = ("-c", "user.name=Hephaestus", "-c", "user.email=hephaestus@localhost")
 
 
@@ -46,21 +42,18 @@ def branch_for(conversation_id: str) -> str:
 def child_branch_for(conversation_id: str, delegation_id: str) -> str:
     """The branch a delegated child works on, beside its parent's rather than under it.
 
-    A dash and not a slash: git stores a branch as a file under ``refs/heads``, so
-    ``heph/<conv>/<delegation>`` cannot exist while ``heph/<conv>`` does — and the parent's
-    branch is the very thing this one is cut from.
+    A dash, not a slash: git stores a branch as a file under ``refs/heads``, so
+    ``heph/<conv>/<delegation>`` cannot coexist with the parent's ``heph/<conv>``.
     """
     return f"{branch_for(conversation_id)}-{delegation_id}"
 
 
 async def run_git(cwd: Path, *args: str) -> tuple[int, str, str]:
-    """One git invocation. Fixed argv, no shell — a project path is operator content and
-    must never be word-split or interpolated into a command line.
+    """One git invocation with a fixed argv and no shell, so a project path is never
+    word-split or interpolated.
 
-    A missing `cwd` comes back as a failed git call rather than an `OSError`: the
-    operator can move or delete a project directory at any time, and every caller here
-    already knows how to handle "git said no" while none of them expects an exception
-    from a path that existed a moment ago.
+    A missing `cwd` returns a failed call rather than raising `OSError`, since the operator
+    can move a project directory at any time and callers handle "git said no".
     """
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -99,8 +92,7 @@ async def commit_worktree(path: Path, message: str | None = None) -> bool:
     if not (path / ".git").exists():
         return False
     _ = await run_git(path, "add", "-A")
-    # `diff --cached --quiet` exits 0 when nothing is staged — the cheapest way to
-    # ask "is there anything to commit" without parsing porcelain.
+    # Exits 0 when nothing is staged.
     clean, _, _ = await run_git(path, "diff", "--cached", "--quiet")
     if clean == 0:
         return False

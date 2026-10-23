@@ -39,27 +39,24 @@ from services.permissions import PERMISSION_LEVELS, STRICTEST_PERMISSION
 
 logger = logging.getLogger(__name__)
 
-#: The roots scanned for ``agents/*.md``, taken from the capability's own default rather
-#: than restated, so this and the inventory tool describe one filesystem layout.
+#: The roots scanned for ``agents/*.md``, shared with the repo-inventory tool so both see
+#: one filesystem layout.
 ASSET_ROOTS: tuple[str, ...] = tuple(RepoContext.asset_roots)
 
-#: The directory whose name says what is in it, read flat as well as through
-#: ``<root>/agents/``. A project that put ``reviewer.md`` straight in here meant an agent by it.
+#: Read flat as well as through ``<root>/agents/``: a ``reviewer.md`` placed directly here
+#: is an agent.
 FLAT_ROOT = ".agents"
 
-#: What a name may be. Deliberately looser than the skills' own rule in one way — an
-#: underscore is allowed, because the built-ins use one and a project renaming its file to
-#: match a built-in is how shadowing is expressed.
+#: Looser than the skills' rule: underscores are allowed, because the built-ins use them and
+#: shadowing a built-in means naming the file to match.
 _NAME = re.compile(r"^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$")
 
-#: How much of a description is kept. It is joined with its peers into the launch tool's
-#: description, which is paid for on every request of every turn — a project file that
-#: pasted an essay in here would otherwise charge the operator for it forever.
+#: Descriptions are joined into the launch tool's description, which is sent on every
+#: request of every turn.
 DESCRIPTION_MAX_CHARS = 400
 
-#: How much of a body is kept as the brief. Charged once per request of the *sub-agent's*
-#: own turns rather than the parent's, so the room is larger; the cap is against a file
-#: that is not a brief at all (a whole design document committed under ``agents/``).
+#: The brief is charged per request of the sub-agent's own turns, so the cap is larger; it
+#: guards against a file that is not a brief (a design document under ``agents/``).
 BRIEF_MAX_CHARS = 8_000
 
 _WHITESPACE_RUN = re.compile(r"\s+")
@@ -99,13 +96,8 @@ _FOREIGN_TOOLS = _READ_ONLY_FOREIGN_TOOLS | frozenset(
 class AgentNameError(ValueError):
     """``normalize_agent_name`` was handed something that is not a usable name.
 
-    A shared error that *each caller translates*, rather than a raised type the normaliser
-    takes as an argument. The two callers fail in front of two different audiences: a
-    project file with a bad ``name:`` is skipped and logged, because nobody is watching the
-    checkout, while a launch handle the model made up has to come back to the model as a
-    retry it can act on. Parameterising the exception would put the choice of how to report
-    a failure inside the function that only knows the rule — and the rule is the one thing
-    about a name that genuinely is shared.
+    Each caller translates it for its own audience: a bad ``name:`` in a project file is
+    skipped and logged, while a bad launch handle goes back to the model as a retry.
     """
 
 
@@ -129,10 +121,8 @@ def project_agents(root: Path) -> tuple[AgentDefinition, ...]:
 def agent_files(root: Path) -> list[Path]:
     """The agent definition files under a project root, deduplicated and ordered.
 
-    Sorted by path rather than left in scan order so two checkouts of one repository
-    produce the same roster in the same order — the order is what the model reads the
-    descriptions in, and a roster that shuffles between runs is a prompt prefix that never
-    caches.
+    Sorted so the roster order is stable across checkouts; a shuffling roster never caches
+    as a prompt prefix.
     """
     found: set[Path] = set()
     for directory in [*(root / name / "agents" for name in ASSET_ROOTS), root / FLAT_ROOT]:
@@ -144,10 +134,9 @@ def agent_files(root: Path) -> list[Path]:
 def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinition:
     """One agent definition file as a spec.
 
-    ``name`` is the filename's stem, used when the frontmatter does not name the agent
-    itself — the standard allows either, and the file is usually named for what is in it.
-    ``clip`` trims an over-long description or brief to what a project file may cost; a
-    file the operator wrote keeps its text and is validated by the store instead.
+    ``name`` is the filename's stem, used when the frontmatter names no agent. ``clip``
+    trims an over-long description or brief to what a project file may cost; a file the
+    operator wrote keeps its text and is validated by the store instead.
     """
     try:
         loaded, body = split_frontmatter(text)
@@ -158,13 +147,9 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
     spec_name = _name(fields.get("name"), fallback=name)
     description = _text(fields.get("description"), field="description")
     if not description:
-        # The one field with no sensible default: it is the only thing the model reads
-        # when choosing, so an agent without one can be launched by nobody.
         raise AgentFileError(f"agent {spec_name!r} has no description")
     brief = body.strip()
     if not brief:
-        # Likewise the body. Frontmatter says which agent this is; the body is the whole
-        # of what it is told to do, and an empty one is an agent with no instructions.
         raise AgentFileError(f"agent {spec_name!r} has no instructions below its frontmatter")
 
     try:
@@ -217,19 +202,11 @@ def render_agent_file(agent: AgentDefinition) -> str:
 def normalize_agent_name(raw: str) -> str:
     """One name rule, for every name a sub-agent is addressed by.
 
-    Two things reach this: the ``name:`` in a project's agent file, and the handle the
-    launching model picks for a sub-agent it is starting. They are not the same kind of
-    name — one identifies a *definition*, the other one *instance* of it — but they are
-    read in the same places by the same eyes, and a second rule would mean an agent file
-    could be called something no launch handle is allowed to be, for no reason anybody
-    could explain.
+    Covers both the ``name:`` in a project's agent file (a definition) and the handle the
+    launching model picks for a sub-agent (an instance). Spaces fold to hyphens rather than
+    being rejected: ``Helper Function Finder`` can only have meant one thing.
 
-    Lowercasing and folding spaces to hyphens rather than rejecting them: ``Helper Function
-    Finder`` is what a model writes when it is thinking about the job rather than about the
-    identifier, and there is exactly one thing it can have meant.
-
-    Raises :class:`AgentNameError`, which each caller translates into its own audience's
-    failure.
+    Raises :class:`AgentNameError`.
     """
     value = raw.strip().lower().replace(" ", "-")
     if not _NAME.match(value):
@@ -245,17 +222,15 @@ def _name(raw: object, *, fallback: str) -> str:
     try:
         return normalize_agent_name(_text(raw) or fallback)
     except AgentNameError as exc:
-        # Translated, not propagated: everything above this reads a bad file as one skipped
-        # agent, and it recognises that by the file error alone.
+        # Callers recognise a skipped file by AgentFileError alone.
         raise AgentFileError(str(exc)) from None
 
 
 def _text(raw: object, *, field: str | None = None) -> str:
     """A frontmatter scalar as one line of text.
 
-    Collapsed rather than rejected for containing newlines: a description written as a YAML
-    block scalar is a normal thing to write, and it is rendered as a single line in the
-    launch tool's roster whatever the file did.
+    Newlines collapse rather than reject: a YAML block scalar is normal, and the roster
+    renders one line regardless.
     """
     if raw is None:
         return ""
@@ -288,11 +263,8 @@ def _declared_class(fields: dict[str, object], *, name: str) -> str:
 def _declared_workspace(fields: dict[str, object], *, name: str) -> WorkspacePolicy:
     """Which files this agent works in, if the file says.
 
-    Ours rather than the foreign standard's — that standard has no notion of a workspace,
-    because the agent it describes always runs in the one checkout. A project that wants
-    its sub-agent kept out of the working tree has no other way to say so, and an
-    unrecognised value falls back to the default rather than failing the file, since
-    getting this wrong should not cost the project its agent.
+    Our own field; the foreign standard has no workspace. An unrecognised value falls back
+    to the default rather than failing the file.
     """
     declared = _text(fields.get("workspace")).lower()
     if not declared:
@@ -309,25 +281,17 @@ def _declared_ceiling(fields: dict[str, object], *, name: str) -> str | None:
 
     ``permission`` is ours and names one of this installation's levels directly.
 
-    ``tools`` is the foreign standard's, and is read for **one bit only**: whether
-    everything it lists observes. It cannot be honoured tool-for-tool, and pretending
-    otherwise would be worse than ignoring it — those names are Claude Code's
-    (``Read``, ``Grep``, ``Bash``), not this catalog's, so an allow-list applied literally
-    would withhold every tool this installation has and leave the sub-agent unable to do
-    anything at all. What the field reliably carries is the author's intent about *reach*,
-    and the read-only case is the one where that intent is unambiguous and worth keeping:
-    an agent whose file says it only reads is held to it. Anything else is left to the
-    level the launcher works out, which is already capped by the launching thread's own.
+    ``tools`` is the foreign standard's and is read for one bit only: whether everything it
+    lists observes. Its names (``Read``, ``Grep``, ``Bash``) are not this catalog's, so an
+    allow-list applied literally would withhold every tool. Anything not read-only is left
+    to the launcher's level, which the launching thread's own already caps.
     """
     declared = _text(fields.get("permission")).lower()
     if declared in PERMISSION_LEVELS:
         return declared
     if declared:
-        # Named a level this installation does not have. Logged rather than fatal, for the
-        # reason an unknown workspace is: the file still describes a usable sub-agent, and
-        # the level it falls back to is worked out by the launcher and capped by the
-        # launching thread's own — so the failure mode of guessing is a narrower sub-agent,
-        # never a wider one.
+        # The fallback level is capped by the launching thread's own, so a wrong guess can
+        # only narrow the sub-agent.
         logger.info(
             "agents: agent %r declared unknown permission %r; using the default level",
             name,

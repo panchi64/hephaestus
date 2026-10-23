@@ -75,29 +75,18 @@ import { InboxDock } from "../components/InboxDock";
 import { createComposerRecall } from "../composerRecall";
 import { nextPermissionLevel, parsePermissionLevel } from "../model";
 
-/** The conversation's reading measure. A line of text on a 27" display is
- *  unreadable at full width long before it is uncomfortable, and the composer
- *  spanning the whole bottom of the screen made the input read as a page
- *  element rather than as a thing to type into.
- *
- *  It is deliberately ONE constant applied to both the transcript's content and
- *  the composer dock. They are the same column and must agree: an input
- *  narrower than the messages above it looks like a mistake, and an input wider
- *  than them looks like two layouts. The scroll container and the dock's
- *  background still span the full width — only their contents are centred — so
- *  the scrollbar stays at the edge of the pane and the transcript still
- *  disappears behind the dock rather than beside it. */
+/** One reading measure shared by the transcript's content and the composer dock so the
+ *  input matches the column above it. Only contents are centred; the scroll container
+ *  and the dock background stay full width so the transcript scrolls behind the dock. */
 const MEASURE = "mx-auto w-full max-w-4xl";
 
-/** Chat room: a searchable thread rail and a live streaming conversation. On
- *  entry it resumes the last conversation only while it's warm (recency-gated),
- *  otherwise it opens a fresh composer — the overview launchpad can also hand it
- *  a thread to open or a message to start. */
+/** Chat room: a live streaming conversation. On entry it resumes the last conversation
+ *  only while it's warm (recency-gated), otherwise it opens a fresh composer; the
+ *  overview launchpad can also hand it a thread to open or a message to start. */
 export function ChatRoomScreen(): JSX.Element {
   const sessions = useChatSessions();
-  // The room's stream, selected conversation (null = new, unsaved), and loaded
-  // history live in a persistent module-level controller — not in this component
-  // — so navigating away mid-turn and back doesn't tear down the in-flight run.
+  // Stream, selected conversation (null = new, unsaved) and history live in a
+  // module-level controller so navigating away mid-turn doesn't tear down the run.
   const {
     currentId,
     openId,
@@ -116,14 +105,11 @@ export function ChatRoomScreen(): JSX.Element {
   } = mainChat();
   const projects = useProjects();
 
-  /** The project a **staged** thread would be scoped to — undefined once the thread is
-   *  saved. Read by the header's subtitle and the composer's picker, so the two can't
-   *  disagree about which project is in play.
+  /** The project a staged thread would be scoped to; undefined once saved. Shared by the
+   *  header subtitle and the composer picker.
    *
-   *  Staged means *no backend id anywhere*, which is `openId` and not `currentId`: the
-   *  room keeps its seat empty for the length of a new thread's first turn, and reading
-   *  that as "still staged" put the hint about the name this thread does not have yet
-   *  directly under the name the backend had just given it. */
+   *  Staged means no backend id anywhere (`openId`, not `currentId`): the seat stays
+   *  empty through a new thread's first turn, so `currentId` would still read as staged. */
   const stagedProject = createMemo(() => {
     if (openId() !== null) return undefined;
     const id = stagedProjectId();
@@ -132,8 +118,7 @@ export function ChatRoomScreen(): JSX.Element {
       : undefined;
   });
 
-  // A send seats the operator's message at the top and the reply grows under a still
-  // view (see `transcriptScroll.ts`).
+  // See `transcriptScroll.ts` for the seating behaviour.
   const transcript = createTranscriptFollow({
     sending: stream.sending,
     conversationId: currentId,
@@ -142,27 +127,20 @@ export function ChatRoomScreen(): JSX.Element {
       stream.messages.findLast((m) => m.role === "user")?.id ?? null,
   });
 
-  // Header reflects the thread on screen (messages resolve through the seam).
-  //
-  // `openId`, not `currentId`: during a new thread's first turn the room has not
-  // seated itself on the backend's id yet, and a header keyed on the seat has
-  // nothing to resolve — which is why an auto-generated name, emitted seconds into
-  // the run, used to appear only once the stream ended.
+  // `openId`, not `currentId`: during a new thread's first turn the seat is not yet on the
+  // backend's id, so the auto-generated name could not resolve until the stream ended.
   const currentSummary = createMemo(() => {
     const id = openId();
     return id ? sessions()?.find((s) => s.id === id) : undefined;
   });
   const headerTitle = () => currentSummary()?.title ?? "New conversation";
 
-  /** Which thread the operator has put the recap away for. View state and nothing
-   *  else — it is a toggle over a band, so it stays here rather than in storage the
-   *  backend would have to own. Keyed by thread so dismissing one doesn't dismiss the
-   *  next one the operator opens, which is the whole case for the band. */
+  /** Which thread the recap was dismissed for; view state only, keyed by thread so one
+   *  dismissal doesn't hide the next thread's recap. */
   const [recapDismissed, setRecapDismissed] = createSignal<string | null>(null);
   const recapSummary = createMemo(() =>
     recapDismissed() === openId() ? undefined : currentSummary(),
   );
-  // A just-generated title for the open thread, if the backend named it this turn.
   const headerReveal = () => {
     const id = openId();
     return id ? titleReveals[id] : undefined;
@@ -170,24 +148,18 @@ export function ChatRoomScreen(): JSX.Element {
 
   // Resolve the entry intent: new-from-overview › open-specific › recency.
   createEffect(() => {
-    // Explicit cross-surface intents (the overview launchpad) are deliberate and
-    // apply on every entry — even after the one-time warm resume below.
+    // Launchpad intents apply on every entry, even after the one-time warm resume below.
     const draft = consumePendingDraft();
     if (draft) {
-      // Only adopt an explicit pick — an empty draft (discovery not yet resolved
-      // on the overview) must not clobber the operator's sticky selection.
+      // An empty draft (discovery unresolved on the overview) must not clobber the sticky selection.
       if (draft.model) void setSelectedModel(draft.model);
-      // A `/level` picked on the launchpad, applied before the thread is created rather
-      // than after — the same relay the room's own control calls, so the level the
-      // operator chose is the one this first turn actually runs at.
+      // Applied before the thread is created so the first turn runs at this level.
       if (draft.permissionLevel) setPermission(draft.permissionLevel);
       setCurrentId(null);
       queueMicrotask(
         () =>
           void stream.send(draft.text, draft.attachmentIds, {
-            // Whatever `/` command the launchpad staged. Without this the room would
-            // send the operator's literal `/reviewer …` with nothing saying what that
-            // token was, and the turn would quietly mean less than it said.
+            // Without it the literal `/reviewer …` would be sent with nothing marking the token as a command.
             command: draft.command ?? null,
           }),
       );
@@ -200,48 +172,31 @@ export function ChatRoomScreen(): JSX.Element {
       markWarmResolved();
       return;
     }
-    // Recency resume is a once-per-session entry concern. The room's state is now
-    // persistent across navigation, so re-running it on every remount would yank
-    // the operator off whatever thread (or fresh composer) they'd left open.
+    // Once per session: room state persists across navigation, so a remount must not
+    // move the operator off the thread (or fresh composer) they left open.
     if (warmResolved()) return;
     const list = sessions();
-    if (!list) return; // wait for the seam to resolve
+    if (!list) return;
     if (untrack(currentId) === null) setCurrentId(entrySessionId(list));
     markWarmResolved();
   });
 
-  /** The project a staged thread is scoped to, as the header names it. Nothing for a
-   *  saved thread — its branch chip is the answer there. */
+  /** The staged project as the header names it; none for a saved thread (its branch chip covers that). */
   const workspaceHint = (): string | undefined => {
     const project = stagedProject();
     return project ? directoryLabel(project) : undefined;
   };
 
-  /** Off the open thread and onto a fresh composer. Unconditional — this is where the
-   *  room goes when the thread it was showing is *gone*, so it can never decline. */
+  /** Unconditional: used when the shown thread is gone, so it can never decline. */
   const clearThread = () => setCurrentId(null);
 
-  /** A fresh composer, **asked for**. It stays in the project of the thread the operator
-   *  is standing in, since that is the work they are most likely continuing; from a
-   *  composer that is already staged it changes nothing. */
+  /** A fresh composer on request; it keeps the current thread's project. From an already
+   *  staged composer it changes nothing. */
   const startNew = () => {
     if (openId() !== null) setStagedProjectId(currentSummary()?.projectId);
     clearThread();
   };
 
-  // Stop the live run for real: cancel on the backend, abort the local stream.
-  // `cancel()` surfaces its own backend error; this only adds the success note.
-  //
-  // **A correction typed into the composer rides the same act.** Interrupting is rarely
-  // the whole intention — the run is stopped because it is doing the wrong thing, and
-  // what comes next is saying what the right thing was. As two acts that is a stop, a
-  // pause while the composer comes back, and a send; and in that gap the correction is
-  // retyped, or a queued message restoring itself lands on top of it.
-  //
-  // Nothing about the stopped run is discarded to make room for it: the cancel leaves
-  // the turn where it stopped — its answer so far, every tool block, every command's
-  // output — and the correction opens the next turn against that history, which is what
-  // makes it a correction rather than a restart.
   const allowHost = async (host: string): Promise<void> => {
     const id = currentId();
     if (id !== null) await allowDomain(id, host);
@@ -251,6 +206,10 @@ export function ChatRoomScreen(): JSX.Element {
       sending: stream.sending(),
       subagents: subagents.latest(),
     });
+  // Cancels on the backend and aborts the local stream; `cancel()` reports its own error.
+  // A correction typed into the composer rides the same act, so it isn't retyped or
+  // overtaken by a restoring queued message. The stopped turn is kept intact and the
+  // correction opens the next turn against it.
   const stopRun = async (correction?: string) => {
     const which = route();
     if (which === "none") return;
@@ -275,23 +234,17 @@ export function ChatRoomScreen(): JSX.Element {
     await stream.cancel();
     if (!correction) return void toast.success("Run cancelled");
     toast.success("Run cancelled — sending your correction");
-    // No attachment ids: attaching is unavailable while a run streams, so there can be
-    // nothing ready to carry.
-    // The composer cleared the correction when STOP took it, so a refusal here would
-    // otherwise lose it: it goes back through the prefill the composer already reads.
+    // No attachment ids: attaching is unavailable while a run streams.
+    // The composer cleared the correction on STOP, so a refusal restores it via the prefill.
     if (!(await sendTurn(correction, []))) stream.stashDraft(correction);
   };
 
   onMount(() => {
-    // The sessions list is an app-wide singleton resource (no longer refetched
-    // per mount), so pull once on entry to catch any out-of-band changes — a
-    // second tab, a scheduled agent — since it was last loaded.
+    // The sessions list is a singleton not refetched per mount; catch out-of-band changes.
     refreshSessions();
   });
 
-  // What the thread changed in the operator's project folders and on its worktree's
-  // branch, read once each for everyone who shows them. Re-read when a turn settles,
-  // since that is when the agent has just changed something.
+  // Folder changes and the worktree branch, read once for every consumer; re-read when a turn settles.
   const threadChanges = createThreadChanges(currentId, () =>
     stream.sending() ? 0 : 1,
   );
@@ -301,16 +254,11 @@ export function ChatRoomScreen(): JSX.Element {
     branch.refetch();
   };
 
-  // The thread's sub-agents. Re-read when a turn settles for the same reason as the
-  // branch — that is the moment a launch has most likely just happened — and it keeps
-  // itself current on its own while any of them is still working.
+  // Re-read when a turn settles (a launch has likely just happened); polls itself while any agent works.
   const subagents = createSubagentsState(currentId, () =>
     stream.sending() ? 0 : 1,
   );
 
-  // The viewport pane beside the conversation — everything about what it holds, how
-  // wide it is, whether it renders as an aside or a sheet, and where focus goes when
-  // it closes. It is a concern of its own, so it lives in one.
   const browser = createBrowserState(currentId, browserOpenedSeq);
   const [ownCallsign] = createResource(
     () => {
@@ -340,21 +288,12 @@ export function ChatRoomScreen(): JSX.Element {
     startNew,
   });
 
-  // Per-conversation draft key, so an unsent message is restored on return. The
-  // controller moves a new thread's draft across when it adopts its id, keyed by the
-  // same derivation.
+  // The controller moves a new thread's draft across when it adopts its id, using this same key.
   const composerKey = () => chatDraftKey(currentId());
 
-  // File attachments for the next turn. Transient (not persisted like the draft):
-  // switching threads discards any still-attached files so they don't ride along
-  // to a different conversation.
-  //
-  // **Except when the switch is not a switch.** A new thread's seat moves from null to
-  // its backend id when its first run ends, and that id is the one the stream has been
-  // bound to all along — the same thread, now named. Clearing there would drop whatever
-  // the operator attached while the first turn ran, on a thread they never left. Read
-  // off the stream's own binding rather than tracked as a flag, because it is exactly
-  // the fact in question: the thread on screen before the flip is the one after it.
+  // Attachments are transient: switching threads discards them. Not when the seat only
+  // moves from null to the id the stream was already bound to (same thread, now named);
+  // clearing then would drop files attached during the first turn.
   const attachments = createComposerAttachments();
   createEffect(
     on(currentId, (id, prev) => {
@@ -368,8 +307,6 @@ export function ChatRoomScreen(): JSX.Element {
     currentTitle: () => currentSummary()?.title,
   });
 
-  // Retitle, fork, copy, the thread's browser and the two deletes — everything that
-  // acts on the thread rather than on a turn in it.
   const actions = createConversationActions({
     conversationId: currentId,
     messages: stream.messages,
@@ -381,11 +318,8 @@ export function ChatRoomScreen(): JSX.Element {
     onDeleted: clearThread,
     onForked: setCurrentId,
   });
-  // A "working" throbber sits on the title while the backend names the thread —
-  // either the first-turn auto-title (stream) or a manual regenerate.
   const titleWorking = () => stream.titlePending() || actions.retitling();
 
-  /** The saved thread's project, named for the status bar. */
   const savedProjectLabel = (): string | undefined => {
     const summary = currentSummary();
     if (!summary?.projectId) return undefined;
@@ -395,23 +329,13 @@ export function ChatRoomScreen(): JSX.Element {
     return project ? directoryLabel(project) : summary.workspace;
   };
 
-  // Which project this composer is about, for both menus. The saved thread's own, else
-  // the one staged for the next thread — the same pair the header subtitle already
-  // reads, so neither picker can be browsing a project the thread is not about to be
-  // scoped to.
-  //
-  // Derived once and passed to both rather than resolved twice: the `@` picker lists that
-  // checkout's files and the `/` picker offers the commands that checkout declares, and a
-  // pair that disagreed would put a file from one tree beside a command from another.
+  // Derived once for both menus: the `@` files and `/` commands must come from the same checkout.
   const composerProjectId = (): string | null =>
     currentSummary()?.projectId ??
     (currentId() === null ? stagedProjectId() : null) ??
     null;
 
-  // The composer's `/` menu. Every action it can fire is a relay this room already owns
-  // — a command is a second way to reach a control, never a second implementation of
-  // one. `fork` takes the newest turn, which is what "fork from here" means when the
-  // operator is typing rather than pointing at a message.
+  // Every `/` action reuses a relay this room already owns. `fork` takes the newest turn.
   const agents = useAgents(() => composerProjectId() ?? undefined);
   const agentValue = (): string =>
     agentChoice() ?? threadAgentName(currentSummary()?.agentName);
@@ -431,25 +355,19 @@ export function ChatRoomScreen(): JSX.Element {
     },
   });
 
-  // The `@` menu, over the project's filesystem. Shut for a thread with no project — its
-  // container holds nothing the operator has ever seen.
+  // The `@` menu is shut for a thread with no project.
   const fileRefs = createComposerFileRefs(composerProjectId, currentId);
 
-  /** Both menus behind the Composer's one slot.
-   *
-   *  The Composer reads the token and reports it to both; each answers for its own
-   *  trigger and returns nothing for the other, so exactly one is ever open. Merging them
-   *  here rather than teaching the Composer about two controllers keeps the design system
-   *  ignorant of what a `/` and an `@` mean, which is the whole point of the seam. */
+  /** Both menus behind the Composer's one slot. Each answers only for its own trigger, so
+   *  one is open at a time; merging here keeps the design system ignorant of `/` and `@`. */
   const composerMenu = {
     groups: () => [...commands.groups(), ...fileRefs.groups()],
     onQuery: (token: Parameters<typeof commands.onQuery>[0]) => {
       commands.onQuery(token);
       fileRefs.onQuery(token);
     },
-    // Routed by the row's own id prefix rather than by trying one and falling through:
-    // an action command legitimately returns null (it ran, and the field clears), and a
-    // fallthrough would read that as "not mine" and ask the file picker about it.
+    // Routed by id prefix, not fallthrough: an action command legitimately returns null
+    // (it ran), which a fallthrough would misread as "not mine".
     onPick: (item: ComposerMenuItem) =>
       item.id.startsWith("file-")
         ? fileRefs.onPick(item)
@@ -460,16 +378,10 @@ export function ChatRoomScreen(): JSX.Element {
     },
   };
 
-  /** Send, once both staged sets have been read against what was actually typed.
-   *
-   *  An action resolves to nothing sent: the relay has already run (or just ran, for the
-   *  one that carries an argument), and there is no message for the model. A command
-   *  the operator typed in full rather than picked counts the same — `consume` falls
-   *  back to reading it off the text.
-   *
-   *  Returns the stream's verdict to the Composer: `false` means the backend did not
-   *  take the turn, and the Composer puts the text and attachments back. An action is
-   *  `true` — it did what it was sent to do. */
+  /** Sends after both staged sets are checked against the typed text. An action sends
+   *  nothing to the model (a fully typed command counts too; `consume` reads it off the
+   *  text). Resolves `false` when the backend refused the turn so the Composer restores
+   *  the text and attachments; an action resolves `true`. */
   const sendTurn = (
     text: string,
     attachmentIds: string[],
@@ -483,21 +395,18 @@ export function ChatRoomScreen(): JSX.Element {
     });
   };
 
-  // ArrowUp in the empty composer edits the newest queued message in place — the third
-  // surface that edits one, following the same hold protocol as the thread's bubble and
-  // the dock's list (see `composerRecall.ts`).
+  // ArrowUp in the empty composer edits the newest queued message; same hold protocol as
+  // the bubble and the dock (see `composerRecall.ts`).
   const recall = createComposerRecall({
     items: () => stream.inbox().items,
     editQueued: (id, text) => void stream.editQueued(id, text),
     holdQueued: (id, held) => void stream.holdQueued(id, held),
     stash: stream.stashDraft,
   });
-  // A recall belongs to the thread it was opened in. Leaving it releases the hold, or the
-  // run behind the thread just left would stall on a message nobody is editing any more.
+  // Leaving the thread releases the hold, or its run would stall on a message nobody edits.
   createEffect(on(currentId, () => recall.cancel(), { defer: true }));
-  // So does a park: the dock takes the composer's slot, which is the surface being
-  // unmounted under the edit — and the dock lists the same message with its own editor,
-  // where a second, invisible hold would stall it with nothing on screen to say why.
+  // A park releases it too: the dock replaces the composer and has its own editor, so a
+  // second invisible hold would stall the run.
   createEffect(
     on(
       () => Boolean(stream.park()),
@@ -505,9 +414,7 @@ export function ChatRoomScreen(): JSX.Element {
     ),
   );
 
-  // The inbox, read once for every place that shows it: the thread's foot, the
-  // composer's count chip and the dock. The dock opens from the chip, and on its own when
-  // a Stop leaves the inbox waiting for the operator.
+  // The dock opens from the count chip, and on its own when a Stop leaves the inbox waiting.
   const inbox = stream.inbox;
   const [dockOpen, setDockOpen] = createSignal(false);
   createEffect(
@@ -527,8 +434,8 @@ export function ChatRoomScreen(): JSX.Element {
     onResume: () => void stream.resumeInbox(),
   };
 
-  /** The composer's `Jump ↑`: to the newest turn holding an ask, through the follow so
-   *  the bottom pin lets go — else to the tail, where the run is. */
+  /** Jumps to the newest turn holding an ask (through the follow, so the bottom pin
+   *  lets go), else to the tail. */
   const jumpToAsk = (): void => {
     const asking = stream.messages.findLast((m) =>
       m.blocks?.some((b) => b.kind === "approval" || b.kind === "question"),
@@ -537,7 +444,6 @@ export function ChatRoomScreen(): JSX.Element {
     if (!el) transcript.jumpToLatest();
   };
 
-  // The composer's status bar: its trailing cells, and the task rows they disclose.
   const status = createConversationStatus({
     conversationId: currentId,
     stats: stream.stats,
@@ -546,19 +452,14 @@ export function ChatRoomScreen(): JSX.Element {
     grantsRevalidate: conversationGrantsRevision,
   });
 
-  /** Shift+Tab's next level — a no-op while the control is pending, for the same reason
-   *  the control itself is disabled then: the level in hand is a placeholder, and
-   *  stepping from it would write a level chosen relative to nothing. */
+  /** No-op while pending: the level in hand is a placeholder to step from. */
   const cyclePermission = () => {
     if (permissionPending()) return;
     setPermission(nextPermissionLevel(permission()));
   };
 
-  /** How tall the title block laid over the transcript stands, so the transcript can
-   *  start its first turn beneath it. Measured rather than assumed: the block grows a
-   *  line for a staged thread's workspace hint and a whole panel for the recap, and a
-   *  fixed spacer would either hide the first turn under one of them or leave a gap
-   *  where neither is showing. */
+  /** Height of the title block over the transcript. Measured because it grows with the
+   *  workspace hint and the recap. */
   const [overlayHeight, setOverlayHeight] = createSignal(0);
   const measureOverlay = (el: HTMLElement) => {
     const observer = new ResizeObserver(() =>
@@ -571,18 +472,12 @@ export function ChatRoomScreen(): JSX.Element {
   return (
     <AllowHostContext.Provider value={allowHost}>
       <div ref={viewport.rowRef} class="flex h-full min-h-0">
-        {/* Conversation — the thread list now lives in the app rail's RECENTS, so
-          the body is free for the conversation plus the viewport pane. */}
         <section class="flex min-h-full min-w-0 flex-1 flex-col">
-          {/* The transcript runs the full height of this box, and the title block is
-            laid over its top rather than stacked above it: the conversation scrolls
-            out of sight *under* the title, through a `ScrollFade`, instead of being
-            cut at the header's bottom edge by a band that spent its own height.
-
-            Nothing in here — this wrapper, the overlay, the transcript's own wrapper —
-            may carry `opacity`, `filter`, `mask`, `isolation` or a `will-change` of
-            them: any one makes a backdrop root, and the fade's blur would sample
-            nothing (the trap noted on `.heph-glass`). */}
+          {/* The title block overlays the transcript, which scrolls under it through a
+            `ScrollFade`. Nothing in here (this wrapper, the overlay, the transcript's
+            wrapper) may carry `opacity`, `filter`, `mask`, `isolation` or a `will-change`
+            of them: each makes a backdrop root and the fade's blur samples nothing
+            (see `.heph-glass`). */}
           <div class="relative flex min-h-0 flex-1 flex-col">
             <TranscriptView
               stream={stream}
@@ -595,11 +490,8 @@ export function ChatRoomScreen(): JSX.Element {
               measure={MEASURE}
               insetTop={overlayHeight}
             />
-            {/* AFTER the transcript in the DOM and with no `z-*`: both are positioned,
-              so paint order is DOM order and this stays on top without a stacking
-              context — which some engines treat as a backdrop root, the one thing the
-              fade inside it cannot survive. The session menu's popover portals to
-              the body, so tab order is the only thing the position costs. */}
+            {/* After the transcript in the DOM and with no `z-*`: paint order is DOM order,
+              and a stacking context here would be a backdrop root the fade can't survive. */}
             <div ref={measureOverlay} class="absolute inset-x-0 top-0">
               <ScrollFade edge="top" />
               <div class="relative">
@@ -623,12 +515,9 @@ export function ChatRoomScreen(): JSX.Element {
                     remove: () => void actions.removeConversation(),
                   }}
                 />
-                {/* Pinned under the title, not folded into the transcript: a recap
-                  inside the scroll is a message that is not one, sitting at the top of
-                  a thread the operator has just been dropped at the bottom of. It
-                  carries the ground as a fill because it is a paragraph — the fade is
-                  for a line of title, and prose scrolling through prose is unreadable
-                  at any blur. `flow-root` keeps the panel's bottom margin inside it. */}
+                {/* Pinned under the title, not in the scroll. It takes an opaque fill because
+                  prose scrolling through prose is unreadable at any blur; `flow-root`
+                  keeps the panel's bottom margin inside. */}
                 <div class="flow-root bg-bg">
                   <ThreadRecap
                     summary={recapSummary}
@@ -640,52 +529,35 @@ export function ChatRoomScreen(): JSX.Element {
             </div>
           </div>
 
-          {/* The composer docks on the page background, and the transcript dissolves
-            into it through the same `ScrollFade` the title uses at the top — one
-            edge treatment for both ends of the conversation, the composer's own
-            opaque fill and ruled frame doing the separating.
-            **No top padding**: the fade reaches up over the transcript's last band
-            on its own, and the transcript keeps exactly that band as its bottom
-            inset, so the last turn at rest clears it. A pad here would add a strip
-            of bare page between the fade and the frame. */}
-          {/* The dock's own background spans the full width — it is what the
-            transcript scrolls out of sight behind — while its contents take the
-            same measure as the transcript above. */}
-          {/* The background is dropped while a run is parked, and only then. The park
-            panel is *glass*: an opaque fill behind it leaves it nothing to frost, and
-            it would read as a flat tinted card rather than as the transcript seen
-            through it (see `ParkDock`). It stays full-width for the composer, which
-            needs the transcript to disappear behind it rather than beside it. */}
-          {/* `pb-4` is the whole bottom margin: the shell gives this route its bottom
-            edge flush (`isFlushRoute`). It has to clear the composer's registration
-            ticks, which sit 6px outside its frame (the shell's scroll root would clip
-            a pair left hanging past it), and then leave a little air — at `pb-2` the
-            ticks cleared but the unit read as resting on the window's edge. */}
+          {/* The transcript dissolves into the dock through the same `ScrollFade` as the
+            title. No top padding: the fade reaches over the transcript's last band, which
+            the transcript keeps as its bottom inset; a pad would leave bare page between
+            fade and frame. The background spans full width while contents take `MEASURE`.
+            It is dropped while a run is parked, since the park panel is glass and an
+            opaque fill leaves it nothing to frost (see `ParkDock`).
+            `pb-4` is the whole bottom margin (the shell gives this route a flush bottom
+            edge, `isFlushRoute`): it clears the composer's registration ticks, 6px
+            outside its frame, with air to spare. */}
           <div
             class={cx("sticky bottom-0 px-4 pb-4", !stream.park() && "bg-bg")}
           >
             <ScrollFade edge="bottom" />
             <div class={cx("relative", MEASURE)}>
-              {/* A parked run takes the composer's place. It is the same slot, so
-                nothing below the transcript moves — but the only thing offered is
-                the thing the run is waiting for. */}
+              {/* A parked run takes the composer's slot and offers only what it waits for. */}
               <Show when={stream.park()}>
                 {(park) => (
                   <ParkDock
                     park={park()}
                     draft={stream.parkDraft()}
                     onDraft={stream.patchParkDraft}
-                    // This room has a Plan panel, so a plan the dock is asking about
-                    // can be read at a panel's width one click away. A compare pane
-                    // passes nothing and the button is not offered there.
+                    // A compare pane passes nothing and the read-plan button is not offered.
                     onReadPlan={() => viewport.showSurface("plan")}
                     onStop={() => void stopRun()}
                     onSubmit={(settlement) =>
                       stream.resolvePark(park().messageId, settlement)
                     }
-                    // A park and a queued message can be outstanding together, and both
-                    // reach the model on the same resume — so the dock that has taken the
-                    // composer's slot also has to be where the queue is answerable.
+                    // A park and a queued message reach the model on the same resume, so the
+                    // dock must also make the queue answerable.
                     inbox={inbox()}
                     inboxActions={inboxActions}
                   />
@@ -709,8 +581,7 @@ export function ChatRoomScreen(): JSX.Element {
                   onSend={sendTurn}
                   menu={composerMenu}
                   recall={recall}
-                  // The backend refuses a turn it can't keep inside a context window; this
-                  // is the same stop, arriving before the message is committed to it.
+                  // The backend's context-window refusal, surfaced before the send.
                   sendBlocked={sendBlockedReason()}
                   attachments={attachments}
                   storageKey={composerKey()}
@@ -718,8 +589,6 @@ export function ChatRoomScreen(): JSX.Element {
                   onPrefillConsumed={stream.clearUndeliveredDraft}
                   onShiftTab={cyclePermission}
                   headerStart={
-                    // What the thread is doing: its name and `ready` at rest, the live
-                    // run, a lost stream, or a run that ended in a way worth saying.
                     <ComposerHeaderStatus
                       title={() => currentSummary()?.title ?? null}
                       streaming={stream.sending}
@@ -732,8 +601,6 @@ export function ChatRoomScreen(): JSX.Element {
                     />
                   }
                   headerEnd={
-                    // The run's clock, queued messages waiting on the operator's say-so,
-                    // or the branch a code thread writes to.
                     <ComposerHeaderAside
                       streaming={stream.sending}
                       runClock={stream.runClock}
@@ -743,9 +610,8 @@ export function ChatRoomScreen(): JSX.Element {
                       branch={() => branch.latest()?.branch}
                     />
                   }
-                  // The action tier's echo. The dock takes the composer's slot for a
-                  // park this room is driving, so what reaches here is a run the backend
-                  // reports waiting that this room is not holding the ask for.
+                  // The action tier's echo: a run the backend reports waiting whose ask
+                  // this room isn't holding (a driven park uses the dock instead).
                   waiting={
                     !stream.park() &&
                     currentSummary()?.activity === "awaiting_input"
@@ -753,19 +619,16 @@ export function ChatRoomScreen(): JSX.Element {
                       : null
                   }
                   controls={
-                    // The project is chosen while the thread is staged and only named once
-                    // it is saved — it is set at creation, and re-pointing a thread would
-                    // strand whatever worktree it had cut. The level is the opposite: it
-                    // is the operator's live control over a thread already in flight, so
-                    // it is offered at every moment of one, and it rides the next send.
+                    // The project is chosen while staged and only named once saved, since
+                    // re-pointing would strand the thread's worktree. The level is a live
+                    // control available throughout and rides the next send.
                     <>
                       <ModelPicker />
                       <PermissionControl
                         level={permission()}
                         onLevelChange={setPermission}
-                        // While an opened thread's own level is still in flight the seat
-                        // holds the strictest one as a placeholder; the control reports
-                        // that rather than naming a level the thread may not be at.
+                        // While an opened thread's level is in flight the seat holds the
+                        // strictest as a placeholder; the control reports that.
                         pending={permissionPending()}
                       />
                       <AgentControl
@@ -793,21 +656,13 @@ export function ChatRoomScreen(): JSX.Element {
                       </Show>
                     </>
                   }
-                  // What the thread is doing: the task count, the stats behind their
-                  // trigger, and how full the context window is.
                   trailing={status.items()}
                 />
               </Show>
-              {/* While a run is parked the Composer — and the status bar joined to it —
-                gives its slot to the dock, but a disconnected stream and the task count
-                are no less true for it; the bar's trailing cells stand on their own
-                until the dock is gone, as the same bar boxed on all four sides. The
-                composer's header line is gone with it, so `Disconnected` — said there
-                the rest of the time — takes the bar's leading cell for the length of
-                the park: one place at a time, never both.
-                Its own fill, shared with the task rows: the wrapper's is gone while a
-                park is up, and neither is part of the glass — without it they would
-                sit on the transcript scrolling behind them. */}
+              {/* While parked, the composer's status bar is replaced by a boxed one so the
+                trailing cells stay visible. `Disconnected`, normally in the composer
+                header, takes its leading cell: one place at a time. The fill is its own
+                (shared with the task rows) because the wrapper's is dropped during a park. */}
               <div class="bg-bg">
                 <Show when={stream.park()}>
                   <StatusBar
@@ -827,8 +682,6 @@ export function ChatRoomScreen(): JSX.Element {
           </div>
         </section>
 
-        {/* Documents / live previews / artifacts sit beside the conversation, on a
-          draggable divider above `lg` and in a full-screen sheet below it. */}
         <ChatViewportMounts viewport={viewport} />
 
         {rename.element}

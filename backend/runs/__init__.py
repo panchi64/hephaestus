@@ -1,8 +1,7 @@
-"""Pillar I + II — the Run substrate and the event protocol (the chassis).
+"""The Run substrate and the event protocol.
 
-A Run is one server-side, background-executing unit of work for one request.
-Chat and agent work both ride it, so continuity, resume, cancellation,
-timeouts, and metrics are written once here and inherited everywhere.
+A Run is one server-side, background-executing unit of work. Chat and agent work both
+ride it, so continuity, resume, cancellation, timeouts and metrics are written once.
 
 - :class:`RunRegistry` — launch/track/bound/cancel Runs (in-process asyncio).
 - :class:`Run` / :class:`RunStatus` — the unit of work and its lifecycle.
@@ -10,7 +9,7 @@ timeouts, and metrics are written once here and inherited everywhere.
 - ``events`` — the frozen v1 typed event union.
 - :func:`sse_response` — stream a Run to a client over SSE.
 
-See docs/architecture/README.md (Pillars I & II).
+See docs/architecture/README.md.
 """
 
 from __future__ import annotations

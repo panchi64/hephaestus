@@ -78,18 +78,14 @@ async def _command_context(
 ) -> str:
     """The tail block a picked command contributes to this turn, or ``""``.
 
-    **A name that resolves to nothing is not an error.** The catalog narrows on facts that
-    move between the picker's read and the send — a skill unpublished in another tab, a
-    tool the operator just switched off — and failing the turn over one would throw away
-    the message they typed to punish them for a race they did not cause. The prompt still
-    carries their literal `/name`, which is a perfectly legible thing for the model to
-    receive and ask about, so the turn goes through with nothing added.
+    A name that resolves to nothing is not an error. The catalog narrows on facts that move
+    between the picker's read and the send (a skill unpublished in another tab, a tool just
+    switched off), and failing would discard the typed message over a race. The prompt still
+    carries the literal `/name`, so the turn goes through with nothing added.
 
-    The same latitude is what makes **regenerate** honest rather than merely convenient.
-    A regenerate arrives here with the invocation read back off the turn it is re-answering,
-    and resolves it *now*: an edited template takes effect, an unpublished skill quietly
-    stops expanding, and neither outcome is a failure — re-answering a turn has always
-    meant re-running it against the world as it currently stands.
+    Regenerate relies on the same latitude: it reads the invocation back off the re-answered
+    turn and resolves it now, so an edited template takes effect and an unpublished skill
+    stops expanding, as re-answering has always meant re-running against current state.
     """
     if command is None:
         return ""
@@ -99,8 +95,8 @@ async def _command_context(
         place=place_kind(binding.project_id, binding.worktree),
         has_conversation=True,
         disabled_tools=disabled_tools,
-        # The same tree the picker listed from, resolved the same way — a project's own
-        # `/release-notes` must mean the same thing on the way out as it did in the menu.
+        # The tree the picker listed from, so a project's `/release-notes` means the same
+        # on the way out as in the menu.
         root=await deps.composer_root(request, binding.project_id, conversation_id),
     )
     return expand(spec, command.argument) if spec is not None else ""
@@ -108,13 +104,11 @@ async def _command_context(
 
 @dataclass(frozen=True)
 class TurnScope:
-    """What decides the agent a turn on this thread runs and the deps it runs it with: the
-    thread's binding, the tools withheld from it, and the app's assembled catalog,
-    instructions and capability bag.
+    """What decides the agent a turn on this thread runs and its deps: the binding, the
+    withheld tools, and the app's catalog, instructions and capability bag.
 
-    Gathered in one place because two things need the identical answer — a chat turn, and
-    the operator's own fold, whose summary is written on the agent that turn would run so
-    its request matches the one the model last served."""
+    Shared by a chat turn and the operator's fold, whose summary is written on the agent a
+    turn would run so its request matches the model's last."""
 
     binding: ConversationBinding
     agent: AgentDefinition
@@ -137,11 +131,7 @@ async def turn_scope(request: deps.Source, conversation_id: str, *, vision: bool
         binding=applied.binding,
         agent=applied.agent,
         disabled_tools=await deps.disabled_tools(request, vision=vision) | applied.withheld,
-        # The app's one agent-facing capability bag — assembled at startup from every
-        # feature manifest's `capabilities` export, so a turn never enumerates handles.
         capabilities=deps.capabilities(request),
-        # The assembled tool catalog + the manifests' dynamic instructions — read per
-        # request so the turn always runs against what the app assembled.
         categories=deps.tool_categories(request),
         dormant=deps.dormant_summaries(request),
         instruction_providers=(*deps.instruction_providers(request), *applied.instructions),
@@ -161,29 +151,24 @@ async def submit_turn(
 ) -> ChatCreated:
     """Gather this route's resources from the `Request` and hand off to `compose_turn`.
 
-    Async only because the enabled-tool policy is a persisted read; every other resource
-    here is an `app.state` handle. `compose_turn` itself stays synchronous, so the
-    submit remains a single uninterrupted step after the caller's conversation mutation."""
-    # `models[4]` is the resolved main model's vision fact — the same one `compose_turn`
-    # passes to the engine for attachments.
+    Async only because the enabled-tool policy is a persisted read. `compose_turn` stays
+    synchronous, so submit is one uninterrupted step after the caller's conversation mutation."""
+    # `models[4]` is the main model's vision fact, as `compose_turn` passes the engine.
     #
-    # Hoisted out of the call below because the command catalog needs the disabled set too:
-    # a `/reviewer` is an offer to launch a sub-agent, and where `agents_spawn` has been
-    # withheld from this run there is nothing to offer. Resolving it twice would let the
-    # command the operator picked and the tools the turn actually has disagree.
+    # Hoisted because the command catalog needs the disabled set too: `/reviewer` offers to
+    # launch a sub-agent, pointless where `agents_spawn` is withheld, and resolving twice
+    # could make the picked command and the turn's tools disagree.
     scope = await turn_scope(request, conversation_id, vision=models[4])
     return compose_turn(
         prompt=prompt,
         conversation_id=conversation_id,
         models=models,
-        # Resolved here rather than in the engine, for the same reason the enabled-tool
-        # policy is: it is a persisted read, and `compose_turn` is the synchronous step
-        # after the caller has already mutated the conversation.
+        # A persisted read, resolved here since `compose_turn` is the synchronous step.
         turn_context=await _command_context(
             request, command, conversation_id, scope.binding, scope.disabled_tools
         ),
-        # Written onto the turn as well as spoken into it — see `compose_turn`. Harmless on
-        # a regenerate, which records no user request for it to land on.
+        # Written onto the turn too (see `compose_turn`); harmless on a regenerate, which
+        # records no user request to land on.
         command=command,
         capabilities=scope.capabilities,
         registry=deps.registry(request),
@@ -199,19 +184,15 @@ async def submit_turn(
         file_refs=file_refs,
         ephemeral=ephemeral,
         max_requests=scope.agent.max_requests,
-        # Resolved here, not at each caller: send, regenerate and edit all want it and none
-        # of them should have to know it exists.
+        # Settings resolved here once so send, regenerate and edit all apply the operator's
+        # compaction policy, gauge boundaries and inactivity bound (else config defaults).
         auto_compact=await _resolve_auto_compact(request, conversation_id),
-        # Same again for the context gauge's boundaries: resolved once here so send,
-        # regenerate and edit all report severity against the operator's own pair.
         context_thresholds=await get_context_thresholds(deps.settings_store(request), OPERATOR_ID),
-        # Same reason again: every interactive turn runs under the operator's inactivity
-        # bound (else the config default).
         inactivity_timeout_s=await get_inactivity_timeout(
             deps.settings_store(request), OPERATOR_ID
         ),
-        # And the wall clock, which is normally absent — resolved here anyway so that an
-        # operator who does set one gets it on every interactive turn, not just send.
+        # Normally absent; resolved anyway so a wall clock the operator sets covers every
+        # interactive turn.
         wall_clock_timeout_s=lower_of(
             scope.agent.wall_clock_timeout_s,
             await get_wall_clock_timeout(deps.settings_store(request), OPERATOR_ID),
@@ -220,9 +201,8 @@ async def submit_turn(
 
 
 async def recompose_chat(source: deps.Source, facts: ParkedFacts) -> Recomposed:
-    """The agent and compaction context a parked chat turn resumes with after a restart,
-    composed from the same :class:`TurnScope` a fresh turn on the thread would be, on the
-    endpoint and model the parked agent held."""
+    """The agent and compaction context a parked chat turn resumes with after a restart, from
+    the :class:`TurnScope` a fresh turn would use, on the endpoint and model it held."""
     conversation_id = facts.conversation_id
     if conversation_id is None:
         raise RecomposeError("this run had no conversation to resume in")
@@ -256,10 +236,9 @@ async def recompose_chat(source: deps.Source, facts: ParkedFacts) -> Recomposed:
 async def _resolve_auto_compact(
     request: deps.Source, conversation_id: str | None
 ) -> AutoCompactPolicy:
-    """The effective conversation auto-compaction policy for a turn: the thread's on/off
-    override beats the operator's global default, which beats the config default —
-    resolved here rather than in the engine so the orchestrator never reads the settings
-    store itself."""
+    """The effective auto-compaction policy: the thread's override beats the operator's
+    default, which beats the config's. Resolved here so the orchestrator never reads the
+    settings store."""
     override = (
         await deps.store(request).get_compaction_override(conversation_id)
         if conversation_id is not None

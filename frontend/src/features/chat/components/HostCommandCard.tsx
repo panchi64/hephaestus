@@ -8,9 +8,8 @@ import { CommandBoundary, FenceNote } from "./CommandBoundary";
 import { createGrantToggle } from "./ConversationGrantToggle";
 import { createAdoptedOpen } from "./ProcessRow";
 
-/** The state at the plate's far end, in mono. Hue only where it means something —
- *  running (info), failed or denied (alert); a command that finished is dim, because a
- *  green OK on every successful command is the one accent spent on nothing. */
+/** The state at the plate's far end. Hue only for running (info) and failed or denied
+ *  (alert); a finished command is dim, since a green OK on every success spends the accent on nothing. */
 const phaseFlag: Record<
   HostCommandPhase,
   { tone: "warn" | "info" | "dim" | "alert"; label: string }
@@ -24,22 +23,16 @@ const phaseFlag: Record<
 };
 
 /**
- * Commands rendered as persistent terminals. Each block shows the exact command the
- * agent wants to run on the operator's machine, gates it behind APPROVE/DENY, and —
- * once approved — keeps the same block to show the runtime output (stdout/stderr/exit).
- * The block never collapses into a separate tool card, so the operator keeps one
- * continuous readout of what ran.
+ * Commands rendered as persistent terminals: the exact command, gated behind
+ * APPROVE/DENY, then the same block shows stdout/stderr/exit once it has run.
  *
- * **More than one tool lands here**, which is why each command carries its own `name`:
- * the sandboxed host command and the worktree shell both run something the operator has
- * to see, and a conversation grant is recorded against a tool *and the command it ran*.
- * Keying the grant off one literal would have quietly recorded the wrong tool for the
- * other; keying it off the tool alone would make one tick under a test run a standing yes
- * to every command the thread goes on to try.
+ * More than one tool lands here (the sandboxed host command and the worktree shell), so
+ * each command carries its own `name`: a conversation grant is recorded against the tool
+ * and the command it ran, and keying on the tool alone would make one tick a standing yes
+ * to everything the thread tries.
  *
- * The backend resumes the parked run only on a decision covering *every* pending
- * command, so decisions are collected and submitted as a single batch once all
- * pending commands are answered.
+ * The backend resumes the parked run only on a decision covering every pending command,
+ * so decisions are submitted as one batch once all are answered.
  */
 export function HostCommandCard(props: {
   commands: HostCommand[];
@@ -48,9 +41,8 @@ export function HostCommandCard(props: {
    *  expanded; the command line and decision controls always stay visible. */
   open?: boolean;
 }): JSX.Element {
-  // Each decision captures its grant scope at the instant that command is decided,
-  // not at batch-submit — so toggling the checkbox after a command is approved can't
-  // retroactively change (or lose) that command's already-locked grant choice.
+  // Grant scope is captured when the command is decided, not at batch submit, so a later
+  // checkbox toggle can't change an already-locked choice.
   type Decision = { approved: boolean; scope: ApprovalDecision["scope"] };
   const [decisions, setDecisions] = createSignal<Record<string, Decision>>({});
   const grant = createGrantToggle();
@@ -61,15 +53,12 @@ export function HostCommandCard(props: {
     pending().every((c) => c.toolCallId in d);
   const allDecided = () => isComplete(decisions());
 
-  // The act a grant on one of these would name — the command, not the tool, since the
-  // backend scopes the grant to the command it was recorded from.
+  // The backend scopes a grant to the command, not the tool.
   const keyOf = (command: HostCommand) =>
     grantKey(command.name, command.command, command.toolCallId);
 
   async function decide(toolCallId: string, approved: boolean): Promise<void> {
     if (submitting()) return;
-    // Lock in this command's grant choice now, keyed by the act that actually asked,
-    // rather than re-reading the checkbox at submit.
     const asked = props.commands.find((c) => c.toolCallId === toolCallId);
     const next = {
       ...decisions(),
@@ -79,8 +68,7 @@ export function HostCommandCard(props: {
       },
     };
     setDecisions(next);
-    // Hold until every pending command is answered, then submit them together —
-    // the resume requires decisions covering exactly the pending calls.
+    // The resume requires decisions covering exactly the pending calls.
     if (!isComplete(next)) return;
     setSubmitting(true);
     const payload: ApprovalDecision[] = Object.entries(next).map(
@@ -137,18 +125,15 @@ function Terminal(props: {
   onDecide: (toolCallId: string, approved: boolean) => void;
 }): JSX.Element {
   const c = () => props.command;
-  // A phase the map doesn't know (a newer backend, a replayed event) must not
-  // throw on the property read below — fall back to a neutral flag.
+  // An unknown phase (newer backend, replayed event) falls back to a neutral flag.
   const flag = () =>
     phaseFlag[c().phase] ?? { tone: "dim" as const, label: c().phase };
-  // The terminal rests open — its output is the point of it — and yields to the
-  // turn's expand-all/collapse-all like every other card.
+  // Rests open, since its output is the point; yields to the turn's expand-all/collapse-all.
   const { open: showOutput } = createAdoptedOpen(props, true);
   // Decided locally, before the optimistic transition off "pending".
   const decidedPending = () =>
     c().phase === "pending" && props.decided !== undefined;
-  // `timedOut` is in the list because a timeout's exit code is null — it never exited —
-  // and a killed command that printed nothing still has the one thing worth saying.
+  // `timedOut` is listed because a timeout has a null exit code and a killed silent command still has that to say.
   const hasOutput = () =>
     Boolean(c().stdout) ||
     Boolean(c().stderr) ||
@@ -157,20 +142,15 @@ function Terminal(props: {
     c().timedOut === true ||
     c().exitCode != null;
 
-  /** The region's name: where the command runs, and how far it said it reaches. */
   const plate = () => (c().reach ? `Host · ${c().reach}` : "Host");
 
-  /** The backend's own measurement, taken around the spawn — never a stopwatch started
-   *  here, which would be timing the stream rather than the command. While it runs the
-   *  figure comes from the progress ticks, so a long command counts up instead of
-   *  sitting at nothing until it ends. */
+  /** The backend's measurement around the spawn (a local stopwatch would time the stream);
+   *  while running it comes from the progress ticks. */
   const elapsed = () =>
     c().elapsedMs !== undefined ? duration(c().elapsedMs!) : undefined;
 
   const body = (): JSX.Element => (
     <Stack gap={2} class="px-3 py-2">
-      {/* The exact command line the agent asked to run on the host — mono, the
-          machine's voice, with the prompt receding so the command is what reads. */}
       <Row gap={2} align="start">
         <Text variant="code" tone="dim" class="shrink-0">
           $
@@ -184,17 +164,14 @@ function Terminal(props: {
         </Text>
       </Row>
 
-      {/* Pending: the operator's judgment aid, then the decision. */}
       <Show when={c().phase === "pending"}>
         <Show when={c().explanation}>
           <Text variant="body" tone="default" class="break-words">
             {c().explanation}
           </Text>
         </Show>
-        {/* What the Auto review found, when one ran. `too_destructive` is the whole
-              reason it is here: the review used to refuse such a command itself, and now
-              it hands it over — so the finding has to arrive with the command rather than
-              on a collapsed row above it. */}
+        {/* The Auto review hands a `too_destructive` command to the operator, so the
+            finding must arrive with the command rather than on a collapsed row above. */}
         <Show when={c().risk === "too_destructive"}>
           <Row gap={2} align="center">
             <StatusFlag status="alert">Cannot be undone</StatusFlag>
@@ -213,10 +190,8 @@ function Terminal(props: {
           }
         >
           <Stack gap={2}>
-            {/* The grant opt-in sits *above* the decision so it reads naturally; its
-                  state is captured into this command's decision the moment APPROVE is
-                  clicked (see `decide`), so set it before approving. A guarded call
-                  offers none. */}
+            {/* Above the decision because its state is captured when APPROVE is clicked
+                (see `decide`). A guarded call offers none. */}
             <CautionsAndGrant
               cautions={c()}
               command={c().command}
@@ -244,20 +219,13 @@ function Terminal(props: {
         </Show>
       </Show>
 
-      {/* What it declared and what held it to that — on the card from the moment the
-            declaration exists, which is before it runs as well as after. */}
+      {/* Shown from the moment the declaration exists, before the command runs. */}
       <CommandBoundary command={c()} />
 
-      {/* Approved and executing — text readout, never a spinner, and now the output
-            itself as it arrives. The run streams it in deltas every half-second, so a
-            command that takes a minute reads as a command working rather than as a
-            stalled turn.
-
-            **One stream here where the settled command has two.** Mid-flight the wire
-            carries stdout and stderr concatenated with no field to tell them apart, and
-            splitting them on a guess would file half a stack trace under the wrong
-            heading. The result is the record and separates them properly, which is why
-            this arm disappears the moment the call completes. */}
+      {/* Live output, streamed in deltas. One stream here, two once settled: mid-flight
+            the wire concatenates stdout and stderr with no field to tell them apart, and
+            guessing would file half a stack trace under the wrong heading. The result
+            separates them, so this arm disappears when the call completes. */}
       <Show when={c().phase === "running"}>
         <Show
           when={c().streamed}
@@ -278,16 +246,14 @@ function Terminal(props: {
         </Show>
       </Show>
 
-      {/* Denied — it never ran. */}
       <Show when={c().phase === "denied"}>
         <Text variant="body" tone="alert">
           Denied — not executed.
         </Text>
       </Show>
 
-      {/* This decision 409'd — already resolved elsewhere (a second tab, a
-            retried request) by the time it landed. Non-interactive; the
-            transcript reconciles with the actual outcome via a refetch. */}
+      {/* The decision 409'd: resolved elsewhere (another tab, a retry). Non-interactive;
+            a refetch reconciles the transcript. */}
       <Show when={c().phase === "stale"}>
         <Text variant="body" tone="dim">
           Decided elsewhere — this was resolved from another session; the
@@ -295,7 +261,6 @@ function Terminal(props: {
         </Text>
       </Show>
 
-      {/* Runtime output, once the command has run. */}
       <Show when={hasOutput() && showOutput()}>
         <Stack gap={1}>
           <Show when={c().stdout}>
@@ -323,12 +288,9 @@ function Terminal(props: {
               {c().error}
             </Text>
           </Show>
-          {/* Beneath the streams, because it is about them: a permission error up
-                there is the fence holding, not the command breaking. */}
+          {/* Beneath the streams because it explains them. */}
           <FenceNote command={c()} />
-          {/* A timeout has no exit code — it never exited — so the marker has to be
-                able to stand without one, and the null is the fact rather than a
-                missing value. */}
+          {/* A timeout never exited, so its marker stands without an exit code. */}
           <Show when={c().timedOut || c().exitCode != null}>
             <Text variant="meta" tone={c().exitCode === 0 ? "dim" : "alert"}>
               {c().timedOut ? "Timed out" : `Exit ${c().exitCode}`}
@@ -343,11 +305,8 @@ function Terminal(props: {
     <Show
       when={c().phase === "pending"}
       fallback={
-        // A ruled frame named by its plate (design §7, §10.14): the one region in a
-        // turn whose edge does work, since it holds a command and what came back from
-        // the operator's own machine. Contents bare; the state reports in mono at the
-        // plate's far end and spends a colour only where something went wrong or is
-        // still going — never a green OK.
+        // A ruled frame named by its plate: its edge does work because it holds a command
+        // and what came back from the operator's machine.
         <section class="flex flex-col border border-line-strong">
           <div class="flex items-center gap-2 border-b border-line px-3 py-2">
             <Text variant="plate" tone="dim" class="min-w-0 flex-1 truncate">
@@ -368,7 +327,7 @@ function Terminal(props: {
         </section>
       }
     >
-      {/* Waiting on the operator: the action tier (design §10.18). */}
+      {/* Waiting on the operator: the action tier. */}
       <ActionFrame
         tone="approval"
         title={`Approval needed · ${plate()}`}

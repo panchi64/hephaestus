@@ -1,8 +1,6 @@
-"""A sub-agent's report as data, and the prose it must never replace.
+"""A sub-agent's structured report block and the prose around it.
 
-The report was prose and nothing else, which is right for the model reading it and useless
-for a coverage map. These pin the shape, the split, and — the part that matters most — that
-every way the structured half can fail costs a panel rather than a report.
+Any failure of the block costs only the panel, never the report.
 """
 
 from __future__ import annotations
@@ -72,8 +70,6 @@ def test_the_block_round_trips():
 
 
 def test_it_parses_inside_the_envelope_too():
-    # Both readers have one in hand at different points, and neither should have to
-    # unwrap first.
     assert report_structure(report_envelope(_report())) == _STRUCTURE
 
 
@@ -130,18 +126,15 @@ def test_a_field_the_model_invented_does_not_throw_the_report_away():
     parsed = report_structure(text)
     assert parsed is not None
     assert [f.statement for f in parsed.findings] == ["x"]
-    assert parsed.findings[0].confidence == "medium"  # the documented default
+    assert parsed.findings[0].confidence == "medium"
 
 
 def test_every_list_may_be_empty():
-    # A sub-agent that hit no contradiction is reporting honestly, not failing.
     parsed = report_structure(f"{FINDINGS_OPEN}\n{{}}\n{FINDINGS_CLOSE}")
     assert parsed == ReportStructure()
 
 
 def test_a_topic_nobody_reached_is_a_row_rather_than_an_omission():
-    # The whole point of a coverage map: a gap has to be distinguishable from a topic the
-    # sub-agent never thought of.
     parsed = report_structure(_report())
     assert parsed is not None
     assert [(c.topic, c.depth) for c in parsed.coverage] == [
@@ -151,7 +144,6 @@ def test_a_topic_nobody_reached_is_a_row_rather_than_an_omission():
 
 
 def test_the_instruction_names_the_markers_the_parser_looks_for():
-    # The brief and the parser are one format; a drift between them is silent.
     assert FINDINGS_OPEN in FINDINGS_INSTRUCTION
     assert FINDINGS_CLOSE in FINDINGS_INSTRUCTION
 

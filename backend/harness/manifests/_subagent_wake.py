@@ -1,15 +1,13 @@
 """Carrying words between the agents of a delegation tree: a finished agent's report up to
 the thread that spawned it, and a message from one agent to another.
 
-**Both go into the recipient's inbox** (``runs/inbox.py``), the same road the operator's
-own mid-turn messages take. A running recipient takes them at its next model request; an
-idle one is started by the inbox dispatcher (``_inbox_dispatch.py``), which also keeps the
-tree's unattended-turn budget.
+Both go into the recipient's inbox (``runs/inbox.py``), as the operator's mid-turn messages
+do. A running recipient takes them at its next model request; an idle one is started by
+the inbox dispatcher (``_inbox_dispatch.py``), which keeps the tree's unattended-turn budget.
 
-**Every report says how the work ended.** A spawned agent files one with
-``subagent_report`` (``tools/report.py``), held here by run until that run ends. An
-unattended turn that ends without one is reported as failed, so the parent always hears
-which of done, blocked or failed it is dealing with.
+Every report says how the work ended. A spawned agent files one with ``subagent_report``
+(``tools/report.py``), held here by run until it ends. An unattended turn ending without
+one is reported failed, so the parent always hears done, blocked or failed.
 """
 
 from __future__ import annotations
@@ -135,16 +133,15 @@ class SubagentWake:
         try:
             await self._report(run)
         except Exception:
-            # Never let this escape: it runs as a background task, and a feature that
-            # failed to deliver one report must not take the dispatcher's other hooks or
-            # the run's own teardown with it.
+            # A background task: one undelivered report must not take the dispatcher's other
+            # hooks or the run's teardown with it.
             logger.exception("subagents: could not settle run %s", run.id)
 
     # -- a sub-agent finished -------------------------------------------------------
 
     async def _report(self, run: Run) -> None:
-        """Every turn a spawned agent finishes — its first, one a message woke, or one the
-        operator sent after opening it — is reported to the thread that spawned it."""
+        """Report every turn a spawned agent finishes (first, message-woken, or sent by the
+        operator after opening it) to the thread that spawned it."""
         if run.conversation_id is None or run.kind not in CHAT_TURN_KINDS:
             return
         row = await self._records.by_child(run.conversation_id)
@@ -165,12 +162,10 @@ class SubagentWake:
                 context_window=run.context_window,
             )
         except Exception:
-            # Guarded on its own, and this is the whole reason it is: closing the row is
-            # bookkeeping, and delivering the report is the work. A write that failed —
-            # two turns and the write-behind drainers can hold SQLite's single writer lock
-            # past its retries — would otherwise cost the parent a report nothing else
-            # holds, on top of a card that reads "working" forever. The card is wrong
-            # until the next restart reconciles it; the thread still hears what happened.
+            # Guarded alone: closing the row is bookkeeping, delivery is the work. A failed
+            # write (concurrent turns and drainers can hold SQLite's writer lock past its
+            # retries) would otherwise cost the parent a report nothing else holds. The card
+            # stays wrong until a restart reconciles it; the thread still hears.
             logger.exception("subagents: could not close out %s", row.id)
         if not row.parent_conversation_id:
             return  # spawned from a run with no thread of its own
@@ -194,12 +189,11 @@ class SubagentWake:
         )
 
     async def _outcome(self, run: Run, conversation_id: str) -> _Outcome:
-        """How the sub-agent's turn ended, and what it has to say for itself.
+        """How the sub-agent's turn ended, and what it has to say.
 
-        A filed report decides it, unless the agent was stopped. Without one, a sub-agent
-        that errored, was stopped, or ended an unattended turn without reporting still did
-        work, and its transcript still holds it, so its last answer is handed over beside
-        the failure rather than thrown away.
+        A filed report decides it, unless the agent was stopped. Without one, an agent that
+        errored, was stopped or ended unreported still did work, so its last answer is handed
+        over beside the failure.
         """
         filed = self._filed.pop(run.id, None)
         if filed is not None and run.status is not RunStatus.cancelled:
@@ -207,8 +201,7 @@ class SubagentWake:
         answer = await self._latest_answer(conversation_id)
         if run.status is RunStatus.done:
             if is_attended(run.kind):
-                # The operator was talking to it in its own thread, so its answer is the
-                # report they meant to send up.
+                # The operator talked to it in its own thread; its answer is the report.
                 return _Outcome("done", answer or "(it answered with nothing)", None)
             return _Outcome("failed", answer, NO_REPORT)
         reason = run.error or run.detail or run.status.value
@@ -394,13 +387,11 @@ def report_text(
     cause: StopCause | None = None,
     preview_chars: int | None = None,
 ) -> str:
-    """A sub-agent's hand-back, as the launching model reads it: who, how it ended, what
-    went wrong, its report, where its work is, and what to do next.
+    """A sub-agent's hand-back as the launching model reads it: who, how it ended, what went
+    wrong, its report, where its work is, and what to do next.
 
-    Named by its **handle**, because a thread with three sub-agents out gets three of these
-    and the spec alone does not tell them apart. Its callsign and class follow, since the
-    operator may refer to it by either; the spec rides along only when it differs from the
-    handle, since ``explorer (explorer)`` is noise.
+    Named by handle, since several sub-agents may share a spec. Callsign and class follow
+    (the operator may use either); the spec appears only when it differs from the handle.
     """
     extras = [name for name in (designation(callsign, agent_class),) if name]
     if spec_name != handle:

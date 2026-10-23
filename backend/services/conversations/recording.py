@@ -35,44 +35,38 @@ class RecordingMixin(StoreCore):
         """Hot path: extend the tree off the active leaf and queue the durable write,
         returning the ids of the nodes it created (empty when it wrote nothing).
 
-        Only projects and serializes here (no vault) — the drainer encrypts just
-        before the write, on the lock-aware side of the queue. An evicted thread is
-        reloaded first, which blocks on the read and raises
-        :class:`ConversationUnavailableError` when the rows cannot be opened. New messages branch
-        automatically when a prior regenerate/edit moved the active leaf back.
-        ``prompt_id`` says the turn's user request is **already in the tree** — written by
-        :meth:`record_prompt` as the turn began — so ``new_messages`` is only what followed
-        it. Nothing in it is then stamped as the turn's request (the first request it holds
-        is a steering message, not the prompt), and a ``blocked_reason`` with no response to
-        carry it lands on the prompt node itself, durably, instead of being dropped with an
-        empty slice.
-        ``attachment_ids``/``file_refs``/``command``/``persisted`` belong to the turn's user
-        request (the first one):
-        the ids are stamped on its node + row (chip rendering), and when ``persisted`` is
-        given the request's *live* attachment content is replaced by that capped set before
-        serialize — so replayed history carries only the retained-up-to-cap content, never
-        the uncapped live payload. Installing it lives here (not in the engine) because
-        *what the durable blob contains* is the store's job. ``blocked_reason``, when the
-        turn ended blocked (a usage/loop/context/time bound), stamps the turn's branch
-        node — the first response, matching how ``project_tree`` keys an assistant view —
-        so a reload carries the same persistent stop marker the live stream showed.
-        ``timings``, when the caller measured them, are the run's per-response wall-clock
-        in the order the responses were produced — zipped onto the response nodes below,
-        so the readout can total a cold thread's time the way it totals its tokens."""
+        Only projects and serializes here; the drainer encrypts before the write. An evicted
+        thread is reloaded first, blocking on the read and raising
+        :class:`ConversationUnavailableError` when the rows cannot be opened. New messages
+        branch automatically when a regenerate/edit moved the active leaf back.
+
+        ``prompt_id`` says the turn's user request is already in the tree
+        (:meth:`record_prompt`), so ``new_messages`` is only what followed it: nothing in it
+        is stamped as the request, and a ``blocked_reason`` with no response to carry it
+        lands on the prompt node.
+
+        ``attachment_ids``/``file_refs``/``command``/``persisted`` belong to the turn's first
+        user request. The ids are stamped on its node and row (chips); ``persisted``, when
+        given, replaces the request's live attachment content with the capped set before
+        serialization, so replayed history never carries the uncapped payload. That lives
+        here because what the durable blob contains is the store's job.
+
+        ``blocked_reason``, when the turn ended blocked (a usage, loop, context or time
+        bound), stamps the first response, the node ``project_tree`` keys the view by, so a
+        reload shows the live stop marker. ``timings`` are per-response wall-clock in
+        production order, zipped onto the response nodes so a cold thread's time can be
+        totalled like its tokens."""
         if not new_messages:
             if prompt_id is not None and blocked_reason:
                 self.stamp_block(conversation_id, prompt_id, blocked_reason)
             return []
         tree = self.cache_get(conversation_id)
         if tree is None:
-            # Evicted, or deleted while this turn was still running (an empty tree then,
-            # which `_persist_messages` re-checks the row before writing).
+            # Evicted, or deleted mid-turn (`_persist_messages` re-checks the row).
             tree = self.hydrate_blocking(conversation_id)
         added = tree.append_chain(new_messages)
-        # A turn blocked before it produced a response (a time/cancel bound tripping in
-        # the pre-model setup window) has no response node to carry the marker — so the
-        # turn's user request carries it instead, and a reload still shows the persistent
-        # stop marker (under the operator's own message) rather than dropping it.
+        # A turn blocked before any response (a bound tripping in the pre-model setup)
+        # has no response node, so its user request carries the stop marker.
         blocked_on_request = bool(blocked_reason) and not any(
             isinstance(n.message, ModelResponse) for n in added
         )
@@ -84,32 +78,19 @@ class RecordingMixin(StoreCore):
         # A turn whose request is already recorded has no request left to stamp.
         stamped = prompt_id is not None
         blocked_stamped = False
-        # One timing per response, consumed in the order the responses appear — the
-        # order the translator produced them in. A short (or absent) list simply leaves
-        # the remaining responses unmeasured: a mismatch means the run stopped somewhere
-        # the stopwatch didn't reach, and a null there is the honest answer, where
-        # misaligning the rest would attribute one response's time to another.
+        # One timing per response, in production order. A short list leaves the rest null
+        # rather than misattributing one response's time to another.
         pending_timings = iter(timings or ())
         for node in added:
-            # The attached files belong to this turn's user request (the first one);
-            # install the capped content and stamp the ids before we project/serialize.
+            # Attachments belong to the turn's first user request: stamp before serializing.
             if not stamped and getattr(node.message, "kind", "") == "request":
                 if attachment_ids:
                     node.attachment_ids = list(attachment_ids)
-                # The `@` references ride the request's own ``metadata`` rather than a
-                # column of their own — the same place the compaction reason rides, and
-                # for the same three reasons: the library carries the field through
-                # serialization, never sends it to a provider, and it lands inside the
-                # sealed blob every read already opens. A host path is operator data and
-                # a column would have to be sealed on its own; nothing scans these the
-                # way `referenced_upload_ids` scans the attachment ids, so there is
-                # nothing a clear column would buy.
-                #
-                # The picked command rides the same dict, one key over. What is written
-                # there is the *invocation* — the name typed and the argument after it —
-                # never the block it expanded to: that block is rebuilt from whatever the
-                # name means at the moment it is needed, which is what keeps a regenerate
-                # from replaying an old copy of a template that has since been edited.
+                # `@` references and the picked command ride the request's ``metadata``:
+                # the library serializes it, never sends it to a provider, and it lands in
+                # the sealed blob, whereas a column would need sealing of its own (host
+                # paths are operator data). The command is stored as its invocation, never
+                # its expansion, so a regenerate re-expands the current template.
                 stamp = {
                     **({FILE_REFS_KEY: list(file_refs)} if file_refs else {}),
                     **(
@@ -181,12 +162,9 @@ class RecordingMixin(StoreCore):
     ) -> str:
         """Write the operator's prompt down **as the turn begins**, returning its node id.
 
-        A turn used to be recorded whole when it finished, so a thread opened mid-run had
-        no prompt for the run in flight and a cancel that captured nothing lost the
-        operator's own words. The prompt is the one part of a turn that exists before the
-        model is called, so it goes in first — as the new leaf, which makes everything the
-        turn produces afterwards a child of it (:meth:`record` with ``prompt_id``). The
-        stamps are exactly the ones :meth:`record` puts on a turn's first request."""
+        Recording it first means a thread opened mid-run shows the prompt and a cancel
+        cannot lose it. It becomes the new leaf, so the turn's output is its child
+        (:meth:`record` with ``prompt_id``). Stamps match those :meth:`record` applies."""
         return self.record(
             conversation_id,
             [prompt],
@@ -204,9 +182,8 @@ class RecordingMixin(StoreCore):
         """Stamp a stop marker on a node that is already recorded, durably.
 
         The prompt of a turn that stopped before producing anything is the only place its
-        marker can go; it is already in the tree and (probably) in the table, so this
-        rewrites the node and queues the matching row update. A node that already carries
-        a marker keeps it — the first stop is the one that explains the turn."""
+        marker can go. A node that already has one keeps it: the first stop explains the
+        turn."""
         tree = self._cache.get(conversation_id)
         if tree is None:
             tree = self.hydrate_blocking(conversation_id)
@@ -242,21 +219,13 @@ class RecordingMixin(StoreCore):
         """Retire the persistent stop marker on the turn whose branch node is
         ``message_id``. Returns False if the node is unknown or was never blocked.
 
-        A stop marker says "this turn was cut short and nothing has been done about
-        it" — a standing prompt to resume. Once the operator *has* resumed it, the
-        marker is answering a question nobody is asking any more, so it is cleared
-        rather than left to accumulate down the transcript. Clearing is durable (it
-        rewrites the node and its row) because the marker itself is durable: a
-        reload must not resurrect a stop the operator already handled. Queued behind
-        any in-flight message writes so it lands on a persisted row.
+        A stop marker invites a resume; once the operator has resumed, it is cleared so it
+        does not accumulate down the transcript. Durable, like the marker itself, and queued
+        behind in-flight message writes so it lands on a persisted row.
 
-        An unrecognized ``message_id`` falls back to the *newest* blocked turn on the
-        active path. A live client names the turn by the id it is showing, and for a
-        turn that stopped before anything was persisted that id is the client's own
-        optimistic one — never a node id here. Such an id can only ever name the turn
-        being streamed, i.e. the newest, so the fallback is unambiguous even with
-        older markers still standing further up the thread — honour the intent rather
-        than leaving a stop the operator has visibly resolved."""
+        An unrecognized ``message_id`` falls back to the newest blocked turn on the active
+        path: for a turn that stopped before anything was persisted, the client's id is its
+        own optimistic one, and it can only name the turn being streamed, the newest."""
         tree = await self.tree(conversation_id)
         node = tree.nodes.get(message_id)
         if node is None:

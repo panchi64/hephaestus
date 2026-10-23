@@ -56,9 +56,6 @@ async def _shell(repo: Path, tmp_path: Path, *, approved: bool = True) -> tuple[
     return Shell(shell_toolset(), ctx), vm
 
 
-# --- the guard ----------------------------------------------------------------------------
-
-
 async def test_without_a_vm_the_tools_refuse_and_nothing_runs(repo: Path, tmp_path: Path):
     marker = tmp_path / "ran"
     shell = Shell(shell_toolset(), checkout_ctx(repo))
@@ -105,9 +102,6 @@ async def test_checking_on_an_approved_command_does_not_ask_again(repo: Path, tm
 
 def test_the_executing_tools_are_the_ones_the_approval_scopes_name():
     assert GATED_TOOLS == {"shell_run_command", "shell_start_command"}
-
-
-# --- a host command ----------------------------------------------------------------------
 
 
 async def test_a_host_command_runs_on_the_operators_machine_and_not_in_the_vm(

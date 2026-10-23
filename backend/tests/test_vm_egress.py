@@ -31,10 +31,7 @@ from services.vm.egress import (
 from .conftest import egress_policy
 
 
-# --- the predicate ----------------------------------------------------------
 def test_a_plain_domain_covers_that_host_and_nothing_under_it():
-    # A plain entry that admitted every subdomain would turn one innocuous-looking host
-    # into anything anyone can publish under it.
     assert allowed("pypi.org", ["pypi.org"])
     assert not allowed("files.pypi.org", ["pypi.org"])
     assert not allowed("a.b.pypi.org", ["pypi.org"])
@@ -42,8 +39,7 @@ def test_a_plain_domain_covers_that_host_and_nothing_under_it():
 
 
 def test_a_plain_domain_does_not_cover_a_lookalike_suffix():
-    # `notpypi.org` ends with `pypi.org` as a *string*; a naive suffix test would hand an
-    # approval for one host to a domain anyone can buy.
+    # `notpypi.org` ends with `pypi.org` as a string; a naive suffix test would match it.
     assert not allowed("notpypi.org", ["pypi.org"])
     assert not allowed("pypi.org.evil.com", ["pypi.org"])
     assert not allowed("example.com", ["pypi.org"])
@@ -52,7 +48,7 @@ def test_a_plain_domain_does_not_cover_a_lookalike_suffix():
 def test_a_wildcard_covers_subdomains_only():
     assert allowed("cdn.example.com", ["*.example.com"])
     assert allowed("a.b.example.com", ["*.example.com"])
-    assert not allowed("example.com", ["*.example.com"])  # the apex was not approved
+    assert not allowed("example.com", ["*.example.com"])
 
 
 def test_matching_ignores_case_and_the_dns_root_dot():
@@ -63,7 +59,6 @@ def test_an_empty_allowlist_allows_nothing():
     assert not allowed("pypi.org", [])
 
 
-# --- the file ---------------------------------------------------------------
 def test_parse_allowlist_takes_one_domain_per_line():
     assert parse_allowlist("pypi.org\n*.example.com\n") == ("pypi.org", "*.example.com")
     assert parse_allowlist("\n  pypi.org  \n\n") == ("pypi.org",)
@@ -72,15 +67,14 @@ def test_parse_allowlist_takes_one_domain_per_line():
 
 
 def test_the_allowlist_reloads_when_the_file_changes(tmp_path: Path):
-    # An approval exists to unblock a retry that is about to happen; a gateway still
-    # holding the list as it stood earlier would refuse it.
+    # An approval unblocks an imminent retry, so a stale list would still refuse it.
     path = tmp_path / ALLOW_FILE
     _ = path.write_text("pypi.org\n")
     allow = Allowlist(tmp_path)
     assert allow.domains() == ("pypi.org",)
 
     _ = path.write_text("pypi.org\napi.example.com\n")
-    os.utime(path, (1, 1))  # a distinct mtime, whatever the filesystem's resolution
+    os.utime(path, (1, 1))  # distinct mtime regardless of filesystem resolution
     assert allow.domains() == ("pypi.org", "api.example.com")
 
 
@@ -102,17 +96,16 @@ async def test_the_policys_own_output_parses_and_matches(tmp_path: Path):
 
     assert allowed("pypi.org", domains)
     assert allowed("cdn.example.com", domains)
-    assert not allowed("files.pypi.org", domains)  # the plain entry is that host alone
+    assert not allowed("files.pypi.org", domains)
     assert not allowed("evil.com", domains)
 
 
 def test_the_denial_marker_names_this_fence():
-    # It is what an agent sees in the body of a refusal, so it has to identify the fence
-    # rather than read as an anonymous proxy error it would try to work around.
+    # The agent sees it in a refusal body, so it must identify the fence rather than look
+    # like a proxy fault.
     assert DENIED_MARKER.startswith("hephaestus-egress")
 
 
-# --- serving requests -------------------------------------------------------
 def _basic(credentials: str) -> bytes:
     return b"Proxy-Authorization: Basic " + base64.b64encode(credentials.encode()) + b"\r\n"
 
@@ -165,8 +158,7 @@ def gateway_to_upstream(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, int]
 
 
 async def test_an_endless_request_head_is_refused_rather_than_buffered(tmp_path: Path):
-    # The head is held whole so `Host:` can be re-stated from the authority, and what
-    # sends it is code the agent wrote; unbounded, it would grow the gateway's memory.
+    # The head is buffered whole to re-state `Host:`, so it must be bounded.
     gateway = EgressGateway()
     credentials = gateway.grant(tmp_path)
     header = b"X-Padding: " + b"a" * 1000 + b"\r\n"
@@ -180,9 +172,8 @@ async def test_an_endless_request_head_is_refused_rather_than_buffered(tmp_path:
 async def test_the_forwarded_host_header_names_the_authority_that_was_allowed(
     tmp_path: Path, gateway_to_upstream: tuple[dict[str, int], list[str]]
 ):
-    # The allowlist decision and the pinned dial are both made on the request line's
-    # authority; a `Host:` the agent chose freely would reach a different origin on any
-    # edge that routes by it.
+    # Allowlisting and the dial use the request line's authority; an agent-chosen `Host:`
+    # could reach another origin.
     state, dialled = gateway_to_upstream
     seen: list[bytes] = []
     up = await _upstream(seen)
