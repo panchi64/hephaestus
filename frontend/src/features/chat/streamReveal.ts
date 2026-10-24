@@ -132,38 +132,37 @@ export function revealDelay(start: number, now: number): number | null {
   return start + REVEAL_MS <= now ? null : start - now;
 }
 
-/** Characters starting within one 144 Hz frame of each other share a wrapper: the
- *  display samples their fades on the same frame, so they cannot be told apart. */
+/** Characters starting within one 144 Hz frame share a wrapper; their fades are indistinguishable. */
 export const SHARED_SPAN_MS = 1000 / 144;
 
-/** One stretch of characters `[at, end)` that renders as a single node: a wrapper
- *  with `delay`, or plain text when `delay` is null. */
+/** Characters up to `end` as one node: a wrapper with `delay`, or plain text when null. */
 export interface RevealRun {
   end: number;
   delay: number | null;
 }
 
-/**
- * Split characters `[from, to)` of `starts` into runs: settled characters join one
- * plain run, and a still-resolving character opens a wrapper that takes every
- * following character starting less than `SHARED_SPAN_MS` after it. A run carries
- * its first character's delay, so a later one starts at most a frame early.
- */
+/** Characters `[from, to)` as runs; settled or unscheduled ones are plain and land hard. */
 export function revealRuns(
   starts: number[],
   from: number,
   to: number,
   now: number,
 ): RevealRun[] {
+  const delayAt = (k: number): number | null =>
+    k < starts.length ? revealDelay(starts[k], now) : null;
   const runs: RevealRun[] = [];
   let i = from;
   while (i < to) {
-    const first = starts[i];
-    const delay = revealDelay(first, now);
+    const delay = delayAt(i);
     let end = i + 1;
-    if (delay === null)
-      while (end < to && revealDelay(starts[end], now) === null) end++;
-    else while (end < to && starts[end] - first < SHARED_SPAN_MS) end++;
+    if (delay === null) while (end < to && delayAt(end) === null) end++;
+    else
+      while (
+        end < to &&
+        end < starts.length &&
+        starts[end] - starts[i] < SHARED_SPAN_MS
+      )
+        end++;
     runs.push({ end, delay });
     i = end;
   }

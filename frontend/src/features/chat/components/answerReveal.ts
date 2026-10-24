@@ -118,7 +118,7 @@ function animatableText(root: HTMLElement): {
 }
 
 /** A run of characters that resolve together. The delay carries the run's phase
- *  across a re-render; the duration is `--reveal-ms` on the answer's host. */
+ *  across a re-render; the duration is `--token-reveal-ms` on the answer's host. */
 function revealSpan(text: string, delay: number): HTMLSpanElement {
   const span = document.createElement("span");
   span.className = SPAN_CLASS;

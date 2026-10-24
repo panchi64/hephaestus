@@ -203,9 +203,8 @@
   opacity: 0;
 }
 
-/* Entries fill `backwards`: the resting geometry is the end state, so a filled
-   end would only pin a transform on each mark (see the reveal in
-   animations-human.css). Exits keep `both` to stay closed until unmount. */
+/* Entries fill `backwards`, since the resting geometry is the end state; exits
+   keep `both` to stay closed until unmount. */
 .heph-frame[data-ready] {
   animation: heph-frame-span var(--motion-stage) linear backwards;
 }

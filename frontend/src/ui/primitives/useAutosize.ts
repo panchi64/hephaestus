@@ -10,7 +10,8 @@ export interface AutosizeOptions {
 /**
  * Grow a textarea to fit its content, from one row up to the smaller of `maxRows`
  * and `maxViewportShare` of the window, then scroll. With `field-sizing: content`
- * the browser does the growing and only the cap is set, again on window resize.
+ * the browser does the growing and only the cap is set, again when the window or
+ * the field resizes.
  * Otherwise the field is re-measured whenever `value` changes — typing, a draft
  * load, a clear after send — on window resize, and whenever its width changes,
  * since a narrower field wraps onto more lines.
@@ -59,6 +60,11 @@ export function useAutosize(
       cap();
       window.addEventListener("resize", cap);
       onCleanup(() => window.removeEventListener("resize", cap));
+      // A line-height or padding change resizes the field; the cap follows it.
+      if (typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(cap);
+      observer.observe(el);
+      onCleanup(() => observer.disconnect());
     });
     return;
   }

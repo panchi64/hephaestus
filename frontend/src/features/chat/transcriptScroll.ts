@@ -44,7 +44,7 @@ export interface TranscriptFollow {
   ref: (el: HTMLDivElement) => void;
   /** `ref` for the content inside the container; its size changes drive the follow
    *  and the anchor. Must not carry `room()`, or growth inside the room goes unseen.
-   *  Each turn's `[data-message-id]` root must be its direct child. */
+   *  Turns are cheapest to find when their `[data-message-id]` roots are its children. */
   contentRef: (el: HTMLElement) => void;
   /** `ref` for a zero-height marker after the last turn: where the content ends, as
    *  opposed to where the reserved room ends. */
@@ -86,13 +86,16 @@ export function createTranscriptFollow(source: {
   let endEl: HTMLElement | undefined;
   const [pinned, setPinned] = createSignal(true);
   let chosen = false;
-  const apply = (event: FollowEvent) => {
+  /** Answers whether it recorded the anchor: scrolls are not anchored while pinned,
+   *  so letting go anchors here. */
+  const apply = (event: FollowEvent): boolean => {
     const was = untrack(pinned);
     const next = nextFollow({ pinned: was, chosen }, event);
     chosen = next.chosen;
     setPinned(next.pinned);
-    // Scrolls are not anchored while pinned, so letting go anchors here.
-    if (was && !next.pinned && scrollEl) recordAnchor(scrollEl);
+    if (!was || next.pinned || !scrollEl) return false;
+    recordAnchor(scrollEl);
+    return true;
   };
   const [below, setBelow] = createSignal(0);
   const [room, setRoom] = createSignal<number | null>(null);
@@ -134,15 +137,21 @@ export function createTranscriptFollow(source: {
     setBelow(Math.max(0, endEl.getBoundingClientRect().top - v.bottom));
   };
 
-  /** Turn roots from the first one reaching into the view, each followed by the live
-   *  answer inside it — document order, so `pickAnchor` reads them top-down. */
-  const candidates = (top: number, bottom: number): HTMLElement[] => {
-    // The turns are the content's direct children: walking those is O(turns), where a
-    // selector query walks every node of every turn on each scroll event.
+  /** The turn roots: the content's direct children, an O(turns) walk instead of a
+   *  query over every node of every turn, with the query kept for any other shape. */
+  const turnRoots = (): HTMLElement[] => {
     const turns: HTMLElement[] = [];
     for (const child of contentEl?.children ?? [])
       if (child instanceof HTMLElement && child.hasAttribute("data-message-id"))
         turns.push(child);
+    if (turns.length || !contentEl) return turns;
+    return [...contentEl.querySelectorAll<HTMLElement>("[data-message-id]")];
+  };
+
+  /** Turn roots from the first one reaching into the view, each followed by the live
+   *  answer inside it — document order, so `pickAnchor` reads them top-down. */
+  const candidates = (top: number, bottom: number): HTMLElement[] => {
+    const turns = turnRoots();
     const from = firstReaching(
       turns.length,
       (i) => turns[i].getBoundingClientRect().bottom,
@@ -158,9 +167,12 @@ export function createTranscriptFollow(source: {
     }
     return out;
   };
-  const recordAnchor = (el: HTMLElement, v: View = view(el)) => {
+  const recordAnchor = (
+    el: HTMLElement,
+    v: View = view(el),
+    els: HTMLElement[] = candidates(v.top, v.bottom),
+  ) => {
     const { top, bottom } = v;
-    const els = candidates(top, bottom);
     const boxes = els.map((c) => {
       const rect = c.getBoundingClientRect();
       return {
@@ -183,9 +195,11 @@ export function createTranscriptFollow(source: {
       const rect = c.getBoundingClientRect();
       return rect.bottom > top && rect.top < bottom;
     };
-    const live = el.querySelector<HTMLElement>("[data-live-answer]");
+    // Only a visible turn can hold an on-screen live answer.
+    const els = candidates(top, bottom);
+    const live = els.find((c) => c.hasAttribute("data-live-answer")) ?? null;
     const next = onScreen(live) ? live : onScreen(anchor) ? anchor : null;
-    if (!next) return recordAnchor(el, v);
+    if (!next) return recordAnchor(el, v, els);
     // The same anchor keeps its target offset: re-reading it here would bank every
     // sub-pixel drift `settle` declined to correct, and a collapse is many of those.
     if (next === anchor) return;
@@ -351,12 +365,12 @@ export function createTranscriptFollow(source: {
       top,
       height,
     });
-    if (!keep) apply("letGo");
+    const anchored = !keep && apply("letGo");
     lastTop = top;
     lastHeight = height;
     const v = view(scrollEl);
     // A pinned `settle` follows the bottom and never reads the anchor.
-    if (!untrack(pinned)) {
+    if (!anchored && !untrack(pinned)) {
       if (ours) refreshAnchor(scrollEl, v);
       else recordAnchor(scrollEl, v);
     }

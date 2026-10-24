@@ -48,6 +48,10 @@ export interface TranscriptViewProps {
  * to the stream for anything about a run, to the thread actions for anything about the
  * conversation.
  */
+/** Turns at the tail that play their arrival when a thread opens: a thread opens at its
+ *  end, so the turns above are off screen and animating them only costs frames. */
+const ARRIVING_TAIL = 8;
+
 export function TranscriptView(props: TranscriptViewProps): JSX.Element {
   const screenshots = createMemo(() => screenshotIndex(props.stream.messages));
 
@@ -155,6 +159,10 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
                     {(message, index) => (
                       <MessageItem
                         message={message}
+                        arriving={
+                          index() >=
+                          props.stream.messages.length - ARRIVING_TAIL
+                        }
                         dimmed={index() < foldedThrough()}
                         subagentCallsign={
                           message.role === "subagent"

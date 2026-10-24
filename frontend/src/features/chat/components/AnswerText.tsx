@@ -97,7 +97,7 @@ export function AnswerText(props: {
       <div
         ref={host}
         class="inline"
-        style={{ "--reveal-ms": `${REVEAL_MS}ms` }}
+        style={{ "--token-reveal-ms": `${REVEAL_MS}ms` }}
       >
         {/* `copyCode` stays on while streaming. Turning it on at the end would move
             every `pre` and `table` into a wrapper just as the operator starts

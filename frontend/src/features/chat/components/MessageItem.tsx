@@ -6,6 +6,7 @@ import {
   createSignal,
   onCleanup,
   onMount,
+  untrack,
   type JSX,
 } from "solid-js";
 import {
@@ -82,10 +83,14 @@ export interface MessageItemProps {
   dimmed?: boolean;
   /** For a sub-agent report or message: the callsign of the agent that sent it. */
   subagentCallsign?: string;
+  /** Whether the turn plays its arrival when it mounts. Read once. Default true. */
+  arriving?: boolean;
 }
 
 /** A single chat turn. A compaction entry is a full-width divider with no actions or bubble. */
 export function MessageItem(props: MessageItemProps): JSX.Element {
+  // Read once: a turn that loses its arrival class mid-animation would snap in.
+  const arriving = untrack(() => props.arriving ?? true);
   return (
     // Two nodes: the entry's animated opacity (`heph-message-in`) outranks the `dimmed`
     // utility while it runs, so the outer node owns the dim and the inner one the movement.
@@ -95,7 +100,7 @@ export function MessageItem(props: MessageItemProps): JSX.Element {
       class={cx(props.dimmed && "opacity-50")}
     >
       {/* Fires once per mounted turn, so a streaming turn never re-animates mid-delta. */}
-      <div class="heph-message-in">
+      <div class={arriving ? "heph-message-in" : undefined}>
         <Switch
           fallback={
             <AssistantTurn

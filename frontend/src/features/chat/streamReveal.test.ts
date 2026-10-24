@@ -259,6 +259,14 @@ describe("revealRuns", () => {
     ]);
   });
 
+  test("characters past the schedule land as plain text", () => {
+    const now = 1000;
+    expect(revealRuns([now, now], 0, 5, now)).toEqual([
+      { end: 2, delay: 0 },
+      { end: 5, delay: null },
+    ]);
+  });
+
   test("covers exactly the requested range", () => {
     const schedule = replay(24, 80, 12);
     const now = 12 * 80;

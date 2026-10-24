@@ -17,11 +17,8 @@
    no transform, so it never makes the element a containing block for its
    absolutely-positioned children; a rise does for as long as it runs.
 
-   Entries on elements that stay fill `backwards`, not `both`. A filled end state keeps
-   `filter: blur(0px)` and an identity transform on the element for good, and in
-   Chromium a non-empty filter is its own paint chunk and render surface — one
-   per turn, tool row and panel, composited on every frame. Exits fill
-   `forwards` so the region stays gone until it unmounts. */
+   Lasting entries fill `backwards`: a filled `blur(0px)` stays a render surface
+   in Chromium. Exits fill `forwards` so the region stays gone until unmount. */
 @keyframes heph-reveal-fade {
   from {
     opacity: 0;
@@ -49,11 +46,11 @@
   animation: heph-reveal-fade var(--reveal-ms, var(--motion-base)) var(--ease)
     backwards;
 }
-/* The one entry that keeps `both`: its spans are unwrapped once the block
-   settles, and a span whose fill ended would change style mid-stream, which
-   with staggered starts is a repaint and relayout on every frame. */
+/* Keeps `both`: its spans are unwrapped once the block settles, and a fill ending
+   mid-stream would restyle a span on every frame. */
 .heph-token-in {
-  animation: heph-reveal-fade var(--reveal-ms) var(--ease) both;
+  animation: heph-reveal-fade var(--token-reveal-ms, var(--motion-base))
+    var(--ease) both;
 }
 /* Overlay entry — modals, popovers, menus, toasts. Settles, never bounces. */
 .heph-rise,
@@ -149,8 +146,8 @@
      non-replaced inline box — so the blur is doing all the materializing here,
      which is another reason to keep it legible. */
   --reveal-blur: 2.5px;
-  /* No `--reveal-ms` here: the schedule in `streamReveal.ts` owns the duration
-     and `AnswerText` sets it on the answer's host, so the two cannot drift. */
+  /* `--token-reveal-ms` comes from `AnswerText`'s host, from the schedule's own
+     constant; its own name keeps it from leaking into reveals inside the answer. */
 }
 :where(code, pre, kbd, samp, table, .font-mono) .heph-token-in {
   animation: none;

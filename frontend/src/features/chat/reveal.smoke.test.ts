@@ -181,7 +181,10 @@ test("no character loses its wrapper while its fade is still running", async () 
         await new Promise((res) => {
           const t0 = performance.now();
           const tick = () => {
-            const spans = document.querySelectorAll('.heph-token-in').length;
+            const wrappers = document.querySelectorAll('.heph-token-in');
+            const spans = wrappers.length;
+            let wrapped = 0;
+            for (const w of wrappers) wrapped += w.textContent.length;
             const prose = document.querySelector(${ANSWER_PROSE});
             const chars = prose ? prose.textContent.length : 0;
             let running = 0;
@@ -192,7 +195,7 @@ test("no character loses its wrapper while its fade is still running", async () 
               const ct = typeof a.currentTime === 'number' ? a.currentTime : 0;
               if (a.playState !== 'finished' && ct / d < 1) running++;
             }
-            log.push({ spans, running, chars });
+            log.push({ spans, wrapped, running, chars });
             zero = spans === 0 ? zero + 1 : 0;
             if ((zero > 30 && log.length > 120) || performance.now() - t0 > 30000) { res(); return; }
             requestAnimationFrame(tick);
@@ -200,13 +203,14 @@ test("no character loses its wrapper while its fade is still running", async () 
           requestAnimationFrame(tick);
         });
         // A wrapper may only disappear once its fade is over, so a big drop in the
-        // wrapper count while characters are still fading is the snap this guards. Two
+        // wrapped characters while some are still fading is the snap this guards. Counted
+        // in characters, not wrappers, since a wrapper holds a frame's worth of them. Two
         // qualifiers, both load-bearing:
         //
-        // The tolerance separates things orders of magnitude apart — a couple of
-        // characters finishing between frames and being written back as plain text is
-        // ordinary churn (observed: 1-2), where the bug collapsed 74 wrappers to 1 in a
-        // single frame with every one at opacity 0.
+        // The tolerance separates things orders of magnitude apart — a few characters
+        // finishing between frames and being written back as plain text is ordinary
+        // churn, where the bug collapsed 74 characters in a single frame with every one
+        // at opacity 0.
         //
         // A frame where the rendered prose got SHORTER is exempt, and that is a real
         // rule rather than a let-off. It means markdown finished a construct that took
@@ -219,12 +223,12 @@ test("no character loses its wrapper while its fade is still running", async () 
         for (let i = 1; i < log.length; i++)
           if (
             log[i - 1].running > 0 &&
-            log[i - 1].spans - log[i].spans > 10 &&
+            log[i - 1].wrapped - log[i].wrapped > 10 &&
             log[i].chars >= log[i - 1].chars
           )
             cuts.push({
               wasMidFade: log[i - 1].running,
-              lost: log[i - 1].spans - log[i].spans,
+              lost: log[i - 1].wrapped - log[i].wrapped,
             });
         return JSON.stringify({
           frames: log.length,
