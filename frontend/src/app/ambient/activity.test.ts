@@ -68,7 +68,13 @@ describe("diffActivity", () => {
       row("fail", { lastOutcome: "error" }),
       row("new", { activity: "queued" }),
     ]);
-    expect(strikes).toEqual(["info", "warn", "nominal", "alert", "info"]);
+    expect(strikes).toEqual([
+      { threadId: "start", tone: "info" },
+      { threadId: "ask", tone: "warn" },
+      { threadId: "ok", tone: "nominal" },
+      { threadId: "fail", tone: "alert" },
+      { threadId: "new", tone: "info" },
+    ]);
   });
 
   test("an unchanged row fires nothing, and neither does a resumed one", () => {

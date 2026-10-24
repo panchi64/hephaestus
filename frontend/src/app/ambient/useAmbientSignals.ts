@@ -1,12 +1,16 @@
 import { createEffect, on, onCleanup } from "solid-js";
-import { AURORA_MAX, strikePoint, type StrikeTone } from "~/ui";
+import { strikePoint, type StrikeTone } from "~/ui";
 import { useChatSessions } from "~/features/chat/data";
 import {
   pushStrike,
   setAmbientAurora,
   setAmbientLoad,
 } from "~/lib/stores/ambient";
-import { awaitingInput, chatBusy } from "~/lib/stores/chatActivity";
+import {
+  awaitingInput,
+  chatBusy,
+  chatThreadId,
+} from "~/lib/stores/chatActivity";
 import { useNotifications } from "~/lib/stores/notifications";
 import type { NotificationKind } from "~/lib/stream/notificationEvents";
 import { activityLoad, diffActivity, liveSubagents } from "./activity";
@@ -42,7 +46,15 @@ export function useAmbientSignals(): void {
     setAmbientAurora(0);
   });
 
+  const openRow = () => {
+    const id = chatThreadId();
+    return id ? sessions()?.find((s) => s.id === id) : undefined;
+  };
+  // A spawned thread open in the room shows as aurora, never as lightning or load.
+  const openIsSpawned = () => !!openRow()?.parentId;
+
   const strikeOwn = (tone: StrikeTone): void => {
+    if (openIsSpawned()) return;
     ownStruck.set(tone, performance.now());
     strike(tone);
   };
@@ -58,9 +70,11 @@ export function useAmbientSignals(): void {
   // The open thread's own run counts before the list catches up with it.
   createEffect(() => {
     const rows = sessions() ?? [];
-    const own = (chatBusy() ? 1 : 0) + (awaitingInput() ? 1 : 0);
+    const own = openIsSpawned()
+      ? 0
+      : (chatBusy() ? 1 : 0) + (awaitingInput() ? 1 : 0);
     setAmbientLoad(Math.max(activityLoad(rows), own));
-    setAmbientAurora(Math.min(liveSubagents(rows), AURORA_MAX));
+    setAmbientAurora(liveSubagents(rows));
   });
 
   let previous: Parameters<typeof diffActivity>[0];
@@ -70,9 +84,10 @@ export function useAmbientSignals(): void {
     const { strikes, snapshot } = diffActivity(previous, rows);
     previous = snapshot;
     const now = performance.now();
-    for (const tone of strikes) {
+    const open = chatThreadId();
+    for (const { threadId, tone } of strikes) {
       const own = ownStruck.get(tone);
-      if (own !== undefined && now - own < OWN_STRIKE_MS) {
+      if (threadId === open && own !== undefined && now - own < OWN_STRIKE_MS) {
         // The list catching up with a strike the open thread already made.
         ownStruck.delete(tone);
         continue;

@@ -50,6 +50,9 @@ const OPTIONS: WebGLContextAttributes = {
 };
 
 const SOFTWARE = /swiftshader|llvmpipe|softpipe|software|basic render/i;
+/** What Chromium and Safari report as `RENDERER`; Firefox reports the real one. */
+const MASKED_RENDERER = "WebKit WebGL";
+const TAU = 2 * Math.PI;
 /** `KHR_parallel_shader_compile`'s query, which doesn't wait on the compiler. */
 const COMPLETION_STATUS = 0x91b1;
 
@@ -76,10 +79,12 @@ function context(
     failIfMajorPerformanceCaveat: true,
   });
   if (fast) {
-    const info = fast.getExtension("WEBGL_debug_renderer_info");
-    const name = String(
-      fast.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : fast.RENDERER),
-    );
+    let name = String(fast.getParameter(fast.RENDERER));
+    // Firefox warns that the extension is deprecated, so ask only where it's needed.
+    if (name === MASKED_RENDERER) {
+      const info = fast.getExtension("WEBGL_debug_renderer_info");
+      if (info) name = String(fast.getParameter(info.UNMASKED_RENDERER_WEBGL));
+    }
     return { gl: fast, software: SOFTWARE.test(name) };
   }
   const slow = webgl2(canvas, OPTIONS);
@@ -235,8 +240,10 @@ export function createRenderer(canvas: FieldCanvas): DitherRenderer | null {
     if (!first && !evolve) return false;
     if (row < 0) {
       if (phase < fadeTo) return false;
-      target = back === front ? 1 - front : back;
-      bakePhase = phase + BAKE_STEP;
+      // The target was the fade's old side; until it's done, only `front` shows.
+      target = 1 - front;
+      back = front;
+      bakePhase += BAKE_STEP;
       row = 0;
     }
     if (first && row === 0) bakePhase = phase;
@@ -300,7 +307,9 @@ export function createRenderer(canvas: FieldCanvas): DitherRenderer | null {
     gl.useProgram(fieldProgram);
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.uniform1f(at.time, frame.time);
-    gl.uniform1f(at.phase, frame.phase);
+    // The deck repeats every turn and the shear swing divides one, so wrapping keeps
+    // float precision over a long session.
+    gl.uniform1f(at.phase, frame.phase % TAU);
     gl.uniform1f(at.fade, fade);
     gl.uniform1f(at.aurora, frame.aurora);
     gl.uniform1i(at.count, 0);

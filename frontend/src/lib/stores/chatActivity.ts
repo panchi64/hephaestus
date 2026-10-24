@@ -19,7 +19,10 @@
  *  the app — is the same in both cases: the run has stopped and will not go on until the
  *  operator comes back to it.
  *
- *  All three are presentation echoes only: the backend owns the run; the chat seam
+ *  `chatThreadId` — the thread open in the room, so the ambient field can tell the open
+ *  thread's own events from the thread list's.
+ *
+ *  All of them are presentation echoes only: the backend owns the run; the chat seam
  *  mirrors its state here and the consumers just render. Driven solely by the main
  *  `mainChat()` room (not the ephemeral compare panes), so they track the one
  *  conversation the operator would return to. */
@@ -28,8 +31,11 @@ import { createSignal } from "solid-js";
 const [chatBusy, setChatBusy] = createSignal(false);
 const [runErrored, setRunErrored] = createSignal(false);
 const [awaitingInput, setAwaitingInput] = createSignal(false);
+const [chatThreadId, setChatThreadId] = createSignal<string | null>(null);
 
 export {
+  chatThreadId,
+  setChatThreadId,
   chatBusy,
   setChatBusy,
   runErrored,

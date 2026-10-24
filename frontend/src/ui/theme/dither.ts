@@ -20,7 +20,7 @@ export type StrikeTone = (typeof STRIKE_TONES)[number];
 /** The tone the aurora leans toward. */
 export const AURORA_TONE: StrikeTone = "nominal";
 
-/** One event's lightning: where on the night side (CSS px, viewport) and when
+/** One event's lightning: where on the visible disc (CSS px, viewport) and when
  *  (`performance.now()`). */
 export interface Strike {
   id: number;
@@ -140,6 +140,10 @@ export const HALO = 1.2;
 
 /** Zonal shear speeds the fastest band to this multiple of the rotation. */
 export const SHEAR = 0.3;
+/** The shear swings back and forth with the rotation, so neighbouring bands drift at
+ *  most `SHEAR × SHEAR_SWING` rad apart and the deck never shreds into noise. Its
+ *  inverse must be whole, so the rotation can wrap at 2π without a jump. */
+export const SHEAR_SWING = 0.5;
 
 /** Milliseconds until the clouds at the disc's centre have moved one cell at the mean
  *  rotation. The shear averages out across the bands, so the fastest steps a little
@@ -161,8 +165,12 @@ export const FIRST_BAKE_ROWS = 128;
 /** Each new bake is this much rotation phase ahead of the last; the field crossfades
  *  over the same span. */
 export const BAKE_STEP = 0.15;
-/** The bake phase wraps here, so the noise lattice stays within float precision. */
-export const BAKE_WRAP = 100;
+/** The evolving warp's noise repeats every `EVOLVE_LATTICE` lattice cells in y, so the
+ *  bake phase can wrap at `BAKE_WRAP` without a jump while staying within float
+ *  precision. Its octaves run at 1, 2.1 and 4.3 times the base, and a wrap shifts each
+ *  by a whole number of periods: 10, 21 and 43. */
+export const EVOLVE_LATTICE = 128;
+export const BAKE_WRAP = 5 * EVOLVE_LATTICE;
 
 export const TONE_INDEX: Record<StrikeTone, number> = {
   neutral: 0,

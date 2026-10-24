@@ -115,7 +115,6 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
     s.top = `${box.y}px`;
     s.width = `${box.width}px`;
     s.height = `${box.height}px`;
-    sink?.resize(window.innerWidth, window.innerHeight);
   };
 
   const inWorker = (canvas: HTMLCanvasElement): Sink => {
@@ -132,6 +131,8 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
       if (e.data.kind === "drawn") canvas.style.visibility = "visible";
       else setWhere("page");
     });
+    // A worker that fails to load or throws never says so; the page draws instead.
+    worker.addEventListener("error", () => setWhere("page"));
     const offscreen = canvas.transferControlToOffscreen();
     const initial = state();
     post(
@@ -181,9 +182,21 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
    *  fallback gets a fresh one. */
   const Surface = (p: { mode: "worker" | "page" }): JSX.Element => {
     let canvas!: HTMLCanvasElement;
-    const onResize = () => place(canvas);
+    const onResize = () => {
+      place(canvas);
+      sink?.resize(window.innerWidth, window.innerHeight);
+    };
     const onVisibility = () => sink?.state({ hidden: document.hidden });
-    const onFocus = () => sink?.state({ focused: document.hasFocus() });
+    // Focus moving into an iframe blurs the window first; `hasFocus` read once focus
+    // settles counts the iframe.
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const onFocus = () => {
+      clearTimeout(settle);
+      settle = setTimeout(
+        () => sink?.state({ focused: document.hasFocus() }),
+        0,
+      );
+    };
     onMount(() => {
       sink = p.mode === "worker" ? inWorker(canvas) : onPage(canvas);
       place(canvas);
@@ -194,6 +207,7 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
       window.addEventListener("blur", onFocus);
     });
     onCleanup(() => {
+      clearTimeout(settle);
       sink?.stop();
       sink = null;
       window.removeEventListener("resize", onResize);

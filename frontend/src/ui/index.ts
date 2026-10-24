@@ -104,7 +104,6 @@ export {
 export { MetClock, type MetClockProps } from "./components/MetClock";
 export { DitherField, type DitherFieldProps } from "./components/DitherField";
 export {
-  AURORA_MAX,
   STRIKE_LIFE_MS,
   strikePoint,
   type Strike,

@@ -2,9 +2,11 @@ import {
   AURORA_FROM,
   AURORA_TONE,
   CELL,
+  EVOLVE_LATTICE,
   HALO,
   LIGHT,
   SHEAR,
+  SHEAR_SWING,
   STRIKE_TONES,
   TONE_INDEX,
 } from "./dither";
@@ -62,23 +64,31 @@ out vec4 outColor;
 const float SPAN = ${f(SPAN)};
 
 ${HASH}
-float noiseP(vec2 p, float period) {
-  vec2 i = floor(p);
+/** Value noise whose lattice repeats every period.x cells in x, and every period.y in
+ *  y when that is above zero. */
+float noiseP(vec2 p, vec2 period) {
+  vec2 i0 = floor(p);
+  vec2 i1 = i0 + 1.0;
   vec2 t = fract(p);
   vec2 s = t * t * (3.0 - 2.0 * t);
-  float x0 = mod(i.x, period);
-  float x1 = mod(i.x + 1.0, period);
-  float a = hash(vec2(x0, i.y));
-  float b = hash(vec2(x1, i.y));
-  float c = hash(vec2(x0, i.y + 1.0));
-  float d = hash(vec2(x1, i.y + 1.0));
+  i0.x = mod(i0.x, period.x);
+  i1.x = mod(i1.x, period.x);
+  if (period.y > 0.0) {
+    i0.y = mod(i0.y, period.y);
+    i1.y = mod(i1.y, period.y);
+  }
+  float a = hash(i0);
+  float b = hash(vec2(i1.x, i0.y));
+  float c = hash(vec2(i0.x, i1.y));
+  float d = hash(i1);
   return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
 }
-/** Three octaves at x frequencies n1, n2, n3 per turn; x is in turns. */
-float fbmP(float x, float y, vec3 n) {
-  return 0.5 * noiseP(vec2(x * n.x, y), n.x)
-    + 0.3 * noiseP(vec2(x * n.y, y * 2.1), n.y)
-    + 0.2 * noiseP(vec2(x * n.z, y * 4.3), n.z);
+/** Three octaves at x frequencies n1, n2, n3 per turn; x is in turns. wrapY is every
+ *  octave's lattice period in y, or zero for none. */
+float fbmP(float x, float y, vec3 n, float wrapY) {
+  return 0.5 * noiseP(vec2(x * n.x, y), vec2(n.x, wrapY))
+    + 0.3 * noiseP(vec2(x * n.y, y * 2.1), vec2(n.y, wrapY))
+    + 0.2 * noiseP(vec2(x * n.z, y * 4.3), vec2(n.z, wrapY));
 }
 
 // Per vortex: centre (x, y), then semi-axes (x, y); spin; whether it's a bright oval.
@@ -100,15 +110,15 @@ float clouds(vec2 q) {
   }
   float t = q.x / SPAN;
   float warp = fbmP(t, q.y * 3.0 + uPhase * 2.0,
-    vec3(${around(1.2)}, ${around(1.2 * 2.1)}, ${around(1.2 * 4.3)}));
+    vec3(${around(1.2)}, ${around(1.2 * 2.1)}, ${around(1.2 * 4.3)}), ${f(EVOLVE_LATTICE)});
   float belt = sin(q.y * 6.0 + warp * 3.2);
   float band = 0.5 + 0.5 * belt;
   // The warp shifts x by a fraction of a turn, so the lattice still wraps.
   float tw = t + warp * 2.0 / (3.0 * SPAN);
   float turb = fbmP(tw, q.y * 8.0 + warp,
-    vec3(${around(3.0)}, ${around(3.0 * 2.1)}, ${around(3.0 * 4.3)}));
+    vec3(${around(3.0)}, ${around(3.0 * 2.1)}, ${around(3.0 * 4.3)}), 0.0);
   float festoon = abs(belt) < 0.18
-    ? 0.25 * fbmP(t, q.y * 9.0, vec3(${around(9.0)}, ${around(9.0 * 2.1)}, ${around(9.0 * 4.3)}))
+    ? 0.25 * fbmP(t, q.y * 9.0, vec3(${around(9.0)}, ${around(9.0 * 2.1)}, ${around(9.0 * 4.3)}), 0.0)
     : 0.0;
   return clamp(0.18 + 0.32 * band + 0.38 * turb + festoon + 0.25 * oval, 0.0, 1.0);
 }
@@ -123,7 +133,8 @@ void main() {
 /**
  * One fragment per field cell of the planet's box. `uOrigin` is the box's top-left
  * cell in the viewport, so cells and the Bayer pattern count from the viewport.
- * `uDisc` is the planet from `planetDisc`, `uPhase` its rotation from `advancePhase`.
+ * `uDisc` is the planet from `planetDisc`, `uPhase` its rotation from `advancePhase`
+ * wrapped to one turn.
  *
  * Every layer yields a density: the baked cloud deck (`uCloudOld` giving way to
  * `uCloudNew` as `uFade` goes 0 to 1), a thin halo, an aurora curtain per live sub-agent and the flashes from
@@ -215,9 +226,8 @@ void main() {
     float cloud = 0.0;
     if (shade > 0.0) {
       float lat = asin(n.y);
-      vec2 uv = vec2(
-        (atan(n.x, n.z) + uPhase * (1.0 + ${f(SHEAR)} * sin(lat * 7.0))) / TAU,
-        0.5 + lat / 3.14159265);
+      float shear = ${f(SHEAR * SHEAR_SWING)} * sin(uPhase / ${f(SHEAR_SWING)}) * sin(lat * 7.0);
+      vec2 uv = vec2((atan(n.x, n.z) + uPhase + shear) / TAU, 0.5 + lat / 3.14159265);
       // Texels per cell, from the sphere: longitude stretches by 1/z toward the limb,
       // latitude by 1/cos(lat). Analytic, so unlit cells and the halo skip the trig.
       float cells = uDisc.z / ${f(CELL)};

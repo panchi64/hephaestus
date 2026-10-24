@@ -179,8 +179,8 @@
      bubble is still quieter than the rules around it. */
   --surface-sunken: #0f0f0f;
   /* The ambient field's lit cell (§11.1), below `--line` so the field stays
-     quieter than any rule drawn on top of it. `--dither-tint` is how far a ring's
-     crest leans toward its event's accent: near black, a hint of hue and no more. */
+     quieter than any rule drawn on top of it. `--dither-tint` is how far a
+     lightning flash or aurora cell leans toward its accent: a hint of hue and no more. */
   --dither-on: #1a1a1a;
   --dither-tint: 4%;
   --line: #212121;

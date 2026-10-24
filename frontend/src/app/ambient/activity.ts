@@ -5,6 +5,11 @@ import type {
   ChatSummary,
 } from "~/features/chat/model";
 
+export interface ActivityStrike {
+  threadId: string;
+  tone: StrikeTone;
+}
+
 type Snapshot = ReadonlyMap<
   string,
   { activity?: ChatActivity; lastOutcome?: ChatOutcome }
@@ -40,7 +45,7 @@ export function liveSubagents(rows: readonly ChatSummary[]): number {
 export function diffActivity(
   prev: Snapshot | undefined,
   rows: readonly ChatSummary[],
-): { strikes: StrikeTone[]; snapshot: Snapshot } {
+): { strikes: ActivityStrike[]; snapshot: Snapshot } {
   const snapshot = new Map(
     rows.map((s) => [
       s.id,
@@ -48,16 +53,18 @@ export function diffActivity(
     ]),
   );
   if (!prev) return { strikes: [], snapshot };
-  const strikes: StrikeTone[] = [];
+  const strikes: ActivityStrike[] = [];
   for (const s of rows) {
     if (s.parentId) continue;
     const was = prev.get(s.id)?.activity;
     const now = s.activity;
     if (now === was) continue;
-    if (now === "awaiting_input") strikes.push("warn");
-    else if (now && !was) strikes.push("info");
+    let tone: StrikeTone | undefined;
+    if (now === "awaiting_input") tone = "warn";
+    else if (now && !was) tone = "info";
     else if (!now && was)
-      strikes.push(s.lastOutcome ? OUTCOME_TONE[s.lastOutcome] : "neutral");
+      tone = s.lastOutcome ? OUTCOME_TONE[s.lastOutcome] : "neutral";
+    if (tone) strikes.push({ threadId: s.id, tone });
   }
   return { strikes, snapshot };
 }
