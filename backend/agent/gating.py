@@ -70,6 +70,7 @@ from services.permissions import (
 from services.permissions.decision_reviewer import make_decision_reviewer
 from services.permissions.fence import Fence
 from services.permissions.guards import (
+    COMMAND_TOOLS,
     GUARD_KEY,
     GUARDED_TOOLS,
     changes_directory,
@@ -182,26 +183,24 @@ async def settle_deferred(
     # resolve one. Each row carries the decision and whether a grant produced it: an ALLOW
     # can come from a grant or an allowing level, and only the first is revocable.
     home = await _guard_home(deps, approvals)
-    # A write or command the read ledger would turn away is neither asked nor reviewed; the
-    # model is told to read the file first. After a `cd` in the batch, commands are left to
-    # the check they meet when they run.
+    # A call the read ledger would turn away is neither asked nor reviewed. Calls after a
+    # command meet only their own check: the command may read, write or move the shell first.
     settled: dict[str, ToolApproved | ToolDenied] = {}
     asking: list[ToolCallPart] = []
     cwd = shell_cwd(deps)
-    cwd_known = True
+    after_command = False
     for call in approvals:
-        args = call.args_as_dict()
-        refusal = (
-            await ledger_refusal(deps, call.tool_name, args, home, cwd, cwd_known=cwd_known)
-            if call.tool_name in LEDGER_TOOLS
-            else None
-        )
+        refusal = None
+        if call.tool_name in LEDGER_TOOLS and not after_command:
+            try:
+                refusal = await ledger_refusal(deps, call.tool_name, call.args_as_dict(), home, cwd)
+            except Exception:  # a check that raises would abort the operator's turn
+                logger.warning("read ledger check failed on %s", call.tool_name, exc_info=True)
         if refusal is None:
             asking.append(call)
         else:
             settled[call.tool_call_id] = ToolDenied(message=refusal)
-        if cwd_known and changes_directory(call.tool_name, args):
-            cwd_known = False
+        after_command = after_command or call.tool_name in COMMAND_TOOLS
     guarded = _guard_reasons(asking, home, cwd, metadata)
     ruled = [
         (call, Decision.ASK, False)

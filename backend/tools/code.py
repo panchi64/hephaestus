@@ -389,7 +389,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         """
         del explanation  # The approval card reads it from the call's arguments.
         home = await home_of(ctx.deps)
-        ledger = ledger_check(ctx.deps, HOST_COMMAND_TOOL, {"command": command}, home, None)
+        ledger = await ledger_check(ctx.deps, HOST_COMMAND_TOOL, {"command": command}, home, None)
         if ledger is not None and ledger.refusal is not None:
             return {"ok": False, "error": ledger.refusal}
         # The installation-wide allowlist, not this conversation's grants: one proxy serves
@@ -409,7 +409,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         except HostExecutionError as exc:
             return {"ok": False, "error": f"The host command could not be launched: {exc}"}
         if ledger is not None and not result.timed_out:
-            ledger.record()
+            await ledger.record()
         payload = exec_result(result, settings, sandboxed=False)
         payload["fenced"] = confinement.active
         payload["reach"] = "host"

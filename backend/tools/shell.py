@@ -63,7 +63,7 @@ from services.sandbox.thread_shells import ThreadShell, ThreadShells
 from services.vm.project import ProjectCopies
 
 from .briefing import with_brief_payload
-from .command_ledger import command_refusal, ledger_check
+from .command_ledger import ledger_check
 from .deps import RunDeps
 from .emit import RunEventEmitted
 from .home import change_log, resolve_run_home
@@ -396,7 +396,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
         shell = state.shell
         cwd = shell.home.cwd
         args = {"command": command, "reach": reach}
-        ledger = ledger_check(ctx.deps, "shell_run_command", args, state.home, cwd)
+        ledger = await ledger_check(ctx.deps, f"{_NAMESPACE}run_command", args, state.home, cwd)
         if ledger is not None and ledger.refusal is not None:
             return ledger.refusal
         bound = boundary("run_command", command, reach, state.home, cwd)
@@ -424,7 +424,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
                 _name_gateway_denial(payload, state, done.began)
             timed_out = done.result.timed_out
         if ledger is not None and not timed_out:
-            ledger.record()
+            await ledger.record()
         return await with_brief_payload(ctx, state.home, touched, payload)
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
@@ -455,9 +455,9 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
         shell = state.shell
         cwd = shell.home.cwd
         args = {"command": command, "reach": reach}
-        refusal = command_refusal(ctx.deps, "shell_start_command", args, state.home, cwd)
-        if refusal is not None:
-            return refusal
+        ledger = await ledger_check(ctx.deps, f"{_NAMESPACE}start_command", args, state.home, cwd)
+        if ledger is not None and ledger.refusal is not None:
+            return ledger.refusal
         bound = boundary("start_command", command, reach, state.home, cwd)
         touched = _touched(state, command, bound, cwd)
         if bound.fenced:

@@ -66,16 +66,18 @@ def thread_of(deps: RunDeps) -> str:
     return deps.conversation_id or deps.workspace_key
 
 
-def unread_message(path: str) -> str:
+def unread_message(*paths: str) -> str:
+    it = "it" if len(paths) == 1 else "them"
     return render_tool_error(
-        f"Read {path} before changing it.",
-        hints=["read it with files_read_file (or cat) in this conversation, then retry"],
+        f"Read {', '.join(paths)} before changing {it}.",
+        hints=[f"read {it} with files_read_file (or cat) in this conversation, then retry"],
     )
 
 
-def stale_message(path: str) -> str:
+def stale_message(*paths: str) -> str:
+    it = "it" if len(paths) == 1 else "them"
     return render_tool_error(
-        f"{path} changed since you read it.", hints=["read it again, then retry"]
+        f"{', '.join(paths)} changed since you read {it}.", hints=[f"read {it} again, then retry"]
     )
 
 

@@ -422,7 +422,8 @@ class _Scanner:
                 before = _body_of(earlier)
                 producer = self._parts(before)[0] if before is not None else None
                 self._feeds[body.id] = None if producer is None else feed_words(producer)
-        feeding = {stage.id for stage in stages[:-1]}
+        # Every stage but the last feeds the next, a subshell or compound one included.
+        feeding = {stage.id for stage in [c for c in node.children if c.is_named][:-1]}
         for child in node.children:
             saved = (self._states, dict(self._vars))
             mark = len(self._assigned)
@@ -449,8 +450,7 @@ class _Scanner:
 
 
 def _takes_stdout(redirect: Node) -> bool:
-    """Whether a ``file_redirect`` sends standard output to a file. ``>&2`` keeps it in the
-    line's output, on standard error."""
+    """Whether a ``file_redirect`` sends standard output to a file (``>&2`` does not)."""
     operators = {child.type for child in redirect.children}
     if operators & _BOTH_STREAMS:
         return True

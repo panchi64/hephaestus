@@ -198,6 +198,36 @@ class TestTheDeferredPath:
         assert manual == []
         assert isinstance(settled["w"], ToolDenied)
 
+    async def test_a_call_after_a_command_in_the_batch_meets_only_its_own_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        checked: list[str] = []
+
+        async def unread(
+            _deps: RunDeps, _tool: str, args: dict[str, object], *_rest: object
+        ) -> str | None:
+            checked.append(str(args.get("command")))
+            return None
+
+        monkeypatch.setattr(gating, "ledger_refusal", unread)
+        settled, manual = await _settle(
+            "manual", [_call("cat a", "r"), _call("sed -i s/x/y/ a", "w")]
+        )
+        assert checked == ["cat a"]
+        assert settled == {}
+        assert [c.tool_call_id for c in manual] == ["r", "w"]
+
+    async def test_a_ledger_check_that_raises_puts_the_call_to_the_operator(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async def broken(*_args: object) -> str | None:
+            raise ValueError("unreadable")
+
+        monkeypatch.setattr(gating, "ledger_refusal", broken)
+        settled, manual = await _settle("manual", [_call("sed -i s/x/y/ a")])
+        assert settled == {}
+        assert [c.tool_call_id for c in manual] == ["c1"]
+
     @pytest.mark.parametrize("level", ["yolo", "auto", "edit"])
     async def test_a_cd_in_one_call_moves_where_the_next_one_starts(
         self, level: PermissionLevel, monkeypatch: pytest.MonkeyPatch
