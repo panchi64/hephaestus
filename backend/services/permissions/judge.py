@@ -14,9 +14,11 @@ The stage rules on two facts it can establish:
 
 - **structure**: the paths, redirects, environment assignments and unreadable constructs
   the grammar finds (``shell_ast.py``);
-- **a fence**: the conversation VM (``services/vm/machines.py``) holds every VM shell tool
-  to the host folders it mounts and to the installation's egress allowlist plus the
-  conversation's grants. The host tool (``shell_run_on_host``) is never cleared here.
+- **a fence**: the conversation VM (``services/vm/machines.py``) holds a command to the
+  folders it mounts, and counts as a fence here only while it has no network (offline
+  mode, or nothing allowed or granted). With egress, an unread program could upload what
+  it reads to an allowed host, so nothing in the VM clears without review. The host tool
+  (``shell_run_on_host``) is never cleared here.
 
 **Reads of the project are the exception and structure carries the whole weight**: the VM
 mounts the project live, so nothing downstream catches a read cleared here. Hence the
@@ -33,11 +35,11 @@ answer below is measured against a directory the command is no longer in.
   changes nothing, so no argument set makes it another kind of act. Only a *classified*
   name reaches it: an unknown one resolves to the class that reaches furthest, so nothing
   an operator's MCP server names can arrive wearing a read's clothes;
-- an **offline sandbox call**: the conversation's VM is the fence, so the program
-  inside needs no reading. This is the one branch that clears a capability the extraction
-  marked unbounded, because no reading of an interpreter's arguments would bound it;
+- an **offline sandbox call**: a program in scratch, with scratch the only writable place
+  and a VM without network around it, needs no reading. This is the one branch that clears
+  a capability the extraction marked unbounded;
 - a **contained command**: a VM shell command with every path inside the worktree, no
-  network address or fetch, and the VM available to hold it there.
+  network address or fetch, in a VM without network.
 
 **A networked command is not a fourth, deliberately.** The VM bounds writes and egress but
 not reads of the project, so a command that reaches out is the only way read data leaves
@@ -84,9 +86,9 @@ class Judgement:
 def judge(capability: Capability, *, fenced: bool) -> Judgement:
     """Whether ``capability``'s structure and fence allow clearing it, and at which tier.
 
-    ``fenced`` says whether the conversation VM is available to hold a shell command. It
-    is an argument so this stays pure and total, and never approves anything it did not
-    fully account for.
+    ``fenced`` says whether a conversation VM with no network would hold the call
+    (``agent/gating.py:vm_fences``). It is an argument so this stays pure and total, and
+    never approves anything it did not fully account for.
 
     The class-settled tiers are tested before ``unbounded``, because a classified read is
     settled by its tool and a sandboxed call by its sandbox, not by their arguments. Every
@@ -95,12 +97,7 @@ def judge(capability: Capability, *, fenced: bool) -> Judgement:
     if capability.kind is ActionKind.READ:
         # No model and no argument rule took part; the row should not read like a command's.
         return Judgement(True, "classified read, cleared at Auto with no review", tier="read")
-    if (
-        capability.sandboxed
-        and not capability.network
-        and (fenced or capability.kind is not ActionKind.SHELL)
-    ):
-        # A shell command is held in the sandbox only by the VM, so it needs the fence up.
+    if capability.sandboxed and not capability.network and fenced:
         return Judgement(True, "runs offline in the conversation's own sandbox", tier="sandbox")
     if capability.unbounded:
         return Judgement(False, capability.unbounded[0])
@@ -127,7 +124,7 @@ def _shell_judgement(capability: Capability, *, fenced: bool) -> Judgement:
     if capability.escapes:
         return Judgement(False, f"names {capability.escapes[0]}, outside the workspace")
     if not fenced:
-        return Judgement(False, "no conversation VM is available to hold it")
+        return Judgement(False, "the conversation VM is down or can reach the network")
     if capability.network or capability.fetches:
         # See the module docstring: reaching out is the only way project reads leave.
         what = "names a network address" if capability.network else "installs or clones"

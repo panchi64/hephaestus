@@ -226,14 +226,15 @@ a deferred call at the Auto level
   │                  an MCP call: the connector, the tool, and the argument KEYS
   → judge.py         a STRUCTURAL stage over that capability — no list of programs.
   │                    Two facts have to agree: what the syntax names, and whether a
-  │                    fence (the conversation's VM) holds it there.  Contained +
-  │                    fenced clears at that tier.  Its only power is to
+  │                    fence (the conversation's VM, with no network) holds it there.
+  │                    Contained + fenced clears at that tier.  Its only power is to
   │                    APPROVE; everything else escalates rather than being refused —
   │                    a host command, a command that reaches the network (always, whatever
   │                    the operator's allowed-domains list holds: the fence bounds no
   │                    reads of the project, so egress is how what a command read leaves the machine),
   │                    a path outside the worktree, an AST shape it could not read, or
-  │                    a command with no fence to hold it.
+  │                    a command with no fence to hold it — which includes any VM
+  │                    that can reach the network.
   → reviewer.py      one structured call on the `utility` model, scoring three axes:
   │                    risk           low | high | too_destructive
   │                    authorization  explicitly_no | neutral | explicitly_yes
@@ -245,8 +246,8 @@ a deferred call at the Auto level
 
 Four properties are load-bearing and each is there for a reason that is easy to lose:
 
-- **The cheap stage settles the common case.** `git status`, `ls src`, `grep -rn foo .`, `uv run pytest`, `git commit -m x` clear with no model call at all — on their *shape*, whatever binary they happen to name. That is what makes the stage affordable to keep strict: narrowing it costs latency, widening it costs the operator's trust, and only one of those is recoverable.
-- **The fence bounds writes and egress, and deliberately not reads of the project.** A cleared command runs in a VM that mounts the project, so it can still read any of it by a route its words did not name, and it writes straight to any mount that is writable. Containment is therefore checked in the judge before anything else, and the extraction refuses any word it cannot place as a single path — a program named by path and an environment assignment's value included.
+- **The cheap stage settles the common case only offline.** In a conversation VM with no network (offline mode, or an empty allowlist and no grants), `git status`, `ls src`, `grep -rn foo .`, `uv run pytest`, `git commit -m x` clear with no model call at all — on their *shape*, whatever binary they happen to name. Once the VM can reach any host, every command goes to the reviewer: `uv run pytest` runs code nobody read, and an allowed host takes an upload as readily as a download. Narrowing the stage costs latency, widening it costs the operator's trust, and only one of those is recoverable.
+- **The fence bounds writes and egress, and deliberately not reads of the project.** A cleared command runs in a VM that mounts the project, so it can still read any of it by a route its words did not name, and it writes straight to any mount that is writable. Containment is therefore checked in the judge before anything else, and the extraction refuses any word it cannot place as a single path — a program named by path and an environment assignment's value included. The unread-program tier (a program in scratch, or `code_execute`) additionally needs scratch to be the only writable place.
 - **The reviewer is told the rubric and never the passing score.** The combination lives in `decide.py` and is written down nowhere the model can read it. A reviewer that knows the threshold optimises for the threshold, which turns three independent observations into one negotiated verdict.
 - **Its transcript carries user and assistant messages only — never tool results.** Everything the model has read from a file, a page or an MCP server is content someone else wrote, and a reviewer that saw it could be argued into approving the very call that untrusted text asked for. Same posture `XC-SEC-5` takes everywhere else, applied to the one call whose output is a permission. What it *does* see is fenced as untrusted on top of that.
 - **Every failure parks.** No utility model bound, a reviewer timeout, an unparseable answer — all of them return the call to the operator. This is the one place in the codebase where the conservative branch has to be the default (`XC-DEG-*`): a review that cannot run is not a review that passes.

@@ -11,7 +11,7 @@ reads a deliberately narrowed catalog as a broken installation and says so. At *
 every change stops on the operator, so how the work is *shaped* changes: ten separate
 edits are ten interruptions, and the model is the only thing that can group them. At
 **Auto** the model is asked to prefer work that stays in its home and reaches no network,
-which is what the review settles for free. At **Yolo** nothing reviews, so the fragment has
+which is what the review settles fastest. At **Yolo** nothing reviews, so the fragment has
 to say both that nothing will stop the work and that the VM still bounds it.
 
 **A fragment is delivered at its level in every workspace, so it may claim nothing about the
@@ -74,9 +74,9 @@ of work instead of a dozen fragments of it."""
 AUTO_LEVEL = """\
 This thread is at the Auto level: a review decides in the operator's place, and only what \
 it will not settle stops for them. Work that stays inside your home and reaches no \
-network is settled without asking anyone, so prefer the approach that stays there. \
-Anything reaching the network is reviewed, and anything whose effect could not be undone \
-stops for the operator however plainly it was asked for."""
+network is the quickest to settle, so prefer the approach that stays there. Anything \
+reaching the network is reviewed, and anything whose effect could not be undone stops \
+for the operator however plainly it was asked for."""
 
 
 # Yolo: nothing reviews, nothing parks, and the model is the last thing standing between

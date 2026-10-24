@@ -37,6 +37,11 @@ class HomeFence:
             return False
         return here == SCRATCH and not places_named(command)
 
+    def writes_only_scratch(self) -> bool:
+        """Whether scratch is the only place the thread may write. The VM mounts every place,
+        so an unread program changes nothing else only when nothing else is writable."""
+        return self.writable <= {SCRATCH}
+
 
 #: Folders that exist only inside the conversation's VM, never on the host, and the
 #: streams every process has.

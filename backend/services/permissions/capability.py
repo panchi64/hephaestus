@@ -169,7 +169,7 @@ _PROGRAM_TOOL = "code_execute"
 #: password or a page of untrusted text — but a request to widen the egress allowlist that
 #: does not say *which host* describes nothing at all, and a reviewer handed it would be
 #: clearing the fence's only exit blind.
-_EGRESS_TOOL = "code_request_egress"
+EGRESS_TOOL = "code_request_egress"
 
 #: File tools, by the argument naming the target. Their worst case is one path, which is
 #: the whole of what there is to say about them.
@@ -244,14 +244,15 @@ def shell_capability(tool: str, command: str, *, root: Fence | None) -> Capabili
     walk = shell_reach(command, root=root)
     unplaced = () if root is not None else (_UNPLACED_ON_THE_HOST if on_the_host else _UNPLACED,)
     fetching = fetches(walk.commands)
-    # A VM command with no network that sees only the thread's scratch is held by the VM as
-    # a sandboxed program is, so it is bounded without its syntax being read.
+    # A VM command that names no network and can write only scratch is held by the VM as a
+    # sandboxed program is, once the judge knows the VM has no egress.
     in_scratch = (
         isinstance(root, HomeFence)
         and not on_the_host
         and not walk.network
         and not fetching
         and root.scratch_only(command)
+        and root.writes_only_scratch()
     )
     return Capability(
         tool=tool,
@@ -288,7 +289,7 @@ def capability_of(
             kind=ActionKind.OPAQUE,
             summary=summary,
             detail=detail,
-            sandboxed=True,
+            sandboxed=isinstance(root, HomeFence) and root.writes_only_scratch(),
             unbounded=("an interpreter's program is not bounded by its arguments",),
         )
 
@@ -333,7 +334,7 @@ def capability_of(
         )
         return Capability(tool=tool, kind=ActionKind.READ, summary=summary, detail=detail)
 
-    if tool == _EGRESS_TOOL:
+    if tool == EGRESS_TOOL:
         return Capability(
             tool=tool,
             kind=ActionKind.OPAQUE,
@@ -404,7 +405,7 @@ def _text_arg(args: Mapping[str, object], name: str) -> str | None:
 
 def _domain_shape(args: Mapping[str, object]) -> str:
     """The hosts an egress request names, in the order it named them. The exception to
-    :func:`_arg_shape`'s rule, argued for at :data:`_EGRESS_TOOL`."""
+    :func:`_arg_shape`'s rule, argued for at :data:`EGRESS_TOOL`."""
     value = args.get("domains")
     entries = cast("list[object]", value) if isinstance(value, list) else []
     names = [str(d) for d in entries if str(d).strip()]

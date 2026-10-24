@@ -22,16 +22,20 @@ from pathlib import Path
 
 import pytest
 
+from services.home.paths import SCRATCH, Place
 from services.permissions.capability import (
     ActionKind,
     capability_of,
     measured_against_root,
     shell_capability,
 )
+from services.permissions.fence import HomeFence
 from services.permissions.judge import Judgement, judge
 from services.permissions.shell_ast import command_prefixes, strip_comments
 
 ROOT = Path("/tmp/hephaestus-judge-workspace")
+API = Place("projects", "api")
+SCRATCH_ONLY = HomeFence(places=frozenset({SCRATCH}), writable=frozenset({SCRATCH}))
 
 
 def judged(
@@ -632,15 +636,17 @@ class TestTheStructuralStage:
         # structural facts in front of it.
         for command in ("ls -la", "uv run pytest", "git status"):
             assert not cleared(command, fenced=False)
-        assert "no conversation VM" in reason("ls -la", fenced=False)
+        assert "can reach the network" in reason("ls -la", fenced=False)
 
-    def test_a_read_and_a_sandbox_call_clear_with_no_fence_at_all(self):
-        # The two tiers a fence has nothing to do with: one is settled by the tool's class,
-        # the other by the container the call already runs inside.
+    def test_a_read_clears_with_no_fence_but_a_sandbox_call_does_not(self):
+        # A read is settled by the tool's class. A sandboxed program is held by a VM with no
+        # network, so without that fence it is the reviewer's.
         read = judge(capability_of("corpus_retrieve", {"query": "x"}), fenced=False)
         assert read.approved and read.tier == "read"
-        sandboxed = judge(capability_of("code_execute", {"code": "print(1)"}), fenced=False)
-        assert sandboxed.approved and sandboxed.tier == "sandbox"
+        program = capability_of("code_execute", {"code": "print(1)"}, root=SCRATCH_ONLY)
+        assert program.sandboxed
+        unfenced = judge(program, fenced=False)
+        assert not unfenced.approved and unfenced.tier is None
 
     def test_a_sandbox_call_has_no_way_to_ask_for_the_network(self):
         # The container *is* the fence for this tool, and it is unconditional: there is no
@@ -648,13 +654,16 @@ class TestTheStructuralStage:
         # program. Widening what the workspace may reach is a different act with a tool of
         # its own (`code_request_egress`), which never clears here — see
         # `test_widening_the_egress_allowlist_is_never_cleared_here`.
-        offline = judge(capability_of("code_execute", {"code": "print(1)"}), fenced=True)
+        offline = judge(
+            capability_of("code_execute", {"code": "print(1)"}, root=SCRATCH_ONLY), fenced=True
+        )
         assert offline.approved
         assert offline.tier == "sandbox"
         # ...and asking for one by writing the argument the tool no longer has changes
         # nothing, since nothing reads it.
         asked = judge(
-            capability_of("code_execute", {"code": "print(1)", "network": True}), fenced=True
+            capability_of("code_execute", {"code": "print(1)", "network": True}, root=SCRATCH_ONLY),
+            fenced=True,
         )
         assert asked.approved and asked.tier == "sandbox"
 
@@ -665,11 +674,18 @@ class TestTheStructuralStage:
 
     def test_a_sandbox_program_is_cleared_by_its_container(self):
         # The call is cleared on the *container*, which bounds it whatever the program does.
-        capability = capability_of("code_execute", {"code": "print(1)"}, root=ROOT)
+        capability = capability_of("code_execute", {"code": "print(1)"}, root=SCRATCH_ONLY)
         assert capability.sandboxed
         judgement = judge(capability, fenced=True)
         assert judgement.approved
         assert judgement.tier == "sandbox"
+
+    def test_a_program_is_not_sandboxed_where_a_project_is_writable(self):
+        writable = HomeFence(places=frozenset({SCRATCH, API}), writable=frozenset({SCRATCH, API}))
+        capability = capability_of("code_execute", {"code": "print(1)"}, root=writable)
+        assert not capability.sandboxed
+        assert not judge(capability, fenced=True).approved
+        assert not capability_of("code_execute", {"code": "print(1)"}, root=ROOT).sandboxed
 
 
 class TestContainment:

@@ -82,6 +82,7 @@ from services.permissions import (
 )
 from services.permissions.decision_questions import build_state
 from services.permissions.decision_reviewer import make_decision_reviewer
+from services.permissions.fence import HomeFence
 from services.permissions.projections import PROJECTIONS
 from services.permissions.reviewer import Reviewer, ReviewUnavailable, ScoredVerdict
 from tools import RunDeps
@@ -144,7 +145,7 @@ def pretend_fenced(monkeypatch: pytest.MonkeyPatch) -> None:
     clears nothing unfenced, so a test about anything else in the gate says which world
     it is in."""
 
-    def fences(_caps: ServiceContainer) -> bool:
+    async def fences(_deps: RunDeps, _calls: Sequence[ToolCallPart]) -> bool:
         return True
 
     monkeypatch.setattr(gating, "vm_fences", fences)
@@ -165,7 +166,7 @@ class TestTheDeterministicStageComesFirst:
         # while something is holding it there.
         outcome = await review(BENIGN, reviewer=reviewer_of(verdict("low")))
         assert outcome.stage == "reviewer"
-        assert "no conversation VM" in judge(BENIGN, fenced=False).reason
+        assert "can reach the network" in judge(BENIGN, fenced=False).reason
 
     async def test_what_the_judge_declines_is_handed_on_with_its_reason(self):
         seen: list[ReviewRequest] = []
@@ -561,7 +562,8 @@ class TestWhatEachToolSaysAboutItself:
         assert "also passing description" in described.summary
 
     def test_a_sandbox_program_says_what_it_runs_and_whether_it_can_reach_out(self):
-        capability = capability_of("code_execute", {"code": "print(1)"})
+        scratch_only = HomeFence(places=frozenset({SCRATCH}), writable=frozenset({SCRATCH}))
+        capability = capability_of("code_execute", {"code": "print(1)"}, root=scratch_only)
         assert "Python program" in capability.summary
         assert capability.detail == "code: print(1)"
         assert capability.sandboxed and not capability.network
@@ -1821,11 +1823,12 @@ async def test_a_command_is_judged_from_where_the_shell_stands(
 ):
     # A thread whose last turn left its shell in a project starts the next run there. Read
     # from scratch instead, a subshell in the project is cleared as a scratch-only command.
+    # The project is read-only: a writable one would make the VM's reach more than scratch.
     api = Place("projects", "api")
 
     async def home(_deps: RunDeps) -> RunHome:
         return RunHome(
-            mounts=(Mount(SCRATCH, tmp_path, writable=True), Mount(api, tmp_path, writable=True)),
+            mounts=(Mount(SCRATCH, tmp_path, writable=True), Mount(api, tmp_path, writable=False)),
             default=SCRATCH,
             key="conv-1",
         )

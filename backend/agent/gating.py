@@ -69,6 +69,7 @@ from services.permissions import (
     review,
     review_transcript,
 )
+from services.permissions.capability import EGRESS_TOOL
 from services.permissions.decision_reviewer import make_decision_reviewer
 from services.permissions.fence import Fence
 from services.permissions.guards import (
@@ -83,6 +84,7 @@ from services.vm import ConversationMachines
 from tools.deps import RunDeps
 from tools.guarded import shell_cwd
 from tools.home import resolve_run_home
+from tools.home_workspace import allowed_hosts
 from tools.run_home import home_of
 
 logger = logging.getLogger(__name__)
@@ -371,9 +373,7 @@ async def review_batch(
     )
     nonce = new_nonce()
     root = await _judged_root(deps, calls, home)
-    # A non-host command is held only by running in the VM, and the shell refuses every
-    # command while it is down.
-    fenced = vm_fences(caps)
+    fenced = await vm_fences(deps, calls)
     outcomes = await gather_bounded(
         [
             review_call(
@@ -397,10 +397,19 @@ async def review_batch(
     return {call.tool_call_id: outcome for call, outcome in zip(calls, outcomes, strict=True)}
 
 
-def vm_fences(caps: ServiceContainer) -> bool:
-    """Whether a command would run in the conversation's VM: the image is ready to boot it."""
-    machines = caps.get_optional(ConversationMachines)
-    return machines is not None and machines.platform.available
+async def vm_fences(deps: RunDeps, calls: Sequence[ToolCallPart]) -> bool:
+    """Whether this batch's commands would run in a conversation VM with no network.
+
+    Only then is the VM a fence the structural stage may lean on: it clears programs it
+    cannot read whole, and an allowed host takes uploads as readily as downloads. A batch
+    asking for egress would open the network before its commands run.
+    """
+    machines = deps.caps.get_optional(ConversationMachines)
+    if machines is None or not machines.platform.available:
+        return False
+    if any(call.tool_name == EGRESS_TOOL for call in calls):
+        return False
+    return await allowed_hosts(deps) is None
 
 
 async def _judged_root(
