@@ -8,7 +8,7 @@ import {
 } from "solid-js";
 import { Caret, Markdown } from "~/ui";
 import { useScreenshotSrc } from "../screenshots";
-import { INTERVAL_SEED, nextInterval } from "../streamReveal";
+import { INTERVAL_SEED, REVEAL_MS, nextInterval } from "../streamReveal";
 import { stableStreamSource } from "../streamTail";
 import {
   applyReveal,
@@ -94,7 +94,11 @@ export function AnswerText(props: {
 
   return (
     <div>
-      <div ref={host} class="inline">
+      <div
+        ref={host}
+        class="inline"
+        style={{ "--reveal-ms": `${REVEAL_MS}ms` }}
+      >
         {/* `copyCode` stays on while streaming. Turning it on at the end would move
             every `pre` and `table` into a wrapper just as the operator starts
             reading; the buttons stay hidden until hover. */}

@@ -9,10 +9,11 @@ export interface AutosizeOptions {
 
 /**
  * Grow a textarea to fit its content, from one row up to the smaller of `maxRows`
- * and `maxViewportShare` of the window, then scroll. Re-measured whenever `value`
- * changes — typing, a draft load, a clear after send — on window resize, since one
- * cap is a share of the window, and whenever the field's width changes, since a
- * narrower field wraps onto more lines. A behavior hook: no styling of its own.
+ * and `maxViewportShare` of the window, then scroll. With `field-sizing: content`
+ * the browser does the growing and only the cap is set, again on window resize.
+ * Otherwise the field is re-measured whenever `value` changes — typing, a draft
+ * load, a clear after send — on window resize, and whenever its width changes,
+ * since a narrower field wraps onto more lines.
  *
  * **The measure waits for the DOM.** `value` is the signal the field's own `value`
  * binding reads, and a write to it from inside another effect (a draft restored on
@@ -26,10 +27,8 @@ export function useAutosize(
   value: () => string,
   options: AutosizeOptions,
 ): void {
-  const autosize = () => {
-    const el = field();
-    if (!el) return;
-    el.style.height = "auto";
+  /** The field's border-box cap and its border, from computed style alone. */
+  const bounds = (el: HTMLTextAreaElement) => {
     const cs = getComputedStyle(el);
     const line = parseFloat(cs.lineHeight) || 20;
     const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
@@ -42,6 +41,33 @@ export function useAutosize(
         line * options.maxRows + padding + border,
       ),
     );
+    return { max, border };
+  };
+
+  // Where the engine sizes a field to its content, the browser grows it during its
+  // own layout and only the cap is ours: no measure, so no forced layout per keystroke.
+  if (typeof CSS !== "undefined" && CSS.supports("field-sizing", "content")) {
+    const cap = () => {
+      const el = field();
+      if (el) el.style.maxHeight = `${bounds(el).max}px`;
+    };
+    onMount(() => {
+      const el = field();
+      if (!el) return;
+      el.style.setProperty("field-sizing", "content");
+      el.style.overflowY = "auto";
+      cap();
+      window.addEventListener("resize", cap);
+      onCleanup(() => window.removeEventListener("resize", cap));
+    });
+    return;
+  }
+
+  const autosize = () => {
+    const el = field();
+    if (!el) return;
+    el.style.height = "auto";
+    const { max, border } = bounds(el);
     // `scrollHeight` covers content + padding but not border; the field is
     // border-box, so add the border back or the set height clips by that much.
     const fit = el.scrollHeight + border;

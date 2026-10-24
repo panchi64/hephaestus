@@ -132,6 +132,44 @@ export function revealDelay(start: number, now: number): number | null {
   return start + REVEAL_MS <= now ? null : start - now;
 }
 
+/** Characters starting within one 144 Hz frame of each other share a wrapper: the
+ *  display samples their fades on the same frame, so they cannot be told apart. */
+export const SHARED_SPAN_MS = 1000 / 144;
+
+/** One stretch of characters `[at, end)` that renders as a single node: a wrapper
+ *  with `delay`, or plain text when `delay` is null. */
+export interface RevealRun {
+  end: number;
+  delay: number | null;
+}
+
+/**
+ * Split characters `[from, to)` of `starts` into runs: settled characters join one
+ * plain run, and a still-resolving character opens a wrapper that takes every
+ * following character starting less than `SHARED_SPAN_MS` after it. A run carries
+ * its first character's delay, so a later one starts at most a frame early.
+ */
+export function revealRuns(
+  starts: number[],
+  from: number,
+  to: number,
+  now: number,
+): RevealRun[] {
+  const runs: RevealRun[] = [];
+  let i = from;
+  while (i < to) {
+    const first = starts[i];
+    const delay = revealDelay(first, now);
+    let end = i + 1;
+    if (delay === null)
+      while (end < to && revealDelay(starts[end], now) === null) end++;
+    else while (end < to && starts[end] - first < SHARED_SPAN_MS) end++;
+    runs.push({ end, delay });
+    i = end;
+  }
+  return runs;
+}
+
 /**
  * How many scheduled characters have already begun resolving. Everything from
  * here on is still invisible and can be re-paced freely; everything before it

@@ -87,8 +87,8 @@ export interface MessageItemProps {
 /** A single chat turn. A compaction entry is a full-width divider with no actions or bubble. */
 export function MessageItem(props: MessageItemProps): JSX.Element {
   return (
-    // Two nodes: an animated opacity (`heph-message-in`, fill-mode both) outranks the
-    // `dimmed` utility, so the outer node owns the dim and the inner one the movement.
+    // Two nodes: the entry's animated opacity (`heph-message-in`) outranks the `dimmed`
+    // utility while it runs, so the outer node owns the dim and the inner one the movement.
     // `data-message-id` is how the transcript finds a turn to scroll to.
     <div
       data-message-id={props.message.id}

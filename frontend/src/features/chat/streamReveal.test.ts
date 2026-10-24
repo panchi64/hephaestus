@@ -6,7 +6,9 @@ import {
   firstLiveIndex,
   nextInterval,
   paceReveal,
+  SHARED_SPAN_MS,
   revealDelay,
+  revealRuns,
   startedCount,
 } from "./streamReveal";
 
@@ -227,5 +229,48 @@ describe("startedCount / firstLiveIndex", () => {
         pending === -1 ? schedule.length : pending,
       );
     }
+  });
+});
+
+describe("revealRuns", () => {
+  test("characters starting within one frame share a wrapper", () => {
+    const now = 1000;
+    const starts = [now, now + 3, now + 6, now + 7, now + 20];
+    expect(revealRuns(starts, 0, 5, now)).toEqual([
+      { end: 3, delay: 0 },
+      { end: 4, delay: 7 },
+      { end: 5, delay: 20 },
+    ]);
+  });
+
+  test("a burst starting together is one wrapper", () => {
+    const now = 1000;
+    const runs = revealRuns(new Array(40).fill(now), 0, 40, now);
+    expect(runs).toEqual([{ end: 40, delay: 0 }]);
+  });
+
+  test("settled characters join one plain run", () => {
+    const now = 1000;
+    const done = now - REVEAL_MS - 1;
+    const starts = [done, done, done, now - 10, now - 9];
+    expect(revealRuns(starts, 0, 5, now)).toEqual([
+      { end: 3, delay: null },
+      { end: 5, delay: -10 },
+    ]);
+  });
+
+  test("covers exactly the requested range", () => {
+    const schedule = replay(24, 80, 12);
+    const now = 12 * 80;
+    const runs = revealRuns(schedule, 30, schedule.length, now);
+    expect(runs.at(-1)?.end).toBe(schedule.length);
+    runs.forEach((run, i) => {
+      const at = i === 0 ? 30 : runs[i - 1].end;
+      expect(run.end).toBeGreaterThan(at);
+      if (run.delay !== null)
+        expect(schedule[run.end - 1] - schedule[at]).toBeLessThan(
+          SHARED_SPAN_MS,
+        );
+    });
   });
 });

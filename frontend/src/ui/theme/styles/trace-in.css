@@ -10,16 +10,16 @@
    ========================================================================== */
 .heph-trace-down {
   transform-origin: top;
-  animation: heph-frame-close 120ms var(--ease) both;
+  animation: heph-frame-close 120ms var(--ease) backwards;
 }
 .heph-trace-across {
   transform-origin: left;
   animation:
-    heph-frame-draw 100ms var(--ease) 80ms both,
+    heph-frame-draw 100ms var(--ease) 80ms backwards,
     heph-trace-cool 240ms var(--ease) 180ms backwards;
 }
 .heph-trace-body {
-  animation: heph-reveal-fade var(--motion-base) var(--ease) 60ms both;
+  animation: heph-reveal-fade var(--motion-base) var(--ease) 60ms backwards;
 }
 /* The trunk and the socket. `backwards` and a `from`-only keyframe: charged
    until the stroke lands, then eased back to whatever the element's own colour

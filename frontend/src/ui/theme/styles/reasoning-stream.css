@@ -95,7 +95,7 @@
   position: relative;
   height: var(--reasoning-h);
   overflow: hidden;
-  animation: heph-stage-open var(--motion-stage) var(--ease) both;
+  animation: heph-stage-open var(--motion-stage) var(--ease) backwards;
 }
 @keyframes heph-stage-open {
   from {

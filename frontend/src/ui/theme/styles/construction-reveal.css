@@ -203,26 +203,29 @@
   opacity: 0;
 }
 
+/* Entries fill `backwards`: the resting geometry is the end state, so a filled
+   end would only pin a transform on each mark (see the reveal in
+   animations-human.css). Exits keep `both` to stay closed until unmount. */
 .heph-frame[data-ready] {
-  animation: heph-frame-span var(--motion-stage) linear both;
+  animation: heph-frame-span var(--motion-stage) linear backwards;
 }
 .heph-frame[data-ready] .heph-frame-mark-a {
-  animation: heph-frame-slide 170ms var(--frame-ease) both;
+  animation: heph-frame-slide 170ms var(--frame-ease) backwards;
 }
 .heph-frame[data-ready] .heph-frame-rule-top {
-  animation: heph-frame-draw 170ms var(--frame-ease) both;
+  animation: heph-frame-draw 170ms var(--frame-ease) backwards;
 }
 .heph-frame[data-ready] .heph-frame-mark-b {
-  animation: heph-frame-drop 150ms var(--frame-ease) 150ms both;
+  animation: heph-frame-drop 150ms var(--frame-ease) 150ms backwards;
 }
 .heph-frame[data-ready] .heph-frame-rule-side {
-  animation: heph-frame-close 150ms var(--frame-ease) 150ms both;
+  animation: heph-frame-close 150ms var(--frame-ease) 150ms backwards;
 }
 .heph-frame[data-ready] .heph-frame-rule-bottom {
-  animation: heph-frame-draw 130ms var(--frame-ease) 190ms both;
+  animation: heph-frame-draw 130ms var(--frame-ease) 190ms backwards;
 }
 .heph-frame[data-ready] .heph-frame-surface {
-  animation: heph-frame-surface 130ms var(--frame-ease) 190ms both;
+  animation: heph-frame-surface 130ms var(--frame-ease) 190ms backwards;
 }
 
 /* The transform origins are geometry, not choreography, so they stay unscoped —

@@ -1,8 +1,8 @@
 /**
  * Does a streamed answer leave anything behind?
  *
- * The reveal wraps each arriving character in its own span so it can resolve in on its
- * own schedule, and for a long time nothing ever took those wrappers out again: every
+ * The reveal wraps arriving characters in spans so they resolve in on their own
+ * schedule, and for a long time nothing ever took those wrappers out again: every
  * character that passed through the reveal window kept its span, its inline
  * `animation-delay` and its filled animation for the life of the session. A four-turn
  * fixture left over a thousand of them. That is invisible — the fade is over, the text
@@ -242,13 +242,14 @@ test("no character loses its wrapper while its fade is still running", async () 
     };
 
     // Without these the assertion below passes on a reveal that never animated at all.
-    expect(result.peak).toBeGreaterThan(50);
+    // Characters starting within a frame share a wrapper, so the window's couple of
+    // hundred characters peak at a few dozen wrappers (observed ~46).
+    expect(result.peak).toBeGreaterThan(20);
     expect(result.framesMidFade).toBeGreaterThan(30);
     // And an upper bound, because the failure in the other direction is silent: wrapping
-    // a block that still holds wrappers puts a span inside each existing one and doubles
-    // the count every delta. The reveal window at this rate holds a couple of hundred
-    // characters (observed peak ~190); nesting took it past a thousand.
-    expect(result.peak).toBeLessThan(500);
+    // a block that still holds wrappers puts a span inside each existing one and
+    // multiplies the count every delta, which took it past a thousand.
+    expect(result.peak).toBeLessThan(250);
     expect(result.cuts).toEqual([]);
   } finally {
     wv.close();

@@ -39,7 +39,7 @@ import {
   REVEAL_MS,
   extendSchedule,
   firstLiveIndex,
-  revealDelay,
+  revealRuns,
 } from "../streamReveal";
 
 /** Subtrees the fade must not enter, because their contents are the machine's
@@ -117,16 +117,13 @@ function animatableText(root: HTMLElement): {
   return { nodes, count };
 }
 
-/** One character, wrapped so it resolves in on its own schedule. */
-function revealSpan(char: string, delay: number): HTMLSpanElement {
+/** A run of characters that resolve together. The delay carries the run's phase
+ *  across a re-render; the duration is `--reveal-ms` on the answer's host. */
+function revealSpan(text: string, delay: number): HTMLSpanElement {
   const span = document.createElement("span");
   span.className = SPAN_CLASS;
-  // Duration comes from the same constant the schedule reasons about, so the
-  // two can't drift; the delay is what carries this character's phase across a
-  // re-render.
-  span.style.setProperty("--reveal-ms", `${REVEAL_MS}ms`);
   span.style.animationDelay = `${delay}ms`;
-  span.textContent = char;
+  span.textContent = text;
   return span;
 }
 
@@ -153,7 +150,7 @@ function unitIndex(unit: HTMLElement, position: number): number {
 
 /** Put every wrapper in `unit` back as plain text and re-join the runs it split.
  *  `normalize()` is the half that matters for paint: without it the block keeps one text
- *  node per character and is shaped one character at a time. */
+ *  node per run and is shaped a run at a time. */
 export function unwrapReveal(unit: HTMLElement): void {
   const spans = unit.querySelectorAll<HTMLElement>(`.${SPAN_CLASS}`);
   if (!spans.length) return;
@@ -228,9 +225,8 @@ export function applyReveal(
   }
 
   // Unwrap FIRST, then measure and wrap — the same order `rewrap` keeps, for the same
-  // reason: walking a block that still holds wrappers finds the one character inside each
-  // and wraps it again, a span inside a span, doubling every delta (measured on the
-  // re-wrap path: 1060 wrappers where there should have been ~190).
+  // reason: walking a block that still holds wrappers finds the text inside each and
+  // wraps it again, a span inside a span, multiplying the wrappers on every delta.
   //
   // On the tail specifically this is DEFENSIVE rather than load-bearing, and removing it
   // does not fail the tests: `Markdown` rebuilds the trailing block on nearly every
@@ -273,18 +269,20 @@ function wrapNodes(
     const len = node.data.length;
     if (base + len <= from || !node.parentNode) continue;
     // Split the node once into "settled" and "still resolving", then rebuild
-    // only the second half a character at a time.
+    // only the second half, one node per run.
     const cut = Math.max(0, from - base);
     const frag = document.createDocumentFragment();
     if (cut > 0)
       frag.appendChild(document.createTextNode(node.data.slice(0, cut)));
-    for (let i = cut; i < len; i++) {
-      const delay = revealDelay(starts[base + i], now);
+    let at = base + cut;
+    for (const { end, delay } of revealRuns(starts, at, base + len, now)) {
+      const text = node.data.slice(at - base, end - base);
       frag.appendChild(
         delay === null
-          ? document.createTextNode(node.data[i])
-          : revealSpan(node.data[i], delay),
+          ? document.createTextNode(text)
+          : revealSpan(text, delay),
       );
+      at = end;
     }
     node.parentNode.replaceChild(frag, node);
   }

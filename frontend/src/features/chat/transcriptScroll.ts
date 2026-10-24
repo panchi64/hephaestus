@@ -43,7 +43,8 @@ export interface TranscriptFollow {
   /** `ref` for the scrolling transcript container. */
   ref: (el: HTMLDivElement) => void;
   /** `ref` for the content inside the container; its size changes drive the follow
-   *  and the anchor. Must not carry `room()`, or growth inside the room goes unseen. */
+   *  and the anchor. Must not carry `room()`, or growth inside the room goes unseen.
+   *  Each turn's `[data-message-id]` root must be its direct child. */
   contentRef: (el: HTMLElement) => void;
   /** `ref` for a zero-height marker after the last turn: where the content ends, as
    *  opposed to where the reserved room ends. */
@@ -86,9 +87,12 @@ export function createTranscriptFollow(source: {
   const [pinned, setPinned] = createSignal(true);
   let chosen = false;
   const apply = (event: FollowEvent) => {
-    const next = nextFollow({ pinned: untrack(pinned), chosen }, event);
+    const was = untrack(pinned);
+    const next = nextFollow({ pinned: was, chosen }, event);
     chosen = next.chosen;
     setPinned(next.pinned);
+    // Scrolls are not anchored while pinned, so letting go anchors here.
+    if (was && !next.pinned && scrollEl) recordAnchor(scrollEl);
   };
   const [below, setBelow] = createSignal(0);
   const [room, setRoom] = createSignal<number | null>(null);
@@ -115,7 +119,8 @@ export function createTranscriptFollow(source: {
     insetTop = parseFloat(style.paddingTop) || 0;
     insetBottom = parseFloat(style.paddingBottom) || 0;
   };
-  const view = (el: HTMLElement): { top: number; bottom: number } => {
+  type View = { top: number; bottom: number };
+  const view = (el: HTMLElement): View => {
     const rect = el.getBoundingClientRect();
     return { top: rect.top + insetTop, bottom: rect.bottom - insetBottom };
   };
@@ -124,19 +129,20 @@ export function createTranscriptFollow(source: {
     lastTop = el.scrollTop;
     lastHeight = el.scrollHeight;
   };
-  const measureBelow = (el: HTMLElement) => {
+  const measureBelow = (el: HTMLElement, v: View = view(el)) => {
     if (!endEl) return;
-    setBelow(Math.max(0, endEl.getBoundingClientRect().top - view(el).bottom));
+    setBelow(Math.max(0, endEl.getBoundingClientRect().top - v.bottom));
   };
 
   /** Turn roots from the first one reaching into the view, each followed by the live
    *  answer inside it — document order, so `pickAnchor` reads them top-down. */
-  const candidates = (
-    el: HTMLElement,
-    top: number,
-    bottom: number,
-  ): HTMLElement[] => {
-    const turns = el.querySelectorAll<HTMLElement>("[data-message-id]");
+  const candidates = (top: number, bottom: number): HTMLElement[] => {
+    // The turns are the content's direct children: walking those is O(turns), where a
+    // selector query walks every node of every turn on each scroll event.
+    const turns: HTMLElement[] = [];
+    for (const child of contentEl?.children ?? [])
+      if (child instanceof HTMLElement && child.hasAttribute("data-message-id"))
+        turns.push(child);
     const from = firstReaching(
       turns.length,
       (i) => turns[i].getBoundingClientRect().bottom,
@@ -152,9 +158,9 @@ export function createTranscriptFollow(source: {
     }
     return out;
   };
-  const recordAnchor = (el: HTMLElement) => {
-    const { top, bottom } = view(el);
-    const els = candidates(el, top, bottom);
+  const recordAnchor = (el: HTMLElement, v: View = view(el)) => {
+    const { top, bottom } = v;
+    const els = candidates(top, bottom);
     const boxes = els.map((c) => {
       const rect = c.getBoundingClientRect();
       return {
@@ -170,8 +176,8 @@ export function createTranscriptFollow(source: {
   /** After a correction, keep the anchor while it is still on screen — re-picking
    *  when the run ends would hand it to the turn above just as the progress rail
    *  collapses over the answer. A live answer coming into view still takes it over. */
-  const refreshAnchor = (el: HTMLElement) => {
-    const { top, bottom } = view(el);
+  const refreshAnchor = (el: HTMLElement, v: View = view(el)) => {
+    const { top, bottom } = v;
     const onScreen = (c: HTMLElement | null): c is HTMLElement => {
       if (!c?.isConnected) return false;
       const rect = c.getBoundingClientRect();
@@ -179,7 +185,7 @@ export function createTranscriptFollow(source: {
     };
     const live = el.querySelector<HTMLElement>("[data-live-answer]");
     const next = onScreen(live) ? live : onScreen(anchor) ? anchor : null;
-    if (!next) return recordAnchor(el);
+    if (!next) return recordAnchor(el, v);
     // The same anchor keeps its target offset: re-reading it here would bank every
     // sub-pixel drift `settle` declined to correct, and a collapse is many of those.
     if (next === anchor) return;
@@ -236,8 +242,9 @@ export function createTranscriptFollow(source: {
         noteMove(scrollEl);
       }
     }
-    refreshAnchor(scrollEl);
-    measureBelow(scrollEl);
+    const v = view(scrollEl);
+    refreshAnchor(scrollEl, v);
+    measureBelow(scrollEl, v);
   };
 
   const watchInput = (el: HTMLElement) => {
@@ -281,11 +288,11 @@ export function createTranscriptFollow(source: {
       }
       readInsets(scrollEl);
       layoutRoom(scrollEl, turn);
-      scrollEl.scrollTop +=
-        turn.getBoundingClientRect().top - view(scrollEl).top;
+      const v = view(scrollEl);
+      scrollEl.scrollTop += turn.getBoundingClientRect().top - v.top;
       noteMove(scrollEl);
-      recordAnchor(scrollEl);
-      measureBelow(scrollEl);
+      recordAnchor(scrollEl, v);
+      measureBelow(scrollEl, v);
     });
   };
 
@@ -347,9 +354,13 @@ export function createTranscriptFollow(source: {
     if (!keep) apply("letGo");
     lastTop = top;
     lastHeight = height;
-    if (ours) refreshAnchor(scrollEl);
-    else recordAnchor(scrollEl);
-    measureBelow(scrollEl);
+    const v = view(scrollEl);
+    // A pinned `settle` follows the bottom and never reads the anchor.
+    if (!untrack(pinned)) {
+      if (ours) refreshAnchor(scrollEl, v);
+      else recordAnchor(scrollEl, v);
+    }
+    measureBelow(scrollEl, v);
   };
 
   let wasSending = false;
