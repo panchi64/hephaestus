@@ -168,8 +168,9 @@ class Settings(BaseSettings):
 
     # The single network allowlist, read by both fences: each conversation VM's
     # `allow_hosts` and the OS-level confinement of `shell_run_on_host`. A second list
-    # would leave a hole in whichever one wasn't widened. Entries match exactly:
-    # `github.com` is not `gist.github.com`; subdomains are spelled `*.github.com`.
+    # would leave a hole in whichever one wasn't widened. The host fence matches entries
+    # exactly (`*.github.com` for subdomains); smol's VM allowlist can only match a name
+    # with its subdomains, so in a VM `github.com` also admits `gist.github.com`.
     #
     # Seeded with package registries and source hosts: installing and cloning are what a
     # workspace is for, and the fence targets exfiltration. Anything else is asked for and

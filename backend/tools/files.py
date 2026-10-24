@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast, override
 
 from pydantic_ai import AbstractToolset, RunContext, Tool, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
+from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness import FileSystem
 from pydantic_ai_harness.filesystem import FileSystemToolset
 
@@ -41,7 +42,7 @@ from .describe import registered_tools
 from .harness_events import attributable
 from .home import change_log, lease, may_lease, resolve_run_home
 from .run_home import home_of
-from .spill import is_untrusted_spill
+from .spill import UNTRUSTED_SUFFIX, is_untrusted_spill
 from .workspace import unavailable
 
 #: The most characters one ``read_file`` page returns, so a page of a long file, or of a
@@ -117,10 +118,16 @@ class _HomeFiles(WrapperToolset[RunDeps]):
         log = change_log(ctx.deps) if name in _FILE_WRITES and located is not None else None
         if log is not None and located is not None:
             await log.before(located[0], [located[1]])
-        inward = attributable(ctx, f"files_{name}")
+        # Only the host half: given a workspace that runs commands, the harness searches
+        # with `rg` through it, which would boot the VM for a file search.
+        inward = replace(attributable(ctx, f"files_{name}"), workspace=Workspace(home.backend))
         result = cast(object, await super().call_tool(name, tool_args, inward, tool))
         if log is not None and located is not None:
             await log.after(located[0], [located[1]])
+        if name == "search_files" and UNTRUSTED_SUFFIX in str(result):
+            # A match inside a saved untrusted output carries its text, so the whole result
+            # reaches the model fenced, as a read of that file would.
+            return wrap_untrusted(str(result), source="saved tool output")
         if located is None:
             return result
         mount, rel = located

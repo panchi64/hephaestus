@@ -304,6 +304,12 @@ async def test_any_page_of_an_untrusted_spill_comes_back_fenced_and_bounded(
     assert len(page) <= READ_PAGE_CHARS + 1000
 
 
+async def test_a_search_that_matches_an_untrusted_spill_comes_back_fenced(tmp_path: Path):
+    found = await _read_back(tmp_path, "x_page", search="line 0001")
+    assert "tool-output/" in found
+    assert _one_fence(found) and "saved tool output" in found
+
+
 async def test_a_page_of_a_huge_spill_is_bounded(tmp_path: Path):
     page = await _read_back(tmp_path, "x_fences_large", read_args={"limit": 100_000})
     assert _one_fence(page)
@@ -510,25 +516,29 @@ async def _read_back(
     caps: ServiceContainer | None = None,
     project_id: str | None = None,
     read_args: dict[str, object] | None = None,
+    *,
+    search: str | None = None,
 ) -> str:
+    """The spilled result read back with `files_read_file`, or with `files_search_files`
+    for ``search`` across the scratch."""
     messages, _ = await _run_tool(tmp_path, tool, caps=caps, project_id=project_id)
     found = re.search(r"/home/agent/scratch/\S+?\.txt", str(_content(messages, tool)))
     assert found is not None
     path = found.group()
+    reading = "files_read_file" if search is None else "files_search_files"
+    args = (
+        {"path": path, "limit": 400, **(read_args or {})}
+        if search is None
+        else {"pattern": search, "path": "/home/agent/scratch"}
+    )
 
     async def reader(
         msgs: list[ModelMessage], _info: AgentInfo
     ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
-        if any(isinstance(m, ModelRequest) and _returns([m], "files_read_file") for m in msgs):
+        if any(isinstance(m, ModelRequest) and _returns([m], reading) for m in msgs):
             yield "done"
         else:
-            yield {
-                0: DeltaToolCall(
-                    name="files_read_file",
-                    json_args=json.dumps({"path": path, "limit": 400, **(read_args or {})}),
-                    tool_call_id="r1",
-                )
-            }
+            yield {0: DeltaToolCall(name=reading, json_args=json.dumps(args), tool_call_id="r1")}
 
     caps = caps or ServiceContainer()
     if caps.get_optional(ScratchDirs) is None:
@@ -546,7 +556,7 @@ async def _read_back(
     async with agent.iter("go", deps=deps) as agent_run:
         await stream_agent_run(agent_run, run)
     assert agent_run.result is not None
-    return str(_content(agent_run.result.all_messages(), "files_read_file"))
+    return str(_content(agent_run.result.all_messages(), reading))
 
 
 async def test_files_read_file_reads_the_spilled_path_on_a_plain_thread(tmp_path: Path):

@@ -20,6 +20,7 @@ from services.home.table import RunHome
 from services.home.workspace import machine_spec
 from services.offline import OfflineModeService
 from services.vm import ConversationMachines, GuestImage, MachineUnavailableError, Platform
+from services.vm import machines as machines_module
 from services.vm.machines import Bind, MachineSpec
 from services.vm.services import public_cidrs
 from tools import RunDeps
@@ -79,7 +80,7 @@ class TestCreateAndReuse:
         await _touch_use(pool, "Conv_1", SPEC_B)
 
         config = fake.machines[0].config
-        assert config.name == "heph-test-conv-1"
+        assert config.name == "heph-test-c-conv-1"
         assert config.mounts is not None
         [mount] = config.mounts
         assert (mount.source, mount.target, mount.read_only) == (
@@ -89,7 +90,7 @@ class TestCreateAndReuse:
         )
         assert config.resources is not None
         assert config.resources.allow_hosts == ["pypi.org"]
-        assert "heph-test-conv-1" in fake.deleted_names
+        assert "heph-test-c-conv-1" in fake.deleted_names
 
     async def test_no_allowlist_means_no_network_rule_is_set(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -203,6 +204,29 @@ class TestRestart:
         assert fake.machines[0].deleted
         assert len(fake.machines) == 2
 
+    async def test_a_restart_behind_a_long_command_is_refused_rather_than_held(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        pool, fake = await _pool(tmp_path, monkeypatch)
+        monkeypatch.setattr(machines_module, "_RESTART_WAIT_S", 0.01)
+        entered = asyncio.Event()
+        leave = asyncio.Event()
+
+        async def hold() -> None:
+            async with pool.use("conv-1", SPEC_A, working_dir="/home/agent/scratch"):
+                entered.set()
+                _ = await leave.wait()
+
+        holder = asyncio.create_task(hold())
+        _ = await entered.wait()
+
+        with pytest.raises(MachineUnavailableError, match="still running"):
+            await _touch_use(pool, "conv-1", SPEC_B)
+
+        leave.set()
+        await holder
+        assert not fake.machines[0].deleted
+
 
 class TestReaping:
     async def test_a_sweep_reaps_idle_machines_and_leaves_busy_ones(
@@ -309,6 +333,44 @@ class TestPurge:
         assert pool.running("c10") and pool.running("c2")
 
 
+class TestOrphans:
+    async def test_start_deletes_conversation_machines_a_dead_process_left(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        pool, fake = await _pool(tmp_path, monkeypatch)
+        fake.leftover = ["heph-test-c-old-conv", "heph-test-services", "heph-other-c-x"]
+
+        await pool.start()
+        await pool.stop()
+
+        assert "heph-test-c-old-conv" in fake.deleted_names
+        assert "heph-test-services" not in fake.deleted_names
+        assert "heph-other-c-x" not in fake.deleted_names
+
+
+class TestTheReaperAndAcquire:
+    async def test_a_machine_acquired_while_the_sweep_waits_is_not_reaped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        pool, fake = await _pool(tmp_path, monkeypatch, idle_ttl_s=0.0)
+        await _touch_use(pool, "conv-1")
+        entered = asyncio.Event()
+        leave = asyncio.Event()
+
+        async def hold() -> None:
+            async with pool.use("conv-1", SPEC_A, working_dir="/home/agent/scratch"):
+                entered.set()
+                _ = await leave.wait()
+
+        holder = asyncio.create_task(hold())
+        _ = await entered.wait()
+        await pool.sweep()
+
+        assert not fake.machines[0].deleted
+        leave.set()
+        await holder
+
+
 class TestEndHooks:
     async def test_a_hook_hears_of_every_way_a_machine_ends(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -329,6 +391,24 @@ class TestEndHooks:
         await _touch_use(pool, "evicting")
 
         assert ended == ["released", "swept", "restarted", "restarted", "a"]
+
+    async def test_a_failing_hook_still_deletes_the_machine_and_reaches_the_rest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        pool, fake = await _pool(tmp_path, monkeypatch)
+        heard: list[str] = []
+
+        def broken(_key: str) -> None:
+            raise RuntimeError("listener bug")
+
+        pool.on_end(broken)
+        pool.on_end(heard.append)
+
+        await _touch_use(pool, "conv-1")
+        await pool.release("conv-1")
+
+        assert fake.machines[0].deleted
+        assert heard == ["conv-1"]
 
     async def test_a_machine_that_is_kept_fires_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -26,6 +26,7 @@ from .target import LOCAL
 logger = logging.getLogger(__name__)
 
 _RUN_DIR = "/run/hephaestus"
+_LOG_DIR = f"{_RUN_DIR}/logs"
 _ADMIN_TIMEOUT_S = 60.0
 #: Everything a public address is not: private, loopback, link-local, carrier-grade NAT,
 #: benchmarking, multicast and reserved ranges.
@@ -154,13 +155,14 @@ class ServicesMachine:
     async def start_service(self, name: str, user: str, argv: Sequence[str]) -> None:
         """Start ``argv`` as ``user`` in the background, logging to the service's log."""
         await self.stop_service(name)
+        # The pid is written by root into a root-only folder: root later signals the group
+        # it names, so a service must not be able to choose it.
         command = (
-            f"mkdir -p {_RUN_DIR} && chmod 1777 {_RUN_DIR} && "
+            f"mkdir -p {_RUN_DIR} {_LOG_DIR} && chmod 0755 {_RUN_DIR} && "
+            + f"chmod 1777 {_LOG_DIR} && "
             + f"su -s /bin/sh {shlex.quote(user)} -c "
-            + shlex.quote(
-                f"setsid {shlex.join(argv)} > {_log(name)} 2>&1 < /dev/null & "
-                + f"echo $! > {_pid(name)}"
-            )
+            + shlex.quote(f"setsid {shlex.join(argv)} > {_log(name)} 2>&1 < /dev/null & echo $!")
+            + f" > {_pid(name)}"
         )
         result = await self._sh(command)
         if result.exit_code != 0:
@@ -168,7 +170,8 @@ class ServicesMachine:
 
     async def stop_service(self, name: str) -> None:
         _ = await self._sh(
-            f'[ -f {_pid(name)} ] && kill -TERM -- -"$(cat {_pid(name)})" 2>/dev/null; '
+            f'pid="$(cat {_pid(name)} 2>/dev/null)"; '
+            + '[ "$pid" -gt 1 ] 2>/dev/null && kill -TERM -- -"$pid" 2>/dev/null; '
             + f"rm -f {_pid(name)}; true"
         )
 
@@ -251,4 +254,4 @@ def _pid(name: str) -> str:
 
 
 def _log(name: str) -> str:
-    return f"{_RUN_DIR}/{name}.log"
+    return f"{_LOG_DIR}/{name}.log"

@@ -57,6 +57,18 @@ class _Workspace:
     )
     error: WorkspaceError | None = None
     calls: list[_Call] = field(default_factory=list[_Call])
+    #: What each command found written beside it, and what is still there afterwards.
+    seen: dict[str, bytes] = field(default_factory=dict[str, bytes])
+    files: dict[str, bytes] = field(default_factory=dict[str, bytes])
+
+    async def make_dir(self, path: str) -> None:
+        del path
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        self.files[path] = data
+
+    async def remove(self, path: str) -> None:
+        _ = self.files.pop(path, None)
 
     async def run(
         self,
@@ -67,6 +79,7 @@ class _Workspace:
         timeout: float | None = None,
     ) -> CommandResult:
         self.calls.append(_Call(command, shell, env, timeout))
+        self.seen.update(self.files)
         if self.error is not None:
             raise self.error
         return self.result
@@ -236,15 +249,17 @@ async def test_execute_code_runs_python_in_the_workspace_shell(monkeypatch: pyte
     run = await _run_code(monkeypatch, workspace)
 
     [call] = workspace.calls
+    [(program, source)] = workspace.seen.items()
     assert call.shell is True
-    assert 'python3 -c "$HEPHAESTUS_CODE"' in call.command
-    assert call.env == {"HEPHAESTUS_CODE": "a"}
+    assert f"python3 {program} < /dev/null" in call.command
+    assert source == b"a"
+    assert workspace.files == {}, "the program is removed once it has run"
     assert call.timeout == 30.0
     assert _result(run)["stdout"] == "hello from box"
     assert len(bodies_of(run, ToolStarted)) == 1
 
 
-async def test_stdin_rides_the_environment_beside_the_program(monkeypatch: pytest.MonkeyPatch):
+async def test_stdin_is_written_beside_the_program(monkeypatch: pytest.MonkeyPatch):
     workspace = _Workspace()
     _serve(monkeypatch, workspace)
     toolset = code_toolset()
@@ -263,8 +278,36 @@ async def test_stdin_rides_the_environment_beside_the_program(monkeypatch: pytes
     )
 
     [call] = workspace.calls
-    assert call.env == {"HEPHAESTUS_CODE": "print(1)", "HEPHAESTUS_STDIN": "in"}
+    program = next(path for path in workspace.seen if path.endswith(".py"))
+    stdin = next(path for path in workspace.seen if path.endswith(".stdin"))
+    assert workspace.seen[program] == b"print(1)"
+    assert workspace.seen[stdin] == b"in"
+    assert f"python3 {program} < {stdin}" in call.command
+    assert workspace.files == {}
     assert call.timeout == 5.0
+
+
+async def test_a_program_too_large_for_the_environment_still_runs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace = _Workspace()
+    _serve(monkeypatch, workspace)
+    toolset = code_toolset()
+    run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
+    ctx = RunContext(deps=_one_tool_deps(run, _Machines()), model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+    data = "x," * 200_000
+
+    _ = cast(
+        object,
+        await toolset.call_tool(
+            "execute", {"code": "print(1)", "stdin": data}, ctx, tools["execute"]
+        ),
+    )
+
+    [call] = workspace.calls
+    assert call.env is None
+    assert data.encode() in workspace.seen.values()
 
 
 async def test_a_cold_machine_announces_the_vm_boot(monkeypatch: pytest.MonkeyPatch):

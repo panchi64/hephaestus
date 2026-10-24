@@ -69,6 +69,15 @@ class FakeSmol:
         self.machines: list[FakeMachine] = []
         self.deleted_names: list[str] = []
         self.create_error: smol.SmolError | None = None
+        #: Machines a previous process left behind, as `list` reports them.
+        self.leftover: list[str] = []
+
+    async def list(
+        self, _conn: smol.ConnectOptions | None = None, _labels: dict[str, str] | None = None
+    ) -> list[smol.MachineSummary]:
+        live = [m.config.name for m in self.live if m.config.name is not None]
+        names = [*self.leftover, *live]
+        return [smol.MachineSummary(id=n, name=n, state="running", labels={}) for n in names]
 
     async def create(
         self, config: smol.MachineConfig | None = None, _conn: smol.ConnectOptions | None = None
@@ -97,6 +106,7 @@ def install_fake_smol(monkeypatch: pytest.MonkeyPatch) -> FakeSmol:
     fake = FakeSmol()
     monkeypatch.setattr(smol.AsyncMachine, "create", fake.create)
     monkeypatch.setattr(smol.AsyncMachine, "delete_by_name", fake.delete_by_name)
+    monkeypatch.setattr(smol.AsyncMachine, "list", fake.list)
     monkeypatch.setattr(smol, "local_availability", lambda: (True, "", ""))
     return fake
 

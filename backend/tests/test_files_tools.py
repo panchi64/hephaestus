@@ -125,8 +125,7 @@ async def test_a_listing_with_no_folder_named_is_of_the_threads_own_place(tmp_pa
     listed = str(await _call("list_directory", {}, manager=manager, caps=caps))
     assert "mine.txt" in listed and "README.md" not in listed
     home = str(await _call("list_directory", {"path": "~"}, manager=manager, caps=caps))
-    # The thread's scratch is its working directory, so the listing names it as `./`.
-    assert "../projects/" in home and "./" in home and "../shared/" in home
+    assert "projects/" in home and "scratch/" in home and "shared/" in home
 
 
 async def test_the_scratch_alias_names_the_same_file(tmp_path: Path):

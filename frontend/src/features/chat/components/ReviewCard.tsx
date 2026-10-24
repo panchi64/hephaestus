@@ -204,14 +204,19 @@ export function ReviewCard(props: {
               </Text>
             )}
           </Show>
-          {/* Said out loud rather than left to be inferred from a missing tier: a host
-              with no sandbox primitive is why an ordinary contained command still had to
-              be asked about, and it is one `brew install` away from being fixed. Only for
-              an act that declared a reach — a fence is nothing to a recall either way. */}
-          <Show when={props.review.reach && props.review.fenced === false}>
+          {/* Why an ordinary contained command still went to review: only a VM with no
+              network clears one on its shape. Not said of the host tool, which is never
+              cleared that way. */}
+          <Show
+            when={
+              props.review.reach &&
+              props.review.reach !== "host" &&
+              props.review.fenced === false
+            }
+          >
             <Text variant="micro" tone="dim">
-              This machine has no sandbox to fence a command with, so it ran
-              unfenced.
+              Its VM can reach the network, or is down, so it was reviewed
+              rather than cleared on its shape.
             </Text>
           </Show>
           <Show when={props.review.risk}>

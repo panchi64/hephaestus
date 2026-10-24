@@ -14,6 +14,8 @@ the host.
 from __future__ import annotations
 
 import re
+import secrets
+from contextlib import suppress
 from dataclasses import replace
 
 from pydantic_ai import FunctionToolset, RunContext, ToolDefinition
@@ -35,13 +37,14 @@ from .home_workspace import home_workspace
 
 _MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([^']+)'")
 
-#: The program and its stdin ride the environment, so neither has to be quoted into a
-#: command line or written to the operator's scratch.
-_RUN_PYTHON = (
-    f"cd {SCRATCH.path} && "
-    + 'if [ -n "${HEPHAESTUS_STDIN+x}" ]; then printf %s "$HEPHAESTUS_STDIN"; fi '
-    + '| python3 -c "$HEPHAESTUS_CODE"'
-)
+#: Where a run's program and stdin are written for the VM to read. Files rather than the
+#: environment, which Linux caps at 128 KiB per variable.
+_RUN_DIR = f"{SCRATCH.path}/.hephaestus"
+
+
+def _run_python(token: str, *, has_stdin: bool) -> str:
+    stdin = f"{_RUN_DIR}/{token}.stdin" if has_stdin else "/dev/null"
+    return f"cd {SCRATCH.path} && python3 {_RUN_DIR}/{token}.py < {stdin}"
 
 
 def _failure_hint(
@@ -236,17 +239,26 @@ def code_toolset() -> FunctionToolset[RunDeps]:
                     body=ToolProgress(tool_call_id=ctx.tool_call_id, partial="Starting your VM…")
                 )
             )
-        env = {"HEPHAESTUS_CODE": code}
-        if stdin is not None:
-            env["HEPHAESTUS_STDIN"] = stdin
         workspace = home_workspace(ctx.deps)
+        token = secrets.token_hex(8)
+        files = [(f"{_RUN_DIR}/{token}.py", code)]
+        if stdin is not None:
+            files.append((f"{_RUN_DIR}/{token}.stdin", stdin))
+        command = _run_python(token, has_stdin=stdin is not None)
         try:
-            done = await workspace.run(_RUN_PYTHON, shell=True, env=env, timeout=timeout_s)
+            await workspace.make_dir(_RUN_DIR)
+            for path, text in files:
+                await workspace.write_bytes(path, text.encode())
+            done = await workspace.run(command, shell=True, timeout=timeout_s)
             result = SandboxResult(done.exit_code, done.stdout, done.stderr)
         except WorkspaceTimeoutError as exc:
             result = SandboxResult(124, exc.stdout, exc.stderr, timed_out=True)
         except WorkspaceError as exc:
             return {"ok": False, "error": render_tool_error("the code did not run", cause=str(exc))}
+        finally:
+            for path, _ in files:
+                with suppress(WorkspaceError, OSError):
+                    await workspace.remove(path)
         return exec_result(result, sandboxed=True, delegated=ctx.deps.delegated_approved)
 
     async def _only_where_there_is_someone_to_ask(
@@ -281,9 +293,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         Returns `allowed`, every domain your VM may now reach.
 
         Args:
-            domains: The hosts, as domains (`api.example.com`). A domain matches that host
-                exactly; `*.example.com` covers its subdomains. A URL is reduced to its
-                host.
+            domains: The hosts, as domains (`api.example.com`). In your VM a domain also
+                covers its subdomains. A URL is reduced to its host.
             reason: What you are fetching from these hosts and what it is for.
         """
         del reason  # The approval card reads it from the call's arguments.

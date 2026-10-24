@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import shutil
+from contextlib import suppress
 from pathlib import Path
 
 import smol
@@ -61,12 +62,13 @@ class GuestImage:
         #: The build step under way, for the operator; None when no build runs.
         self.step: str | None = None
         self.building: bool = False
+        #: Fixed at start: a build script edited under a running app must not move the
+        #: image machines boot from to one that was never built.
+        self._path: Path = override or images_dir / fingerprint(ca_bundle) / "image.tar"
 
     @property
     def path(self) -> Path:
-        if self._override is not None:
-            return self._override
-        return self._dir / fingerprint(self._ca) / "image.tar"
+        return self._path
 
     async def ensure(self) -> Path:
         """The archive's path, building it first when it is missing."""
@@ -95,9 +97,11 @@ class GuestImage:
             _ = shutil.copyfile(self._ca, work / "extra-ca.crt")
             argv.append("/out/extra-ca.crt")
         logger.info("guest image: building %s", target.parent.name)
+        stem = f"hephaestus-build-{target.parent.name}-"
+        await _delete_builders(stem)
         builder = await smol.AsyncMachine.create(
             smol.MachineConfig(
-                name=f"hephaestus-build-{target.parent.name}-{os.getpid()}",
+                name=f"{stem}{os.getpid()}",
                 image=_BUILDER_IMAGE,
                 mounts=[smol.MountSpec(source=str(work), target="/out")],
                 resources=smol.ResourceSpec(
@@ -134,6 +138,19 @@ class GuestImage:
                 self.step = step
                 logger.info("guest image: %s", step)
             await asyncio.sleep(_POLL_S)
+
+
+async def _delete_builders(stem: str) -> None:
+    """Delete builders of this image that an interrupted build left running."""
+    try:
+        summaries = await smol.AsyncMachine.list(LOCAL)
+    except smol.SmolError:
+        logger.warning("guest image: could not list machines to clean up", exc_info=True)
+        return
+    for summary in summaries:
+        if summary.name.startswith(stem):
+            with suppress(smol.SmolError):
+                await smol.AsyncMachine.delete_by_name(summary.name, LOCAL)
 
 
 def _last_step(log: Path) -> str | None:

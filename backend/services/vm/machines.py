@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 _SAFE = re.compile(r"[^a-z0-9-]")
 
+#: How long a restart for new access waits for the commands in flight; past it the caller
+#: is told to retry rather than held behind the key's lock.
+_RESTART_WAIT_S = 60.0
+
 #: `~` is the agent's home, so its paths mean the same in a command as in a file tool, and
 #: packages install into the scratch, which outlives the machine.
 _GUEST_ENV = (
@@ -135,6 +139,7 @@ class ConversationMachines:
         self._end_hooks.append(hook)
 
     async def start(self) -> None:
+        await self._delete_orphans()
         await self._reaper.start()
 
     async def stop(self) -> None:
@@ -176,11 +181,19 @@ class ConversationMachines:
                 await self._end(key, slot)
 
     async def sweep(self) -> None:
-        now = time.monotonic()
-        for key, slot in list(self._slots.items()):
-            if slot.busy == 0 and now - slot.last_used >= self._idle_ttl_s:
+        for key in list(self._slots):
+            # Decided under the key's lock: a command acquiring the machine holds it until
+            # the slot is marked busy.
+            async with self._lock(key):
+                slot = self._slots.get(key)
+                if slot is None or slot.busy or not self._expired(slot):
+                    continue
                 logger.info("vm: reaping idle machine for %s", key)
-                await self.release(key)
+                del self._slots[key]
+                await self._end(key, slot)
+
+    def _expired(self, slot: _Slot) -> bool:
+        return time.monotonic() - slot.last_used >= self._idle_ttl_s
 
     def _lock(self, key: str) -> asyncio.Lock:
         return self._locks.setdefault(key, asyncio.Lock())
@@ -193,7 +206,13 @@ class ConversationMachines:
                 return slot
             if slot is not None:
                 # A restart waits for the commands in flight rather than ending them.
-                _ = await slot.idle.wait()
+                try:
+                    _ = await asyncio.wait_for(slot.idle.wait(), _RESTART_WAIT_S)
+                except TimeoutError as exc:
+                    raise MachineUnavailableError(
+                        "the VM needs a restart for new access but a command is still "
+                        + "running in it; wait for it to finish or stop it, then retry"
+                    ) from exc
                 logger.info("vm: restarting the machine for %s with a new mount or egress", key)
                 del self._slots[key]
                 await self._end(key, slot)
@@ -205,26 +224,48 @@ class ConversationMachines:
             return slot
 
     async def _make_room(self) -> None:
-        idle = sorted((slot.last_used, key) for key, slot in self._slots.items() if slot.busy == 0)
-        while len(self._slots) >= self._max and idle:
-            _, key = idle.pop(0)
+        while len(self._slots) >= self._max:
+            # Chosen afresh each round, between awaits: a slot that turned busy while the
+            # last machine was being deleted is no longer a candidate.
+            idle = [(slot.last_used, key) for key, slot in self._slots.items() if not slot.busy]
+            if not idle:
+                raise MachineUnavailableError(
+                    f"all {self._max} VMs are busy with other conversations; try again shortly"
+                )
+            _, key = min(idle)
             await self._end(key, self._slots.pop(key))
-        if len(self._slots) >= self._max:
-            raise MachineUnavailableError(
-                f"all {self._max} VMs are busy with other conversations; try again shortly"
-            )
 
     async def _end(self, key: str, slot: _Slot) -> None:
-        for hook in self._end_hooks:
-            hook(key)
         try:
             _ = await slot.machine.delete()
         except smol.SmolError:
             logger.warning("vm: could not delete the machine for %s", key, exc_info=True)
+        for hook in self._end_hooks:
+            try:
+                hook(key)
+            except Exception:  # one listener must not keep the others from hearing
+                logger.exception("vm: an end hook failed for %s", key)
+
+    async def _delete_orphans(self) -> None:
+        """Delete this installation's machines a previous process left running."""
+        try:
+            summaries = await smol.AsyncMachine.list(LOCAL)
+        except smol.SmolError:
+            logger.warning("vm: could not list machines to clean up", exc_info=True)
+            return
+        for summary in summaries:
+            if summary.name.startswith(self._name_prefix):
+                with suppress(smol.SmolError):
+                    await smol.AsyncMachine.delete_by_name(summary.name, LOCAL)
+
+    @property
+    def _name_prefix(self) -> str:
+        """Every conversation machine's name starts so; the services machine's does not."""
+        return f"{self._prefix}-c-"
 
     async def _create(self, key: str, spec: MachineSpec) -> smol.AsyncMachine:
         image = self._platform.require()
-        name = _SAFE.sub("-", f"{self._prefix}-{key}".lower())[:63]
+        name = _SAFE.sub("-", f"{self._name_prefix}{key}".lower())[:63]
         # A machine left by a process that died keeps the name; it is ours to replace.
         with suppress(smol.SmolError):
             await smol.AsyncMachine.delete_by_name(name, LOCAL)
