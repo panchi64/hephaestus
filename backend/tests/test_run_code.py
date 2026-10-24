@@ -19,7 +19,7 @@ from pydantic_ai import (
     FunctionToolset,
     RunContext,
 )
-from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -384,9 +384,9 @@ class TestAScriptsCalls:
             for message in seen[1]
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, RetryPromptPart)
+            if isinstance(part, ToolReturnPart) and part.outcome == "retried"
         )
-        assert "2 nested tool calls" in retry.model_response()
+        assert "2 nested tool calls" in retry.model_response_str()
 
     async def test_a_reload_rebuilds_the_scripts_rows(self):
         """The cold view rebuilds the script's calls from its own result, after store

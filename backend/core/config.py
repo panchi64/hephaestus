@@ -7,7 +7,6 @@ not modeled here.
 
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -510,6 +509,5 @@ class Settings(BaseSettings):
     openai_cache_retention: Literal["in_memory", "24h", "off"] = "off"
 
 
-@lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings.settings_cached()

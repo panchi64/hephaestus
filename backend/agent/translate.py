@@ -28,7 +28,6 @@ from pydantic_ai import (
     ModelRequestNode,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -36,6 +35,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
 )
+from pydantic_ai.messages import ERROR_OUTCOMES
 
 from core.citations import Citable
 from core.diagnostics import is_platform_failure
@@ -329,18 +329,9 @@ def on_tool_event(
             # A repeated call loops only while its answer stops changing, so progress is
             # unknown until this event. A failure is an answer too: the same error three
             # times is a loop, and one of the commonest.
-            answer = part.model_response() if isinstance(part, RetryPromptPart) else part.content
-            loop_breaker.observe(part.tool_call_id, answer)
-        if isinstance(part, RetryPromptPart):
-            _ = run.emit(
-                ToolFailed(
-                    tool_call_id=part.tool_call_id,
-                    name=part.tool_name or "",
-                    error=part.model_response(),
-                )
-            )
-        elif part.outcome == "failed":
-            error = str(part.content)
+            loop_breaker.observe(part.tool_call_id, part.content)
+        if part.outcome in ERROR_OUTCOMES:
+            error = part.model_response_str(wrap_if_error=False)
             _ = run.emit(
                 ToolFailed(
                     tool_call_id=part.tool_call_id,

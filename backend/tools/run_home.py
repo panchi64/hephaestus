@@ -1,6 +1,6 @@
 """The run's home for a caller that can do without one.
 
-The guard, the read ledger and the file tools all place paths against the run's home. The
+The guard and the file tools both place paths against the run's home. The
 resolution is memoised on the run (``RunDeps.home``), so asking again costs nothing; this
 is the one place that reads it, and it fails the same way for every caller: no home.
 """

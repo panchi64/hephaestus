@@ -16,6 +16,7 @@ files (``tools/briefing.py``).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import override
 
@@ -36,14 +37,6 @@ from services.projects.worktree import WorktreeBusyError
 from .briefing import with_brief
 from .deps import RunDeps
 from .home import change_log, lease, may_lease, resolve_run_home
-from .read_ledger import (
-    BINARY,
-    hash_reported,
-    ledger_of,
-    seed_from_history,
-    thread_of,
-    unread_message,
-)
 from .rebound import ReboundToolset
 from .run_home import home_of
 from .spill import is_untrusted_spill
@@ -61,6 +54,10 @@ GATED_TOOLS = frozenset(f"files_{name}" for name in WRITE_TOOLS)
 
 #: The writes that change a file's content, which a revert can put back.
 _FILE_WRITES = frozenset({"write_file", "edit_file"})
+
+#: A successful text read opens with the harness's `[path | N lines | hash:…]` header; a
+#: binary read names its type and size instead, and a failure has no header.
+_TEXT_READ = re.compile(r"\A\[[^\n]* \| \d+ lines[ \]]")
 
 #: The tools that walk a folder, and the spellings that name no folder in particular.
 _WALKS = frozenset({"list_directory", "search_files", "find_files"})
@@ -105,13 +102,6 @@ class _HomeFiles(ReboundToolset):
         home = await home_of(ctx.deps)
         tool_args = _in_home_terms(name, tool_args, home)
         path = tool_args.get("path")
-        if name in _FILE_WRITES and home is not None:
-            _seed_ledger(ctx, home, name, tool_args)
-        refusal, pinned = check_read(ctx.deps, name, tool_args, home)
-        if refusal is not None:
-            return refusal
-        if pinned is not None:
-            tool_args = {**tool_args, "expected_hash": pinned}
         if name in WRITE_TOOLS and isinstance(path, str):
             refusal, leased = await _clear_write(ctx, home, path)
             if refusal is not None:
@@ -125,11 +115,6 @@ class _HomeFiles(ReboundToolset):
         result = await super().call_tool(name, tool_args, ctx, tool)
         if log is not None and located is not None:
             await log.after(located[0], [located[1]])
-        ledger = ledger_of(ctx.deps.caps)
-        if ledger is not None and located is not None and isinstance(path, str):
-            if (fresh := hash_reported(name, result)) is not None:
-                host = str(located[0].root / located[1])
-                ledger.record(thread_of(ctx.deps), host, fresh, named=path)
         if home is None or located is None:
             return result
         mount, rel = located
@@ -145,16 +130,17 @@ class FileRead:
     path: str
     host: str
     text: str
-    content_hash: str
 
 
 async def read_again(deps: RunDeps, path: str, *, max_chars: int) -> FileRead | None:
-    """``path`` read through the run's home, at most ``max_chars`` long, or ``None`` when
-    the home or the file is gone or the file is binary."""
+    """``path`` (as a file tool call spelled it) read through the run's home, at most
+    ``max_chars`` long, or ``None`` when the home or the file is gone, or the file is an
+    image or PDF."""
     home = await home_of(deps)
     if home is None:
         return None
     try:
+        path = str(_in_home_terms("read_file", {"path": path}, home)["path"])
         located = home.locate(path)
     except ModelRetry:
         return None
@@ -168,87 +154,16 @@ async def read_again(deps: RunDeps, path: str, *, max_chars: int) -> FileRead | 
     if not isinstance(reader, FileSystemToolset):
         return None
     result = await reader.read_file(path, workspace=home.backend)
-    fresh = hash_reported("read_file", result)
-    if fresh is None or fresh == BINARY:
+    if not isinstance(result, str) or not _TEXT_READ.match(result):
         return None
     mount, rel = located
     text = wrap_untrusted(result, source="saved tool output") if _is_fenced(mount, rel) else result
-    return FileRead(path=path, host=str(mount.root / rel), text=text, content_hash=fresh)
+    return FileRead(path=path, host=str(mount.root / rel), text=text)
 
 
 def _is_fenced(mount: Mount, rel: str) -> bool:
     """Whether a read of this file reaches the model fenced: a saved untrusted tool output."""
     return mount.place == SCRATCH and is_untrusted_spill(rel)
-
-
-def _host_key(tool: str, args: dict[str, object], home: RunHome) -> str | None:
-    if tool not in _FILE_WRITES and tool != "read_file":
-        return None
-    path = _in_home_terms(tool, args, home).get("path")
-    if not isinstance(path, str) or not path:
-        return None
-    try:
-        located = home.locate(path)
-    except ModelRetry:
-        return None
-    return str(located[0].root / located[1]) if located is not None else None
-
-
-def _seed_ledger(
-    ctx: RunContext[RunDeps], home: RunHome, name: str, tool_args: dict[str, object]
-) -> None:
-    """Refill the ledger from the run's history, which a parked turn restored after a
-    restart still carries. Skipped once the ledger has a record for this call's file."""
-    ledger = ledger_of(ctx.deps.caps)
-    if ledger is None or not ctx.messages:
-        return
-    target = _host_key(name, tool_args, home)
-    if target is not None and ledger.get(thread_of(ctx.deps), target) is not None:
-        return
-    seed_from_history(
-        ledger, thread_of(ctx.deps), ctx.messages, lambda tool, args: _host_key(tool, args, home)
-    )
-
-
-def check_read(
-    deps: RunDeps, name: str, tool_args: dict[str, object], home: RunHome | None
-) -> tuple[str | None, str | None]:
-    """The refusal for changing an existing file that was not read in this conversation,
-    and the hash a permitted change is pinned to. ``tool_args`` is already in home terms.
-
-    Neither when the tool does not rewrite a file, the file is new, or the run keeps no
-    ledger. A file that was read as binary is permitted but not pinned: the harness
-    reports no hash for one.
-    """
-    path = tool_args.get("path")
-    ledger = ledger_of(deps.caps)
-    if name not in _FILE_WRITES or ledger is None or home is None or not isinstance(path, str):
-        return None, None
-    located = home.locate(path)
-    if located is None:
-        return None, None
-    host = located[0].root / located[1]
-    if not host.is_file():
-        return None, None
-    known = ledger.get(thread_of(deps), str(host))
-    if known is None:
-        return unread_message(path), None
-    return None, None if known == BINARY else known
-
-
-async def unread_refusal(
-    deps: RunDeps, tool: str, tool_args: dict[str, object], home: RunHome | None = None
-) -> str | None:
-    """The refusal a change to a file not read in this conversation would meet, for a
-    caller that wants to answer before the operator is asked. ``tool`` is the namespaced
-    name; ``home`` is the run's, if the caller already has it."""
-    name = tool.removeprefix("files_")
-    home = home if home is not None else await home_of(deps)
-    try:
-        spelled = _in_home_terms(name, tool_args, home)
-    except ModelRetry:
-        return None
-    return check_read(deps, name, spelled, home)[0]
 
 
 def _in_home_terms(

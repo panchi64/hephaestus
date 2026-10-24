@@ -41,7 +41,6 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
-    RetryPromptPart,
     TextPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -111,8 +110,7 @@ def _categories() -> dict[str, FunctionToolset[RunDeps]]:
 
 def _called(messages: Sequence[ModelMessage], name: str) -> bool:
     return any(
-        isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
-        and part.tool_name == name
+        isinstance(part, BaseToolCallPart | BaseToolReturnPart) and part.tool_name == name
         for message in messages
         for part in message.parts
     )

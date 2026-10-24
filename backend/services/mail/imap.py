@@ -269,6 +269,12 @@ class ImapTransport(MailTransport, WatchableTransport):
             # exists only in this frame — and the sync loop comes back every few minutes.
             _drop_socket(client)
             raise MailUnavailableError(f"could not reach the mail server: {exc}") from exc
+        except ValueError as exc:
+            # aioimaplib refuses a command argument holding CR, LF or NUL.
+            _drop_socket(client)
+            raise MailAuthError(
+                "this account's username or credentials contain a line break or NUL byte"
+            ) from exc
         except Exception:
             _drop_socket(client)  # a refused login, or a domain error out of `_command`
             raise

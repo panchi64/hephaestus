@@ -23,7 +23,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -468,9 +467,7 @@ def _provision_then_answer(uid: str) -> Callable[[list[ModelMessage], AgentInfo]
     """A FunctionModel function: call attachments_provision once, then answer."""
 
     def fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        already = any(
-            isinstance(p, ToolReturnPart | RetryPromptPart) for m in messages for p in m.parts
-        )
+        already = any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
         if already:
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(
@@ -488,7 +485,7 @@ def _provision_then_answer(uid: str) -> Callable[[list[ModelMessage], AgentInfo]
 
 async def _run_provision(
     uid: str, *, uploads: UploadStore | None, sessions: _FakeSandboxSessions | None
-) -> tuple[list[ToolReturnPart], list[RetryPromptPart]]:
+) -> tuple[list[ToolReturnPart], list[ToolReturnPart]]:
     agent = Agent(
         FunctionModel(_provision_then_answer(uid)),
         deps_type=RunDeps,
@@ -509,8 +506,9 @@ async def _run_provision(
         conversation_id="conv-1",
     )
     result = await agent.run("go", deps=deps)
-    returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
-    retries = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    returns = [p for p in parts if p.outcome != "retried"]
+    retries = [p for p in parts if p.outcome == "retried"]
     return returns, retries
 
 

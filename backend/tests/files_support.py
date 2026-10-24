@@ -20,7 +20,6 @@ from services.sandbox import SandboxSessionManager
 from services.settings_store import SettingsStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
 from tools.files import files_toolset
-from tools.read_ledger import ReadLedger
 
 _TOOLSET = build_agent_toolsets({"files": files_toolset()})[0]
 README = "~/projects/api/README.md"
@@ -61,7 +60,6 @@ async def project_caps(tmp_path: Path) -> tuple[ServiceContainer, Path]:
     caps.add(projects)
     caps.add(WriteLeases(engine, ttl_s=3600))
     caps.add(_Manager(tmp_path), as_type=SandboxSessionManager)
-    caps.add(ReadLedger())
     return caps, root
 
 

@@ -7,8 +7,8 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
     RunContext,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -68,11 +68,12 @@ async def test_translates_steps_text_and_tool_calls():
     assert answer == "all done"
 
 
-async def test_retry_prompt_part_becomes_tool_failed():
-    # A tool retry/error (RetryPromptPart) maps to tool.failed, not a crash.
+async def test_a_retried_call_becomes_tool_failed():
     run = _run()
     event = FunctionToolResultEvent(
-        part=RetryPromptPart(content="bad input", tool_name="lookup", tool_call_id="c9")
+        part=ToolReturnPart(
+            tool_name="lookup", content="bad input", tool_call_id="c9", outcome="retried"
+        )
     )
     on_tool_event(event, run, None, None)
 

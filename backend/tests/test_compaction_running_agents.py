@@ -196,7 +196,7 @@ async def test_a_launcher_failure_leaves_the_fold_without_the_block(
         caps = ServiceContainer()
         caps.add(launcher, as_type=SubagentLauncher)
 
-        restored = await restore_after_fold(run_deps(caps), Settings())
+        restored = await restore_after_fold(run_deps(caps), Settings(), [])
 
         assert restored.part is None
         assert restored.agents is None

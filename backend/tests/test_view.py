@@ -100,7 +100,7 @@ def _call_then_finish(args: dict[str, object]) -> _StreamFn:
 
     def _settled(messages: list[ModelMessage]) -> bool:
         return any(
-            type(part).__name__ in ("ToolReturnPart", "RetryPromptPart")
+            type(part).__name__ == "ToolReturnPart"
             for message in messages
             for part in message.parts
         )

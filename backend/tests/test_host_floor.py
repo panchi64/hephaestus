@@ -37,9 +37,9 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def unfenced(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
-    get_settings.cache_clear()
+    Settings.settings_clear_cache()
     yield
-    get_settings.cache_clear()
+    Settings.settings_clear_cache()
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ async def fenced(
 ) -> AsyncIterator[Path]:
     monkeypatch.setenv("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "true")
     monkeypatch.setenv("HEPHAESTUS_DATA_DIR", str(tmp_path / "data"))
-    get_settings.cache_clear()
+    Settings.settings_clear_cache()
     await shutdown_confinement()
     root = tmp_path / "probe"
     root.mkdir()
@@ -56,11 +56,11 @@ async def fenced(
     if confinement_state(get_settings()).state != "active" or not probe.ok:
         reason = confinement_state(get_settings()).reason or probe.stderr
         await shutdown_confinement()
-        get_settings.cache_clear()
+        Settings.settings_clear_cache()
         pytest.skip(f"no working host fence here: {reason}")
     yield home
     await shutdown_confinement()
-    get_settings.cache_clear()
+    Settings.settings_clear_cache()
 
 
 def _shell(root: Path) -> HostShell:

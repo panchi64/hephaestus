@@ -8,7 +8,7 @@ unavailability the next call recovers from), all of which are ours.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import override
 
 import aioimaplib
@@ -75,7 +75,9 @@ class _StubClient:
     async def wait_hello_from_server(self) -> None:
         return None
 
-    async def login(self, user: str, _password: str) -> _Response:
+    async def login(self, user: str, password: str) -> _Response:
+        if any(char in user + password for char in "\r\n\0"):
+            raise ValueError("command argument contains CR, LF or NUL")
         self.commands.append(("login", user))
         return _Response("OK" if self.login_ok else "NO", [])
 
@@ -164,6 +166,15 @@ async def test_a_refused_login_is_an_auth_error(monkeypatch: pytest.MonkeyPatch)
         await ImapTransport(_spec()).probe()
     # A connection that is never returned is holding a socket no one else can reach: the
     # handle lives only inside `_connect`, and the sync loop retries every few minutes.
+    assert client.protocol.transport.closed is True
+
+
+async def test_a_password_with_a_line_break_is_an_auth_error(monkeypatch: pytest.MonkeyPatch):
+    client = _StubClient()
+    _install(monkeypatch, client)
+    spec = replace(_spec(), password="hunter2\r\nA1 LOGOUT")
+    with pytest.raises(MailAuthError):
+        await ImapTransport(spec).probe()
     assert client.protocol.transport.closed is True
 
 

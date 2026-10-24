@@ -19,14 +19,18 @@ from typing import TYPE_CHECKING, Literal
 from pydantic_ai import (
     BinaryContent,
     ModelRequest,
-    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.messages import ModelMessage, ModelRequestPart, ModelResponsePart
+from pydantic_ai.messages import (
+    ERROR_OUTCOMES,
+    ModelMessage,
+    ModelRequestPart,
+    ModelResponsePart,
+)
 
 from core.compaction_sections import SummarySection, summary_sections
 from core.diagnostics import is_platform_failure
@@ -373,7 +377,6 @@ _PART_CLASSES: tuple[tuple[type, str], ...] = (
     (ThinkingPart, "reasoning"),
     (ToolCallPart, "tool_calls"),
     (ToolReturnPart, "tool_results"),
-    (RetryPromptPart, "tool_results"),
     (UserPromptPart, "conversation"),
     (TextPart, "conversation"),
 )
@@ -509,7 +512,7 @@ def tool_images(content: object) -> list[ToolImageView]:
 
 def _attach_tool_images(
     user_parts: list[UserPromptPart],
-    returns: list[ToolReturnPart | RetryPromptPart],
+    returns: list[ToolReturnPart],
     by_call: dict[str, ToolView],
 ) -> None:
     """Hang a tool-return request's image payloads on the calls that produced them.
@@ -519,8 +522,7 @@ def _attach_tool_images(
     image-bearing call per step (a screenshot); with two such calls and one between them,
     an image could land on the neighbouring card. The live path is always exact, since
     ``FunctionToolResultEvent`` carries the call id."""
-    candidates = [p for p in returns if isinstance(p, ToolReturnPart)]
-    for part, tool_return in zip(user_parts, candidates, strict=False):
+    for part, tool_return in zip(user_parts, returns, strict=False):
         images = tool_images(part.content)
         if not images:
             continue
@@ -643,7 +645,7 @@ def project_tree(
     A view's ``id`` is the node defining the turn's branch point, whose siblings are the
     turn's versions; the store fills version index/count since it holds the tree.
 
-    A later request's ``ToolReturnPart``/``RetryPromptPart`` mutates the shared ``ToolView``
+    A later request's ``ToolReturnPart`` mutates the shared ``ToolView``
     already attached to the issuing turn.
     """
     views: list[MessageView] = []
@@ -678,7 +680,7 @@ def project_tree(
         since_checkpoint.append(message)
         if isinstance(message, ModelRequest):
             user_parts = [p for p in message.parts if isinstance(p, UserPromptPart)]
-            returns = [p for p in message.parts if isinstance(p, ToolReturnPart | RetryPromptPart)]
+            returns = [p for p in message.parts if isinstance(p, ToolReturnPart)]
             # A request with tool returns is the agent's own round-trip even when it also
             # has a user part (a screenshot's pixels are appended as user content). Reading
             # it as an operator turn would close the assistant turn mid-work and skip the
@@ -743,12 +745,13 @@ def project_tree(
                 continue
             # A tool-return request: stitch results into the open assistant turn.
             for part in message.parts:
-                if isinstance(part, ToolReturnPart) and part.outcome == "failed":
+                if isinstance(part, ToolReturnPart) and part.outcome in ERROR_OUTCOMES:
                     tool = by_call.get(part.tool_call_id)
                     if tool is not None:
+                        error = part.model_response_str(wrap_if_error=False)
                         tool.status = "error"
-                        tool.error = flatten_content(part.content)
-                        tool.platform = is_platform_failure(tool.error)
+                        tool.error = error
+                        tool.platform = is_platform_failure(error)
                 elif isinstance(part, ToolReturnPart):
                     tool = by_call.get(part.tool_call_id)
                     if tool is not None:
@@ -758,11 +761,6 @@ def project_tree(
                         _attach_answers(tool)
                         # A script's calls follow it on the turn, each naming it as parent.
                         owner[part.tool_call_id].tools.extend(_script_calls(part))
-                elif isinstance(part, RetryPromptPart):
-                    tool = by_call.get(part.tool_call_id)
-                    if tool is not None:
-                        tool.status = "error"
-                        tool.error = part.model_response()
             _attach_tool_images(user_parts, returns, by_call)
         else:
             if assistant is None:

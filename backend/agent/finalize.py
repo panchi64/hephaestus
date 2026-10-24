@@ -19,7 +19,6 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -140,7 +139,7 @@ def _denied_returns(parked: ParkedTurn, reason: str) -> list[ModelMessage]:
         for message in history[last + 1 :]
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, ToolReturnPart | RetryPromptPart)
+        if isinstance(part, ToolReturnPart)
     }
     response = history[last]
     assert isinstance(response, ModelResponse)

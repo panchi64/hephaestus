@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import IO
 
-from pydantic_ai_harness.shell._capability import LLM_API_KEY_ENV_PATTERNS
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
 from .base import HostExecutionError, SandboxResult
 from .fence import HostConfinement, fence_command

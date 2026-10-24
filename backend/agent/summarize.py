@@ -297,7 +297,7 @@ async def compact_conversation(
     )
     if isinstance(summary, FoldFailed):
         return summary
-    restored = await restore_after_fold(deps, cfg)
+    restored = await restore_after_fold(deps, cfg, plan.messages)
     # No await from here to `record_compaction`: the restore's running-agents read is the
     # cutoff a sub-agent's report has to land on one side of.
     # Labelled on the way in, not on the way out: the stored text is what both the model

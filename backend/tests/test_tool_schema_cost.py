@@ -95,7 +95,11 @@ from .test_tool_policy import stub_offline
 #: (`docs/voice.md` §12), where each says when to reach for it over its neighbors, what
 #: it returns and the mistakes it invites, and for the memory catalog's `memory_open` and
 #: `memory_update`. The operator put the model using its tools well above this cost.
-CATALOG_CEILING_CHARS = 74_000
+#:
+#: **Raised a seventh time, from 74k, for pydantic-ai 2.58's `read_file`**, which can return
+#: images and PDFs: the `BinaryContent` type it now names is rendered into `run_code`'s
+#: signature list. It took a fresh request to 75.9k characters.
+CATALOG_CEILING_CHARS = 77_000
 
 #: The same for the whole corpus — every dormant group revealed. Deferral moves a group's
 #: cost from every turn to the turns that want it; it does not make the group free, and a
@@ -105,8 +109,8 @@ CATALOG_CEILING_CHARS = 74_000
 #: from 84k for the dormant `routines` group, whose schedule is one compact string rather
 #: than a nested object for that reason; then from 88k for the shell in every thread; then
 #: from 92k for the voice rewrite of every tool description and the memory catalog's two
-#: tools.
-CORPUS_CEILING_CHARS = 124_000
+#: tools; then from 124k for `read_file`'s `BinaryContent` return type.
+CORPUS_CEILING_CHARS = 127_000
 
 
 def _dormant_categories() -> tuple[str, ...]:
@@ -187,9 +191,11 @@ async def test_the_whole_corpus_stays_inside_its_ceiling():
 
 async def test_the_dormant_groups_are_most_of_what_a_turn_no_longer_pays():
     """The saving is the whole reason the groups are dormant, so it is pinned rather than
-    left to be re-derived from two ceilings that move independently."""
+    left to be re-derived from two ceilings that move independently. Raised from 0.6 with
+    the ceilings above: the `BinaryContent` schema lands in `run_code`, which is never
+    dormant."""
     fresh, corpus = await _catalog("auto")
-    assert fresh[1] < corpus[1] * 0.6, (
+    assert fresh[1] < corpus[1] * 0.61, (
         f"a fresh request carries {fresh[1]} characters of the corpus' {corpus[1]} — "
         "deferral has stopped deferring most of what it used to"
     )

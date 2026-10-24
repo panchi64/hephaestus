@@ -129,8 +129,8 @@ async def test_a_subagent_that_never_reports_is_settled_as_failed_with_its_last_
 
         card = await _first_card(client)
 
-        # Failed, not done, with its last answer kept. The exact error is pinned by the wake
-        # tests: `TestModel` answers the reminder with an empty response rather than text.
+        # Failed, not done, with its last answer kept once: `TestModel` answers the report
+        # reminder with the same text again. The exact error is pinned by the wake tests.
         assert card["status"] == "failed"
         assert card["error"]
         assert card["summary"] == "found it in parser.py"

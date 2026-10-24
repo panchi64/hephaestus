@@ -9,7 +9,7 @@ from typing import override
 
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 
@@ -66,13 +66,13 @@ class _Down(FunctionToolset[RunDeps]):
         raise ConnectionError("the MCP server is gone")
 
 
-def _results(messages: list[ModelMessage]) -> list[ToolReturnPart | RetryPromptPart]:
+def _results(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, ToolReturnPart | RetryPromptPart)
+        if isinstance(part, ToolReturnPart)
     ]
 
 
@@ -178,7 +178,17 @@ async def test_a_category_that_cannot_list_its_tools_does_not_end_the_run() -> N
 
 async def test_a_retry_request_still_goes_back_as_a_retry() -> None:
     _, messages, _ = await _drive("boom_picky")
-    assert any(isinstance(part, RetryPromptPart) for part in _results(messages))
+    assert any(part.outcome == "retried" for part in _results(messages))
+
+
+async def test_a_retried_call_shows_as_failed_live_and_on_reload() -> None:
+    _, messages, run = await _drive("boom_picky")
+    [live] = bodies_of(run, ToolFailed)
+    assert live.name == "boom_picky"
+    views = project_tree([(f"n{index}", message) for index, message in enumerate(messages)])
+    [tool] = [tool for view in views for tool in view.tools]
+    assert tool.status == "error"
+    assert tool.error == live.error
 
 
 def test_the_renderer_reads_like_a_compiler_diagnostic() -> None:

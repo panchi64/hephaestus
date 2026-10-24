@@ -1,10 +1,10 @@
 """Toolsets whose tools are fixed but whose *backing object* is not.
 
-Several categories act on something a run resolves rather than the app: `files` on the
-run's home, `repo` on its workspace, `browse` on a conversation's live browser. Categories
-are assembled once at app startup and shared by every conversation, so none of them can
-bake that in at construction. `files` and `repo` only need it handed to them as
-``ctx.workspace``; `browse` holds per-binding state, so it is rebuilt per binding.
+Two categories act on something a run resolves rather than the app: `files` on the run's
+home, `browse` on a conversation's live browser. Categories are assembled once at app
+startup and shared by every conversation, so neither can bake that in at construction.
+`files` only needs it handed to it as ``ctx.workspace``; `browse` holds per-binding state,
+so it is rebuilt per binding.
 
 `AbstractToolset.for_run(ctx)` is not the hook for this, and it is worth saying why since
 it looks like it: the library does call it once per run, but a harness toolset's `for_run`
@@ -33,18 +33,13 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from dataclasses import replace
 from typing import cast, override
 
 from pydantic_ai import AbstractToolset, RunContext, Tool, ToolsetTool
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-
-from services.projects.worktree import WorktreeBusyError
 
 from .deps import RunDeps
 from .describe import registered_tools
 from .harness_events import attributable
-from .workspace import run_workspace, unavailable
 
 # Bound toolsets are cached per key because building one registers every tool and
 # generates its schema — too much to repeat on each call. An evicted one is rebuilt on
@@ -142,21 +137,3 @@ class ReboundToolset(AbstractToolset[RunDeps]):
                 _ = self._tools.pop(id(evicted), None)
         self._bound[key] = bound
         return bound
-
-
-class WorkspaceToolset(ReboundToolset):
-    """A toolset dispatched against each run's workspace, which every call sees as
-    ``ctx.workspace``."""
-
-    @override
-    async def resolve(
-        self, name: str, ctx: RunContext[RunDeps]
-    ) -> tuple[AbstractToolset[RunDeps], RunContext[RunDeps]] | str:
-        try:
-            workspace = await run_workspace(ctx)
-        except WorktreeBusyError as exc:
-            return str(exc)
-        if workspace is None:
-            return unavailable(ctx.deps)
-        backend = LocalWorkspaceBackend(workspace.root)
-        return self._template, replace(ctx, workspace=Workspace(backend))

@@ -4,40 +4,40 @@ version = "0.1.0"
 description = "Hephaestus backend — the chassis around a Pydantic AI engine."
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.143.0",
+    "fastapi>=0.162.0",
     "uvicorn[standard]>=0.54.0",
     "pydantic>=2.14.1",
-    "pydantic-settings>=2.15.0",
-    "pydantic-ai>=2.55.0",
+    "pydantic-settings>=2.16.1",
+    "pydantic-ai>=2.61.0",
     # The Pydantic team's own capability library: the sandbox file tools (`FileSystem`)
     # and the agent's task list (`Planning`) are theirs to maintain, not ours.
-    "pydantic-ai-harness>=0.55.0",
+    "pydantic-ai-harness>=0.61.0",
     # Filesystem/network confinement for the approved host-command escape hatch —
     # seatbelt on macOS, bubblewrap on Linux, no container.
     "sandbox-runtime>=0.2.0",
     "sqlmodel>=0.0.48",
     "cryptography>=50.0.2",
     "argon2-cffi>=25.1.0",
-    "alembic>=1.20.0",
+    "alembic>=1.20.1",
     # Imported directly by our own modules rather than relied on transitively.
-    "sqlalchemy>=2.1.4",
-    "starlette>=1.7.0",
+    "sqlalchemy>=2.1.6",
+    "starlette>=1.10.0",
     "lxml>=6.1.3",
     "anyio>=4.15.1",
     "numpy>=2.5.4",
-    "openai>=3.29.0",
-    "websockets>=16.1.1",
+    "openai>=3.37.0",
+    "websockets>=17.3",
     "httpx>=0.28.1",
     # Web fetch: pages are rendered in a headless Chromium that runs in a container and is
     # driven over CDP (services/webfetch) — so Playwright is the client only, with NO local
     # browser binary to install. trafilatura is the top-scoring open-source main-content
     # extractor — run here over the rendered HTML string (not as a fetcher), emitting
     # Markdown natively (output_format="markdown"). Pulls lxml transitively.
-    "playwright>=1.63.0",
+    "playwright>=1.64.1",
     "trafilatura>=2.3.1",
     "langdetect>=1.0.9",
     "pypdfium2>=5.14.0",
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     "croniter>=6.2.4",
     # Agent Skills bundles (services/skills): SKILL.md frontmatter is YAML, and the format is
     # an interop contract with Claude Code / the Skills API, so it is parsed and re-rendered
@@ -48,13 +48,13 @@ dependencies = [
     # than a poll) and SMTP submission. Both are pure-Python and async-native. The Gmail,
     # Graph and JMAP transports need no client library of their own — they are REST/JSON
     # over the httpx client this app already carries.
-    "aioimaplib>=2.0.1",
+    "aioimaplib>=2.0.3",
     "aiosmtplib>=5.1.3",
     # OAuth2 (auth-code + PKCE + refresh) for the Gmail/Graph mail transports. Chosen over
     # google-api-python-client/msal: those are sync, heavy, and keep their own on-disk
     # credential caches, which fights the memory-only-key posture — refresh tokens here are
     # vault-sealed like every other secret.
-    "authlib>=1.8.0",
+    "authlib>=1.9.1",
     # Splitting a reply from the quoted thread beneath it (EMAIL-4).
     "email-reply-parser>=0.5.12",
     # Calendar (services/calendar): RFC 5545 parsing/emitting for ICS import/export, the
@@ -62,7 +62,7 @@ dependencies = [
     # dateutil's rrule for recurrence expansion. Time zones come from stdlib zoneinfo, not
     # pytz. dateutil is already resolved transitively; pinned direct since we call it.
     "icalendar>=7.3.0",
-    "caldav>=3.4.0",
+    "caldav>=3.6.0",
     "python-dateutil>=2.9.0.post0",
     # The Auto permission level's deterministic stage (services/permissions/shell_ast.py)
     # reads a shell command's worst case off its syntax before deciding whether it needs a
@@ -74,7 +74,7 @@ dependencies = [
     # brittle on ordinary bashisms.
     "tree-sitter>=0.26.0",
     "tree-sitter-bash>=0.25.1",
-    "pydantic-monty>=1.1.0",
+    "pydantic-monty>=1.3.0",
     "smolvm>=0.0.36",
     "jsonschema>=4.26.0",
 ]
@@ -88,7 +88,7 @@ dev = [
     "fpdf2>=2.8.7",
     # openai and pydantic-ai type their HTTP client as httpx2, and tests that hand them a
     # client import it directly.
-    "httpx2>=2.13.1",
+    "httpx2>=2.16.0",
     # The MCP fixture server the discovery tests dial (`tests/mcp_sample_server.py`) is a
     # real server, so it imports the SDK directly rather than riding the client path the
     # app uses. Resolved transitively anyway (pydantic-ai-slim[mcp] → fastmcp-slim[client]
@@ -97,7 +97,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-xdist>=3.6",
-    "ruff>=0.8",
+    "ruff>=0.17.2",
 ]
 
 [tool.uv]

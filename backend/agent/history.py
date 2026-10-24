@@ -21,7 +21,6 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -192,7 +191,7 @@ def split_injected_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
             out.append(message)
             continue
         user_parts = [p for p in message.parts if isinstance(p, UserPromptPart)]
-        tool_parts = [p for p in message.parts if isinstance(p, ToolReturnPart | RetryPromptPart)]
+        tool_parts = [p for p in message.parts if isinstance(p, ToolReturnPart)]
         if not user_parts or not tool_parts:
             out.append(message)
             continue

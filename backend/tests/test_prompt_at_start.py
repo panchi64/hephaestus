@@ -21,7 +21,6 @@ from pathlib import Path
 from pydantic_ai import FunctionToolset, ModelRequest, ModelResponse, TextPart, ToolApproved
 from pydantic_ai.messages import (
     ModelMessage,
-    RetryPromptPart,
     SystemPromptPart,
     ThinkingPart,
     ToolReturnPart,
@@ -455,12 +454,7 @@ async def test_a_fold_never_swallows_the_prompt_being_answered(tmp_path: Path):
         for part in message.parts
         if isinstance(
             part,
-            UserPromptPart
-            | TextPart
-            | SystemPromptPart
-            | ToolReturnPart
-            | RetryPromptPart
-            | ThinkingPart,
+            UserPromptPart | TextPart | SystemPromptPart | ToolReturnPart | ThinkingPart,
         )
     ]
     assert texts == ["earlier", "old"]  # the prompt stays out of the summary

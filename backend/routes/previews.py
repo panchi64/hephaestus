@@ -164,11 +164,9 @@ async def proxy_ws(websocket: WebSocket, token: str, path: str) -> None:
         await websocket.close(code=1011)
         return
 
-    await websocket.accept(subprotocol=upstream.subprotocol)
-    try:
+    async with upstream:
+        await websocket.accept(subprotocol=upstream.subprotocol)
         await _bridge(websocket, upstream)
-    finally:
-        await upstream.close()
 
 
 async def _bridge(client_ws: WebSocket, upstream: ClientConnection) -> None:

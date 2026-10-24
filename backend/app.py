@@ -81,7 +81,6 @@ from tools import (
     core_categories,
 )
 from tools.describe import category_names
-from tools.read_ledger import ReadLedger
 from tools.shell import SHELL_MAX_OUTPUT_CHARS, SHELL_TIMEOUT_S
 from tools.tasks import tasks_context
 from tools.workspace_context import workspace_context
@@ -383,8 +382,6 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     agent_capabilities.add(state.plan_mode)
     # Opening a worktree moves a thread's workspace, through the same narrow seam.
     agent_capabilities.add(WorktreeSwitch(state.conversations))
-    # What each conversation last read of each file, so an edit can be checked against it.
-    agent_capabilities.add(ReadLedger())
     # Last request fingerprint per conversation, so a turn's first request can say what moved
     # in the head. Absent means within-turn comparison only (`runs/prefix.py`).
     agent_capabilities.add(PrefixLedger())

@@ -57,7 +57,7 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed
 from pydantic_ai.messages import ToolCallPart, ToolReturn
 from pydantic_ai.toolsets.abstract import ToolsetTool
-from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
+from pydantic_ai_harness.code_mode import CodeMode, CodeModeReturnSchemaWarning, CodeModeToolset
 
 from core.config import Settings
 from core.diagnostics import render_tool_error
@@ -88,11 +88,9 @@ _CATALOG_NOTE = (
     "a script when many calls feed one answer and only the answer needs to come back."
 )
 
-# The harness warns once per tool that a folded tool has no return schema (`-> Any`); true of
-# most of this catalog and not actionable, so it would be a log warning per tool per process.
-warnings.filterwarnings(
-    "ignore", message=r"CodeMode: tool .* has no return schema", category=UserWarning
-)
+# The harness warns that folded tools have no return schema (`-> Any`); true of most of this
+# catalog and not actionable.
+warnings.filterwarnings("ignore", category=CodeModeReturnSchemaWarning)
 
 
 @dataclass(frozen=True, slots=True)

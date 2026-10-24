@@ -2,10 +2,9 @@
 plan and the agents it spawned that are still working, read fresh, so the model resumes
 from their current state rather than a paraphrase.
 
-Attached to the checkpoint as one more user part, framed as the workspace's. The read
-ledger is then reset to exactly the files restored: any other file the thread read before
-the fold now needs reading again before an edit, since the model holds only a summary of
-it.
+Attached to the checkpoint as one more user part, framed as the workspace's. The files are
+the ones the folded history last read or wrote through the file tools, or restored at the
+previous fold, so they carry over from fold to fold.
 
 The task list needs no restoring: it rides every turn's prompt tail (``tools/tasks.py``).
 """
@@ -13,10 +12,12 @@ The task list needs no restoring: it rides every turn's prompt tail (``tools/tas
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from pydantic_ai import UserPromptPart
+from pydantic_ai import ModelMessage, ToolCallPart, ToolReturnPart, UserPromptPart
 
 from core.config import Settings
 from core.text import CHARS_PER_TOKEN_PROSE, chars_to_tokens, clip
@@ -26,13 +27,14 @@ from services.subagents import SubagentLauncher, SubagentView
 from tools import RunDeps
 from tools.files import read_again
 from tools.plan import render_plan
-from tools.read_ledger import Seen, ledger_of, thread_of
 
 logger = logging.getLogger(__name__)
 
 #: A plan in one of these states is still the thread's to carry out or revise.
 _LIVE_PLAN = frozenset({"pending", "approved", "revising"})
 _TAGS = ("restored-file", "restored-plan", "running-agents", "workspace-note")
+_FILE_TOOLS = frozenset({"files_read_file", "files_write_file", "files_edit_file"})
+_RESTORED_PATH = re.compile(r'<restored-file path="([^"]*)">')
 #: Named in the restored list when the plan came back, beside the file paths.
 RESTORED_PLAN = "plan"
 _TASK_CHARS = 300
@@ -53,31 +55,51 @@ class Restored:
     agents: str | None = None
 
 
-async def restore_after_fold(deps: RunDeps, settings: Settings) -> Restored:
-    """Re-read the thread's most recent files and its live plan, within the settings'
-    budgets, and reset the read ledger to the files that came back."""
+def recent_files(messages: Sequence[ModelMessage]) -> list[str]:
+    """The paths ``messages`` read or wrote through the file tools, or restored at an
+    earlier fold, newest first and each once, as the calls spelled them."""
+    calls: dict[str, str] = {}
+    touched: list[str] = []
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolCallPart) and part.tool_name in _FILE_TOOLS:
+                path = part.args_as_dict().get("path")
+                if isinstance(path, str):
+                    calls[part.tool_call_id] = path
+            elif isinstance(part, ToolReturnPart) and part.outcome == "success":
+                if part.tool_call_id in calls:
+                    touched.append(calls[part.tool_call_id])
+            elif isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                found: list[str] = _RESTORED_PATH.findall(part.content)
+                touched.extend(path.replace("%22", '"') for path in found)
+    return list(dict.fromkeys(reversed(touched)))
+
+
+async def restore_after_fold(
+    deps: RunDeps, settings: Settings, messages: Sequence[ModelMessage]
+) -> Restored:
+    """Re-read the files ``messages`` (the history being folded) last touched and the
+    thread's live plan, within the settings' budgets."""
     blocks: list[str] = []
     names: list[str] = []
-    kept: dict[str, Seen] = {}
-    ledger = ledger_of(deps.caps)
-    thread = thread_of(deps)
-    if ledger is not None:
-        spent = 0.0
-        per_file = int(settings.compaction_restore_file_tokens * CHARS_PER_TOKEN_PROSE)
-        for path in ledger.recent(thread, settings.compaction_restore_files):
-            read = await read_again(deps, path, max_chars=per_file)
-            if read is None:
-                continue
-            cost = chars_to_tokens(len(read.text))
-            if spent + cost > settings.compaction_restore_total_tokens:
-                break
-            spent += cost
-            kept[read.host] = Seen(read.content_hash, read.path)
-            names.append(read.path)
-            safe_path = read.path.replace('"', "%22")
-            body = neutralize_tags(read.text, _TAGS)
-            blocks.append(f'<restored-file path="{safe_path}">\n{body}\n</restored-file>')
-        ledger.reset(thread, dict(reversed(kept.items())))
+    hosts: set[str] = set()
+    spent = 0.0
+    per_file = int(settings.compaction_restore_file_tokens * CHARS_PER_TOKEN_PROSE)
+    for path in recent_files(messages):
+        if len(names) >= settings.compaction_restore_files:
+            break
+        read = await read_again(deps, path, max_chars=per_file)
+        if read is None or read.host in hosts:
+            continue
+        cost = chars_to_tokens(len(read.text))
+        if spent + cost > settings.compaction_restore_total_tokens:
+            break
+        spent += cost
+        hosts.add(read.host)
+        names.append(read.path)
+        safe_path = read.path.replace('"', "%22")
+        body = neutralize_tags(read.text, _TAGS)
+        blocks.append(f'<restored-file path="{safe_path}">\n{body}\n</restored-file>')
     plan_text = await _live_plan(deps)
     if plan_text is not None:
         names.append(RESTORED_PLAN)

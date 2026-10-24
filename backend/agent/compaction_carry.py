@@ -23,7 +23,6 @@ from datetime import datetime
 from pydantic_ai import (
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -98,7 +97,7 @@ def operator_messages(messages: list[ModelMessage]) -> tuple[list[OperatorMessag
     for message in messages:
         if not isinstance(message, ModelRequest):
             continue
-        if any(isinstance(part, ToolReturnPart | RetryPromptPart) for part in message.parts):
+        if any(isinstance(part, ToolReturnPart) for part in message.parts):
             continue
         for part in message.parts:
             if not isinstance(part, UserPromptPart):
