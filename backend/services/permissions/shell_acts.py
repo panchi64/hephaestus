@@ -80,6 +80,13 @@ def names_whole_folder(segment: str) -> bool:
 REMOVERS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
 
 _WRITES_ALL = frozenset({"tee", "touch", "truncate"})
+_WRITER_VALUE_FLAGS = {
+    "touch": frozenset({"-r", "--reference", "-d", "--date", "-t"}),
+    "truncate": frozenset({"-r", "--reference", "-s", "--size"}),
+}
+_PRINTERS = frozenset({"cat", "head", "tail", "nl", "tac", "bat"})
+_PRINTER_VALUE_FLAGS = frozenset({"-n", "-c", "--lines", "--bytes"})
+_SED_VALUE_FLAGS = frozenset({"-e", "-f", "-l", "--expression", "--file"})
 _COPIERS = frozenset({"cp", "mv", "install", "ln", "rsync"})
 _COPY_VALUE_FLAGS = frozenset(
     {"-t", "--target-directory", "-S", "--suffix", "-m", "--mode", "-o", "--owner", "-g", "--group"}
@@ -160,6 +167,8 @@ class Transfer:
     moves: bool
     #: Whether files in ``dest`` that are not in the sources are deleted (``rsync --delete``).
     prunes: bool
+    #: Whether a file already at the destination is left alone (``cp -n``, ``mv -n``).
+    keeps_existing: bool = False
 
 
 def name_of(one: ShellCommand) -> str:
@@ -263,24 +272,25 @@ def _clean_targets(rest: list[str]) -> list[str]:
     return specs
 
 
-def _edits_in_place(name: str, args: tuple[str, ...]) -> bool:
-    if name not in ("sed", "gsed", "perl"):
-        return False
+def _has_flag(args: tuple[str, ...], letter: str, longs: tuple[str, ...]) -> bool:
+    """Whether ``-<letter>``, alone or among bundled short flags, or a long spelling is given."""
     return any(
-        word.startswith("--in-place")
-        or (word.startswith("-") and not word.startswith("--") and "i" in word[1:])
+        word.partition("=")[0] in longs
+        or (word.startswith("-") and not word.startswith("--") and letter in word[1:])
         for word in args
     )
+
+
+def _edits_in_place(name: str, args: tuple[str, ...]) -> bool:
+    return name in ("sed", "gsed", "perl") and _has_flag(args, "i", ("--in-place",))
 
 
 def _extraction(name: str, args: tuple[str, ...]) -> Transfer | None:
     """``tar -x -C DIR`` and ``unzip -d DIR``: names read from an archive land in DIR."""
     if name == "tar":
-        extracting = any(
-            word in ("--extract", "--get")
-            or (word.startswith("-") and not word.startswith("--") and "x" in word[1:])
-            for word in args
-        ) or (bool(args) and not args[0].startswith("-") and "x" in args[0])
+        extracting = _has_flag(args, "x", ("--extract", "--get")) or (
+            bool(args) and not args[0].startswith("-") and "x" in args[0]
+        )
         folders = option_values(args, "C", ("--directory",)) if extracting else []
     elif name == "unzip":
         folders = option_values(args, "d", ())
@@ -314,6 +324,7 @@ def transfer(one: ShellCommand) -> Transfer | None:
         into_directory=bool(directory) or len(sources) > 1 or dest.endswith("/"),
         moves=name == "mv" or (rsync and "--remove-source-files" in args),
         prunes=rsync and any(word.startswith(("--delete", "--del")) for word in args),
+        keeps_existing=name in ("cp", "mv") and _has_flag(args, "n", ("--no-clobber",)),
     )
 
 
@@ -332,7 +343,7 @@ def write_targets(one: ShellCommand) -> list[Target]:
     if name == "mkdir":
         return [Target(path, "dir") for path in operands(args)]
     if name in _WRITES_ALL:
-        return [Target(path, "write") for path in operands(args)]
+        return [Target(path, "write") for path in operands(args, _WRITER_VALUE_FLAGS.get(name))]
     if name == "dd":
         return [Target(word[3:], "write") for word in args if word.startswith("of=")]
     if _edits_in_place(name, args):
@@ -343,4 +354,37 @@ def write_targets(one: ShellCommand) -> list[Target]:
         files = option_values(args, "O", ("--output-document",))
         folders = option_values(args, "P", ("--directory-prefix",))
         return [*(Target(p, "write") for p in files), *(Target(p, "dir") for p in folders)]
+    return []
+
+
+def rewrite_targets(one: ShellCommand) -> list[str]:
+    """The paths a command (other than a copy or move) overwrites or rewrites in place.
+    An append, ``touch`` and a removal leave the existing content standing."""
+    name = name_of(one)
+    if name == "touch" or (name == "tee" and _has_flag(one.arguments, "a", ("--append",))):
+        return []
+    return [target.path for target in write_targets(one) if target.kind == "write"]
+
+
+def landing_paths(moved: Transfer) -> list[str]:
+    """Where a copy or move may land: the destination itself, or each source's name inside
+    it when it is a folder. A source only known when it runs names no landing path."""
+    if OPAQUE in moved.dest:
+        return []
+    inside = [
+        f"{moved.dest.rstrip('/')}/{posixpath.basename(source.rstrip('/'))}"
+        for source in moved.sources
+        if OPAQUE not in source
+    ]
+    return inside if moved.into_directory else [moved.dest, *inside]
+
+
+def printed_files(one: ShellCommand) -> list[str]:
+    """The operands of a command that prints the files it names, whole or in part."""
+    name = name_of(one)
+    args = one.arguments
+    if name in _PRINTERS:
+        return operands(args, _PRINTER_VALUE_FLAGS)
+    if name in ("sed", "gsed") and not _edits_in_place(name, args):
+        return operands(args, _SED_VALUE_FLAGS)
     return []

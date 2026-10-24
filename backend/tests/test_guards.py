@@ -751,6 +751,33 @@ class TestCriticalRemoval:
         assert scan("popd && ls").steps[-1].cwds == frozenset({(OPAQUE,)})
         assert scan("(cd /tmp); ls").steps[-1].cwds == frozenset({()})
 
+    @pytest.mark.parametrize(
+        ("command", "shown"),
+        [
+            ("cat f", True),
+            ("(cat f)", True),
+            ("cat f 2> err", True),
+            ("cat f >&2", True),
+            ("sh -c 'cat f'", True),
+            ("cat f | grep x", False),
+            ("cat f > g", False),
+            ("cat f &> g", False),
+            ("echo $(cat f)", False),
+            ("diff <(cat f) g", False),
+        ],
+    )
+    def test_a_step_knows_whether_its_output_reaches_the_line(self, command: str, shown: bool):
+        steps = [step for step in scan(command).steps if step.command.program == "cat"]
+        assert [step.shown for step in steps] == [shown]
+
+    def test_a_redirect_knows_whether_it_appends(self):
+        found = scan("echo a > one; echo b >> two; echo c &>> three")
+        assert [(r.path, r.append) for r in found.writes] == [
+            ("one", False),
+            ("two", True),
+            ("three", True),
+        ]
+
     def test_the_folder_holding_the_worktrees_is_critical(self, settings: Settings, home: RunHome):
         worktrees = settings.worktrees_dir
         for command in (

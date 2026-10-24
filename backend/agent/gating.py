@@ -70,7 +70,7 @@ from services.permissions import (
 from services.permissions.decision_reviewer import make_decision_reviewer
 from services.permissions.fence import Fence
 from services.permissions.guards import (
-    FILE_REWRITE_TOOLS,
+    COMMAND_TOOLS,
     GUARD_KEY,
     GUARDED_TOOLS,
     changes_directory,
@@ -80,8 +80,8 @@ from services.permissions.guards import (
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
+from tools.command_ledger import LEDGER_TOOLS, ledger_refusal
 from tools.deps import RunDeps
-from tools.files import unread_refusal
 from tools.guarded import shell_cwd
 from tools.home import resolve_run_home
 from tools.run_home import home_of
@@ -183,21 +183,25 @@ async def settle_deferred(
     # resolve one. Each row carries the decision and whether a grant produced it: an ALLOW
     # can come from a grant or an allowing level, and only the first is revocable.
     home = await _guard_home(deps, approvals)
-    # A write the read ledger would turn away is neither asked nor reviewed; the model is
-    # told to read the file first.
+    # A call the read ledger would turn away is neither asked nor reviewed. Calls after a
+    # command meet only their own check: the command may read, write or move the shell first.
     settled: dict[str, ToolApproved | ToolDenied] = {}
     asking: list[ToolCallPart] = []
+    cwd = shell_cwd(deps)
+    after_command = False
     for call in approvals:
-        refusal = (
-            await unread_refusal(deps, call.tool_name, call.args_as_dict(), home)
-            if call.tool_name in FILE_REWRITE_TOOLS
-            else None
-        )
+        refusal = None
+        if call.tool_name in LEDGER_TOOLS and not after_command:
+            try:
+                refusal = await ledger_refusal(deps, call.tool_name, call.args_as_dict(), home, cwd)
+            except Exception:  # a check that raises would abort the operator's turn
+                logger.warning("read ledger check failed on %s", call.tool_name, exc_info=True)
         if refusal is None:
             asking.append(call)
         else:
             settled[call.tool_call_id] = ToolDenied(message=refusal)
-    guarded = _guard_reasons(asking, home, shell_cwd(deps), metadata)
+        after_command = after_command or call.tool_name in COMMAND_TOOLS
+    guarded = _guard_reasons(asking, home, cwd, metadata)
     ruled = [
         (call, Decision.ASK, False)
         if call.tool_call_id in guarded and decide(permission, call.tool_name) is not Decision.BLOCK

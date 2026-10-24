@@ -26,6 +26,7 @@ from core.diagnostics import render_tool_error
 from core.exceptions import InvalidInputError
 from runs import ToolProgress
 from services.egress import EgressPolicy
+from services.permissions.guards import HOST_COMMAND_TOOL
 from services.sandbox import (
     HostExecutionError,
     SandboxError,
@@ -38,8 +39,10 @@ from services.sandbox import (
 )
 from services.sandbox.refusals import host_refusal, is_egress_denied, vm_refusal
 
+from .command_ledger import ledger_check
 from .deps import RunDeps
 from .emit import RunEventEmitted
+from .run_home import home_of
 
 # The pids limit surfaces as a failed fork inside the process with no distinct signal, so
 # this heuristic matches the OS errors it typically prints.
@@ -357,7 +360,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         metadata={"code_arg_name": "command", "code_arg_language": "shell"},
     )
     async def run_host_command(
-        _ctx: RunContext[RunDeps],
+        ctx: RunContext[RunDeps],
         command: str,
         explanation: str,
         timeout_s: float = 120.0,
@@ -385,6 +388,10 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             timeout_s: Seconds before the command is killed. Default 120.
         """
         del explanation  # The approval card reads it from the call's arguments.
+        home = await home_of(ctx.deps)
+        ledger = await ledger_check(ctx.deps, HOST_COMMAND_TOOL, {"command": command}, home, None)
+        if ledger is not None and ledger.refusal is not None:
+            return {"ok": False, "error": ledger.refusal}
         # The installation-wide allowlist, not this conversation's grants: one proxy serves
         # every confined host process, so a grant here would widen them all and outlive this
         # command (`services/sandbox/fence.confine`).
@@ -401,6 +408,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             )
         except HostExecutionError as exc:
             return {"ok": False, "error": f"The host command could not be launched: {exc}"}
+        if ledger is not None and not result.timed_out:
+            await ledger.record()
         payload = exec_result(result, settings, sandboxed=False)
         payload["fenced"] = confinement.active
         payload["reach"] = "host"

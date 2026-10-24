@@ -2,9 +2,10 @@
 
 An edit or an overwrite of an existing file needs a read behind it in the same
 conversation, and the harness then refuses it if the file changed since (``expected_hash``).
-Losing the ledger on a restart only makes the model read again. The ledger is bounded, and
-the oldest conversation is forgotten first. A fold resets a conversation's record to the
-files it re-read (``agent/compaction_restore.py``): the model no longer holds the rest.
+Shell and host commands are held to the same rule (``command_ledger.py``). Losing the
+ledger on a restart only makes the model read again. The ledger is bounded, and the oldest
+conversation is forgotten first. A fold resets a conversation's record to the files it
+re-read (``agent/compaction_restore.py``): the model no longer holds the rest.
 """
 
 from __future__ import annotations
@@ -96,10 +97,18 @@ def thread_of(deps: RunDeps) -> str:
     return deps.conversation_id or deps.workspace_key
 
 
-def unread_message(path: str) -> str:
+def unread_message(*paths: str) -> str:
+    it = "it" if len(paths) == 1 else "them"
     return render_tool_error(
-        f"Read {path} before changing it.",
-        hints=["read it with files_read_file in this conversation, then retry"],
+        f"Read {', '.join(paths)} before changing {it}.",
+        hints=[f"read {it} with files_read_file (or cat) in this conversation, then retry"],
+    )
+
+
+def stale_message(*paths: str) -> str:
+    it = "it" if len(paths) == 1 else "them"
+    return render_tool_error(
+        f"{', '.join(paths)} changed since you read {it}.", hints=[f"read {it} again, then retry"]
     )
 
 

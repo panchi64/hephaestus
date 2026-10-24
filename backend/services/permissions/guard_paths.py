@@ -15,7 +15,7 @@ import posixpath
 import pwd
 import re
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from core.config import Settings
 from services.home.paths import HOME
@@ -159,6 +159,21 @@ class Places:
         for target in directories:
             places = places.after_cd(target)
         return places
+
+    def ledger_key(self, text: str, *, host: bool) -> str | None:
+        """The host path the read ledger knows a command's file by, or None when it lies
+        outside the home. ``host`` reads the path as the operator's machine does."""
+        if self.home is None:
+            return None
+        if host or self.host_only:
+            path = _resolve(text, tilde=str(self.os_home), cwd=self.host_cwd, vm=False)
+            if path is None:
+                return None
+            inside = (is_under(PurePosixPath(path), m.root) for m in self.home.mounts)
+            return path if any(inside) else None
+        path = _resolve(text, tilde=HOME, cwd=self.vm_cwd, vm=True)
+        located = self.home.locate(path) if path is not None else None
+        return str(located[0].root / located[1]) if located is not None else None
 
     def _readings(self, text: str, *, host_first: bool) -> list[tuple[bool, str]]:
         """``(is_host, path)`` for each reading of ``text`` that can be placed."""

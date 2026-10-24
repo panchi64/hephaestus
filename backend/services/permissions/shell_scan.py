@@ -49,6 +49,9 @@ type Cwds = frozenset[tuple[str, ...]]
 _MAX_NESTING = 4
 _MAX_STATES = 16
 _WRITE_OPERATORS = frozenset({">", ">>", "&>", "&>>", ">|"})
+_APPEND_OPERATORS = frozenset({">>", "&>>"})
+_BOTH_STREAMS = frozenset({"&>", "&>>"})
+_CAPTURED = frozenset({"command_substitution", "process_substitution"})
 _SCOPED = frozenset(
     {"subshell", "command_substitution", "process_substitution", "function_definition"}
 )
@@ -74,13 +77,24 @@ _UNKNOWN: Cwds = frozenset({(OPAQUE,)})
 class Step:
     command: ShellCommand
     cwds: Cwds
+    #: Whether what the command prints reaches the line's own output, rather than a later
+    #: pipeline stage, a file or a substitution.
+    shown: bool = True
+
+
+@dataclass(frozen=True)
+class Redirect:
+    """An output redirect's destination, with the directories it may be relative to."""
+
+    path: str
+    cwds: Cwds
+    append: bool
 
 
 @dataclass
 class Scan:
     steps: list[Step] = field(default_factory=list)
-    #: Destinations of output redirects, with the directories they may be relative to.
-    writes: list[tuple[str, Cwds]] = field(default_factory=list)
+    writes: list[Redirect] = field(default_factory=list)
     #: The text of each part that could not be read.
     unreadable: list[str] = field(default_factory=list)
     #: The text of each pipeline, redirect or substitution that gives a shell a script
@@ -132,6 +146,8 @@ class _Scanner:
         self._assigned: list[str] = []
         self._functions: set[str] = set()
         self._feeds: dict[int, list[str] | None] = {}
+        #: How many enclosing constructs take the visited command's output.
+        self._hidden: int = 0
 
     def run(self, text: str, depth: int) -> None:
         if depth > _MAX_NESTING:
@@ -177,7 +193,10 @@ class _Scanner:
             self._pipeline(node, depth)
         elif kind == "redirected_statement":
             self._redirected(node, depth)
+            hides = any(c.type == "file_redirect" and _takes_stdout(c) for c in node.children)
+            self._hidden += hides
             self._children(node, depth)
+            self._hidden -= hides
         elif kind == "file_redirect":
             self._redirect(node)
         elif kind == "variable_assignment":
@@ -201,8 +220,11 @@ class _Scanner:
             name = node.child_by_field_name("name")
             if name is not None:
                 self._functions.add(node_text(name))
+        captured = node.type in _CAPTURED
         self._cond += 1
+        self._hidden += captured
         self._children(node, depth)
+        self._hidden -= captured
         self._cond -= 1
         self._states, self._vars = saved
         for name in self._assigned[mark:]:
@@ -260,7 +282,8 @@ class _Scanner:
         operators = {child.type for child in node.children}
         written = self._word(target)
         if operators & _WRITE_OPERATORS or (">&" in operators and not set(written) <= _ALL_DIGITS):
-            self._out.writes.append((written, self._states))
+            append = bool(operators & _APPEND_OPERATORS)
+            self._out.writes.append(Redirect(written, self._states, append))
 
     def _parts(self, node: Node) -> tuple[ShellCommand | None, Node | None]:
         """The command a ``command`` node runs, unwrapped, and its here-string if any."""
@@ -365,7 +388,7 @@ class _Scanner:
         self._states = self._cap(frozenset(state + (target,) for state in self._states))
 
     def _emit(self, one: ShellCommand) -> None:
-        self._out.steps.append(Step(one, self._states))
+        self._out.steps.append(Step(one, self._states, shown=self._hidden == 0))
 
     def _find_execs(self, args: tuple[str, ...], source: str, depth: int) -> None:
         index = 0
@@ -399,11 +422,16 @@ class _Scanner:
                 before = _body_of(earlier)
                 producer = self._parts(before)[0] if before is not None else None
                 self._feeds[body.id] = None if producer is None else feed_words(producer)
+        # Every stage but the last feeds the next, a subshell or compound one included.
+        feeding = {stage.id for stage in [c for c in node.children if c.is_named][:-1]}
         for child in node.children:
             saved = (self._states, dict(self._vars))
             mark = len(self._assigned)
+            feeds_next = child.id in feeding
             self._cond += 1
+            self._hidden += feeds_next
             self._visit(child, depth)
+            self._hidden -= feeds_next
             self._cond -= 1
             self._states, self._vars = saved
             for name in self._assigned[mark:]:
@@ -419,6 +447,20 @@ class _Scanner:
                         self._nested(node_text(part), depth)
             elif child.type == "file_redirect" and any(c.type == "<" for c in child.children):
                 self._unseen(node_text(node))
+
+
+def _takes_stdout(redirect: Node) -> bool:
+    """Whether a ``file_redirect`` sends standard output to a file (``>&2`` does not)."""
+    operators = {child.type for child in redirect.children}
+    if operators & _BOTH_STREAMS:
+        return True
+    descriptor = next((node_text(c) for c in redirect.children if c.type == "file_descriptor"), "1")
+    if descriptor != "1":
+        return False
+    if operators & _WRITE_OPERATORS:
+        return True
+    target = redirect.child_by_field_name("destination")
+    return ">&" in operators and target is not None and not set(node_text(target)) <= _ALL_DIGITS
 
 
 def _body_of(node: Node) -> Node | None:
