@@ -28,6 +28,8 @@ export interface FieldState {
   strikes: readonly Strike[];
   reduced: boolean;
   hidden: boolean;
+  /** The window has focus. Without it the clouds hold; events still draw. */
+  focused: boolean;
 }
 
 export interface FieldLoop {
@@ -52,7 +54,8 @@ const cancelFrame = (id: number): void =>
 /**
  * The field's pacing, in the page or in a worker: a draw happens only when it would
  * change a cell. A timer waits for the next one and a single frame draws it, so
- * nothing runs between draws or while hidden. Reduced motion and software rendering
+ * nothing runs between draws or while hidden. While the window is unfocused the clouds
+ * hold and only lightning and the aurora draw. Reduced motion and software rendering
  * hold a still frame with no lightning; software drops the aurora too.
  *
  * Null where WebGL2 can't run on `canvas`. `onDrawn` fires after the first draw.
@@ -117,12 +120,13 @@ export function createFieldLoop(
     }
     if (stale) place(r);
     const moving = !state.reduced && !r.still;
-    if (moving) phase = advancePhase(phase, now - last, state.load);
+    const turning = moving && state.focused;
+    if (turning) phase = advancePhase(phase, now - last, state.load);
     last = now;
     const flashing = moving && strikesAlive(state.strikes, now);
     // The first bake takes a strip per frame and shows nothing until it ends. Later
     // bakes wait out lightning, so no frame carries both.
-    if (r.bake(moving ? phase : 0, moving && !flashing)) {
+    if (r.bake(moving ? phase : 0, turning && !flashing)) {
       frame = nextFrame(paint);
       return;
     }
@@ -137,8 +141,8 @@ export function createFieldLoop(
       shown = true;
       onDrawn();
     }
-    if (!moving || !disc) return;
-    after(flashing ? STRIKE_FRAME_MS : cloudInterval(disc.r, state.load));
+    if (flashing) after(STRIKE_FRAME_MS);
+    else if (turning && disc) after(cloudInterval(disc.r, state.load));
   }
 
   const onLost = (e: Event): void => {
@@ -158,11 +162,12 @@ export function createFieldLoop(
 
   return {
     update(next) {
-      const wasHidden = state.hidden;
+      const wasHeld = state.hidden || !state.focused;
       Object.assign(state, next);
       if (state.hidden) return halt();
-      // Back from hidden, the clouds pick up where they were rather than jumping.
-      if (wasHidden) last = performance.now();
+      // Back from hidden or unfocused, the clouds pick up where they were rather
+      // than jumping.
+      if (wasHeld) last = performance.now();
       request();
     },
     resize(width, height) {

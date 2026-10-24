@@ -157,11 +157,12 @@ describe("planetBox", () => {
 });
 
 describe("cloudInterval", () => {
-  test("waits for one cell of motion at the fastest band", () => {
+  test("waits for one cell of motion at the mean rotation", () => {
     const r = 720;
     const ms = cloudInterval(r, 0);
-    const moved = (SPIN / 1000) * ms * (1 + SHEAR) * (r / CELL);
-    expect(moved).toBeCloseTo(1);
+    expect((SPIN / 1000) * ms * (r / CELL)).toBeCloseTo(1);
+    // The fastest band steps at most this far.
+    expect((SPIN / 1000) * ms * (1 + SHEAR) * (r / CELL)).toBeLessThan(1.5);
   });
 
   test("halves at the load cap", () => {

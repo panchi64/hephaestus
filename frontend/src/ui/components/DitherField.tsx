@@ -105,6 +105,7 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
     strikes: props.strikes(),
     reduced: reduced(),
     hidden: document.hidden,
+    focused: document.hasFocus(),
   });
 
   const place = (canvas: HTMLCanvasElement): void => {
@@ -182,18 +183,23 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
     let canvas!: HTMLCanvasElement;
     const onResize = () => place(canvas);
     const onVisibility = () => sink?.state({ hidden: document.hidden });
+    const onFocus = () => sink?.state({ focused: document.hasFocus() });
     onMount(() => {
       sink = p.mode === "worker" ? inWorker(canvas) : onPage(canvas);
       place(canvas);
       paint();
       window.addEventListener("resize", onResize);
       document.addEventListener("visibilitychange", onVisibility);
+      window.addEventListener("focus", onFocus);
+      window.addEventListener("blur", onFocus);
     });
     onCleanup(() => {
       sink?.stop();
       sink = null;
       window.removeEventListener("resize", onResize);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onFocus);
     });
     return (
       <canvas

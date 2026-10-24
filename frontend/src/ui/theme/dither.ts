@@ -139,10 +139,11 @@ export const HALO = 1.2;
 /** Zonal shear speeds the fastest band to this multiple of the rotation. */
 export const SHEAR = 0.3;
 
-/** Milliseconds until the fastest visible cloud has moved one cell: the field never
- *  redraws a frame that would look the same. */
+/** Milliseconds until the clouds at the disc's centre have moved one cell at the mean
+ *  rotation. The shear averages out across the bands, so the fastest steps a little
+ *  over a cell and the slowest a little under; no frame repeats the last. */
 export function cloudInterval(r: number, load: number): number {
-  const perMs = advancePhase(0, 1, load) * (1 + SHEAR);
+  const perMs = advancePhase(0, 1, load);
   return 1 / (perMs * (r / CELL));
 }
 
