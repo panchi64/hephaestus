@@ -18,7 +18,6 @@ import asyncio
 import logging
 import secrets
 import time
-from collections import OrderedDict
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import override
@@ -83,6 +82,7 @@ from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP, split_workspace_key
 from tools import InstructionProvider, RunDeps
 
+from ._subagent_stop import SubagentStopper
 from ._subagent_wake import OPERATOR_STOPPED, RESPAWN_HINT, SubagentWake, stopped_phrase
 
 logger = logging.getLogger(__name__)
@@ -93,9 +93,6 @@ SUBAGENT_KIND = "linked"
 
 #: How many agents a tree runs at once when the operator has set no cap.
 DEFAULT_MAX_CONCURRENT = 8
-
-#: How many thread stops are remembered.
-_STOP_MARKS_KEPT = 256
 
 #: How much of a task is kept as the conversation's name.
 _TITLE_MAX_CHARS = 80
@@ -123,10 +120,17 @@ class ConversationSubagents(SubagentLauncher):
     to reach turn composition.
     """
 
-    def __init__(self, ctx: HarnessContext, records: SubagentStore, wake: SubagentWake) -> None:
+    def __init__(
+        self,
+        ctx: HarnessContext,
+        records: SubagentStore,
+        wake: SubagentWake,
+        stopper: SubagentStopper,
+    ) -> None:
         self._ctx: HarnessContext = ctx
         self._records: SubagentStore = records
         self._wake: SubagentWake = wake
+        self._stopper: SubagentStopper = stopper
         self._conversations: ConversationStore = ctx.services.get(ConversationStore)
         self._models: ModelRegistry = ctx.services.get(ModelRegistry)
         self._runs: RunRegistry = ctx.services.get(RunRegistry)
@@ -139,8 +143,6 @@ class ConversationSubagents(SubagentLauncher):
         #: so concurrent launches in one step consult these as well as the register.
         self._reserved: set[tuple[str, str, str]] = set()
         self._reserve_lock: asyncio.Lock = asyncio.Lock()
-        #: When each thread was last stopped, by monotonic clock, for launches in flight.
-        self._stop_marks: OrderedDict[str, tuple[float, StopCause]] = OrderedDict()
         self._composer: ThreadComposer = ThreadComposer(
             agents=self._agents,
             model_registry=self._models,
@@ -349,12 +351,12 @@ class ConversationSubagents(SubagentLauncher):
             base_ref=base_ref,
             ledger_prompt_message_id=parent.ledger_prompt_message_id,
         )
-        stopped_by = self._stopped_since(thread, began) if thread else None
+        stopped_by = self._stopper.stopped_since(thread, began) if thread else None
         if stopped_by is not None:
             # Its parent was stopped while this was being composed; the sweep missed it.
             row = await self._records.by_child(conversation_id)
             if row is not None:
-                _ = await self._stop_rows(owner_id, [row], stopped_by)
+                _ = await self._stopper.stop_rows(owner_id, [row], stopped_by)
         return LaunchedSubagent(
             subagent_id=created.run_id,
             conversation_id=conversation_id,
@@ -605,55 +607,7 @@ class ConversationSubagents(SubagentLauncher):
                 + "not yours to stop. Message it, or its parent, instead."
             )
         rows = [row, *await self._records.descendants(row.child_conversation_id, owner_id)]
-        return await self._stop_rows(owner_id, rows, StopCause.parent)
-
-    async def stop_below(self, owner_id: str, conversation_id: str) -> list[str]:
-        """Stop every live agent below a thread, for the operator (:class:`SubtreeStopper`)."""
-        self._mark_stop(conversation_id, StopCause.operator)
-        below = await self._records.descendants(conversation_id, owner_id)
-        rows = [
-            row
-            for row in below
-            if row.status in LIVE_STATUSES
-            or self._runs.active_run_for(row.child_conversation_id, owner_id) is not None
-        ]
-        # A finished agent isn't stopped, so a report from below would wake it; its inbox
-        # waits for the operator instead.
-        stopping = {row.id for row in rows}
-        for row in below:
-            if row.id not in stopping:
-                _ = self._runs.inbox(row.child_conversation_id, owner_id).stop()
-        return await self._stop_rows(owner_id, rows, StopCause.operator)
-
-    def _mark_stop(self, conversation_id: str, cause: StopCause) -> None:
-        self._stop_marks[conversation_id] = (time.monotonic(), cause)
-        self._stop_marks.move_to_end(conversation_id)
-        while len(self._stop_marks) > _STOP_MARKS_KEPT:
-            _ = self._stop_marks.popitem(last=False)
-
-    def _stopped_since(self, conversation_id: str, since: float) -> StopCause | None:
-        """Who stopped this thread after ``since``, which a launch in flight would have missed."""
-        marked = self._stop_marks.get(conversation_id)
-        return marked[1] if marked is not None and marked[0] >= since else None
-
-    async def _stop_rows(
-        self, owner_id: str, rows: list[SubagentRecord], cause: StopCause
-    ) -> list[str]:
-        # Marked before any cancel so the resulting reports don't wake an agent being stopped.
-        for each in rows:
-            self._mark_stop(each.child_conversation_id, cause)
-            await self._records.settle(each.id, status="cancelled")
-            self._wake.note_stop(each.child_conversation_id, cause)
-        stopped: list[str] = []
-        for each in rows:
-            run = self._runs.active_run_for(each.child_conversation_id, owner_id)
-            if run is None or run.is_terminal:
-                continue
-            if run.stop_cause is None:
-                run.stop_cause = cause
-            if await self._runs.cancel(run.id):
-                stopped.append(each.handle or each.spec_name)
-        return stopped
+        return await self._stopper.stop_rows(owner_id, rows, StopCause.parent)
 
     @override
     async def tree(self, owner_id: str, conversation_id: str) -> list[SubagentView]:

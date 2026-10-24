@@ -118,7 +118,7 @@ async def test_a_request_that_changes_a_thread_waits_for_the_parks_to_be_restore
         assert restored.status is RunStatus.awaiting_input
 
 
-async def test_a_send_that_outwaits_the_cap_goes_ahead_and_says_so(
+async def test_a_send_that_outwaits_the_cap_is_refused_with_a_503(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ):
     install_sensitive_tool(monkeypatch)
@@ -137,7 +137,8 @@ async def test_a_send_that_outwaits_the_cap_goes_ahead_and_says_so(
         sent = await client.post(
             "/chat", json={"prompt": "again", "conversation_id": conversation_id}
         )
-        assert sent.status_code == 202
+        assert sent.status_code == 503
+        assert "still being restored" in sent.text
     assert any("stored parks not restored" in r.getMessage() for r in caplog.records)
 
 

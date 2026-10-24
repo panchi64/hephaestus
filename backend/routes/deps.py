@@ -18,7 +18,7 @@ from core.api_scopes import ScopeTable
 from core.auth import SESSION_COOKIE, AuthManager, token_from_headers
 from core.config import Settings
 from core.container import ServiceContainer
-from core.exceptions import NotFoundError, PermissionDeniedError
+from core.exceptions import DegradedCapabilityError, NotFoundError, PermissionDeniedError
 from core.ratelimit import RateLimiter
 from core.vault import Vault
 from runs import ConversationBusyError, InboxDispatch, Run, RunRegistry
@@ -276,15 +276,21 @@ RESTORE_WAIT_S = 10.0
 async def after_restore(request: Request) -> None:
     """Hold a request that changes an existing thread until the stored parks are back: a turn
     finished or a leaf moved first would change where the parked turn is written or occupy
-    the thread. After the cap it proceeds: a restore stuck on the vault must not freeze the app."""
+    the thread.
+
+    Raises DegradedCapabilityError (503) after the cap: proceeding would race the restore, and
+    a restore stuck on the vault must not hold the request open."""
     try:
         _ = await asyncio.wait_for(registry(request).parks_restored.wait(), RESTORE_WAIT_S)
-    except TimeoutError:
+    except TimeoutError as exc:
         logger.warning(
-            "routes: stored parks not restored after %.0fs; proceeding with %s",
+            "routes: stored parks not restored after %.0fs; refusing %s",
             RESTORE_WAIT_S,
             request.url.path,
         )
+        raise DegradedCapabilityError(
+            "Paused runs are still being restored after the restart. Try again shortly."
+        ) from exc
 
 
 def claim_conversation(request: Request, conversation_id: str) -> None:

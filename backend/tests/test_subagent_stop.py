@@ -203,6 +203,36 @@ async def test_stopping_an_idle_thread_with_nothing_live_changes_nothing(
         assert not app_state(app).runs.inbox(root, "operator").waiting_for_operator
 
 
+async def test_a_stop_with_only_finished_agents_leaves_their_inboxes_alone(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _hold_every_model(monkeypatch, only="slow task")
+    async with client_app() as (client, app):
+        root = await _thread(app)
+        child = await launcher_of(app).launch(
+            "operator",
+            EXPLORER,
+            "plain task",
+            handle="done",
+            parent=SubagentParent(conversation_id=root),
+        )
+        await settle_run(app, child.run_id)
+        row = await records_of(app).by_child(child.conversation_id)
+        assert row is not None
+        await records_of(app).settle(row.id, status="done")
+        for _ in range(100):
+            if app_state(app).runs.active_run_for(root, "operator") is None:
+                break
+            await asyncio.sleep(0.05)
+
+        resp = await client.post(f"/conversations/{root}/agents/stop")
+
+        assert resp.status_code == 200, resp.text
+        assert json_body(resp)["stopped"] == []
+        inbox = app_state(app).runs.inbox(child.conversation_id, "operator")
+        assert not inbox.waiting_for_operator and not inbox.stop_notice_pending
+
+
 async def test_an_unknown_thread_is_a_404(monkeypatch: pytest.MonkeyPatch):
     _hold_every_model(monkeypatch)
     async with client_app() as (client, _app):

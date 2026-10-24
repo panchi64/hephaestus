@@ -171,6 +171,36 @@ async def test_a_reconnect_with_an_old_last_event_id_receives_the_approval(
         assert "approval.required" in [e["type"] for e in events]
 
 
+async def test_an_inbox_event_emitted_into_a_parked_run_is_stored_with_its_seq(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    install_sensitive_tool(monkeypatch)
+    async with client_app(home=tmp_path) as (client, app):
+        swap_tool_catalog(app, danger_categories())
+        run_id, _call_id = await park_chat(client, app)
+        old = app_state(app).runs.get(run_id)
+        assert old is not None and old.conversation_id is not None
+        inbox = app_state(app).runs.inbox(old.conversation_id, old.owner_id)
+        _ = inbox.enqueue("while you wait")
+        inbox_seq = old.stream.last_seq
+        assert old.stream.replay()[-1].body.type == "message.queued"
+
+        deadline = asyncio.get_running_loop().time() + 15.0
+        while asyncio.get_running_loop().time() < deadline:
+            rows = [r for r in await stored_parks(app) if r.run_id == run_id]
+            if rows and rows[0].last_event_id == inbox_seq:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("the stored seq never caught up")
+
+    async with client_app(home=tmp_path) as (client, app):
+        swap_tool_catalog(app, danger_categories())
+        restored = await await_parked(app, run_id)
+        approval = next(e for e in restored.stream.replay() if e.body.type == "approval.required")
+        assert approval.seq > inbox_seq
+
+
 async def test_a_missing_model_blocks_the_restored_run_and_denies_its_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -248,6 +278,10 @@ class _Recording(ParkedJournal):
     def record(self, run: Run) -> bool:
         self.recorded.append(run.id)
         return True
+
+    @override
+    def advance(self, run_id: str, last_seq: int) -> None:
+        pass
 
     @override
     def forget(self, run_id: str) -> None:

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, update
 from sqlmodel import Session, col, delete, select
 
 from core.db import in_session
@@ -42,9 +42,10 @@ class StoredPark:
 
 @dataclass(frozen=True)
 class _Job:
-    op: Literal["record", "forget"]
+    op: Literal["record", "advance", "forget"]
     run_id: str
     park: StoredPark | None = None
+    last_seq: int = 0
 
 
 class SealedParkedStore:
@@ -69,6 +70,10 @@ class SealedParkedStore:
 
     def record(self, park: StoredPark) -> None:
         self._worker.submit(_Job("record", park.run_id, park))
+
+    def advance(self, run_id: str, last_seq: int) -> None:
+        """Raise the stored stream seq of a park; a no-op once the row is gone."""
+        self._worker.submit(_Job("advance", run_id, last_seq=last_seq))
 
     def forget(self, run_id: str) -> None:
         self._worker.submit(_Job("forget", run_id))
@@ -123,6 +128,19 @@ class SealedParkedStore:
                 )
 
             await in_session(self._engine, record)
+        elif job.op == "advance":
+
+            def advance(session: Session) -> None:
+                _ = session.exec(
+                    update(ParkedTurnRecord)
+                    .where(
+                        col(ParkedTurnRecord.run_id) == job.run_id,
+                        col(ParkedTurnRecord.last_event_id) < job.last_seq,
+                    )
+                    .values(last_event_id=job.last_seq)
+                )
+
+            await in_session(self._engine, advance)
         else:
 
             def forget(session: Session) -> None:
