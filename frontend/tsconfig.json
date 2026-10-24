@@ -3,8 +3,6 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "allowJs": true,
@@ -12,11 +10,9 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    // skipLibCheck: SolidStart's server runtime (srvx/h3) ships .d.ts that
-    // declare Node+Deno+Bun+Cloudflare types at once — unsatisfiable in a
-    // browser tsconfig. This skips checking dependency .d.ts INTERNALS only;
-    // our own src/ code is still fully type-checked. (TS team's tsc --init
-    // default.)
+    // skipLibCheck: bun-types and vite/client both declare `ImportMeta.hot` and
+    // `ImportMeta.env`, and their declarations conflict. This skips checking
+    // dependency .d.ts internals only; src/ is still fully type-checked.
     "skipLibCheck": true,
     // "bun" is here only for `bun:test` in *.test.ts. It brings Bun's server
     // globals into scope app-wide, which is harmless: nothing in src/ can call

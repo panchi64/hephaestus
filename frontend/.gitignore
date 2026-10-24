@@ -4,9 +4,6 @@ dist
 .nitro
 .vercel
 .netlify
-.vinxi
-.solid-start
-app.config.timestamp_*.js
 
 # Environment
 .env
@@ -14,9 +11,6 @@ app.config.timestamp_*.js
 
 # dependencies
 /node_modules
-
-# Pyodide runtime assets — copied from node_modules on postinstall
-public/pyodide/
 
 # This project uses bun only — never pnpm/npm/yarn lockfiles
 pnpm-lock.yaml
