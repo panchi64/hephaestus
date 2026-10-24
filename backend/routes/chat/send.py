@@ -263,6 +263,11 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
     try:
         models = await thread_models(request, body.conversation_id, body.endpoint_id, body.model)
         if body.restore_files is not None:
+            valid = await store.is_reseat_point(
+                body.conversation_id, body.message_id, regenerate=True
+            )
+            if not valid:
+                raise HTTPException(status_code=404, detail="message not found")
             # Planned against the leaf as it is now; `regenerate_point` moves it.
             await _rewind_reporting(
                 request, body.conversation_id, body.message_id, body.restore_files.preview_token
@@ -310,6 +315,11 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
         stamped = await store.turn_stamps(body.conversation_id, body.message_id)
         stamps = still_named(stamped, body.prompt)
         if body.restore_files is not None:
+            valid = await store.is_reseat_point(
+                body.conversation_id, body.message_id, regenerate=False
+            )
+            if not valid:
+                raise HTTPException(status_code=404, detail="message not found")
             await _rewind_reporting(
                 request, body.conversation_id, body.message_id, body.restore_files.preview_token
             )

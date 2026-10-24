@@ -8,10 +8,9 @@ from typing import cast
 import pytest
 from pydantic_ai.messages import ToolCallPart
 
-import routes.runs as runs_routes
-from agent import ParkedTurn
+from agent import ParkedTurn, approval_guards
 from core.config import get_settings
-from routes.runs import ApprovalDecision, ApprovalDecisions
+from routes.runs import ApprovalDecision
 from tools import RunDeps
 
 _SCRATCH = "/home/agent/scratch"
@@ -31,18 +30,18 @@ async def _guarded(
     async def no_home(_deps: RunDeps) -> None:
         return None
 
-    monkeypatch.setattr(runs_routes, "home_of", no_home)
+    monkeypatch.setattr(approval_guards, "home_of", no_home)
 
     def scratch(_deps: RunDeps) -> str:
         return _SCRATCH
 
-    monkeypatch.setattr(runs_routes, "shell_cwd", scratch)
+    monkeypatch.setattr(approval_guards, "shell_cwd", scratch)
     parked = SimpleNamespace(
         compaction=SimpleNamespace(deps=object()),
         requests=SimpleNamespace(approvals=approvals, metadata={}),
     )
-    return await runs_routes.guarded_approvals(
-        ApprovalDecisions(decisions=decisions),
+    return await approval_guards.guarded_approvals(
+        decisions,
         cast(ParkedTurn, cast(object, parked)),
         get_settings(),
     )

@@ -254,19 +254,22 @@ def _tool_return(result: object) -> ToolReturn[object] | None:
     return cast("ToolReturn[object]", result) if isinstance(result, ToolReturn) else None
 
 
-def _script_proved_impersonal(result: ToolReturn[object]) -> bool:
-    """Whether the script's metadata shows it called no personal-data tool. Anything the
-    metadata does not show counts as personal."""
+def _script_personal_categories(result: ToolReturn[object]) -> frozenset[str] | None:
+    """The personal-data categories the script's metadata shows it called, or None when the
+    metadata does not show its calls, which counts as personal."""
     metadata = cast(object, result.metadata)
     if not isinstance(metadata, dict):
-        return False
+        return None
     calls = cast(Mapping[str, object], metadata).get("tool_calls")
     if not isinstance(calls, dict):
-        return False
-    return all(
-        isinstance(call, ToolCallPart) and _category(call.tool_name) not in _PERSONAL
-        for call in cast(Mapping[object, object], calls).values()
-    )
+        return None
+    found: set[str] = set()
+    for call in cast(Mapping[object, object], calls).values():
+        if not isinstance(call, ToolCallPart):
+            return None
+        if (category := _category(call.tool_name)) in _PERSONAL:
+            found.add(category)
+    return frozenset(found)
 
 
 async def _spill(ctx: RunContext[RunDeps], name: str, result: object) -> object:
@@ -279,8 +282,11 @@ async def _spill(ctx: RunContext[RunDeps], name: str, result: object) -> object:
         return result
     save = category not in _PERSONAL
     wrapped = _tool_return(result)
-    if wrapped is not None and name == RUN_CODE and not _script_proved_impersonal(wrapped):
-        return result
+    if wrapped is not None and name == RUN_CODE:
+        personal = _script_personal_categories(wrapped)
+        if personal is None or personal - {_EXTERNAL}:
+            return result
+        save = save and not personal
     value = cast(object, wrapped.return_value) if wrapped is not None else result
     if isinstance(value, Citable):
         return result

@@ -317,6 +317,40 @@ async def test_seeding_pins_the_history_hash_so_a_moved_file_still_conflicts(tmp
     assert (root / "README.md").read_text() == "changed by hand\n"
 
 
+async def test_seeding_skips_a_history_call_with_no_path(tmp_path: Path):
+    caps, _root = await _project(tmp_path)
+    pathless: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart("files_read_file", {}, tool_call_id="r1")]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    "files_read_file", "[a | 1 lines | hash:aaaaaaaaaaaa]\nx", tool_call_id="r1"
+                )
+            ]
+        ),
+    ]
+    _ = await _call(caps, "edit_file", _edit(), conversation="after", messages=pathless)
+    assert caps.get(ReadLedger).get("after", "None") is None
+
+
+async def test_a_write_to_a_file_the_ledger_knows_does_not_rescan_the_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    caps, _root = await _project(tmp_path)
+    read = await _call(caps, "read_file", {"path": README}, conversation="c")
+    history = _read_history(README, read)
+    scans: list[int] = []
+
+    def counting(*_args: object) -> None:
+        scans.append(1)
+
+    monkeypatch.setattr("tools.files.seed_from_history", counting)
+    _ = await _call(caps, "edit_file", _edit(), conversation="c", messages=history)
+    assert scans == []
+    _ = await _call(caps, "edit_file", _edit(), conversation="other", messages=history)
+    assert scans == [1]
+
+
 def test_seeding_never_overwrites_a_newer_record():
     ledger = ReadLedger()
     ledger.record("c", "/a", "bbbbbbbbbbbb")

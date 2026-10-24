@@ -17,9 +17,9 @@ from pydantic_ai import ToolApproved, ToolDenied
 from pydantic_ai.messages import ToolCallPart
 
 from agent import ParkedTurn, build_resume_orchestrator
+from agent.approval_guards import guarded_approvals
 from agent.gating import GrantApproved
 from agent.recompose import RecomposeError, recompose
-from core.config import Settings
 from routes import deps
 from runs import (
     AnsweredQuestionOut,
@@ -37,19 +37,9 @@ from services.answers import (
     render_answer,
 )
 from services.approval_grants import GrantInfo, grant_scopes, grant_width, grantable
-from services.permissions.guards import (
-    COMMAND_TOOLS,
-    FILE_WRITE_TOOLS,
-    GUARDED_TOOLS,
-    changes_directory,
-    guard,
-    guard_of_approval,
-)
 from services.plan_mode import PLAN_SUBMIT_TOOL
 from services.settings_store import get_inactivity_timeout, get_wall_clock_timeout
 from services.subagents import SubtreeStopper
-from tools.guarded import shell_cwd
-from tools.run_home import home_of
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -262,51 +252,6 @@ def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[
     return width == "tool" if settled.needs_whole_tool else width != "none"
 
 
-async def guarded_approvals(
-    body: ApprovalDecisions,
-    parked: ParkedTurn,
-    settings: Settings,
-) -> set[str]:
-    """The approved calls only the operator may answer: those the park marked guarded, and
-    those whose replacement arguments are guarded themselves."""
-    deps_of_run = parked.compaction.deps if parked.compaction is not None else None
-    home = await home_of(deps_of_run) if deps_of_run is not None else None
-    cwd = shell_cwd(deps_of_run) if deps_of_run is not None else None
-    chosen = {d.tool_call_id: d for d in body.decisions}
-    found: set[str] = set()
-    # Command tools run in order, so a `cd` moves where later calls start; after one,
-    # relative paths can't be placed.
-    cwd_known = True
-    for call in parked.requests.approvals:
-        decision = chosen.get(call.tool_call_id)
-        name = call.tool_name
-        override = decision.override_args if decision is not None and decision.approved else None
-        if decision is not None and decision.approved:
-            if guard_of_approval(parked.requests.metadata.get(call.tool_call_id)) is not None:
-                found.add(call.tool_call_id)
-            elif override is not None and name in GUARDED_TOOLS:
-                # Unplaceable is not known harmless: a file write with no home, a command
-                # with no deps, or one following a `cd`.
-                unplaced = (name in FILE_WRITE_TOOLS and home is None) or (
-                    name in COMMAND_TOOLS and (deps_of_run is None or not cwd_known)
-                )
-                reason = guard(
-                    name,
-                    override,
-                    home=home,
-                    settings=settings,
-                    cwd=cwd,
-                    cwd_known=cwd_known,
-                    strict=True,
-                )
-                if unplaced or reason is not None:
-                    found.add(call.tool_call_id)
-        # Settled calls count too: they run.
-        if cwd_known and changes_directory(name, override or call.args_as_dict()):
-            cwd_known = False
-    return found
-
-
 @router.post("/{run_id}/approve", status_code=202)
 async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) -> ApprovalOutcome:
     """Settle everything a parked run awaits, permissions and answers, then resume it.
@@ -349,7 +294,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         # request may recompose before the 403 (idempotent). Failure is reported below.
         with contextlib.suppress(RecomposeError):
             _ = await recompose(registry, run, parked)
-    guarded = await guarded_approvals(body, parked, deps.app_state(request).settings)
+    guarded = await guarded_approvals(body.decisions, parked, deps.app_state(request).settings)
     if guarded:
         deps.require_operator(request)
 
