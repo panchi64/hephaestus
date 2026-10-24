@@ -1,4 +1,5 @@
 import {
+  AURORA_FROM,
   AURORA_TONE,
   CELL,
   HALO,
@@ -174,16 +175,17 @@ float noise(vec2 p) {
 
 /** The densest aurora curtain at a disc-relative point (unit radius). */
 float aurora(vec2 d, float r) {
-  // The curtains sit between about -1.7 and -0.5 rad: the upper right of the limb.
-  if (uAurora < 0.5 || r < 0.9 || r > 1.16 || d.y > 0.0 || d.x < -0.2) return 0.0;
+  // The curtains reach from about -2.1 to -0.9 rad: the top of the limb, either
+  // side of the pole, where every one of them is on screen.
+  if (uAurora < 0.5 || r < 0.9 || r > 1.16 || d.y > 0.0 || d.x < -0.6) return 0.0;
   float a = atan(d.y, d.x);
   float best = 0.0;
   // Curtains are 0.16 rad apart and reach 0.21, so only the nearest three can show.
-  float near = floor((a + 1.5) / 0.16 + 0.5);
+  float near = floor((a - ${f(AURORA_FROM)}) / 0.16 + 0.5);
   for (int i = -1; i <= 1; i++) {
     float k = near + float(i);
     if (k < 0.0 || k >= uAurora) continue;
-    float da = a - (-1.5 + 0.16 * k + 0.03 * sin(uTime * 0.07 + k));
+    float da = a - (${f(AURORA_FROM)} + 0.16 * k + 0.03 * sin(uTime * 0.07 + k));
     if (abs(da) > 0.18) continue;
     float span = exp(-(da * da) / 0.0081);
     float lift = r - 1.0 + 0.015 * sin(a * 30.0 + uTime * 0.2 + k);
@@ -217,7 +219,7 @@ void main() {
         (atan(n.x, n.z) + uPhase * (1.0 + ${f(SHEAR)} * sin(lat * 7.0))) / TAU,
         0.5 + lat / 3.14159265);
       // Texels per cell, from the sphere: longitude stretches by 1/z toward the limb,
-      // latitude by 1/cos(lat). Analytic, so the night side and halo skip the trig.
+      // latitude by 1/cos(lat). Analytic, so unlit cells and the halo skip the trig.
       float cells = uDisc.z / ${f(CELL)};
       float ring = sqrt(max(1.0 - n.y * n.y, 1e-4));
       float lod = log2(max(uBake.x / (TAU * cells * max(n.z, 1e-3)), uBake.y / (3.14159265 * cells * ring)));

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AURORA_FROM,
+  AURORA_MAX,
   CELL,
   FLASHES,
   HALO,
@@ -63,7 +65,7 @@ describe("strikePoint", () => {
     [1600, 1000],
     [390, 844],
     [2560, 1080],
-  ])("lands on the visible night side at %ix%i", (w, h) => {
+  ])("lands on the visible disc, off the limb, at %ix%i", (w, h) => {
     const random = seeded(w + h);
     const { cx, cy, r } = planetDisc(w, h);
     for (let i = 0; i < 200; i++) {
@@ -74,10 +76,47 @@ describe("strikePoint", () => {
       expect(y).toBeLessThan(h);
       const nx = (x - cx) / r;
       const ny = (y - cy) / r;
-      const r2 = nx * nx + ny * ny;
-      expect(r2).toBeLessThan(1);
-      const lit = nx * LIGHT[0] + ny * LIGHT[1] + Math.sqrt(1 - r2) * LIGHT[2];
-      expect(lit).toBeLessThan(0.05);
+      expect(nx * nx + ny * ny).toBeLessThan(0.9);
+    }
+  });
+});
+
+describe("the light", () => {
+  test.each([
+    [1600, 1000],
+    [390, 844],
+    [2560, 1080],
+    [3840, 2160],
+  ])("leaves no night side on screen at %ix%i", (w, h) => {
+    const { cx, cy, r } = planetDisc(w, h);
+    for (let x = 0; x < w; x += 8) {
+      for (let y = 0; y < h; y += 8) {
+        const nx = (x - cx) / r;
+        const ny = (y - cy) / r;
+        const r2 = nx * nx + ny * ny;
+        if (r2 >= 1) continue;
+        const lit =
+          nx * LIGHT[0] + ny * LIGHT[1] + Math.sqrt(1 - r2) * LIGHT[2];
+        expect(lit).toBeGreaterThan(0.1);
+      }
+    }
+  });
+});
+
+describe("the aurora", () => {
+  test.each([
+    [1600, 1000],
+    [390, 844],
+    [3840, 2160],
+  ])("keeps every curtain on screen at %ix%i", (w, h) => {
+    const { cx, cy, r } = planetDisc(w, h);
+    for (let k = 0; k < AURORA_MAX; k++) {
+      const a = AURORA_FROM + 0.16 * k;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      expect(x).toBeGreaterThan(0);
+      expect(x).toBeLessThan(w);
+      expect(y).toBeGreaterThan(0);
     }
   });
 });

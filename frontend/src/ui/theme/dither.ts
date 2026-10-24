@@ -34,6 +34,9 @@ export interface Strike {
 export const LOAD_CAP = 5;
 /** Live sub-agents past this add no more aurora curtains. */
 export const AURORA_MAX = 6;
+/** The first curtain's angle on the limb (rad, 0 to the right, negative upward); the
+ *  rest follow 0.16 rad apart toward the right, all left of the viewport's edge. */
+export const AURORA_FROM = -1.9;
 
 /** One strike is `FLASHES` flashes, each `FLASH_MS` long, starting up to
  *  `FLASH_SPREAD_MS` apart; the whole strike is over by `STRIKE_LIFE_MS`. */
@@ -57,15 +60,16 @@ export function advancePhase(phase: number, dt: number, load: number): number {
 }
 
 /** Unit vector toward the sun, in the disc's frame (x right, y down, z toward the
- *  viewer). It puts the terminator on the visible disc with night on the right. */
+ *  viewer): from the upper left and in front, so every part of the disc that can be
+ *  on screen is lit and the night side stays past the viewport's edge. */
 export const LIGHT: readonly [number, number, number] = (() => {
-  const v = [-1, -0.3, 0.12];
+  const v = [-0.5, -0.45, 0.75];
   const l = Math.hypot(...v);
   return [v[0] / l, v[1] / l, v[2] / l];
 })();
 
-/** Strikes land where the surface faces the sun less than this. */
-const NIGHT = 0.05;
+/** Strikes land within this much of the radius (squared), off the foreshortened limb. */
+const STRIKE_REACH = 0.85;
 /** Strikes keep this far (CSS px) inside the viewport. */
 const MARGIN = 8;
 
@@ -82,7 +86,7 @@ export function planetDisc(width: number, height: number): Disc {
   return { cx: width - 0.54 * r, cy: 0.92 * height, r };
 }
 
-/** A random point on the visible night side, for an event's lightning. */
+/** A random point on the visible disc, for an event's lightning. */
 export function strikePoint(
   width: number,
   height: number,
@@ -96,10 +100,7 @@ export function strikePoint(
       continue;
     const nx = (x - cx) / r;
     const ny = (y - cy) / r;
-    const r2 = nx * nx + ny * ny;
-    if (r2 >= 1) continue;
-    const lit = nx * LIGHT[0] + ny * LIGHT[1] + Math.sqrt(1 - r2) * LIGHT[2];
-    if (lit < NIGHT) return { x, y };
+    if (nx * nx + ny * ny < STRIKE_REACH) return { x, y };
   }
   return {
     x: Math.min(cx + 0.4 * r, width - MARGIN),
