@@ -29,7 +29,7 @@ from core.config import get_settings
 from core.text import elide_middle
 from core.untrusted import PREAMBLE_LINE, wrap_untrusted
 from services.home.paths import SCRATCH
-from services.sandbox import SandboxSessionManager
+from services.home.scratch import ScratchDirs
 from services.tool_policy import permission_disabled_tools
 from services.workspace import sandbox_workspace
 
@@ -213,10 +213,10 @@ def _can_read_back(deps: RunDeps) -> bool:
 
 
 async def _write(deps: RunDeps, relpath: str, text: str) -> None:
-    sessions = deps.caps.get_optional(SandboxSessionManager)
-    if sessions is None:
-        raise LookupError("no sandbox sessions")
-    workspace = await sandbox_workspace(sessions, deps.workspace_key, holder=deps.run)
+    scratch = deps.caps.get_optional(ScratchDirs)
+    if scratch is None:
+        raise LookupError("no scratch folders")
+    workspace = sandbox_workspace(scratch, deps.workspace_key)
     await asyncio.to_thread(workspace.files.write_file, relpath, text.encode())
 
 

@@ -15,7 +15,7 @@ acceptable only if visible: a reviewed call emits ``review.started`` and ``revie
 into the work log, or a call they never approved would look like a gate failing open.
 
 These frames are the Auto level's own and not where reach and fence are reported: only a
-reviewing level produces them. The declared reach and fence verdict also ride the executing
+reviewing level produces them. The fence verdict also rides the executing
 tool's result (``tools/shell.py``), true at every level and what a cold reload reads. The
 frames add the ruling: who cleared the call and on what ground.
 
@@ -52,6 +52,8 @@ from services.approval_grants import (
 from services.approval_ledger import ApprovalLedger, LedgerEntry
 from services.home.table import RunHome
 from services.permissions import (
+    ActionKind,
+    Capability,
     Decision,
     GrantWidth,
     PriorApproval,
@@ -77,8 +79,7 @@ from services.permissions.guards import (
     is_guarded,
 )
 from services.registry import ModelRegistry
-from services.sandbox.thread_shells import ThreadShells
-from services.vm.project import ProjectCopies
+from services.vm import ConversationMachines
 from tools.deps import RunDeps
 from tools.guarded import shell_cwd
 from tools.home import resolve_run_home
@@ -370,8 +371,8 @@ async def review_batch(
     )
     nonce = new_nonce()
     root = await _judged_root(deps, calls, home)
-    # A non-host command is held to its reach only by running in the VM, and the shell
-    # refuses every command while it is down.
+    # A non-host command is held only by running in the VM, and the shell refuses every
+    # command while it is down.
     fenced = vm_fences(caps)
     outcomes = await gather_bounded(
         [
@@ -397,14 +398,15 @@ async def review_batch(
 
 
 def vm_fences(caps: ServiceContainer) -> bool:
-    copies = caps.get_optional(ProjectCopies)
-    return copies is not None and copies.vm.available
+    """Whether a command would run in the conversation's VM: the image is ready to boot it."""
+    machines = caps.get_optional(ConversationMachines)
+    return machines is not None and machines.platform.available
 
 
 async def _judged_root(
     deps: RunDeps, calls: Sequence[ToolCallPart], opened: RunHome | None = None
 ) -> Fence | None:
-    """The home every path in this batch is measured against, from where the thread's shell stands.
+    """The home every path in this batch is measured against, from where the run's shell stands.
 
     Resolved, not read off the run's memo: a turn's first shell command is deferred before
     any tool has opened a workspace, so the memo is empty. Judging against None is strictest
@@ -429,10 +431,7 @@ async def _judged_root(
             return None
     if home is None:
         return None
-    shells = deps.caps.get_optional(ThreadShells)
-    cwd = shells.cwd(deps.workspace_key) if shells is not None else None
-    # A working directory outside the home is where the shell won't start
-    # (`HomeShell.stand_within`).
+    cwd = shell_cwd(deps)
     return home.fence(cwd if cwd is not None and home.place_of(cwd) is not None else None)
 
 
@@ -451,6 +450,18 @@ async def resolve_reviewer(caps: ServiceContainer, owner_id: str) -> Reviewer | 
         logger.info("auto review unavailable: no decision model (%s)", exc)
         return None
     return make_decision_reviewer(spec, settings=get_settings(), client=registry.http_client)
+
+
+def _in_vm(capability: Capability) -> bool:
+    return capability.kind is ActionKind.SHELL and not capability.on_host
+
+
+def _event_reach(capability: Capability) -> Literal["offline", "host"] | None:
+    """The review row's wire label: the frontend still reads ``host`` for the host tool
+    and ``offline`` plus ``network`` for a VM command."""
+    if capability.on_host:
+        return "host"
+    return "offline" if _in_vm(capability) else None
 
 
 async def review_call(
@@ -483,10 +494,8 @@ async def review_call(
             name=tool,
             summary=capability.summary,
             detail=capability.detail,
-            reach=capability.reach,
-            network=(
-                capability.runs_with_network if capability.reach in ("offline", "network") else None
-            ),
+            reach=_event_reach(capability),
+            network=capability.runs_with_network if _in_vm(capability) else None,
         )
     )
     outcome = await review(

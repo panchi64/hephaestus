@@ -1,6 +1,6 @@
 """The operator's live view of a conversation's browser: frames down, input up.
 
-The browser runs headless in the platform VM, so the operator sees it as a CDP screencast
+The browser runs headless in the services VM, so the operator sees it as a CDP screencast
 of the session's current page and drives it by sending mouse, wheel, keyboard and
 navigation events that are replayed through CDP's Input domain. Chromium withholds the
 next frame until the last one is acknowledged, and a watcher keeps only the newest frame,

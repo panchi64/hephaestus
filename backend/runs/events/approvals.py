@@ -95,10 +95,10 @@ class ReviewStarted(Body):
 
     ``summary`` is the action's extracted worst case, in the words the reviewer judges.
     ``detail`` is the act's own content where worth reading (a delegated task, a program,
-    the reason for opening a credential), else null. ``reach`` is how far a shell command
-    declared it needs to go (worktree, network, host); null for acts declaring nothing, which
-    differs from declaring the widest reach. ``network`` is whether a VM command runs with
-    egress (an ``offline`` declaration can differ), null where nothing runs in the VM.
+    the reason for opening a credential), else null. ``reach`` is ``host`` for the host
+    command tool, ``offline`` for a VM shell command, null for any other act (``network``
+    is not produced). ``network`` is whether a VM command names an address or fetches,
+    null where nothing runs in the VM.
     Additive to v1."""
 
     type: Literal["review.started"] = "review.started"

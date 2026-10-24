@@ -1,4 +1,4 @@
-"""Plugins — tools the agent writes in Python, run in the platform VM once the operator
+"""Plugins — tools the agent writes in Python, run in a VM of their own once the operator
 publishes them."""
 
 from __future__ import annotations
@@ -9,15 +9,22 @@ from routes import plugins as plugins_routes
 from services.agents import AgentCatalog
 from services.plugins import PluginRuntime, PluginStore
 from services.revisions import RevisionStore
-from services.vm import PlatformVM
+from services.vm import ConversationMachines
+from services.vm.target import machine_prefix
 from tools.plugins import GATED_TOOLS, plugins_toolset
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     store = PluginStore(ctx.engine, ctx.vault, RevisionStore(ctx.engine, ctx.vault))
-    vm = ctx.services.get_optional(PlatformVM) if ctx.settings.vm_enabled else None
+    machines = ctx.services.get_optional(ConversationMachines) if ctx.settings.vm_enabled else None
     runtime = (
-        None if vm is None else PluginRuntime(vm, ctx.settings.data_dir / "plugins" / "egress")
+        None
+        if machines is None
+        else PluginRuntime(
+            machines.platform,
+            ctx.settings.data_dir / "plugins" / "installed",
+            prefix=machine_prefix(ctx.settings.data_dir),
+        )
     )
     ctx.services.get(AgentCatalog).contribute(store.agents)
     services = (store,) if runtime is None else (store, runtime)
@@ -36,7 +43,7 @@ MANIFEST = FeatureManifest(
         DormantCategory(
             "plugins",
             "the tools of the operator's published plugins, and writing and testing new "
-            + "plugins: tools in Python that run in the platform VM",
+            + "plugins: tools in Python that each run in a VM of their own",
         ),
     ),
     build=_build,

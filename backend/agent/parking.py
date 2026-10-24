@@ -173,7 +173,7 @@ def announcements(
                 summary=summarize_call(call.tool_name, args),
                 explanation=explanation if isinstance(explanation, str) else None,
                 guard=guard_reason,
-                unconfined=unconfined(call.tool_name, args, settings=get_settings()),
+                unconfined=unconfined(call.tool_name, settings=get_settings()),
             )
         )
     for call in requests.calls:

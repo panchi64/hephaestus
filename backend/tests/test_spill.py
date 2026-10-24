@@ -7,13 +7,13 @@ the code-mode toolset returns it.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
+import threading
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import InitVar, dataclass
 from pathlib import Path
-from typing import cast
+from typing import cast, override
 
 import pytest
 from pydantic_ai import FunctionToolset, ToolReturn
@@ -28,7 +28,7 @@ from core.config import Settings
 from core.container import ServiceContainer
 from core.untrusted import wrap_untrusted
 from runs import Run, RunStream
-from services.sandbox import SandboxSessionManager
+from services.home.scratch import HostFiles, ScratchDirs
 from tools import RunDeps
 from tools.code_mode_marks import RUN_CODE
 from tools.files import READ_PAGE_CHARS, files_toolset
@@ -63,38 +63,32 @@ class _Found:
         return [Citation(url=SOURCE, title="page")]
 
 
-class _Session:
-    def __init__(self, workspace: Path, *, fail: bool) -> None:
-        self._workspace: Path = workspace
-        self._fail: bool = fail
+class _BrokenFiles(HostFiles):
+    """A scratch whose writes fail, or block for a second and then fail."""
 
-    def ensure_workspace(self) -> Path:
-        self._workspace.mkdir(parents=True, exist_ok=True)
-        return self._workspace
-
-    def read_file(self, relpath: str) -> bytes:
-        return (self._workspace / relpath).read_bytes()
-
-    def write_file(self, relpath: str, content: bytes) -> None:
-        if self._fail:
-            raise OSError("disk full")
-        target = self._workspace / relpath
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _ = target.write_bytes(content)
-
-
-class _Manager:
-    def __init__(self, root: Path, *, fail: bool = False, hang: bool = False) -> None:
-        self._root: Path = root
-        self._fail: bool = fail
+    def __init__(self, root: Path, *, hang: bool) -> None:
+        super().__init__(root)
         self._hang: bool = hang
-        self.sessions: dict[str, _Session] = {}
 
-    async def acquire(self, key: str, *, holder: object = None) -> _Session:
-        del holder
+    @override
+    def write_file(self, relpath: str, content: bytes) -> None:
         if self._hang:
-            _ = await asyncio.Event().wait()
-        return self.sessions.setdefault(key, _Session(self._root / key, fail=self._fail))
+            _ = threading.Event().wait(1.0)
+        raise OSError("disk full")
+
+
+class _BrokenScratch(ScratchDirs):
+    def __init__(self, root: Path, *, hang: bool) -> None:
+        super().__init__(root)
+        self._hang: bool = hang
+
+    @override
+    def acquire(self, key: str) -> HostFiles:
+        return _BrokenFiles(self.path(key), hang=self._hang)
+
+
+def _scratch(root: Path, *, fail: bool, hang: bool) -> ScratchDirs:
+    return _BrokenScratch(root, hang=hang) if fail or hang else ScratchDirs(root)
 
 
 @pytest.fixture(autouse=True)
@@ -215,7 +209,7 @@ async def _run_tool(
     disabled: frozenset[str] | None = None,
 ) -> tuple[list[ModelMessage], Path]:
     caps = caps or ServiceContainer()
-    caps.add(_Manager(tmp_path, fail=fail, hang=hang), as_type=SandboxSessionManager)
+    caps.add(_scratch(tmp_path, fail=fail, hang=hang))
     agent = build_agent(_model(first, args), categories=_categories())
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     deps = RunDeps(
@@ -231,7 +225,7 @@ async def _run_tool(
     async with agent.iter("go", deps=deps) as agent_run:
         await stream_agent_run(agent_run, run)
     assert agent_run.result is not None
-    return agent_run.result.all_messages(), tmp_path / "c1"
+    return agent_run.result.all_messages(), ScratchDirs(tmp_path).path("c1")
 
 
 def _returns(messages: list[ModelMessage], tool: str) -> list[ToolReturnPart]:
@@ -444,7 +438,7 @@ async def test_an_oversized_untrusted_external_result_stays_fenced_when_cut(tmp_
 
 
 async def test_a_file_read_is_not_spilled(tmp_path: Path):
-    workspace = tmp_path / "c1"
+    workspace = ScratchDirs(tmp_path).path("c1")
     workspace.mkdir()
     _ = (workspace / "big.txt").write_text(BIG)
     messages, _ = await _run_tool(
@@ -507,7 +501,7 @@ async def test_a_sub_agent_thread_spills_into_its_owners_scratch(tmp_path: Path)
     messages, workspace = await _run_tool(tmp_path, "x_big", workspace_key="c1/w7")
     assert "tool-output/" in str(_content(messages, "x_big"))
     assert len(_saved(workspace)) == 1
-    assert not (tmp_path / "c1/w7").exists()
+    assert not ScratchDirs(tmp_path).path("c1/w7").exists()
 
 
 async def _read_back(
@@ -537,8 +531,8 @@ async def _read_back(
             }
 
     caps = caps or ServiceContainer()
-    if caps.get_optional(SandboxSessionManager) is None:
-        caps.add(_Manager(tmp_path), as_type=SandboxSessionManager)
+    if caps.get_optional(ScratchDirs) is None:
+        caps.add(ScratchDirs(tmp_path))
     agent = build_agent(FunctionModel(stream_function=reader), categories=_categories())
     run = Run(id="t2", kind="chat", owner_id="operator", stream=RunStream())
     deps = RunDeps(

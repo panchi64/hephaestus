@@ -1,4 +1,4 @@
-"""Plugins: tools the agent writes in Python, run in the platform VM once published."""
+"""Plugins: tools the agent writes in Python, run in a VM once published."""
 
 from core.exceptions import PluginValidationError
 

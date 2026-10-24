@@ -9,40 +9,22 @@ from pydantic_ai import RunContext
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import Workspace
 
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
 from runs import Run, RunStream
 from services.home.leases import WriteLeases
+from services.home.scratch import ScratchDirs
 from services.projects.store import ProjectStore
-from services.sandbox import SandboxSessionManager
 from services.settings_store import SettingsStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
 from tools.files import files_toolset
+from tools.home_workspace import home_workspace
 
 _TOOLSET = build_agent_toolsets({"files": files_toolset()})[0]
 README = "~/projects/api/README.md"
-
-
-class _Session:
-    def __init__(self, workspace: Path) -> None:
-        self._workspace: Path = workspace
-
-    def ensure_workspace(self) -> Path:
-        self._workspace.mkdir(parents=True, exist_ok=True)
-        return self._workspace
-
-
-class _Manager:
-    """Hands out one session per key, each with its own scratch directory."""
-
-    def __init__(self, root: Path) -> None:
-        self._root: Path = root
-
-    async def acquire(self, key: str, *, holder: object = None) -> _Session:
-        del holder
-        return _Session(self._root / "scratch" / key)
 
 
 async def project_caps(tmp_path: Path) -> tuple[ServiceContainer, Path]:
@@ -59,7 +41,7 @@ async def project_caps(tmp_path: Path) -> tuple[ServiceContainer, Path]:
     caps = ServiceContainer()
     caps.add(projects)
     caps.add(WriteLeases(engine, ttl_s=3600))
-    caps.add(_Manager(tmp_path), as_type=SandboxSessionManager)
+    caps.add(ScratchDirs(tmp_path / "scratch"))
     return caps, root
 
 
@@ -78,8 +60,10 @@ async def call_files(
     messages: list[ModelMessage] | None = None,
 ) -> str:
     """One files tool call, as a turn on ``conversation`` would make it."""
+    deps = run_deps(caps, conversation)
     ctx = RunContext(
-        deps=run_deps(caps, conversation),
+        deps=deps,
+        workspace=Workspace(home_workspace(deps)),
         messages=messages or [],
         model=TestModel(),
         usage=RunUsage(),

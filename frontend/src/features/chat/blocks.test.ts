@@ -54,7 +54,7 @@ function host(id: string, phase: HostCommandPhase): AssistantBlock {
     id,
     command: {
       toolCallId: id,
-      name: "code_run_host_command",
+      name: "shell_run_on_host",
       command: "ls",
       phase,
     },

@@ -1,8 +1,8 @@
 """How a command that a fence stopped is reported, for the VM's fence and the host's.
 
-Both execution tools classify a finished command here, so a refusal reads the same
-whichever tool ran it. The result is a note for the model and, for a VM egress refusal that
-names its host, the host itself, which the command card offers to allow.
+A conversation's VM resolves only the hosts its egress allowlist names, so a refused host
+shows up as a name-resolution failure. The result is a note for the model and, where the
+output names the host, the host itself, which the command card offers to allow.
 """
 
 from __future__ import annotations
@@ -11,8 +11,6 @@ import fnmatch
 import re
 from dataclasses import dataclass
 from pathlib import Path
-
-from services.vm import DENIED_MARKER
 
 from .floor import credential_read_floor, is_protected_write
 from .network_errors import mentions_no_network
@@ -27,40 +25,17 @@ class Refusal:
     denied_host: str | None = None
 
 
-#: How a client reports the gateway's 407 to a request that carried no credentials.
-_PROXY_REFUSED_SIGNS = ("Proxy Authentication Required", "response 407", "hephaestus-egress")
-
-#: A refused HTTPS tunnel carries no body, so it is legible only in the client's own
-#: phrasing of the gateway's 403.
-_TUNNEL_DENIED_SIGNS = (
-    "tunnel connection failed: 403",
-    "connect tunnel failed, response 403",
-    "http code 403 from proxy after connect",
-)
-
-_DENIED_BODY_HOST = re.compile(re.escape(DENIED_MARKER) + r"\s+([^\s]+)", re.IGNORECASE)
-
-#: The places a client names the host it was reaching: a URL, urllib3's pool, curl's resolver.
+#: The places a client names the host it was reaching: curl's and Python's resolvers, a
+#: URL, urllib3's pool.
 _HOST_CANDIDATES = (
+    re.compile(r"Could not resolve host: ([A-Za-z0-9][A-Za-z0-9.-]*)"),
     re.compile(r"""host=['"]([^'"\s]+)['"]"""),
     re.compile(r"https?://([A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9])"),
-    re.compile(r"Could not resolve host: ([A-Za-z0-9][A-Za-z0-9.-]*)"),
 )
 
 _HOST_DENIAL_SIGNS = ("operation not permitted", "permission denied")
 
 _ABSOLUTE_PATH = re.compile(r"""(/[^\s'"`:]+)""")
-
-_OFFLINE_NOTE = (
-    "This command ran with reach `offline`, which has no network. The VM does have "
-    "network: run the same command again with reach `network` to reach the domains the "
-    "operator has allowed. Do not move it to `host`; installs and downloads belong in the VM."
-)
-
-_CREDENTIALS_NOTE = (
-    "The VM's egress gateway did not accept this command's proxy credentials. Run it "
-    "again; if it is refused the same way, tell the operator rather than moving it to `host`."
-)
 
 _READ_ONLY_NOTE = (
     "A project you may only read is mounted read-only. To change it, edit the file "
@@ -70,17 +45,13 @@ _READ_ONLY_NOTE = (
 
 
 def is_egress_denied(text: str) -> bool:
-    """Whether ``text`` reads as a connection the VM's gateway refused or that never left."""
-    return DENIED_MARKER.lower() in text.lower() or mentions_no_network(text)
+    """Whether ``text`` reads as a connection that never left the VM."""
+    return mentions_no_network(text)
 
 
 def denied_host(text: str) -> str | None:
-    """The host the gateway refused, when ``text`` names it."""
-    found = _DENIED_BODY_HOST.search(text)
-    if found is not None:
-        return found.group(1).strip().rstrip(".,;)").lower() or None
-    low = text.lower()
-    if not any(sign in low for sign in _TUNNEL_DENIED_SIGNS):
+    """The host a refused connection was for, when ``text`` names it."""
+    if not mentions_no_network(text):
         return None
     for pattern in _HOST_CANDIDATES:
         match = pattern.search(text)
@@ -92,25 +63,18 @@ def denied_host(text: str) -> str | None:
 def egress_note(host: str | None) -> str:
     named = f" (`{host}`)" if host else ""
     return (
-        f"The VM's egress gateway refused a host{named} this conversation has not been "
-        "allowed to reach. Ask for it with `code_request_egress`, then run the command again."
+        f"Your VM could not reach a host{named}: it reaches only the hosts this conversation "
+        "is allowed, and none while the platform is offline. Ask for it with "
+        "`code_request_egress`, then run the command again."
     )
 
 
-def vm_refusal(*, network: bool, ok: bool, stdout: str, stderr: str) -> Refusal | None:
+def vm_refusal(*, ok: bool, stdout: str, stderr: str) -> Refusal | None:
     """What the model should do about a refusal by the VM's fence, or None."""
     text = f"{stdout}\n{stderr}"
-    if DENIED_MARKER in text:
+    if not ok and mentions_no_network(text):
         host = denied_host(text)
         return Refusal(egress_note(host), host)
-    if not ok:
-        refused = "407" in text and any(sign in text for sign in _PROXY_REFUSED_SIGNS)
-        if network and refused:
-            return Refusal(_CREDENTIALS_NOTE)
-        if network and (host := denied_host(text)) is not None:
-            return Refusal(egress_note(host), host)
-        if not network and (refused or mentions_no_network(text)):
-            return Refusal(_OFFLINE_NOTE)
     if "Read-only file system" in text:
         return Refusal(_READ_ONLY_NOTE)
     return None

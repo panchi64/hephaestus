@@ -33,22 +33,9 @@ export interface ToolEntry extends ToolPresentation {
   keys?: readonly string[];
   /** `[singular, plural]` for a counted result — "12 entries", "1 match". */
   noun?: readonly [string, string];
-  /** Present when the call renders as a **terminal** rather than as a tool card: the
-   *  command line, its approval, and its output as one continuous readout that never
-   *  splits into an approval card and a separate result.
-   *
-   *  It is here, on the table, and not as a name test in the fold. Running a command
-   *  is the thing the operator most needs to see happen, and there is more than one
-   *  tool that does it — the fold used to ask `name === code_run_host_command` in four
-   *  separate event cases, which is four places to remember when a second one lands,
-   *  and is why `shell_run_command` (a worktree thread's only way to run anything, already
-   *  carrying the terminal glyph two rows below) fell through to a generic card.
-   *
-   *  It used to say *how* the tool reported, because the worktree shell answered with
-   *  one labelled string the client had to pull apart while the sandboxed one answered
-   *  with a record. Both answer with a record now, so the distinction had one value
-   *  left and no second reading — a flag is the honest shape of the question that
-   *  remains. */
+  /** Present when the call renders as a **terminal**: the command line, its approval and
+   *  its output as one readout, not an approval card and a separate result. Declared on
+   *  this table so the fold never tests a tool name. */
   terminal?: true;
   /** The argument that holds a program the call runs. The open card shows it as code
    *  and leaves it out of the argument dump, which would otherwise print the whole
@@ -111,6 +98,14 @@ const CATEGORY_PREPARING: Record<string, string> = {
 };
 
 const DEFAULT_ICON: IconName = "plug";
+
+const HOST_COMMAND_ENTRY: ToolEntry = {
+  icon: "terminal",
+  label: "Host command",
+  keys: ["explanation", "command"],
+  terminal: true,
+  preparing: "Composing a host command",
+};
 
 export const TOOLS: Record<string, ToolEntry> = {
   // Both keys, in this order: which agent is most of what the row says, and the task is
@@ -309,13 +304,8 @@ export const TOOLS: Record<string, ToolEntry> = {
     keys: ["code"],
     preparing: "Writing code to run",
   },
-  code_run_host_command: {
-    icon: "terminal",
-    label: "Host command",
-    keys: ["explanation", "command"],
-    terminal: true,
-    preparing: "Composing a host command",
-  },
+  shell_run_on_host: HOST_COMMAND_ENTRY,
+  code_run_host_command: HOST_COMMAND_ENTRY,
 
   corpus_retrieve: {
     icon: "library",

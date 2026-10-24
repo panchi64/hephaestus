@@ -1,7 +1,7 @@
 """The `plugins` category: the model writing plugins, and the tools published ones add.
 
-**What an agent writes is a draft.** It runs only through ``plugins_test``, in the
-platform VM, reaching only the hosts this conversation may already reach. The operator
+**What an agent writes is a draft.** It runs only through ``plugins_test``, in a
+VM of its own, reaching only the hosts this conversation may already reach. The operator
 reads the draft and publishes it; only then do its tools join this category,
 each gated by the class its manifest declares and reaching only its declared hosts.
 
@@ -48,7 +48,7 @@ GATED_TOOLS: frozenset[str] = frozenset({"plugins_test"})
 
 _UNAVAILABLE = "Plugins cannot be written in this deployment."
 _NO_VM = render_tool_error(
-    "plugins run in the platform VM, which is not running right now",
+    "plugins run in a VM, which is not running right now",
     hints=["carry on without this plugin, and tell the operator if the task needs it"],
 )
 _READ_MAX_CHARS = 200_000
@@ -65,7 +65,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         files: dict[str, str],
         remove: list[str] | None = None,
     ) -> dict[str, object]:
-        """Drafts a plugin, a set of tools written in Python that run in the platform VM,
+        """Drafts a plugin, a set of tools written in Python that each run in a VM of their own,
         or revises its draft. Write one when the operator wants a lasting capability the
         platform lacks, such as a client for an API they use; for a one-off task, write
         and run the code directly instead.

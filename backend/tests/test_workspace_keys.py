@@ -8,16 +8,10 @@ import asyncio
 from pathlib import Path
 from typing import final, override
 
+from services.home.scratch import HostFiles, ScratchDirs
 from services.projects.repo import WorktreeState, child_branch_for
 from services.projects.worktree import WorktreeManager
-from services.sandbox import LiveWork
-from services.workspace import (
-    WorkspaceSession,
-    WorkspaceSessions,
-    sandbox_workspace,
-    scratch_key,
-    split_workspace_key,
-)
+from services.workspace import sandbox_workspace, scratch_key, split_workspace_key
 
 
 async def _run(cwd: Path, *args: str) -> None:
@@ -109,53 +103,32 @@ class TestReopeningAChildWorktree:
 
 
 @final
-class _FakeSession(WorkspaceSession):
-    """Only what resolving a workspace asks of a session."""
+class _RecordingScratch(ScratchDirs):
+    """Records which keys `sandbox_workspace` opened."""
 
     def __init__(self, root: Path) -> None:
-        self.root: Path = root
-
-    @override
-    def ensure_workspace(self) -> Path:
-        self.root.mkdir(parents=True, exist_ok=True)
-        return self.root
-
-    @override
-    def read_file(self, relpath: str) -> bytes:
-        raise AssertionError(f"unexpected call: read_file {relpath}")
-
-    @override
-    def write_file(self, relpath: str, content: bytes) -> None:
-        raise AssertionError(f"unexpected call: write_file {relpath}")
-
-
-@final
-class _FakeSessions(WorkspaceSessions):
-    """A sandbox manager as `sandbox_workspace` uses one, recording which keys it opened."""
-
-    def __init__(self, tmp_path: Path) -> None:
-        self._root: Path = tmp_path
+        super().__init__(root)
         self.acquired: list[str] = []
 
     @override
-    async def acquire(self, key: str, *, holder: LiveWork | None = None) -> _FakeSession:
+    def acquire(self, key: str) -> HostFiles:
         self.acquired.append(key)
-        return _FakeSession(self._root / key)
+        return super().acquire(key)
 
 
 class TestOpeningTheScratch:
-    async def test_an_ordinary_key_is_the_conversations_own_session(self, tmp_path: Path):
-        sessions = _FakeSessions(tmp_path)
-        _ = await sandbox_workspace(sessions, "c1")
-        assert sessions.acquired == ["c1"]
+    def test_an_ordinary_key_is_the_conversations_own_scratch(self, tmp_path: Path):
+        scratch = _RecordingScratch(tmp_path)
+        _ = sandbox_workspace(scratch, "c1")
+        assert scratch.acquired == ["c1"]
 
-    async def test_a_delegated_key_opens_its_owners_session(self, tmp_path: Path):
-        sessions = _FakeSessions(tmp_path)
+    def test_a_delegated_key_opens_its_owners_scratch(self, tmp_path: Path):
+        scratch = _RecordingScratch(tmp_path)
 
-        workspace = await sandbox_workspace(sessions, "c1/s-ab12")
+        workspace = sandbox_workspace(scratch, "c1/s-ab12")
 
-        assert sessions.acquired == ["c1"]
-        assert workspace.root == tmp_path / "c1"
+        assert scratch.acquired == ["c1"]
+        assert workspace.root == scratch.path("c1")
 
 
 async def _log(path: Path) -> str:

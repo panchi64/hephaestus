@@ -33,11 +33,11 @@ from services.home.paths import Place
 from services.home.table import child_worktree_name
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.repo import WorktreeError, branch_for, child_branch_for
-from services.sandbox.thread_shells import ThreadShells
 from services.subagent_store import SubagentStore
 from services.subagents import FiledReport
 from services.subagents.callsigns import designation
 from services.subagents.report import report_heading
+from services.vm import ConversationMachines
 from services.workspace import split_workspace_key
 
 logger = logging.getLogger(__name__)
@@ -236,10 +236,10 @@ class SubagentWake:
             or projects is None
         ):
             return None
-        # What it left running writes into the worktree being committed, so it stops first.
-        shells = self._ctx.capabilities.get_optional(ThreadShells)
-        if shells is not None:
-            await shells.close(row.workspace_key or "")
+        # What it left running writes into the worktree being committed, so its VM goes first.
+        machines = self._ctx.capabilities.get_optional(ConversationMachines)
+        if machines is not None and row.workspace_key:
+            await machines.release(row.workspace_key)
         try:
             changed = await worktrees.child_changes(
                 project_id=row.project_id,

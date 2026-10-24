@@ -4,7 +4,7 @@ Four layers, fastest-first:
 - ``extract`` — the trafilatura→innerText cascade over an HTML string (no browser).
 - ``RequestGuard`` — the per-request SSRF policy (no browser; IP literals stay offline).
 - ``BrowserFetcher`` — pre-flight refusal + degrade, and a real Chromium render in the
-  platform VM that proves JavaScript-injected content is captured (skipped without a real VM).
+  services VM that proves JavaScript-injected content is captured (skipped without a real VM).
 - the agent reaching ``web_fetch`` through the toolset stack.
 """
 
@@ -30,8 +30,7 @@ from pydantic_ai.settings import ModelSettings
 from core.config import Settings
 from core.exceptions import SSRFError, WebFetchError
 from core.text import tokens_to_chars, truncate_on_boundary
-from services.vm import PlatformVM
-from services.vm.smolvm import SmolvmDriver
+from services.vm import GuestImage, Platform, ServicesMachine
 from services.webfetch import BrowserFetcher, FetchedPage, ManagedBrowser
 from services.webfetch.cookies import DomainCookieJar
 from services.webfetch.distill import WebDistiller
@@ -765,29 +764,31 @@ async def test_fetch_pdf_text_size_cap(monkeypatch: pytest.MonkeyPatch):
 # --- VM-hosted browser: a real render (skipped without a real VM) ------------
 
 
-async def _browser_or_skip(tmp_path: Path) -> tuple[ManagedBrowser, PlatformVM]:
-    """A browser in a real platform VM; set ``HEPHAESTUS_TEST_VM=1`` on a host that has the
-    VM backend and its image to run it."""
+async def _browser_or_skip(tmp_path: Path) -> tuple[ManagedBrowser, ServicesMachine, Platform]:
+    """A browser in a real services VM; set ``HEPHAESTUS_TEST_VM=1`` on a host that can run
+    machines to run it."""
     if not os.environ.get("HEPHAESTUS_TEST_VM"):
-        pytest.skip("set HEPHAESTUS_TEST_VM=1 to render in a real platform VM")
+        pytest.skip("set HEPHAESTUS_TEST_VM=1 to render in a real services VM")
     settings = Settings(data_dir=tmp_path)
-    vm = PlatformVM(
-        SmolvmDriver(
-            state_dir=tmp_path / "vm",
-            cpus=settings.vm_cpus,
-            memory_mb=settings.vm_memory_mb,
-            disk_gb=settings.vm_disk_gb,
-            boot_timeout_s=settings.vm_boot_timeout_s,
-            provision_timeout_s=settings.vm_provision_timeout_s,
-            image=Path(settings.vm_image) if settings.vm_image else None,
+    platform = Platform(
+        GuestImage(
+            tmp_path / "images",
             ca_bundle=Path(settings.vm_ca_bundle) if settings.vm_ca_bundle else None,
-        ),
-        scratch=tmp_path / "vm" / "transfer",
+            override=Path(settings.vm_image) if settings.vm_image else None,
+        )
+    )
+    await platform.start()
+    vm = ServicesMachine(
+        platform,
+        name=f"heph-test-{os.getpid()}-services",
+        cpus=settings.vm_services_cpus,
+        memory_mb=settings.vm_services_memory_mb,
     )
     await vm.start()
-    if not await vm.wait_ready(settings.vm_boot_timeout_s + settings.vm_provision_timeout_s):
+    if not await vm.wait_ready(3600.0):
         await vm.stop()
-        pytest.fail(f"the platform VM did not come up: {vm.failure}")
+        await platform.stop()
+        pytest.fail(f"the services VM did not come up: {vm.failure}")
     browser = ManagedBrowser(
         enabled=True,
         vm=vm,
@@ -801,8 +802,9 @@ async def _browser_or_skip(tmp_path: Path) -> tuple[ManagedBrowser, PlatformVM]:
     if not await browser.wait_available(600.0):
         await browser.stop()
         await vm.stop()
-        pytest.fail("the browser did not connect in the platform VM")
-    return browser, vm
+        await platform.stop()
+        pytest.fail("the browser did not connect in the services VM")
+    return browser, vm, platform
 
 
 async def _allow_all(_url: str) -> None:
@@ -816,7 +818,7 @@ async def _js(page: Page, expression: str) -> object:
 async def test_vm_browser_renders_js_extracts_and_is_stealthed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    browser, vm = await _browser_or_skip(tmp_path)
+    browser, vm, platform = await _browser_or_skip(tmp_path)
     try:
         # 1) The fetch pipeline renders a JS-built page and extracts its content as Markdown.
         # Let the synthetic data: URL past the entry pre-flight (the guard treats data: as
@@ -888,6 +890,7 @@ async def test_vm_browser_renders_js_extracts_and_is_stealthed(
     finally:
         await browser.stop()
         await vm.stop()
+        await platform.stop()
 
 
 # --- agent reaches the fetch tool through the toolset stack ----------------

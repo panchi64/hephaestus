@@ -1,11 +1,12 @@
-"""Plugins: tools written as Python that run in the platform VM.
+"""Plugins: tools written as Python that run in a VM.
 
 A plugin's files are sealed as one bundle. ``active_enc`` is the published version, the
 one its tools run; ``draft_enc`` is the working copy an agent or the operator edits,
 which runs only when tested until the operator publishes it. Earlier published versions
 live in ``revisions``.
 
-A secret's value is sealed here and is sent only by the egress gateway, to ``domain``.
+A secret's value is sealed here and is injected by smol's ``CredentialSpec`` only in
+requests to ``domain``.
 """
 
 from __future__ import annotations

@@ -10,18 +10,13 @@ propose is the wrong posture, and a model that does not know why its tools are m
 reads a deliberately narrowed catalog as a broken installation and says so. At **Manual**
 every change stops on the operator, so how the work is *shaped* changes: ten separate
 edits are ten interruptions, and the model is the only thing that can group them. At
-**Auto** there is one thing the model is asked to *state* rather than merely do — the
-reach a command needs — and a declaration nothing explained would be filled in by guess.
-At **Yolo** that same declaration is still what the sandbox is built from, and it is now
-the *only* thing reading it — so the fragment has to say both that nothing will stop the
-work and that the one statement the model makes about it is still load-bearing.
+**Auto** the model is asked to prefer work that stays in its home and reaches no network,
+which is what the review settles for free. At **Yolo** nothing reviews, so the fragment has
+to say both that nothing will stop the work and that the VM still bounds it.
 
 **A fragment is delivered at its level in every workspace, so it may claim nothing about the
-catalog.** The tools that take a ``reach`` are the shell's, and an operator can switch the shell
-off; a sentence beginning "every shell command" would be a false premise in a thread that was
-never offered it. It is written as the
-conditional it actually is — *where* a tool asks how far a command reaches — which costs a clause
-and is true everywhere the fragment is delivered.
+catalog.** An operator can switch the shell off; a sentence beginning "every shell command"
+would be a false premise in a thread that was never offered it.
 
 **Edit says nothing.** It is the level the base prompt was written for — act, the approval
 gate catches what is genuinely dangerous — and repeating that here would spend
@@ -72,20 +67,16 @@ of work instead of a dozen fragments of it."""
 
 
 # Auto: the level where the approvals are given for the model, by a review it never sees
-# the rules of. Only two things here are the model's to act on — declare the reach, and
-# prefer the contained approach — and both are said in the plainest way available. The
-# review's own rubric is deliberately not restated: a model told what clears the bar writes
-# for the bar rather than writing the truth, which is the same reason the reviewer is never
-# told the passing combination either (`prompts/utility.py`).
+# the rules of. Only one thing here is the model's to act on — prefer the contained
+# approach. The review's own rubric is deliberately not restated: a model told what clears
+# the bar writes for the bar rather than writing the truth, which is the same reason the
+# reviewer is never told the passing combination either (`prompts/utility.py`).
 AUTO_LEVEL = """\
 This thread is at the Auto level: a review decides in the operator's place, and only what \
 it will not settle stops for them. Work that stays inside your home and reaches no \
-network is settled without asking anyone, so prefer the approach that stays there. Where \
-a tool asks how far a command needs to reach, answer it honestly — that declaration is \
-what the sandbox around the command is built from, and one that needs more than it \
-declared fails inside that sandbox rather than going ahead. Anything reaching the network \
-is reviewed, and anything whose effect could not be undone stops for the operator however \
-plainly it was asked for."""
+network is settled without asking anyone, so prefer the approach that stays there. \
+Anything reaching the network is reviewed, and anything whose effect could not be undone \
+stops for the operator however plainly it was asked for."""
 
 
 # Yolo: nothing reviews, nothing parks, and the model is the last thing standing between
@@ -94,12 +85,8 @@ plainly it was asked for."""
 # model told what the bar is writes for the bar (the reason the reviewer's own rules are
 # never restated to it either).
 #
-# The second paragraph is the load-bearing one, and it is about *reach* rather than about
-# caution. At Auto a dishonest declaration was caught twice, by the review and by the
-# fence; here only the fence is left, and a model that reads "nothing will stop me" as
-# "the reach argument no longer matters" declares `host` for convenience and throws away
-# the one bound the operator still has. The clause is conditional for the same reason
-# Auto's is — the tools that take a reach are the shell's, and the shell is code mode's.
+# The second paragraph is the load-bearing one: with no review left, the conversation VM
+# is the one bound the operator still has, and the host tool is the way past it.
 YOLO_LEVEL = """\
 This thread is at the Yolo level: the operator has turned every approval off, and nothing \
 you do here will pause for them — not a command, not a message sent, not a credential \
@@ -108,8 +95,6 @@ front of you. Work as carefully as you would if each of these were being read be
 ran, because none of them will be, and say plainly in the turn what you actually did \
 rather than leaving them to discover it.
 
-The sandbox has not gone anywhere. Where a tool asks how far a command needs to reach, \
-that answer is now the only thing deciding what the command is held to, so give it \
-honestly and no wider than the work needs: take `offline` wherever the work needs no \
-network, and ask for more only where it genuinely does. Over-declaring buys \
-you nothing here and removes the last bound on a command that goes wrong."""
+The VM has not gone anywhere. Your commands still run in it, held to the folders it \
+mounts and the hosts this conversation may reach, and that is now the only bound on a \
+command that goes wrong. Use the host only where the work cannot be done inside the VM."""

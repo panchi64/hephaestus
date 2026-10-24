@@ -5,15 +5,10 @@ says so (:mod:`judge`, structurally, then the decision model in :mod:`decision_r
 Imported through the package, so a caller names one home for all of it."""
 
 from services.permissions.capability import (
-    DEFAULT_REACH,
-    REACHES,
     ActionKind,
     Capability,
-    Reach,
     capability_of,
-    declared_reach,
     measured_against_root,
-    renamed_reach,
 )
 from services.permissions.decide import (
     Decision,
@@ -65,7 +60,6 @@ from services.permissions.shell_ast import ShellCommand, command_prefixes, strip
 __all__ = [
     "ACTING_PERMISSIONS",
     "DEFAULT_PERMISSION",
-    "DEFAULT_REACH",
     "PERMISSIONS",
     "PERMISSION_LADDER",
     "PERMISSION_LEVELS",
@@ -73,7 +67,6 @@ __all__ = [
     "LEVEL_EXEMPT_TOOLS",
     "OPERATOR_ONLY_TOOLS",
     "PLANNING_TOOLS",
-    "REACHES",
     "STRICTEST_PERMISSION",
     "ActionKind",
     "ApprovalPolicy",
@@ -86,7 +79,6 @@ __all__ = [
     "PermissionLevel",
     "PermissionSpec",
     "PriorApproval",
-    "Reach",
     "ReviewBudget",
     "ReviewOutcome",
     "ReviewRequest",
@@ -105,12 +97,10 @@ __all__ = [
     "capability_of",
     "command_prefixes",
     "decide",
-    "declared_reach",
     "judge",
     "measured_against_root",
     "permission_level",
     "permission_spec",
-    "renamed_reach",
     "review",
     "review_transcript",
     "stricter_permission",

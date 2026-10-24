@@ -16,6 +16,7 @@ from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import Workspace
 
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
@@ -24,47 +25,21 @@ from runs import Run, RunStream
 from services.home.changes import ThreadChanges
 from services.home.leases import WriteLeases
 from services.home.paths import Place
+from services.home.scratch import ScratchDirs
 from services.projects.store import ProjectStore
-from services.sandbox import SandboxSessionManager
 from services.settings_store import SettingsStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
 from tools.files import files_toolset
-
-
-class _Session:
-    """A session whose workspace is a real directory on disk."""
-
-    def __init__(self, workspace: Path) -> None:
-        self._workspace: Path = workspace
-        self.ensured: int = 0
-
-    def ensure_workspace(self) -> Path:
-        self.ensured += 1
-        self._workspace.mkdir(parents=True, exist_ok=True)
-        return self._workspace
-
-
-class _Manager:
-    """Hands out one session per key, each with its own workspace directory."""
-
-    def __init__(self, root: Path) -> None:
-        self._root: Path = root
-        self.sessions: dict[str, _Session] = {}
-
-    async def acquire(self, key: str, *, holder: object = None) -> _Session:
-        del holder
-        if key not in self.sessions:
-            self.sessions[key] = _Session(self._root / key)
-        return self.sessions[key]
+from tools.home_workspace import home_workspace
 
 
 def _deps(
-    manager: _Manager | None, conversation_id: str, extra: ServiceContainer | None = None
+    manager: ScratchDirs | None, conversation_id: str, extra: ServiceContainer | None = None
 ) -> tuple[Run, RunDeps]:
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     caps = extra or ServiceContainer()
-    if manager is not None and caps.get_optional(SandboxSessionManager) is None:
-        caps.add(manager, as_type=SandboxSessionManager)
+    if manager is not None and caps.get_optional(ScratchDirs) is None:
+        caps.add(manager)
     return run, RunDeps(run=run, owner_id="operator", caps=caps, conversation_id=conversation_id)
 
 
@@ -79,7 +54,7 @@ async def _call(
     tool: str,
     args: dict[str, object],
     *,
-    manager: _Manager | None,
+    manager: ScratchDirs | None,
     conversation_id: str = "conv-1",
     caps: ServiceContainer | None = None,
     approved: bool = False,
@@ -102,6 +77,7 @@ async def _call(
     # synthetic context has none of, so name the owner directly.
     ctx = RunContext(
         deps=deps,
+        workspace=Workspace(home_workspace(deps)),
         model=TestModel(),
         usage=RunUsage(),
         _event_stream_buffer=[],
@@ -136,7 +112,7 @@ async def test_a_sandbox_thread_reads_a_project_by_its_home_path(tmp_path: Path)
     caps, root, _leases = await _with_project(tmp_path)
     _ = (root / "CLAUDE.md").write_text("Run the checks with `make check`.\n")
     read = await _call(
-        "read_file", {"path": "~/projects/api/README.md"}, manager=_Manager(tmp_path), caps=caps
+        "read_file", {"path": "~/projects/api/README.md"}, manager=ScratchDirs(tmp_path), caps=caps
     )
     # The first touch of the project carries how to work in it.
     assert "the api" in str(read) and "make check" in str(read)
@@ -144,19 +120,20 @@ async def test_a_sandbox_thread_reads_a_project_by_its_home_path(tmp_path: Path)
 
 async def test_a_listing_with_no_folder_named_is_of_the_threads_own_place(tmp_path: Path):
     caps, _root, _leases = await _with_project(tmp_path)
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     _ = await _call("write_file", {"path": "mine.txt", "content": "x"}, manager=manager, caps=caps)
     listed = str(await _call("list_directory", {}, manager=manager, caps=caps))
     assert "mine.txt" in listed and "README.md" not in listed
     home = str(await _call("list_directory", {"path": "~"}, manager=manager, caps=caps))
-    assert "projects" in home and "scratch" in home
+    # The thread's scratch is its working directory, so the listing names it as `./`.
+    assert "../projects/" in home and "./" in home and "../shared/" in home
 
 
 async def test_the_scratch_alias_names_the_same_file(tmp_path: Path):
     # `/work/...` is how the code tool and a sandbox workspace name scratch, so a path one
     # tool hands back has to be one the file tools take.
     caps, _root, _leases = await _with_project(tmp_path)
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     args: dict[str, object] = {"path": "/work/report.md", "content": "ok"}
     _ = await _call("write_file", args, manager=manager, caps=caps)
     read = await _call("read_file", {"path": "~/scratch/report.md"}, manager=manager, caps=caps)
@@ -166,13 +143,13 @@ async def test_the_scratch_alias_names_the_same_file(tmp_path: Path):
 async def test_a_relative_path_is_inside_the_threads_own_place(tmp_path: Path):
     # A folder of the thread's own named like a group of the home is still its own folder.
     caps, _root, _leases = await _with_project(tmp_path)
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     # With no such folder of its own, it is the home's: models drop the `~/`.
     dropped = await _call(
         "read_file", {"path": "projects/api/README.md"}, manager=manager, caps=caps
     )
     assert "the api" in str(dropped)
-    (tmp_path / "conv-1" / "projects" / "api").mkdir(parents=True)
+    (manager.path("conv-1") / "projects" / "api").mkdir(parents=True)
     args: dict[str, object] = {"path": "projects/api/x.md", "content": "mine"}
     _ = await _call("write_file", args, manager=manager, caps=caps)
     read = await _call(
@@ -187,13 +164,13 @@ async def test_a_write_into_a_project_the_thread_may_only_read_asks_first(tmp_pa
     caps, root, _leases = await _with_project(tmp_path)
     args: dict[str, object] = {"path": "~/projects/api/notes.md", "content": "hi"}
     with pytest.raises(ApprovalRequired):
-        _ = await _call("write_file", args, manager=_Manager(tmp_path), caps=caps)
+        _ = await _call("write_file", args, manager=ScratchDirs(tmp_path), caps=caps)
     assert not (root / "notes.md").exists()
 
 
 async def test_an_approved_write_leases_the_project_to_the_thread(tmp_path: Path):
     caps, root, leases = await _with_project(tmp_path)
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     args: dict[str, object] = {"path": "~/projects/api/notes.md", "content": "hi"}
     _ = await _call("write_file", args, manager=manager, caps=caps, approved=True)
     assert (root / "notes.md").read_text() == "hi"
@@ -211,7 +188,7 @@ async def test_a_delegated_agent_cannot_take_write_access(tmp_path: Path):
     caps, root, leases = await _with_project(tmp_path)
     args: dict[str, object] = {"path": "~/projects/api/notes.md", "content": "hi"}
     refused = await _call(
-        "write_file", args, manager=_Manager(tmp_path), caps=caps, approved=True, delegated=True
+        "write_file", args, manager=ScratchDirs(tmp_path), caps=caps, approved=True, delegated=True
     )
     assert "read-only to you" in str(refused)
     assert not (root / "notes.md").exists()
@@ -219,11 +196,11 @@ async def test_a_delegated_agent_cannot_take_write_access(tmp_path: Path):
 
 
 async def test_each_conversation_reads_and_writes_its_own_workspace(tmp_path: Path):
-    manager = _Manager(tmp_path)
-    (tmp_path / "conv-1").mkdir()
-    (tmp_path / "conv-2").mkdir()
-    _ = (tmp_path / "conv-1" / "note.txt").write_text("first thread")
-    _ = (tmp_path / "conv-2" / "note.txt").write_text("second thread")
+    manager = ScratchDirs(tmp_path)
+    (manager.path("conv-1")).mkdir()
+    (manager.path("conv-2")).mkdir()
+    _ = (manager.path("conv-1") / "note.txt").write_text("first thread")
+    _ = (manager.path("conv-2") / "note.txt").write_text("second thread")
 
     one = await _call("read_file", {"path": "note.txt"}, manager=manager, conversation_id="conv-1")
     two = await _call("read_file", {"path": "note.txt"}, manager=manager, conversation_id="conv-2")
@@ -234,13 +211,13 @@ async def test_each_conversation_reads_and_writes_its_own_workspace(tmp_path: Pa
 
 
 async def test_write_lands_in_the_conversation_workspace(tmp_path: Path):
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     _ = await _call("write_file", {"path": "result.txt", "content": "hello"}, manager=manager)
-    assert (tmp_path / "conv-1" / "result.txt").read_text() == "hello"
+    assert (manager.path("conv-1") / "result.txt").read_text() == "hello"
 
 
 async def test_paths_outside_the_workspace_are_refused(tmp_path: Path):
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     secret = tmp_path / "secret.txt"
     _ = secret.write_text("not the agent's")
 
@@ -253,11 +230,11 @@ async def test_paths_outside_the_workspace_are_refused(tmp_path: Path):
 
 
 async def test_a_symlink_out_of_the_workspace_is_refused(tmp_path: Path):
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     outside = tmp_path / "outside.txt"
     _ = outside.write_text("host side")
-    (tmp_path / "conv-1").mkdir(exist_ok=True)
-    (tmp_path / "conv-1" / "link.txt").symlink_to(outside)
+    (manager.path("conv-1")).mkdir(exist_ok=True)
+    (manager.path("conv-1") / "link.txt").symlink_to(outside)
 
     # Containment resolves symlinks before authorizing, so a link is not a way out —
     # the case a naive prefix check on the *unresolved* path would miss.
@@ -275,8 +252,8 @@ async def test_a_correctable_failure_comes_back_as_a_retry_not_a_dead_run(tmp_pa
     this repo would notice it going away. Also pinned: the message names the path the way
     the model spelled it, never an absolute host path.
     """
-    manager = _Manager(tmp_path)
-    (tmp_path / "conv-1").mkdir(exist_ok=True)
+    manager = ScratchDirs(tmp_path)
+    (manager.path("conv-1")).mkdir(exist_ok=True)
 
     missing = await _call("read_file", {"path": "nope.txt"}, manager=manager)
     assert isinstance(missing, str)
@@ -299,16 +276,14 @@ async def test_no_sandbox_runtime_degrades_instead_of_failing():
 
 
 async def test_reading_materializes_the_workspace_without_the_vm(tmp_path: Path):
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     _ = await _call("list_directory", {"path": "."}, manager=manager)
-    # The session was asked for its workspace (which restores a sealed one), and nothing
-    # else — browsing files must not pay for a VM round trip.
-    assert manager.sessions["conv-1"].ensured >= 1
+    assert manager.settled_workspace("conv-1") is not None
 
 
 async def test_a_sub_agent_writes_where_its_parent_may_and_nowhere_new(tmp_path: Path):
     caps, root, leases = await _with_project(tmp_path)
-    manager = _Manager(tmp_path)
+    manager = ScratchDirs(tmp_path)
     write: dict[str, object] = {"path": "~/projects/api/notes.md", "content": "hi"}
 
     async def child(*, approved: bool = False) -> object:

@@ -5,9 +5,8 @@ import { isTerminalTool } from "./toolPresentation";
 /**
  * Which tools render as a terminal, and how a command's result becomes one.
  *
- * The table is the point. The fold used to ask `name === code_run_host_command` in four
- * separate event cases, so the worktree shell — a worktree thread's only way to run anything at
- * all — fell through to a generic tool card while carrying the terminal glyph.
+ * The table is the point. The fold asks the table, not a tool name, so every command tool
+ * renders as a terminal.
  *
  * The **second** point is the object/string split. Both command tools answer with a
  * record when they execute and a plain sentence when a guard refused them, so the shape
@@ -17,6 +16,7 @@ import { isTerminalTool } from "./toolPresentation";
 
 describe("the table says which calls are terminals", () => {
   test("both tools that run a command", () => {
+    expect(isTerminalTool("shell_run_on_host")).toBe(true);
     expect(isTerminalTool("code_run_host_command")).toBe(true);
     expect(isTerminalTool("shell_run_command")).toBe(true);
   });

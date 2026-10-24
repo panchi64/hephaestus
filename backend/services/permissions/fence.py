@@ -30,8 +30,7 @@ class HomeFence:
 
     def scratch_only(self, command: str) -> bool:
         """Whether ``command`` would see the thread's scratch and nothing else of the home:
-        it stands in scratch and names no project or worktree
-        (`services/sandbox/home_shell.py`)."""
+        it stands in scratch and names no project or worktree."""
         try:
             here = parse(self.cwd).place
         except HomePathError:
@@ -39,8 +38,8 @@ class HomeFence:
         return here == SCRATCH and not places_named(command)
 
 
-#: Folders each shell command gets a fresh, empty tmpfs of, dropped when it ends
-#: (`vm/guest/confine.py`), and the streams every process has.
+#: Folders that exist only inside the conversation's VM, never on the host, and the
+#: streams every process has.
 _JOB_PRIVATE = ("/tmp", "/dev/shm")
 _STREAMS = frozenset({"/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"})
 

@@ -16,8 +16,8 @@ from core.exceptions import PluginValidationError
 from routes.deps import app_state
 from runs import Run, RunStream
 from services.agents import AgentCatalog
+from services.home.scratch import ScratchDirs
 from services.plugins import PluginStore, validate_files
-from services.sandbox import SandboxSessionManager
 from services.skills import SkillStore
 from tools.deps import RunDeps
 from tools.skills import skill_catalog
@@ -120,7 +120,7 @@ def _deps(
     if skills is not None:
         caps.add(skills)
     if sessions is not None:
-        caps.add(sessions, as_type=SandboxSessionManager)
+        caps.add(sessions, as_type=ScratchDirs)
     run = Run(id="run-1", kind="chat", owner_id=OWNER, stream=RunStream())
     return RunDeps(run=run, owner_id=OWNER, conversation_id="conv-1", caps=caps)
 

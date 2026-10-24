@@ -3,7 +3,7 @@ both of their services.
 
 Search queries the backend's own SearXNG (zero operator setup; an enabled provider
 in the encrypted registry overrides it). Fetch renders every page in a headless
-browser in the platform VM before extraction — the open web is treated as
+browser in the services VM before extraction — the open web is treated as
 always-dynamic. Offline mode probes connectivity first and owns bringing both
 services up/down, so a host that boots offline never launches the heavy browser.
 """
@@ -24,7 +24,7 @@ from services.registry import ModelRegistry
 from services.search import SearchService
 from services.searxng import ManagedSearxng
 from services.settings_store import SettingsStore
-from services.vm import PlatformVM
+from services.vm import ServicesMachine
 from services.webfetch import BrowserFetcher, ManagedBrowser, WebDistiller
 from tools.search import web_toolset
 
@@ -32,8 +32,8 @@ from tools.search import web_toolset
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     settings = ctx.settings
     registry = ctx.services.get(ModelRegistry)
-    vm = ctx.services.get_optional(PlatformVM) if settings.vm_enabled else None
-    # Managed web search — the backend runs its own SearXNG in the platform VM. It is
+    vm = ctx.services.get_optional(ServicesMachine) if settings.vm_enabled else None
+    # Managed web search — the backend runs its own SearXNG in the services VM. It is
     # not started here: the offline-mode service (below) owns bringing both web
     # services up — probe-first. Its stop registers
     # before the monitor's, so the monitor stops first and never fights the teardown.
@@ -57,7 +57,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         timeout_s=settings.web_search_timeout_s,
         result_limit=settings.web_search_result_limit,
     )
-    # Web fetch — a headless Chromium in the platform VM + the render-and-extract
+    # Web fetch — a headless Chromium in the services VM + the render-and-extract
     # fetcher. Bring-up is best-effort: without the VM the browser is unavailable
     # and web fetch degrades, like managed search.
     browser = ManagedBrowser(
@@ -136,7 +136,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     await ctx.lifecycle.start("offline", start=offline.start, stop=offline.stop)
     return FeatureRuntime(
         services=(searxng, search, browser, fetcher, offline),
-        capabilities=(search, fetcher),
+        capabilities=(search, fetcher, offline),
         state={
             "searxng": searxng,
             "web_client": web_client,

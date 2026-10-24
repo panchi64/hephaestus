@@ -1,6 +1,6 @@
 /** Plugin data contracts and the pure rules around them.
  *
- *  A plugin is a set of Python tools that run in the platform VM, and may also
+ *  A plugin is a set of Python tools that run in the conversation's VM, and may also
  *  contribute agents and skills. An agent's
  *  work is a draft; the operator reviews it and publishes it, which makes its
  *  tools callable and its agents and skills available. The helpers here shape what the screens show — the backend

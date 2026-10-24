@@ -140,7 +140,6 @@ def build_state(request: ReviewRequest) -> JsonValue:
         "runs_in_sandbox": capability.sandboxed,
         "names_network_address": capability.network,
         "installs_or_clones": capability.fetches,
-        "declared_reach": capability.reach,
     }
     return {
         "notice": untrusted_preamble(nonce),

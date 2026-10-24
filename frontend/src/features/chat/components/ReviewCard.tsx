@@ -57,17 +57,15 @@ function scoreLine(scores: Record<string, number>): string {
  *  domains are allowed. */
 const TIER: Record<NonNullable<Review["tier"]>, string> = {
   read: "The tool only observes, whatever it is asked for.",
-  sandbox: "It runs offline inside the platform VM.",
-  workspace: "Ran fenced to the worktree, with no network.",
+  sandbox: "It runs inside this conversation's VM.",
+  workspace: "It stays in this conversation's folders and names no address.",
 };
 
-/** How far the command said it needs to go. Shown for every reviewed command, cleared or
- *  not: it is the model's own claim, and reading it beside the verdict is how an operator
- *  notices a command that declared less than it did. */
+/** Where the command runs, shown for every reviewed command, cleared or not. */
 const REACH: Record<NonNullable<Review["reach"]>, string> = {
-  offline: "Declared reach: the VM, offline.",
-  network: "Declared reach: the VM and the allowed domains.",
-  host: "Declared reach: your whole machine.",
+  offline: "Runs in this conversation's VM.",
+  network: "Runs in this conversation's VM and reaches the allowed domains.",
+  host: "Runs on your machine, inside the host fence.",
 };
 
 const RISK: Record<NonNullable<Review["risk"]>, string> = {

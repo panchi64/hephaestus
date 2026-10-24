@@ -14,6 +14,7 @@ import hashlib
 import tempfile
 from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
+from typing import override
 
 import httpx
 import pytest
@@ -50,8 +51,9 @@ from services.corpus.chunk_store import CorpusChunkStore
 from services.corpus.folder import FolderAdapter
 from services.corpus.index import CorpusIndex
 from services.corpus.uploads import UploadsAdapter
+from services.home.scratch import HostFiles, ScratchDirs
 from services.registry import ModelRegistry
-from services.sandbox import SandboxError, SandboxSessionManager
+from services.sandbox import SandboxError
 from services.upload_extraction import BasicExtractor
 from services.uploads import UploadStore
 from services.workspace import RunWorkspace
@@ -116,35 +118,39 @@ async def _insert_upload(
 # --- the sandbox fakes both halves of the feature stage into ----------------
 
 
-class _FakeSandboxSession:
-    """Records files staged into its (host-side) workspace. Mirrors the real
-    ``SandboxSession``'s ``read_file``/``write_file`` contract closely enough to exercise
-    the collision-safe staging path (``services.sandbox.staging``)."""
+class _FakeSandboxSession(HostFiles):
+    """Records files staged into its (host-side) workspace. Mirrors ``HostFiles``'
+    ``read_file``/``write_file`` contract closely enough to exercise the collision-safe
+    staging path (``services.sandbox.staging``)."""
 
     def __init__(self) -> None:
+        super().__init__(Path("/fake-host-workspace"))
         self.files: dict[str, bytes] = {}
 
+    @override
     def write_file(self, relpath: str, content: bytes) -> None:
         self.files[relpath] = content
 
+    @override
     def read_file(self, relpath: str) -> bytes:
         if relpath not in self.files:
             raise SandboxError(f"no such file in the sandbox: {relpath!r}")
         return self.files[relpath]
 
+    @override
     def ensure_workspace(self) -> Path:
         return Path("/fake-host-workspace")
 
 
-class _FakeSandboxSessions:
+class _FakeSandboxSessions(ScratchDirs):
     def __init__(self) -> None:
+        super().__init__(Path("/fake-scratch-root"))
         self.session: _FakeSandboxSession = _FakeSandboxSession()
         self.acquired: str | None = None
-        self.holder: object = None
 
-    async def acquire(self, key: str, *, holder: object = None) -> _FakeSandboxSession:
+    @override
+    def acquire(self, key: str) -> _FakeSandboxSession:
         self.acquired = key
-        self.holder = holder
         return self.session
 
 
@@ -498,7 +504,7 @@ async def _run_provision(
         caps.add(uploads)
     if sessions is not None:
         # The fake sandbox manager registers under the class the tools resolve.
-        caps.add(sessions, as_type=SandboxSessionManager)
+        caps.add(sessions, as_type=ScratchDirs)
     deps = RunDeps(
         run=run,
         owner_id=OWNER,

@@ -1,7 +1,7 @@
 /**
  * The thread's browser, live.
  *
- * The agent's browser is headless and runs in the platform VM, so this pane is the only
+ * The agent's browser is headless and runs in the services VM, so this pane is the only
  * way to see it and the only way to take the wheel: it paints the frames the backend
  * streams and sends back what the operator does to them. Logging in, dismissing a
  * banner or landing on a page before handing the thread on all happen here.

@@ -54,6 +54,7 @@ from ._helpers import (
     swap_tool_catalog,
 )
 from ._json import json_body, json_list, obj, s
+from .command_workspace import command_workspace
 from .test_approval_routes import danger_categories as _approval_danger_categories
 from .test_task_routes import await_task_run_finalized, create_task, parked_call_id
 
@@ -85,7 +86,7 @@ async def agent_visible(disabled: frozenset[str]) -> set[str]:
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
     # A spawned thread is also offered `subagent_report`.
     deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled, reports_to_parent=True)
-    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+    ctx = RunContext(deps=deps, workspace=command_workspace(), model=TestModel(), usage=RunUsage())
     return set(await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx))
 
 
@@ -136,7 +137,7 @@ _PINNED_CATALOG = {
     "calendar_update_event",
     "code_execute",
     "code_request_egress",
-    "code_run_host_command",
+    "shell_run_on_host",
     "corpus_retrieve",
     "files_create_directory",
     "files_edit_file",

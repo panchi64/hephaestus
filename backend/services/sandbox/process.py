@@ -1,6 +1,6 @@
 """Running a command on the operator's real machine, and reaping the tree it starts.
 
-Two paths land here: ``code_run_host_command``, the approval-gated escape hatch, and the
+Two paths land here: ``shell_run_on_host``, the approval-gated escape hatch, and the
 host shell in a project folder. Both go through :func:`run_on_host`, which spawns, times out,
 kills the process tree and handles cancellation in one place.
 

@@ -3,9 +3,9 @@
 A thread that writes a project's folder (with a lease, or because it was started in it)
 edits the operator's working copy directly. The first time a turn changes a file, the file
 is recorded as it was before that turn, so the operator can put it back: all the way to
-before the thread's first change, or to before any one turn. The file tools record around
-each write, and the shell around bringing a command's work out of the VM
-(``services/vm/project.py``). Directories are not recorded; their files are.
+before the thread's first change, or to before any one turn. Only the file tools record;
+a shell command writes through the VM's live mount and is left to git. Directories are
+not recorded; their files are.
 
 A file is put back only if it still holds what the thread left: one the operator, or
 another thread, has changed since is reported rather than overwritten.

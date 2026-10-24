@@ -45,8 +45,8 @@ three the other knobs produce. The exception is one row and one branch, both of 
 so; what makes it defensible is that it is reachable only by an operator naming it, never
 by a default, a fallback or a degrade (:data:`DEFAULT_PERMISSION`,
 :data:`STRICTEST_PERMISSION`), and that it removes the *asking* and not the fence — a
-declared reach still builds the sandbox a command runs inside, and one that needs more
-than it declared still fails in there rather than going ahead.
+VM command still runs inside the conversation VM, and one that needs more than the VM
+allows still fails in there rather than going ahead.
 
 **At Auto, "through the review" includes the review's own deterministic answer**, and for
 a self-gated *read* that answer costs no model call: ``judge.py`` clears a tool the

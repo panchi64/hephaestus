@@ -37,8 +37,8 @@ from runs import STOP_NOTICE, Run
 from services.commands.spec import Invocation
 from services.conversation_view import estimate_tokens
 from services.conversations import ConversationBinding, ConversationStore
+from services.home.scratch import ScratchDirs
 from services.projects import ProjectStore, WorktreeManager
-from services.sandbox import SandboxSessionManager
 from services.uploads import UploadStore
 from services.workspace import resolve_workspace
 from tools import PromptContextProvider, PromptContextRequest, default_workspace_key
@@ -267,10 +267,9 @@ async def prepare_turn(
             conversation_id=conversation_id,
             workspace_key=workspace_key or default_workspace_key(conversation_id, run),
             owner_id=run.owner_id,
-            sessions=caps.get_optional(SandboxSessionManager),
+            scratch=caps.get_optional(ScratchDirs),
             projects=caps.get_optional(ProjectStore),
             worktrees=caps.get_optional(WorktreeManager),
-            holder=run,
         )
 
     if attachment_ids and prompt is not None and uploads is not None:

@@ -1,71 +1,63 @@
-"""The one egress allowlist: what a workspace may reach, and the file the fences read."""
+"""The one egress allowlist: what a workspace may reach."""
 
 from __future__ import annotations
-
-import os
-from pathlib import Path
 
 import pytest
 
 from core.db import init_db, make_engine
 from core.exceptions import InvalidInputError
 from services.egress import EgressPolicy, normalise_domain
-from services.vm.egress import ALLOW_FILE
 
 GLOBAL = ("pypi.org", "files.pythonhosted.org")
 CONV = "conv-1"
 
 
-def _policy(tmp_path: Path, global_domains: tuple[str, ...] = GLOBAL) -> EgressPolicy:
+def _policy(global_domains: tuple[str, ...] = GLOBAL) -> EgressPolicy:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
-    return EgressPolicy(engine, tmp_path, global_domains)
-
-
-def _allow_text(policy: EgressPolicy, key: str) -> str:
-    return (policy.allow_dir(key) / ALLOW_FILE).read_text()
+    return EgressPolicy(engine, global_domains)
 
 
 # --- the union --------------------------------------------------------------
 
 
-async def test_a_workspace_starts_with_the_installation_wide_list(tmp_path: Path):
-    policy = _policy(tmp_path)
+async def test_a_workspace_starts_with_the_installation_wide_list():
+    policy = _policy()
     assert await policy.allowed_for(CONV) == frozenset(GLOBAL)
 
 
-async def test_a_grant_adds_to_the_global_list_without_replacing_it(tmp_path: Path):
-    policy = _policy(tmp_path)
+async def test_a_grant_adds_to_the_global_list_without_replacing_it():
+    policy = _policy()
     allowed = await policy.allow(CONV, ["example.com"])
     assert allowed == frozenset([*GLOBAL, "example.com"])
     assert await policy.allowed_for(CONV) == allowed
 
 
-async def test_grants_do_not_leak_between_workspaces(tmp_path: Path):
-    policy = _policy(tmp_path)
+async def test_grants_do_not_leak_between_workspaces():
+    policy = _policy()
     _ = await policy.allow(CONV, ["example.com"])
     assert await policy.allowed_for("conv-2") == frozenset(GLOBAL)
 
 
-async def test_granting_the_same_domain_twice_is_a_no_op(tmp_path: Path):
+async def test_granting_the_same_domain_twice_is_a_no_op():
     # The unique constraint is resolved in the database, so a re-approval is not an
     # IntegrityError and does not double the row.
-    policy = _policy(tmp_path)
+    policy = _policy()
     _ = await policy.allow(CONV, ["example.com"])
     assert await policy.allow(CONV, ["EXAMPLE.com."]) == frozenset([*GLOBAL, "example.com"])
 
 
-async def test_a_stateless_run_key_gets_its_own_allowlist(tmp_path: Path):
+async def test_a_stateless_run_key_gets_its_own_allowlist():
     # A run without a conversation keys its workspace off the run id; the policy cannot
     # tell the two apart and must not have to.
-    policy = _policy(tmp_path)
+    policy = _policy()
     _ = await policy.allow("run-abc", ["example.com"])
     assert await policy.allowed_for("run-abc") == frozenset([*GLOBAL, "example.com"])
     assert await policy.allowed_for(CONV) == frozenset(GLOBAL)
 
 
-async def test_a_workspaceless_run_gets_the_global_list_and_cannot_be_granted(tmp_path: Path):
-    policy = _policy(tmp_path)
+async def test_a_workspaceless_run_gets_the_global_list_and_cannot_be_granted():
+    policy = _policy()
     assert await policy.allowed_for("") == frozenset(GLOBAL)
     with pytest.raises(InvalidInputError):
         _ = await policy.allow("", ["example.com"])
@@ -136,80 +128,32 @@ def test_normalisation_refuses_anything_wider_than_it_reads(raw: str):
         _ = normalise_domain(raw)
 
 
-async def test_allow_refuses_the_whole_batch_when_one_domain_is_unusable(tmp_path: Path):
-    policy = _policy(tmp_path)
+async def test_allow_refuses_the_whole_batch_when_one_domain_is_unusable():
+    policy = _policy()
     with pytest.raises(InvalidInputError):
         _ = await policy.allow(CONV, ["example.com", "10.0.0.1"])
     assert await policy.allowed_for(CONV) == frozenset(GLOBAL)
 
 
-def test_a_malformed_configured_domain_fails_at_construction(tmp_path: Path):
+def test_a_malformed_configured_domain_fails_at_construction():
     with pytest.raises(InvalidInputError):
-        _ = _policy(tmp_path, ("pypi.org", "not a domain"))
-
-
-# --- materialising ----------------------------------------------------------
-
-
-async def test_materialise_writes_a_sorted_directory_the_fence_can_mount(tmp_path: Path):
-    policy = _policy(tmp_path)
-    _ = await policy.allow(CONV, ["zed.example.com", "alpha.example.com"])
-
-    directory = await policy.materialise(CONV)
-
-    assert directory == policy.allow_dir(CONV)
-    assert directory.is_dir()
-    lines = _allow_text(policy, CONV).splitlines()
-    assert lines == sorted(lines)
-    assert set(lines) == await policy.allowed_for(CONV)
-    # Nothing but the file the fence reads — a temp file left behind would be mounted too.
-    assert [p.name for p in directory.iterdir()] == [ALLOW_FILE]
-
-
-async def test_materialise_creates_the_directory_when_it_is_missing(tmp_path: Path):
-    policy = _policy(tmp_path)
-    assert not policy.allow_dir(CONV).exists()
-    _ = await policy.materialise(CONV)
-    assert set(_allow_text(policy, CONV).split()) == frozenset(GLOBAL)
-
-
-async def test_a_second_write_replaces_the_file_rather_than_rewriting_it(tmp_path: Path):
-    # Atomicity is the point: a reader mid-request sees the old list or the new one, never
-    # a truncated file. A reader holding the old file keeps reading the old list whole.
-    # Holding it open also keeps its inode from being reused by a later write.
-    policy = _policy(tmp_path)
-    _ = await policy.materialise(CONV)
-    path = policy.allow_dir(CONV) / ALLOW_FILE
-    with path.open(encoding="utf-8") as reader:
-        before = os.fstat(reader.fileno())
-
-        _ = await policy.allow(CONV, ["example.com"])
-        _ = await policy.materialise(CONV)
-        after = path.stat()
-
-        assert "example.com" not in reader.read().split()
-    assert "example.com" in _allow_text(policy, CONV).split()
-    assert after.st_ino != before.st_ino
-    assert after.st_mtime_ns != before.st_mtime_ns
-    assert [p.name for p in policy.allow_dir(CONV).iterdir()] == [ALLOW_FILE]
+        _ = _policy(("pypi.org", "not a domain"))
 
 
 # --- forgetting -------------------------------------------------------------
 
 
-async def test_forget_drops_the_grants_and_the_materialised_file(tmp_path: Path):
-    policy = _policy(tmp_path)
+async def test_forget_drops_the_grants():
+    policy = _policy()
     _ = await policy.allow(CONV, ["example.com"])
-    _ = await policy.materialise(CONV)
 
     await policy.forget(CONV)
 
     assert await policy.allowed_for(CONV) == frozenset(GLOBAL)
-    assert not policy.allow_dir(CONV).exists()
 
 
-async def test_forget_leaves_other_workspaces_alone(tmp_path: Path):
-    policy = _policy(tmp_path)
+async def test_forget_leaves_other_workspaces_alone():
+    policy = _policy()
     _ = await policy.allow(CONV, ["example.com"])
     _ = await policy.allow("conv-2", ["other.example.com"])
 
@@ -218,7 +162,7 @@ async def test_forget_leaves_other_workspaces_alone(tmp_path: Path):
     assert await policy.allowed_for("conv-2") == frozenset([*GLOBAL, "other.example.com"])
 
 
-async def test_forget_is_a_no_op_for_a_conversation_that_never_asked(tmp_path: Path):
-    policy = _policy(tmp_path)
+async def test_forget_is_a_no_op_for_a_conversation_that_never_asked():
+    policy = _policy()
     await policy.forget("conv-never")  # no rows, no directory, no error
     assert await policy.allowed_for("conv-never") == frozenset(GLOBAL)

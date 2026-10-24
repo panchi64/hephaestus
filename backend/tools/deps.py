@@ -94,7 +94,10 @@ class RunDeps:
     # The projects and worktrees whose instruction files this run has handed over
     # (`tools/briefing.py`).
     briefed: set[Place] = field(default_factory=set[Place], repr=False, compare=False)
-    # Keys the run's sandbox session, preview and staged artifacts. A field, not a derived
+    # Where the run's shell stands after a `cd`, as a home path; None before one
+    # (`tools/shell.py`).
+    shell_cwd: str | None = field(default=None, repr=False, compare=False)
+    # Keys the run's VM, preview and staged artifacts. A field, not a derived
     # property, because a child workspace is a fork and delegation hands a sub-agent a
     # different one; empty at construction it fills itself in below.
     workspace_key: str = ""

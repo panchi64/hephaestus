@@ -126,7 +126,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         label: "Plugins",
         icon: "plug",
         description:
-          "Python tools agents write, which run in the platform VM once you publish them",
+          "Python tools agents write, which run in the conversation's VM once you publish them",
         keywords: ["tool", "python", "extension", "egress", "secret", "draft"],
       },
       {

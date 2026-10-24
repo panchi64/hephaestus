@@ -261,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="dev_instance",
         description=(
             "Run an isolated Hephaestus for development — its own data, ports and "
-            "platform VM, seeded and safe to break."
+            "VMs, seeded and safe to break."
         ),
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -289,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--with-vm",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="also run the platform VM: sandbox, SearXNG and web fetch (remembered)",
+        help="also run the VMs: shell, code, SearXNG and web fetch (remembered)",
     )
     _ = up.add_argument(
         "--reseed",

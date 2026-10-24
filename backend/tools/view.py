@@ -2,47 +2,47 @@
 
 A conversation has a single **View**: a canvas beside the chat that holds a history
 of **versions** to compare against, optionally fronted by a live, interactive
-**head**. A ``show`` is the only thing that mints a version: it captures the sandbox
-workspace as a new version (the version's *code*, via ``services/workspace_history``)
-and stamps **how it previews**:
+**head**. A ``show`` is the only thing that mints a version: it captures the
+conversation's scratch as a new version (the version's *code*, via
+``services/workspace_history``) and stamps **how it previews**:
 
 - ``show(file=…)`` captures the file's bytes as the version's preview (via
   ``services/artifacts``) — an image, an HTML page, a snippet — rendered by kind.
-- ``show(serve=…)`` runs a server in the sandbox and emits ``view.live`` — the
-  backend reverse-proxies it into a sandboxed iframe — overlaid on the version.
+- ``show(serve=…)`` runs a server in the conversation's VM and emits ``view.live`` —
+  the backend reverse-proxies it into a sandboxed iframe — overlaid on the version.
 
 Every version is one ``view.snapshot`` event carrying its preview descriptor; the
-workspace tree behind it is the comparable, diffable code. If the sandbox or the
-version store isn't wired into the run, the tool says so rather than failing — the
-model adapts (graceful degradation).
+scratch tree behind it is the comparable, diffable code. If the VM or the version store
+isn't wired into the run, the tool says so rather than failing.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai.workspaces import WorkspaceUnavailableError
 
 from core.diagnostics import render_tool_error
 from runs import ViewLive, ViewLiveStopped, ViewSnapshot
 from services.artifacts import ArtifactStore
-from services.sandbox import SandboxError, SandboxSessionManager
+from services.home.paths import SCRATCH
+from services.home.scratch import ScratchDirs
+from services.sandbox import SandboxError
+from services.vm import Previews, VMError
 from services.workspace_history import SnapshotView, WorkspaceHistoryStore, format_show_result
 
 from .deps import RunDeps
 from .emit import RunEventEmitted
-
-if TYPE_CHECKING:
-    from services.sandbox.session import SandboxSession
+from .home_workspace import run_machine_spec
 
 logger = logging.getLogger(__name__)
 
 
 async def _capture_version(
     ctx: RunContext[RunDeps],
-    session: SandboxSession,
+    scratch: ScratchDirs,
     *,
     title: str | None,
     preview_artifact_id: str | None,
@@ -53,7 +53,8 @@ async def _capture_version(
     version store is wired."""
     history = ctx.deps.caps.get_optional(WorkspaceHistoryStore)
     assert history is not None  # guarded by the caller
-    files = await asyncio.to_thread(session.collect_text_files)
+    folder = scratch.acquire(ctx.deps.scratch_key)
+    files = await asyncio.to_thread(folder.collect_text_files, scratch.walk_excludes)
     snapshot = await history.capture(
         ctx.deps.owner_id,
         ctx.deps.scratch_key,
@@ -83,15 +84,14 @@ async def _capture_version(
 async def _show_file(ctx: RunContext[RunDeps], file: str, title: str | None) -> str:
     """Mint a new View version whose preview is a file the agent produced: capture the
     file's bytes (the rendered preview) and the workspace tree (the version's code)."""
-    sessions = ctx.deps.caps.get_optional(SandboxSessionManager)
+    scratch = ctx.deps.caps.get_optional(ScratchDirs)
     store = ctx.deps.caps.get_optional(ArtifactStore)
     history = ctx.deps.caps.get_optional(WorkspaceHistoryStore)
-    if sessions is None or store is None or history is None:
+    if scratch is None or store is None or history is None:
         return "The view is unavailable."
     try:
-        session = await sessions.acquire(ctx.deps.scratch_key, holder=ctx.deps.run)
-        content = session.read_file(file)
-    except SandboxError as exc:
+        content = scratch.acquire(ctx.deps.scratch_key).read_file(file)
+    except (SandboxError, OSError) as exc:
         return f"Could not read {file!r}: {exc}"
     artifact = await store.publish(
         ctx.deps.owner_id,
@@ -104,7 +104,7 @@ async def _show_file(ctx: RunContext[RunDeps], file: str, title: str | None) -> 
     try:
         snapshot = await _capture_version(
             ctx,
-            session,
+            scratch,
             title=title or artifact.filename,
             preview_artifact_id=artifact.id,
             preview_kind=artifact.kind,
@@ -124,8 +124,8 @@ async def _show_live(
 ) -> str:
     """Run a server as the View's live, interactive head — overlaying a fresh version
     of the workspace, so the head's code is recorded and comparable like any other."""
-    sessions = ctx.deps.caps.get_optional(SandboxSessionManager)
-    if sessions is None:
+    previews = ctx.deps.caps.get_optional(Previews)
+    if previews is None:
         return "The live view is unavailable — your computer isn't available right now."
     if port is None:
         raise ModelRetry(
@@ -135,8 +135,14 @@ async def _show_live(
             )
         )
     try:
-        handle = await sessions.start_preview(ctx.deps.scratch_key, serve, port)
-    except SandboxError as exc:
+        handle = await previews.start(
+            ctx.deps.workspace_key,
+            await run_machine_spec(ctx.deps),
+            working_dir=SCRATCH.path,
+            command=serve,
+            port=port,
+        )
+    except (VMError, WorkspaceUnavailableError) as exc:
         return f"The live server did not start: {exc}"
     # Announce the running head first — point the iframe at the entry path so a static
     # server whose root would list the directory (`python -m http.server` with no
@@ -158,11 +164,11 @@ async def _show_live(
     # it. Best-effort and *after* the live event: a capture failure must never orphan
     # the already-running server or hide it from the operator. The live head carries no
     # static preview, so it folds no separate version chip — the LIVE chip represents it.
-    if ctx.deps.caps.get_optional(WorkspaceHistoryStore) is not None:
+    scratch = ctx.deps.caps.get_optional(ScratchDirs)
+    if scratch is not None and ctx.deps.caps.get_optional(WorkspaceHistoryStore) is not None:
         try:
-            session = await sessions.acquire(ctx.deps.scratch_key, holder=ctx.deps.run)
             _ = await _capture_version(
-                ctx, session, title=title, preview_artifact_id=None, preview_kind=None
+                ctx, scratch, title=title, preview_artifact_id=None, preview_kind=None
             )
         except Exception:  # history is best-effort, never break the turn
             logger.warning("live-view version capture failed", exc_info=True)
@@ -200,9 +206,8 @@ def view_toolset() -> FunctionToolset[RunDeps]:
         - `serve` with `port`: the argv of a server to run from `~/scratch`
           (`["python", "-m", "http.server", "8000"]`) and the port it listens on. It
           becomes the View's live, interactive head, replacing any server already shown
-          here, and the call returns once the server answers. The server must bind
-          `0.0.0.0`, not `127.0.0.1`, because the View reaches it from outside your
-          machine. It must load its assets by relative URL, because the View serves it
+          here, and the call returns once the server answers. It must load its assets
+          by relative URL, because the View serves it
           under a path of its own and a root-relative `/app.js` misses. If its root
           would show a directory listing, pass `path` for the entry page (`index.html`).
 
@@ -237,10 +242,10 @@ def view_toolset() -> FunctionToolset[RunDeps]:
         with `serve` replaces the running server on its own, so you do not need this
         before showing a new one.
         """
-        sessions = ctx.deps.caps.get_optional(SandboxSessionManager)
-        if sessions is None:
+        previews = ctx.deps.caps.get_optional(Previews)
+        if previews is None:
             return "The live view is unavailable — your computer isn't available right now."
-        await sessions.stop_preview(ctx.deps.scratch_key)
+        await previews.stop(ctx.deps.workspace_key)
         _ = await ctx.emit(
             RunEventEmitted(body=ViewLiveStopped(conversation_id=ctx.deps.scratch_key))
         )

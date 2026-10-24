@@ -130,7 +130,7 @@ class LiveStatusOut(BaseModel):
     """Whether a `view.live` head is still reachable. `token` is the one embedded in
     the head's proxied URL (`/previews/{token}/…`) — the frontend already has it, so
     no conversation id is needed to ask. ``"running"`` = still up; ``"stopped"`` = torn
-    down without an explicit `view_close` (the sandbox idle-reaped it, or the
+    down without an explicit `view_close` (its VM was reaped or restarted, or the
     conversation was purged) — the operator gets a legible reason instead of a bare
     404; ``"unknown"`` = neither (an explicit close, or the process restarted)."""
 
@@ -139,10 +139,10 @@ class LiveStatusOut(BaseModel):
 
 @router.get("/live/status", response_model=LiveStatusOut)
 async def get_live_status(token: str, request: Request) -> LiveStatusOut:
-    sessions = deps.sandbox_sessions(request)
-    if sessions is None:
+    previews = deps.previews(request)
+    if previews is None:
         return LiveStatusOut(status="unknown")
-    return LiveStatusOut(status=sessions.preview_status(token))
+    return LiveStatusOut(status=previews.status(token))
 
 
 @router.get("/{artifact_id}/content")

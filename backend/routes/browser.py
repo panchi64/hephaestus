@@ -1,6 +1,6 @@
 """The agent's browser, from the app's side: its session, the live view, and the profile.
 
-The browser runs headless in the platform VM. A conversation's session is opened and
+The browser runs headless in the services VM. A conversation's session is opened and
 ended here, watched as a stream of screencast frames, and driven by posting input events;
 all of it rides the app's authenticated HTTP surface under the chat scope.
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/browser", tags=["browser"])
 
 #: Shown verbatim in a toast.
-_UNAVAILABLE = "The browser is not available: the platform VM or web fetch is not running."
+_UNAVAILABLE = "The browser is not available: the services VM or web fetch is not running."
 _NO_SESSION = "This conversation has no open browser."
 
 

@@ -51,6 +51,7 @@ from tools import (
     tool_search_capability,
 )
 from tools.describe import category_names
+from tools.home_workspace import HomeWorkspaceCapability
 from tools.report import require_report
 
 from .code_mode import CodeModeLimits, code_mode_capability
@@ -146,6 +147,9 @@ def build_agent(
             # instructions and no hooks — every category still arrives through the namespaced,
             # gated stack (`tools/harness_events.py`).
             harness_events_capability(),
+            # `ctx.workspace` for every tool: files on the host, commands in the
+            # conversation's machine (`tools/home_workspace.py`).
+            HomeWorkspaceCapability(),
             # The other half of the `narration` argument the describing stage offers every
             # tool: this takes the sentence back off the call before Pydantic AI
             # validates it against a function signature that never declared it. Registered

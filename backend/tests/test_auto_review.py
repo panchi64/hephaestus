@@ -84,8 +84,6 @@ from services.permissions.decision_questions import build_state
 from services.permissions.decision_reviewer import make_decision_reviewer
 from services.permissions.projections import PROJECTIONS
 from services.permissions.reviewer import Reviewer, ReviewUnavailable, ScoredVerdict
-from services.sandbox.thread_shells import ThreadShells
-from services.vm.project import ProjectCopies
 from tools import RunDeps
 from tools.agents import agents_toolset
 from tools.browse import browse_toolset
@@ -100,7 +98,6 @@ from tools.vault import vault_toolset
 from ._helpers import client_app
 from ._helpers import run_bodies as _bodies
 from ._json import JSON, obj, s
-from .vm_fakes import FakeVM
 
 #: A workspace root, because a command is judged against the directory it runs in and a
 #: command with none is read as unplaced — the deterministic stage clears neither.
@@ -143,7 +140,7 @@ def verdict(
 
 
 def pretend_fenced(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tell the gate the platform VM is up, without booting one. The structural stage
+    """Tell the gate the conversation VM is up, without booting one. The structural stage
     clears nothing unfenced, so a test about anything else in the gate says which world
     it is in."""
 
@@ -168,7 +165,7 @@ class TestTheDeterministicStageComesFirst:
         # while something is holding it there.
         outcome = await review(BENIGN, reviewer=reviewer_of(verdict("low")))
         assert outcome.stage == "reviewer"
-        assert "no fence" in judge(BENIGN, fenced=False).reason
+        assert "no conversation VM" in judge(BENIGN, fenced=False).reason
 
     async def test_what_the_judge_declines_is_handed_on_with_its_reason(self):
         seen: list[ReviewRequest] = []
@@ -1585,7 +1582,7 @@ class TestTheSettledPile:
         self, monkeypatch: pytest.MonkeyPatch
     ):
         # The grant fills the reviewer's `neutral` authorization — but only for the act it
-        # names. `code_run_host_command` always reaches the reviewer, so both calls here
+        # names. `shell_run_on_host` always reaches the reviewer, so both calls here
         # are reviewed and the grant is the only difference between them.
         monkeypatch.setattr(
             gating,
@@ -1593,12 +1590,12 @@ class TestTheSettledPile:
             _resolver(reviewer_of(verdict("high", "neutral"))),
         )
         grants = _grant_store()
-        _ = await grants.grant(OWNER, CONV, "code_run_host_command", ("uv", "run", "pytest"))
+        _ = await grants.grant(OWNER, CONV, "shell_run_on_host", ("uv", "run", "pytest"))
         caps = ServiceContainer.of(grants)
 
         def call(command: str, call_id: str) -> ToolCallPart:
             return ToolCallPart(
-                tool_name="code_run_host_command",
+                tool_name="shell_run_on_host",
                 args={"command": command},
                 tool_call_id=call_id,
             )
@@ -1836,17 +1833,11 @@ async def test_a_command_is_judged_from_where_the_shell_stands(
     monkeypatch.setattr(gating, "resolve_run_home", home)
     monkeypatch.setattr(gating, "resolve_reviewer", _resolver(None))
     pretend_fenced(monkeypatch)
-    shells = ThreadShells(
-        ProjectCopies(FakeVM(tmp_path / "vm"), idle_ttl_s=60.0, reap_interval_s=60.0),
-        default_timeout=1.0,
-        max_output_chars=1,
-    )
     call = ToolCallPart(
         tool_name="shell_run_command", args={"command": "(rm -rf src)"}, tool_call_id="c1"
     )
-    caps = ServiceContainer()
-    caps.add(shells)
     run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
+    deps = RunDeps(run=run, owner_id=OWNER, caps=ServiceContainer(), workspace_key="conv-1")
 
     async def settle() -> list[ToolCallPart]:
         _settled, manual = await gating.settle_deferred(
@@ -1854,14 +1845,14 @@ async def test_a_command_is_judged_from_where_the_shell_stands(
             [call],
             caps=ServiceContainer(),
             conversation_id=CONV,
-            deps=RunDeps(run=run, owner_id=OWNER, caps=caps, workspace_key="conv-1"),
+            deps=deps,
             messages=[],
             permission="auto",
         )
         return manual
 
     assert await settle() == []
-    _ = shells.get("conv-1", start=f"{HOME}/projects/api")
+    deps.shell_cwd = f"{HOME}/projects/api"
     assert [c.tool_call_id for c in await settle()] == ["c1"]
 
 

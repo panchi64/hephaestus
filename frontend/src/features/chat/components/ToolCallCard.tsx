@@ -274,8 +274,8 @@ export function ToolCallCard(props: {
           </Show>
           {/* A call that ran a command without being a terminal — a backgrounded
               process, which is a handle the agent checks on later rather than output
-              the operator watches arrive. It still ran something on their machine
-              under a declared reach, and this is the only row that would say so. */}
+              the operator watches arrive. It still ran something, and this is the
+              only row that says where. */}
           <Show when={props.tool.boundary}>
             {(boundary) => (
               <>

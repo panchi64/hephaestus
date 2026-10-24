@@ -223,11 +223,11 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
     Sensitivity.HOST_EXEC: frozenset(
         {
             # Arbitrary code, whichever machine runs it: `code_execute` in the
-            # conversation's sandbox, `code_run_host_command` on the operator's own machine,
-            # and the shell in the VM or, declared `host`, on that machine.
+            # conversation's sandbox, `shell_run_on_host` on the operator's own machine,
+            # and the shell in the conversation's VM.
             "code_execute",
-            "code_run_host_command",
-            # Runs a plugin draft's code in the platform VM.
+            "shell_run_on_host",
+            # Runs a plugin draft's code in a VM.
             "plugins_test",
             "shell_run_command",
             "shell_start_command",

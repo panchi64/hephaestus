@@ -17,13 +17,11 @@ from core.exceptions import NotFoundError
 from core.vault import Vault
 from models.workspace_history import WorkspaceBlob, WorkspaceSnapshot
 from routes.deps import app_state
-from services.sandbox import SandboxSessionManager
+from services.home.scratch import ScratchDirs
 from services.workspace_history import WorkspaceHistoryStore
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, json_list, obj, s
-from .conftest import egress_policy
-from .vm_fakes import FakeVM
 
 _EXCLUDES = Settings().sandbox_walk_excludes
 
@@ -34,18 +32,6 @@ async def _store(tmp_path: Path) -> WorkspaceHistoryStore:
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     return WorkspaceHistoryStore(engine, vault)
-
-
-def _manager(tmp_path: Path, vault: Vault) -> SandboxSessionManager:
-    return SandboxSessionManager(
-        FakeVM(tmp_path / "sandbox" / "work"),
-        vault,
-        egress=egress_policy(tmp_path),
-        data_dir=tmp_path,
-        idle_ttl_s=1800.0,
-        reap_interval_s=60.0,
-        excludes=_EXCLUDES,
-    )
 
 
 # --- the store: capture, dedup, every-show-is-a-version ----------------------
@@ -204,16 +190,15 @@ async def test_delete_removes_snapshots_and_only_orphan_blobs(tmp_path: Path):
 
 # --- the sandbox file-collection seam ----------------------------------------
 async def test_collect_text_files_skips_excluded_and_binary(tmp_path: Path):
-    vault = Vault(tmp_path / "k.json")
-    await vault.setup("pw")
-    session = await _manager(tmp_path, vault).acquire("conv-a")
-    _ = session.write_file("src/app.py", b"print('hi')\n")
-    _ = session.write_file("notes.txt", b"text")
-    _ = session.write_file("node_modules/dep/index.js", b"junk")  # excluded dir
-    _ = session.write_file("logo.png", b"\x89PNG\r\n\x1a\n")  # binary (invalid utf-8)
-    _ = session.write_file("data.bin", b"valid\x00utf8\x00but-binary")  # NUL: valid utf-8
+    scratch = ScratchDirs(tmp_path / "sandbox" / "work", excludes=tuple(_EXCLUDES))
+    session = scratch.acquire("conv-a")
+    session.write_file("src/app.py", b"print('hi')\n")
+    session.write_file("notes.txt", b"text")
+    session.write_file("node_modules/dep/index.js", b"junk")  # excluded dir
+    session.write_file("logo.png", b"\x89PNG\r\n\x1a\n")  # binary (invalid utf-8)
+    session.write_file("data.bin", b"valid\x00utf8\x00but-binary")  # NUL: valid utf-8
 
-    files = session.collect_text_files()
+    files = session.collect_text_files(scratch.walk_excludes)
 
     assert set(files) == {"src/app.py", "notes.txt"}  # both binaries skipped
     assert files["notes.txt"] == b"text"

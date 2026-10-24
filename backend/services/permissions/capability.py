@@ -48,46 +48,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Literal, cast
+from typing import cast
 
 from services.permissions.fence import Fence, HomeFence, escapes
 from services.permissions.fetches import fetches
 from services.permissions.projections import describe
 from services.permissions.shell_ast import ShellCommand, shell_reach, strip_comments
 from services.tool_sensitivity import EXTERNAL_PREFIX, Sensitivity, classified, sensitivity_of
-
-#: How far a shell command says it needs to reach, declared by the model on the call and
-#: enforced by the tool that runs it (``tools/shell.py``). It is a *declaration*, not a
-#: measurement: the grammar walk checks it against what the command actually names, and a
-#: fence built to match it is what makes a contradiction fail rather than merely be noted.
-type Reach = Literal["offline", "network", "host"]
-
-#: The declared values, as a set to validate an argument against.
-REACHES: frozenset[str] = frozenset({"offline", "network", "host"})
-
-#: What a call that names no reach at all is taken to have declared. It is the executing
-#: tools' own schema default, so an omitted argument is not a missing declaration — it is
-#: the declaration the tool will act on, and the judge has to model what will run.
-DEFAULT_REACH: Reach = "offline"
-
-#: Old spellings of a reach that a thread's history may still carry, and what they mean.
-_RENAMED_REACHES: dict[str, Reach] = {"workspace": "offline"}
-
-
-def renamed_reach(value: object) -> object:
-    """``value`` with an old spelling of a reach replaced by its current one."""
-    if isinstance(value, str):
-        return _RENAMED_REACHES.get(value, value)
-    return value
-
-
-#: The tools whose schema actually carries a ``reach`` argument (``tools/shell.py``). Only
-#: for these does an absent argument mean :data:`DEFAULT_REACH`; for every other shell-shaped
-#: tool it means the call declared nothing, which is a different fact and has to read as one
-#: — the reviewer's prompt and the operator's review row both say what was declared, and a
-#: tool with no such argument reporting "offline" is the chassis putting words in the
-#: model's mouth.
-_REACH_ARG_TOOLS = frozenset({"shell_run_command", "shell_start_command"})
 
 
 class ActionKind(StrEnum):
@@ -154,10 +121,6 @@ class Capability:
     fetches: bool = False
     #: Paths that leave the workspace, or that we cannot place inside it.
     escapes: tuple[str, ...] = ()
-    #: How far the call *said* it needs to reach. None for every kind of act that declares
-    #: nothing — a mail send, a file write, an MCP call — which is a different fact from
-    #: declaring the widest reach, and the two must not read the same on a review row.
-    reach: Reach | None = None
     #: Whether this act runs inside the conversation's own sandbox rather than on the
     #: host. The sandbox is itself a fence, so an offline call to one is bounded without
     #: anything here having read its program — which is the only way an interpreter's
@@ -174,12 +137,15 @@ class Capability:
         return not self.unbounded
 
     @property
+    def on_host(self) -> bool:
+        """Whether this is the host command tool, which runs outside the conversation's VM."""
+        return self.tool in _HOST_COMMAND_TOOLS
+
+    @property
     def runs_with_network(self) -> bool:
-        """Whether a VM command gets the conversation's egress: it declared ``network``, or
-        declared ``offline`` and names an address or installs or clones anyway."""
-        if self.reach == "network":
-            return True
-        return self.reach == "offline" and (self.network or self.fetches)
+        """Whether a VM shell command names an address or installs or clones, so it uses
+        the conversation's egress."""
+        return self.kind is ActionKind.SHELL and not self.on_host and (self.network or self.fetches)
 
     @property
     def programs(self) -> tuple[str, ...]:
@@ -191,7 +157,7 @@ class Capability:
 _COMMAND_ARG: dict[str, str] = {
     "shell_run_command": "command",
     "shell_start_command": "command",
-    "code_run_host_command": "command",
+    "shell_run_on_host": "command",
 }
 
 #: The tool whose argument is a Python program run in the conversation's sandbox. The
@@ -215,12 +181,12 @@ _PATH_ARG: dict[str, str] = {
 
 
 #: Shell-shaped tools whose command does **not** run in the run's workspace.
-#: `code_run_host_command` runs on the operator's own machine, where a sandbox thread's
+#: `shell_run_on_host` runs on the operator's own machine, where a sandbox thread's
 #: workspace is a directory the host fence denies outright and a worktree does not exist
 #: at all (it is withheld from worktree chats). So there is no root its
 #: paths can honestly be placed against — and placing them against one anyway is exactly
 #: what let `cat .env` read as a workspace file.
-_HOST_COMMAND_TOOLS = frozenset({"code_run_host_command"})
+_HOST_COMMAND_TOOLS = frozenset({"shell_run_on_host"})
 
 #: What goes on the record when a command's paths could not be placed. Both belong in
 #: ``unbounded`` rather than reading as a clean walk, because that is what they are: every
@@ -251,33 +217,7 @@ def measured_against_root(tool: str) -> bool:
     return tool in _COMMAND_ARG or tool in _PATH_ARG
 
 
-def declared_reach(tool: str, args: Mapping[str, object]) -> Reach | None:
-    """How far this call says it needs to reach, or None when it said nothing.
-
-    Four readings, and each is the conservative one for its case. A **host command**
-    declares ``host`` whatever its arguments say: it runs on the operator's machine, which
-    is the definition of the widest reach. An argument **absent from a tool that has one**
-    is :data:`DEFAULT_REACH` — not a missing declaration but the schema default the tool
-    will actually run under, and reading it as anything else would make every call that
-    left the argument off escalate while running fenced to the worktree anyway. A tool with
-    **no such argument at all** declares nothing, and says so with ``None``: `code_execute`
-    cannot state a reach, so reporting one for it would be this module writing a
-    declaration the model never made. A **value this module does not recognise** is
-    ``host``, and an explicit ``null`` is one of those: the tool's own validation would
-    refuse it, so no such call ever runs, and the widest reading is the only one that
-    cannot be wrong about a call that somehow did.
-    """
-    if tool in _HOST_COMMAND_TOOLS:
-        return "host"
-    if "reach" not in args:
-        return DEFAULT_REACH if tool in _REACH_ARG_TOOLS else None
-    value = renamed_reach(args["reach"])
-    return cast("Reach", value) if value in REACHES else "host"
-
-
-def shell_capability(
-    tool: str, command: str, *, root: Fence | None, reach: Reach | None = DEFAULT_REACH
-) -> Capability:
+def shell_capability(tool: str, command: str, *, root: Fence | None) -> Capability:
     """One shell command as a capability — the grammar walk, wrapped in the common shape.
 
     The summary carries the command **without its comments**. A comment changes nothing
@@ -298,20 +238,17 @@ def shell_capability(
     measure rather than a missing one, and the decision belongs where the reading is made
     rather than at each of the callers that happen to know a root.
 
-    ``reach`` is what the call *declared*, carried onto the capability unexamined. Checking
-    it against the paths the walk found is a policy question and belongs to the stage that
-    rules (``judge.py``); recording the two side by side is this module's whole job.
     """
     on_the_host = tool in _HOST_COMMAND_TOOLS
     root = None if on_the_host else root
     walk = shell_reach(command, root=root)
     unplaced = () if root is not None else (_UNPLACED_ON_THE_HOST if on_the_host else _UNPLACED,)
     fetching = fetches(walk.commands)
-    # A command with no network that sees only the thread's scratch is held by the VM as
+    # A VM command with no network that sees only the thread's scratch is held by the VM as
     # a sandboxed program is, so it is bounded without its syntax being read.
     in_scratch = (
         isinstance(root, HomeFence)
-        and reach == "offline"
+        and not on_the_host
         and not walk.network
         and not fetching
         and root.scratch_only(command)
@@ -327,7 +264,6 @@ def shell_capability(
         network=walk.network,
         fetches=fetching,
         escapes=walk.escapes,
-        reach=reach,
         sandboxed=in_scratch,
         unbounded=(*walk.unbounded, *unplaced),
     )
@@ -438,7 +374,7 @@ def _command_capability(
     # command. There is no tool argument left to widen it with: egress is no longer a flag
     # on the run, so the workspace reaches what its allowlist names and adding to that list
     # is its own approval-gated call.
-    return shell_capability(tool, command, root=root, reach=declared_reach(tool, args))
+    return shell_capability(tool, command, root=root)
 
 
 def _file_capability(

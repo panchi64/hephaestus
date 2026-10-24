@@ -63,7 +63,7 @@ export interface WorkShape {
 
 /** Host commands borrow the registry entry of the tool that produces them, so
  *  the header's glyph matches the terminal card's. */
-const HOST_TOOL = "code_run_host_command";
+const HOST_TOOL = "shell_run_on_host";
 
 /** The one glyph a review row leads with, wherever it appears — the header's summary and
  *  the row itself must agree, or the fold and its contents read as two different events. */

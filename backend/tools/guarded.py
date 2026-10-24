@@ -21,16 +21,14 @@ from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from core.config import get_settings
 from services.permissions.guards import GUARD_KEY, GUARDED_TOOLS, guard
-from services.sandbox.thread_shells import ThreadShells
 
 from .deps import RunDeps
 from .run_home import home_of
 
 
 def shell_cwd(deps: RunDeps) -> str | None:
-    """Where the thread's shell stands, or None before its first command."""
-    shells = deps.caps.get_optional(ThreadShells)
-    return shells.cwd(deps.workspace_key) if shells is not None else None
+    """Where the run's shell stands, or None before it has moved."""
+    return deps.shell_cwd
 
 
 @dataclass

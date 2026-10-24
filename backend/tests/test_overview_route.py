@@ -46,7 +46,7 @@ async def test_overview_empty_workspace():
     assert caps["decision_model"]["remediation_href"] == "/models"
     assert caps["sandbox"]["status"] == "warn"
     assert caps["sandbox"]["detail"] == "disabled"
-    # Web search is managed (SearXNG in the platform VM); with no VM in tests it degrades
+    # Web search is managed (SearXNG in the services VM); with no VM in tests it degrades
     # to warn, and there is nothing for the operator to configure.
     assert caps["web_search"]["status"] == "warn"
     assert caps["web_search"]["detail"] == "VM not ready — disabled"

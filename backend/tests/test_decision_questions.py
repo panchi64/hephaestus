@@ -84,7 +84,7 @@ class TestTheStateIsSplitByAuthor:
         measured = obj(_state()["measured"])
         assert measured["tool"] == "shell_run_command"
         assert measured["names_network_address"] is False
-        assert measured["declared_reach"] == "offline"
+        assert "declared_reach" not in measured
         assert "/" in arr(measured["reaches_outside_workspace"])
 
     def test_an_install_is_reported_beside_the_address_fact(self):
@@ -115,7 +115,7 @@ class TestTheStateIsSplitByAuthor:
         assert measured["runs_in_sandbox"] is True
         # The walk's reading, not the sandbox's egress: a program writes no address.
         assert measured["names_network_address"] is False
-        host = capability_of("code_run_host_command", {"command": "ls", "explanation": "x"})
+        host = capability_of("shell_run_on_host", {"command": "ls", "explanation": "x"})
         assert obj(_state(host)["measured"])["runs_in_sandbox"] is False
 
     def test_it_carries_nothing_the_model_could_only_guess_at(self):
@@ -217,9 +217,7 @@ class TestTheQuestions:
         assert "similar action" in requested
 
     def test_sending_outward_is_asked_for_whatever_the_walk_saw(self):
-        pushes = capability_of(
-            "shell_run_command", {"command": "git push origin main", "reach": "network"}
-        )
+        pushes = capability_of("shell_run_command", {"command": "git push origin main"})
         assert not pushes.network
         assert "names_network_address of false is no evidence" in QUESTIONS["outward"].instructions
 

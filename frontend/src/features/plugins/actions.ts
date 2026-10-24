@@ -21,7 +21,7 @@ export async function publishWithConfirm(plugin: Plugin): Promise<boolean> {
   if (!target) return false;
   const ok = await confirm({
     title: `Publish "${plugin.name}"?`,
-    detail: `Its ${target.tools.length === 1 ? "tool becomes" : "tools become"} callable in the platform VM. ${accessSummary(target).join(" ")}`,
+    detail: `Its ${target.tools.length === 1 ? "tool becomes" : "tools become"} callable in the conversation's VM. ${accessSummary(target).join(" ")}`,
     confirmLabel: "Publish",
   });
   if (!ok) return false;

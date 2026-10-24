@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from argon2 import PasswordHasher
@@ -27,7 +26,7 @@ if TYPE_CHECKING:
     from services.egress import EgressPolicy
 
 # Host-command confinement is a *process-global* singleton (`sandbox-runtime` configures
-# one sandbox for the whole interpreter). Several tests drive `code_run_host_command`
+# one sandbox for the whole interpreter). Several tests drive `shell_run_on_host`
 # through to a real `echo`, which would otherwise initialize that singleton from whatever
 # settings the test happened to have — and then only on machines where the platform
 # primitive is actually available, since it needs `ripgrep` on PATH. That makes the suite
@@ -35,7 +34,7 @@ if TYPE_CHECKING:
 # tested. Off here, so the host path under test is the plain subprocess; the confinement
 # logic itself is exercised explicitly in `test_sandbox.py`, which configures it directly.
 _ = os.environ.setdefault("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
-# The app would otherwise boot a real QEMU VM; the VM tests drive a local stand-in.
+# The app would otherwise build the guest image and boot machines; the VM tests fake the smol SDK.
 _ = os.environ.setdefault("HEPHAESTUS_VM_ENABLED", "false")
 
 import core.crypto  # noqa: E402 — must follow the environment default above
@@ -81,17 +80,11 @@ def _call_everything_but_scripts(
 _TestModel.customize_request_parameters = _call_everything_but_scripts
 
 
-def egress_policy(data_dir: Path, domains: tuple[str, ...] = ("pypi.org",)) -> EgressPolicy:
-    """A real :class:`~services.egress.EgressPolicy` over a throwaway database.
-
-    Here rather than in each suite because four of them need one now — the session
-    manager writes the allowlist file on every cold acquire, so it is a construction
-    argument rather than a thing under test in most of them. Real rather than a stub: the
-    file on disk *is* the interface the fences read, and a stub would only re-describe it.
-    """
+def egress_policy(domains: tuple[str, ...] = ("pypi.org",)) -> EgressPolicy:
+    """A real :class:`~services.egress.EgressPolicy` over a throwaway database."""
     from core.db import init_db, make_engine  # after the patches above
     from services.egress import EgressPolicy
 
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
-    return EgressPolicy(engine, data_dir, domains)
+    return EgressPolicy(engine, domains)

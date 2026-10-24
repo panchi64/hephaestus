@@ -8,11 +8,10 @@ import re
 #: ``FileNotFoundError`` and ``ModuleNotFoundError``.
 _ENOTFOUND = re.compile(r"\benotfound\b")
 
-#: Lowercase phrases a client prints when its connection never got as far as the gateway, or
-#: when the gateway refused a CONNECT. A refused HTTPS tunnel carries no body, so it is legible
-#: only in these phrasings: urllib, urllib3 and pip say the first, curl one of the other two.
-#: pip's own "no matching distribution" summary is not here: a misspelled package name prints
-#: it against a registry that was reached perfectly well.
+#: Lowercase phrases a client prints when a connection never left the machine: a name the
+#: resolver refused, or a proxy tunnel that was refused. pip's own "no matching
+#: distribution" summary is not here: a misspelled package name prints it against a
+#: registry that was reached perfectly well.
 NO_NETWORK_SIGNS = (
     "temporary failure in name resolution",
     "name or service not known",

@@ -54,19 +54,18 @@ def home(tmp_path: Path) -> RunHome:
     )
 
 
-def shell(command: str, *, reach: str = "offline") -> dict[str, object]:
-    return {"command": command, "reach": reach}
-
-
 def reason_for(
     command: str,
     settings: Settings,
     home: RunHome | None,
     *,
-    reach: str = "offline",
+    on_host: bool = False,
     cwd: str | None = None,
 ) -> str | None:
-    args = shell(command, reach=reach)
+    if on_host:
+        host: dict[str, object] = {"command": command, "explanation": "x"}
+        return guard("shell_run_on_host", host, home=home, settings=settings, cwd=cwd)
+    args: dict[str, object] = {"command": command}
     return guard("shell_run_command", args, home=home, settings=settings, cwd=cwd)
 
 
@@ -671,12 +670,12 @@ class TestCriticalRemoval:
     def test_passing(self, command: str, cwd: str | None, settings: Settings, home: RunHome):
         assert reason_for(command, settings, home, cwd=cwd) is None, command
 
-    @pytest.mark.parametrize("reach", ["offline", "network", "host"])
+    @pytest.mark.parametrize("on_host", [False, True])
     def test_the_reading_does_not_depend_on_where_it_runs(
-        self, reach: str, settings: Settings, home: RunHome
+        self, on_host: bool, settings: Settings, home: RunHome
     ):
-        assert reason_for("rm -rf ~", settings, home, reach=reach) is not None
-        assert reason_for("rm -rf ./build", settings, home, reach=reach) is None
+        assert reason_for("rm -rf ~", settings, home, on_host=on_host) is not None
+        assert reason_for("rm -rf ./build", settings, home, on_host=on_host) is None
 
     def test_a_project_folder_by_its_host_path(
         self, settings: Settings, home: RunHome, tmp_path: Path
@@ -696,8 +695,8 @@ class TestCriticalRemoval:
             key="t",
         )
         assert reason_for(f"rm -rf {documents}", settings, held) is not None
-        assert reason_for("rm -rf ~/Documents", settings, held, reach="host") is not None
-        assert reason_for("rm -rf ~/Documents/other", settings, held, reach="host") is None
+        assert reason_for("rm -rf ~/Documents", settings, held, on_host=True) is not None
+        assert reason_for("rm -rf ~/Documents/other", settings, held, on_host=True) is None
         assert reason_for("rm -rf ~/Documents", settings, None) is None
 
     def test_a_move_of_a_folder_holding_a_project_is_critical(self, settings: Settings):
@@ -716,15 +715,15 @@ class TestCriticalRemoval:
             "mv ~/Documents/proj /tmp/p",
             "D=~/Documents; rm -rf $D",
         ):
-            assert reason_for(command, settings, held, reach="host") is not None, command
-        assert reason_for("mv ~/Documents/other /tmp/d", settings, held, reach="host") is None
+            assert reason_for(command, settings, held, on_host=True) is not None, command
+        assert reason_for("mv ~/Documents/other /tmp/d", settings, held, on_host=True) is None
 
     def test_a_host_command_starts_in_the_host_scratch_and_reads_only_the_host(
         self, settings: Settings, home: RunHome
     ):
         def host(command: str) -> str | None:
             args: dict[str, object] = {"command": command, "explanation": "x"}
-            return guard("code_run_host_command", args, home=home, settings=settings, cwd=IN_API)
+            return guard("shell_run_on_host", args, home=home, settings=settings, cwd=IN_API)
 
         assert host("rm -rf *") is None
         assert host("rm -f *.log") is None
@@ -785,8 +784,8 @@ class TestCriticalRemoval:
             f"rm -rf {worktrees}/*",
             f"rm -rf {worktrees.parent}",
         ):
-            assert reason_for(command, settings, home, reach="host") is not None, command
-        assert reason_for(f"rm -rf {worktrees}/thread-1", settings, home, reach="host") is None
+            assert reason_for(command, settings, home, on_host=True) is not None, command
+        assert reason_for(f"rm -rf {worktrees}/thread-1", settings, home, on_host=True) is None
 
     def test_the_data_folder_and_its_parent(self, settings: Settings):
         assert reason_for(f"rm -rf {settings.data_dir}", settings, None) is not None
@@ -805,7 +804,7 @@ class TestCriticalRemoval:
         assert "no standing approval" in reason
 
     def test_every_executing_shell_tool_is_covered(self, settings: Settings, home: RunHome):
-        for tool in ("shell_run_command", "shell_start_command", "code_run_host_command"):
+        for tool in ("shell_run_command", "shell_start_command", "shell_run_on_host"):
             args: dict[str, object] = {"command": "rm -rf ~", "explanation": "x"}
             assert guard(tool, args, home=home, settings=settings) is not None, tool
 
@@ -818,11 +817,11 @@ class TestProtectedWrites:
     @pytest.mark.parametrize("command", WRITES_CAUGHT)
     def test_caught_on_the_host(self, command: str, settings: Settings, home: RunHome):
         spelled = command.replace("HOMEDIR", str(HOME_DIR))
-        assert reason_for(spelled, settings, home, reach="host") is not None, command
+        assert reason_for(spelled, settings, home, on_host=True) is not None, command
 
     @pytest.mark.parametrize("command", WRITES_PASSING)
     def test_passing_on_the_host(self, command: str, settings: Settings, home: RunHome):
-        assert reason_for(command, settings, home, reach="host") is None, command
+        assert reason_for(command, settings, home, on_host=True) is None, command
 
     @pytest.mark.parametrize(
         "command",
@@ -843,7 +842,7 @@ class TestProtectedWrites:
         self, command: str, settings: Settings, home: RunHome
     ):
         assert reason_for(command, settings, home) is None
-        reason = reason_for(command, settings, home, reach="host")
+        reason = reason_for(command, settings, home, on_host=True)
         assert reason is not None
         assert "osascript" in reason or "can't read" in reason or "crontab" in reason
 
@@ -867,10 +866,10 @@ class TestProtectedWrites:
             (project / "src.py", False),
         ):
             command = f"echo x > {path}"
-            assert (reason_for(command, settings, home, reach="host") is not None) is expected
+            assert (reason_for(command, settings, home, on_host=True) is not None) is expected
 
     def test_the_cards_say_your_home_folder_on_the_host(self, settings: Settings, home: RunHome):
-        reason = reason_for("rm -rf ~", settings, home, reach="host")
+        reason = reason_for("rm -rf ~", settings, home, on_host=True)
         assert reason is not None
         assert "your home folder" in reason
         in_vm = reason_for("rm -rf ~", settings, home)
@@ -880,9 +879,9 @@ class TestProtectedWrites:
     def test_a_folder_holding_a_project_in_a_copy_is_judged_by_its_names(
         self, settings: Settings, home: RunHome
     ):
-        assert reason_for("cp a b ~/out/", settings, home, reach="host") is None
-        assert reason_for("cp a b ~", settings, home, reach="host") is None
-        assert reason_for("cp .zshrc b ~", settings, home, reach="host") is not None
+        assert reason_for("cp a b ~/out/", settings, home, on_host=True) is None
+        assert reason_for("cp a b ~", settings, home, on_host=True) is None
+        assert reason_for("cp .zshrc b ~", settings, home, on_host=True) is not None
 
     def test_the_vms_home_is_not_the_operators(self, settings: Settings, home: RunHome):
         for command in ("echo x >> ~/.zshrc", "echo x > ~/.gitconfig", "cp a ~/.profile"):
@@ -913,19 +912,21 @@ class TestProtectedWrites:
         scratch = tmp_path / "scratch"
         scratch.mkdir()
         home = RunHome(mounts=(Mount(SCRATCH, scratch, writable=True),), default=SCRATCH, key="t")
-        host = {"reach": "host"}
         for command, expected in (
             (f"echo x > {tmp_path}/app.db", True),
             (f"echo x > {scratch}/notes.md", False),
         ):
             reason = guard(
-                "shell_run_command", {"command": command, **host}, home=home, settings=settings
+                "shell_run_on_host",
+                {"command": command, "explanation": "x"},
+                home=home,
+                settings=settings,
             )
             assert (reason is not None) is expected, command
 
     def test_a_target_known_only_at_run_time_is_not_judged(self, settings: Settings, home: RunHome):
-        assert reason_for("echo x > $TARGET", settings, home, reach="host") is None
-        assert reason_for("tee $TARGET", settings, home, reach="host") is None
+        assert reason_for("echo x > $TARGET", settings, home, on_host=True) is None
+        assert reason_for("tee $TARGET", settings, home, on_host=True) is None
 
 
 class TestFileTools:
@@ -979,31 +980,26 @@ class TestTheFence:
         self, monkeypatch: pytest.MonkeyPatch, settings: Settings, home: RunHome
     ):
         self.fence(monkeypatch, "unavailable")
-        reason = reason_for("make install", settings, home, reach="host")
+        reason = reason_for("make install", settings, home, on_host=True)
         assert reason is not None
         assert "install bubblewrap" in reason
-        started = guard(
-            "shell_start_command", shell("make", reach="host"), home=home, settings=settings
-        )
-        assert started is not None
         host: dict[str, object] = {"command": "ls", "explanation": "look"}
-        assert guard("code_run_host_command", host, home=home, settings=settings) is not None
+        assert guard("shell_run_on_host", host, home=home, settings=settings) is not None
 
     def test_a_vm_command_does_not_depend_on_the_host_fence(
         self, monkeypatch: pytest.MonkeyPatch, settings: Settings, home: RunHome
     ):
         self.fence(monkeypatch, "unavailable")
-        assert reason_for("make install", settings, home, reach="offline") is None
-        assert reason_for("make install", settings, home, reach="network") is None
+        assert reason_for("make install", settings, home) is None
 
     @pytest.mark.parametrize("state", ["active", "disabled_by_setting"])
     def test_a_fence_that_is_up_or_switched_off_is_not_a_guard(
         self, state: FenceState, monkeypatch: pytest.MonkeyPatch, settings: Settings, home: RunHome
     ):
         self.fence(monkeypatch, state)
-        assert reason_for("make install", settings, home, reach="host") is None
+        assert reason_for("make install", settings, home, on_host=True) is None
         host: dict[str, object] = {"command": "ls", "explanation": "look"}
-        assert guard("code_run_host_command", host, home=home, settings=settings) is None
+        assert guard("shell_run_on_host", host, home=home, settings=settings) is None
 
 
 class TestTheWarning:
@@ -1011,16 +1007,15 @@ class TestTheWarning:
         self, monkeypatch: pytest.MonkeyPatch, settings: Settings
     ):
         set_fence(monkeypatch, "unavailable", "no bwrap")
-        host: dict[str, object] = {"command": "ls"}
-        reason = unconfined("code_run_host_command", host, settings=settings)
+        reason = unconfined("shell_run_on_host", settings=settings)
         assert reason is not None
         assert "can't start: no bwrap" in reason
         assert reason.endswith("turn the fence off in Settings.")
-        assert unconfined("shell_run_command", shell("ls", reach="host"), settings=settings)
+        assert unconfined("shell_run_command", settings=settings) is None
 
     def test_a_disabled_fence_warns_too(self, monkeypatch: pytest.MonkeyPatch, settings: Settings):
         set_fence(monkeypatch, "disabled_by_setting", "disabled by configuration")
-        assert unconfined("code_run_host_command", {}, settings=settings) == (
+        assert unconfined("shell_run_on_host", settings=settings) == (
             "The host fence is turned off in Settings."
         )
 
@@ -1028,9 +1023,9 @@ class TestTheWarning:
         self, monkeypatch: pytest.MonkeyPatch, settings: Settings
     ):
         set_fence(monkeypatch, "active")
-        assert unconfined("code_run_host_command", {}, settings=settings) is None
+        assert unconfined("shell_run_on_host", settings=settings) is None
         set_fence(monkeypatch, "unavailable", "x")
-        assert unconfined("shell_run_command", shell("ls"), settings=settings) is None
+        assert unconfined("shell_run_command", settings=settings) is None
 
 
 class TestOnceOnly:

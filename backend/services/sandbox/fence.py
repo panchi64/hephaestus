@@ -1,8 +1,7 @@
 """The OS-level fence for commands that run on the operator's machine rather than in the VM.
 
-Two paths execute there, and both run inside :func:`confine`: ``code_run_host_command``, the
-approval-gated exception for when the host itself must change, and the host shell working in
-a project's folder or worktree.
+One path executes there, inside :func:`confine`: ``shell_run_on_host``, the
+approval-gated exception for when the host itself must change.
 
 The fence is ``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux). Writes are
 deny-by-default, and the deny floor in :mod:`services.sandbox.floor` (shell rc files, launch
@@ -11,15 +10,9 @@ application's dotenv file, database and data directory for reads) applies to eve
 settings lists can add to it and never remove from it. The floor's docstring states which
 git paths are covered on which platform.
 
-The two callers differ on the network. ``code_run_host_command`` reaches only the
-``egress_allowed_domains`` allowlist. The host shell's network is open, because it runs
-``brew``, ``git push`` and package installs on the operator's own machine; it is bounded by
-what it can write and read, not by where it can connect. It reads less than the hatch:
-the floor plus ``credential_read_floor`` are read-denied, so tools reach secrets through
-ssh-agent, the Keychain and credential helpers rather than key and token files, while
-``host_command_deny_read`` (read-denied for ``code_run_host_command``) is write-denied for
-both. On Linux unix sockets are blocked inside the fence, so ssh-agent and docker are
-unavailable there; on macOS seatbelt's open network includes unix sockets.
+It reaches only the ``egress_allowed_domains`` allowlist, and ``host_command_deny_read``
+is read- and write-denied. On Linux unix sockets are blocked inside the fence, so
+ssh-agent and docker are unavailable there.
 
 **Loopback is outside the allowlist, deliberately.** A dev server and its tests are compute,
 so the allowlisted profile permits ``localhost``, and with it whatever else listens there,
@@ -41,14 +34,14 @@ import signal
 import stat
 import tempfile
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from core.config import Settings
 
 from .base import HostExecutionError
-from .floor import credential_read_floor, hooks_floor, merged, read_floor, write_floor
+from .floor import hooks_floor, merged, read_floor, write_floor
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +120,7 @@ def floor_read_paths(settings: Settings) -> tuple[str, ...]:
 
 
 def denied_read_paths(settings: Settings) -> tuple[str, ...]:
-    """What ``code_run_host_command`` may not read: the floor, then ``host_command_deny_read``.
+    """What ``shell_run_on_host`` may not read: the floor, then ``host_command_deny_read``.
 
     The host shell reads less (:func:`floor_read_paths`), so ``git push`` over SSH, ``gh``,
     ``docker`` and ``kubectl`` keep their credentials. Both are write-denied the full list.
@@ -199,27 +192,6 @@ def confinement_state(settings: Settings) -> ConfinementState:
     if _resolved.disabled:
         return ConfinementState("disabled_by_setting", _resolved.reason)
     return ConfinementState("unavailable", _resolved.reason)
-
-
-async def shell_confinement(settings: Settings) -> HostConfinement:
-    """The fence for the host shell: writes under ``~``, temp and the scratch directory
-    plus ``host_shell_allow_write``, and an open network."""
-    resolved = await resolve_confinement(settings)
-    if not resolved.active:
-        return resolved
-    # The runtime drops `/tmp` as written (a symlink on macOS), so its real path is named too.
-    shared_tmp = ("/tmp", "/var/tmp", os.path.realpath("/tmp"), os.path.realpath("/var/tmp"))
-    allow_write = merged(
-        ("~", tempfile.gettempdir(), *shared_tmp, str(scratch_path())),
-        settings.host_shell_allow_write,
-    )
-    return replace(
-        resolved,
-        allow_write=allow_write,
-        allowed_domains=(),
-        deny_read=merged(floor_read_paths(settings), credential_read_floor(Path.home())),
-        open_network=True,
-    )
 
 
 async def fence_command(command: str, confinement: HostConfinement | None) -> str:
@@ -298,7 +270,7 @@ async def configure(settings: Settings) -> HostConfinement:
     try:
         await SandboxManager.initialize(
             SandboxRuntimeConfig(
-                # The allowlist the VM's egress gateway reads: one installation-wide policy.
+                # The installation-wide egress allowlist, with no per-conversation grants.
                 # `allow_local_binding` is read off this global config at wrap time, so a
                 # per-call config cannot supply it; it is all-or-nothing (one
                 # `localhost:*` rule), hence the loopback residual in the module docstring.

@@ -32,7 +32,7 @@ _NAMED: dict[str, PlaceKind] = {
     "shared": "shared",
 }
 _LAYOUT = "a path under ~/scratch, ~/projects/<name>, ~/worktrees/<name> or ~/shared/<name>"
-#: A named place's name, as the guest accepts it after its group (`vm/guest/confine.py`).
+#: A named place's name: one lowercase path component, safe as a VM mount target.
 _NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 _NAMED_PLACE = re.compile(r"(?:~|/home/agent)/(projects|worktrees)/([a-z0-9][a-z0-9._-]{0,79})")
 

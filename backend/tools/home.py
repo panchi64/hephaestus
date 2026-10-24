@@ -1,29 +1,26 @@
 """The run's home, as a tool and the approval gate see it.
 
-Assembled once per run and memoised on its deps: the thread's scratch (the sandbox
-session's workspace), every registered project, writable where the thread holds a lease
-or was started in it, the thread's worktree of its project when it opened one, and the
-open worktrees of the sub-agents it spawned.
+Assembled once per run and memoised on its deps: the thread's scratch, every registered
+project, writable where the thread holds a lease or was started in it, the thread's
+worktree of its project when it opened one, and the open worktrees of the sub-agents it
+spawned.
 """
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from services.home.changes import ChangeLog, ThreadChanges
 from services.home.leases import WriteLeases
 from services.home.paths import Place
+from services.home.scratch import ScratchDirs
 from services.home.table import RunHome, default_place, thread_mounts
 from services.projects.store import ProjectStore
-from services.sandbox import SandboxError, SandboxSessionManager
 from services.subagents import SubagentLauncher
 from services.workspace import sandbox_workspace, split_workspace_key
 
 from .deps import RunDeps
 from .workspace import resolve_run_workspace
-
-logger = logging.getLogger(__name__)
 
 
 async def resolve_run_home(deps: RunDeps) -> RunHome | None:
@@ -35,13 +32,12 @@ async def resolve_run_home(deps: RunDeps) -> RunHome | None:
     if deps.home is not None:
         return deps.home
     projects = deps.caps.get_optional(ProjectStore)
-    scratch = None
-    sessions = deps.caps.get_optional(SandboxSessionManager)
-    if sessions is not None:
-        try:
-            scratch = (await sandbox_workspace(sessions, deps.workspace_key, holder=deps.run)).root
-        except SandboxError:
-            logger.debug("home: no scratch for %s", deps.workspace_key, exc_info=True)
+    scratch_dirs = deps.caps.get_optional(ScratchDirs)
+    scratch = (
+        sandbox_workspace(scratch_dirs, deps.workspace_key).root
+        if scratch_dirs is not None
+        else None
+    )
     slug = None
     worktree_root: Path | None = None
     if deps.project_id and projects is not None:

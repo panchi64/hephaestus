@@ -495,46 +495,17 @@ class TestACommandScopedGrant:
         # being one the fence can hold — and the leading words say nothing about either.
         assert self._covers(command) is False
 
-    @pytest.mark.parametrize("reach", ["host", "network"])
-    def test_the_same_words_declaring_a_wider_reach_are_not_the_same_act(self, reach: str):
-        # `reach` is what decides the fence the tool wraps the process in: `host` runs it
-        # unwrapped. The operator ticked a box under a fenced run.
-        assert (
-            covered_by_grant(
-                "shell_run_command",
-                {"command": "uv run pytest", "reach": reach},
-                self.held,
-            )
-            is False
-        )
-
-    def test_a_grant_recorded_under_a_wider_reach_covers_that_reach_and_no_other(self):
-        # The one that makes grants usable at Auto at all: `brew install wget` declared
-        # `host` parks, the operator ticks the box, and the next identical call is covered
-        # — while the same words fenced, or declared `network`, are asked about again.
+    def test_a_grant_stored_with_a_retired_reach_marker_loads_and_covers_nothing_now(self):
+        # Scopes written before the reach argument was removed lead with `@host` or
+        # `@network`; they stay readable and match no command.
         held = _grants(("shell_run_command", ("@host", "brew", "install", "wget")))
+        for args in ({"command": "brew install wget"}, {"command": "@host brew install wget"}):
+            assert covered_by_grant("shell_run_command", args, held) is False
 
-        def covers(reach: str) -> bool:
-            return covered_by_grant(
-                "shell_run_command", {"command": "brew install wget", "reach": reach}, held
-            )
-
-        assert covers("host") is True
-        assert covers("offline") is False
-        assert covers("network") is False
-
-    def test_an_install_is_scoped_by_the_network_it_runs_with_whatever_it_declared(self):
-        # An offline `npm ci` runs with the network, so it is the same act as one declared
-        # `network`, and one yes covers both.
-        held = _grants(("shell_run_command", ("@network", "npm", "ci")))
-
-        def covers(reach: str) -> bool:
-            return covered_by_grant(
-                "shell_run_command", {"command": "npm ci", "reach": reach}, held
-            )
-
-        assert covers("network") is True
-        assert covers("offline") is True
+    def test_a_grant_on_the_vm_tool_does_not_cover_the_host_tool(self):
+        held = _grants(("shell_run_command", ("git", "status")))
+        assert covered_by_grant("shell_run_command", {"command": "git status"}, held) is True
+        assert covered_by_grant("shell_run_on_host", {"command": "git status"}, held) is False
 
     def test_a_scope_covers_its_own_words_and_not_what_follows_them(self):
         # A scope is only as long as the approved command's own leading words, so matching
@@ -627,7 +598,7 @@ class TestTheScopeAnApprovalRecords:
         # Twice on different targets, because that is what the cap makes one act — a
         # differently *flagged* stage is a different act and records its own scope.
         assert grant_scopes(
-            "code_run_host_command",
+            "shell_run_on_host",
             {"command": "uv run pytest tests/a.py && uv run pytest tests/b.py"},
         ) == [("uv", "run", "pytest")]
 
@@ -640,27 +611,13 @@ class TestTheScopeAnApprovalRecords:
         # nothing should have written down, and the operator's chip would misdescribe it.
         assert grant_scopes("shell_run_command", {"command": command}) is None
 
-    @pytest.mark.parametrize("reach", ["host", "network"])
-    def test_a_command_declaring_a_wider_reach_records_the_reach_in_its_scope(self, reach: str):
-        # At Auto these are the only shell calls that ever park, so a scoping that refused
-        # them would leave "allow for this conversation" with nothing to apply to. The
-        # reach leads the scope instead, so the grant stands for *that* run and no other.
-        assert grant_scopes("shell_run_command", {"command": "uv run pytest", "reach": reach}) == [
-            (f"@{reach}", "uv", "run", "pytest")
+    def test_a_vm_command_records_its_own_words(self):
+        assert grant_scopes("shell_run_command", {"command": "uv run pytest"}) == [
+            ("uv", "run", "pytest")
         ]
 
-    def test_the_tools_own_reach_is_not_written_into_the_scope(self):
-        assert grant_scopes(
-            "shell_run_command", {"command": "uv run pytest", "reach": "offline"}
-        ) == [("uv", "run", "pytest")]
-
-    def test_a_host_tool_still_records_its_own_reach(self):
-        # `code_run_host_command` reaches the host by construction and carries no `reach`
-        # argument to widen, so measuring it against a value it can never declare would
-        # retire its grants rather than scope them.
-        assert grant_scopes("code_run_host_command", {"command": "git status"}) == [
-            ("git", "status")
-        ]
+    def test_a_host_tool_records_its_own_words(self):
+        assert grant_scopes("shell_run_on_host", {"command": "git status"}) == [("git", "status")]
 
     @pytest.mark.parametrize("command", ["cat $TARGET", "ls |", ""])
     def test_an_unreadable_command_records_nothing(self, command: str):
@@ -676,7 +633,7 @@ class TestTheScopeAnApprovalRecords:
         # here — a new executing tool must not quietly inherit a whole-tool grant.
         from tools.shell import GATED_TOOLS
 
-        assert COMMAND_SCOPED_TOOLS == GATED_TOOLS | {"code_run_host_command"}
+        assert COMMAND_SCOPED_TOOLS == GATED_TOOLS | {"shell_run_on_host"}
 
 
 async def test_expired_grants_are_pruned_on_read():
