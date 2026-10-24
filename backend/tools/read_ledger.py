@@ -3,14 +3,16 @@
 An edit or an overwrite of an existing file needs a read behind it in the same
 conversation, and the harness then refuses it if the file changed since (``expected_hash``).
 Losing the ledger on a restart only makes the model read again. The ledger is bounded, and
-the oldest conversation is forgotten first.
+the oldest conversation is forgotten first. A fold resets a conversation's record to the
+files it re-read (``agent/compaction_restore.py``): the model no longer holds the rest.
 """
 
 from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart
 
@@ -32,28 +34,57 @@ _WRITE_HASH = re.compile(r"\A(?:Wrote|Edited) .*\[hash:([0-9a-f]{12})\]\Z", re.D
 _BINARY_READ = re.compile(r"\A\[Binary file: ")
 
 
+@dataclass(frozen=True)
+class Seen:
+    """One file's record: its content hash, and the home path the model named it by (empty
+    for a record seeded from history, which knows only the host path)."""
+
+    content_hash: str
+    path: str = ""
+
+
 class ReadLedger:
-    """``{conversation: {absolute path: content hash}}``, in memory."""
+    """``{conversation: {absolute path: Seen}}``, in memory, most recently touched last."""
 
     def __init__(self) -> None:
-        self._seen: OrderedDict[str, OrderedDict[str, str]] = OrderedDict()
+        self._seen: OrderedDict[str, OrderedDict[str, Seen]] = OrderedDict()
 
     def get(self, conversation: str, path: str) -> str | None:
         paths = self._seen.get(conversation)
         if paths is None:
             return None
         self._seen.move_to_end(conversation)
-        return paths.get(path)
+        seen = paths.get(path)
+        return None if seen is None else seen.content_hash
 
-    def record(self, conversation: str, path: str, content_hash: str) -> None:
+    def record(self, conversation: str, path: str, content_hash: str, *, named: str = "") -> None:
         paths = self._seen.setdefault(conversation, OrderedDict())
         self._seen.move_to_end(conversation)
-        paths[path] = content_hash
+        paths[path] = Seen(content_hash, named)
         paths.move_to_end(path)
         while len(paths) > _MAX_PATHS:
             _ = paths.popitem(last=False)
         while len(self._seen) > _MAX_CONVERSATIONS:
             _ = self._seen.popitem(last=False)
+
+    def recent(self, conversation: str, limit: int) -> list[str]:
+        """The home paths of the ``limit`` text files most recently read or written, newest
+        first."""
+        paths = self._seen.get(conversation)
+        if paths is None or limit <= 0:
+            return []
+        named = [
+            seen.path
+            for seen in reversed(paths.values())
+            if seen.path and seen.content_hash != BINARY
+        ]
+        return named[:limit]
+
+    def reset(self, conversation: str, keep: Mapping[str, Seen]) -> None:
+        """Forget every file but ``keep`` (host path to its fresh record), oldest first."""
+        _ = self._seen.pop(conversation, None)
+        for host, seen in keep.items():
+            self.record(conversation, host, seen.content_hash, named=seen.path)
 
 
 def ledger_of(caps: ServiceContainer) -> ReadLedger | None:

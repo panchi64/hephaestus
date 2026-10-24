@@ -194,6 +194,9 @@ class MessageOut(BaseModel):
     # event uses, without fence markers or the model-facing preamble. Empty elsewhere and
     # when the text parses into nothing (the client falls back to `content`).
     sections: list[SummarySection] = Field(default_factory=list)
+    # `role == "compaction"` only: what the fold re-read after the briefing, as on the live
+    # event. Empty elsewhere.
+    restored: list[str] = Field(default_factory=list)
     # Assistant turns only: the order the model emitted reasoning, calls and answer, which
     # `tools`/`content` flatten into lanes. Empty elsewhere.
     segments: list[SegmentOut] = Field(default_factory=list)
@@ -249,6 +252,12 @@ class RetitleRequest(BaseModel):
 
     endpoint_id: str | None = None
     model: str | None = None
+
+
+class CompactRequest(RetitleRequest):
+    """The picker selection to fold with, and what the operator wants the briefing to keep."""
+
+    focus: str | None = Field(default=None, max_length=2000)
 
 
 class VersionSwitch(BaseModel):
@@ -380,6 +389,7 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
         tokens_after=view.tokens_after,
         compaction_reason=view.compaction_reason,
         sections=view.sections,
+        restored=view.restored,
         segments=[
             SegmentOut(kind=s.kind, text=s.text, tool_call_id=s.tool_call_id) for s in view.segments
         ],
@@ -870,7 +880,7 @@ async def set_auto_compact_override(
 _NOTHING_TO_FOLD = "Nothing to fold — there are no new turns since the last compaction."
 
 
-async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> None:
+async def _run_manual_fold(run: Run, request: Request, pick: CompactRequest) -> None:
     """The operator's own fold, as a run.
 
     It is a run because :func:`agent.folding.fold` announces itself by emitting onto a
@@ -913,6 +923,7 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
         capabilities=scope.capabilities,
         disabled_tools=scope.disabled_tools,
         binding=scope.binding,
+        focus=pick.focus,
     )
     if isinstance(result, NothingToFold):
         run.block(_NOTHING_TO_FOLD)
@@ -922,7 +933,7 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
 
 @router.post("/{conversation_id}/compact", response_model=FoldStarted, status_code=202)
 async def compact_conversation_now(
-    conversation_id: str, request: Request, body: RetitleRequest | None = None
+    conversation_id: str, request: Request, body: CompactRequest | None = None
 ) -> FoldStarted:
     """Fold this thread's older turns into a summary now, before the automatic threshold.
 
@@ -937,7 +948,7 @@ async def compact_conversation_now(
     store = deps.store(request)
     if await store.get_summary(conversation_id, OPERATOR_ID) is None:
         raise HTTPException(status_code=404, detail="conversation not found")
-    pick = body or RetitleRequest()
+    pick = body or CompactRequest()
     await deps.after_restore(request)
 
     async def orchestrator(run: Run) -> None:

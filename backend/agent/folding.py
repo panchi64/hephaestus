@@ -79,7 +79,9 @@ def incoming_request(
     return ModelRequest(parts=[UserPromptPart(content=parts)]) if parts else None
 
 
-async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) -> FoldResult:
+async def fold(
+    run: Run, ctx: CompactionContext, *, reason: CompactionReason, focus: str | None = None
+) -> FoldResult:
     """Run one compaction and announce it on ``run``, answering with what happened.
 
     **The one path every fold takes**, whichever trigger fired — the prelude's projected
@@ -129,6 +131,8 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
                 agent=ctx.agent,
                 deps=ctx.deps,
                 reason=reason,
+                settings=ctx.settings,
+                focus=focus,
                 on_plan=announce_plan,
                 # The summary as it is written, so the operator watches it arrive.
                 on_delta=announce_delta,
@@ -149,6 +153,7 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
                 tokens_before=result.tokens_before,
                 tokens_after=result.tokens_after,
                 after_message_id=result.after_message_id,
+                restored=list(result.restored),
             )
         )
     return result

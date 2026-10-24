@@ -340,7 +340,7 @@ export function ChatRoomScreen(): JSX.Element {
     agentChoice() ?? threadAgentName(currentSummary()?.agentName);
 
   const commands = createComposerCommands(currentId, composerProjectId, {
-    compact: () => void stream.compactNow(),
+    compact: (focus) => void stream.compactNow(focus),
     fork: () => {
       const last = stream.messages.at(-1);
       if (last) void actions.fork(last.id);

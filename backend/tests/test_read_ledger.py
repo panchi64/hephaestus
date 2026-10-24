@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 import pytest
-from pydantic_ai import ApprovalRequired, ModelRetry, RunContext
+from pydantic_ai import ApprovalRequired, ModelRetry
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -14,86 +13,17 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
-from core.db import init_db, make_engine
-from core.vault import Vault
-from runs import Run, RunStream
 from services.home.leases import WriteLeases
 from services.projects.store import ProjectStore
 from services.sandbox import SandboxSessionManager
-from services.settings_store import SettingsStore
-from tools import RunDeps, build_agent_toolsets, harness_events_capability
-from tools.files import files_toolset, unread_refusal
-from tools.read_ledger import ReadLedger, hash_reported, seed_from_history
+from tools.files import unread_refusal
+from tools.read_ledger import ReadLedger, Seen, hash_reported, seed_from_history
 
-_TOOLSET = build_agent_toolsets({"files": files_toolset()})[0]
-README = "~/projects/api/README.md"
-
-
-class _Session:
-    def __init__(self, workspace: Path) -> None:
-        self._workspace: Path = workspace
-
-    def ensure_workspace(self) -> Path:
-        self._workspace.mkdir(parents=True, exist_ok=True)
-        return self._workspace
-
-
-class _Manager:
-    """Hands out one session per key, each with its own scratch directory."""
-
-    def __init__(self, root: Path) -> None:
-        self._root: Path = root
-
-    async def acquire(self, key: str, *, holder: object = None) -> _Session:
-        del holder
-        return _Session(self._root / "scratch" / key)
-
-
-async def _project(tmp_path: Path) -> tuple[ServiceContainer, Path]:
-    engine = make_engine("sqlite:///:memory:")
-    init_db(engine)
-    vault = Vault(tmp_path / "keyfile.json")
-    await vault.setup("pw")
-    projects = ProjectStore(engine, vault, SettingsStore(engine))
-    root = tmp_path / "api"
-    root.mkdir()
-    _ = (root / "README.md").write_text("the api\n")
-    _ = await projects.create("operator", "api", str(root))
-    caps = ServiceContainer()
-    caps.add(projects)
-    caps.add(WriteLeases(engine, ttl_s=3600))
-    caps.add(_Manager(tmp_path), as_type=SandboxSessionManager)
-    caps.add(ReadLedger())
-    return caps, root
-
-
-async def _call(
-    caps: ServiceContainer,
-    tool: str,
-    args: dict[str, object],
-    *,
-    conversation: str = "conv-1",
-    approved: bool = True,
-    messages: list[ModelMessage] | None = None,
-) -> str:
-    run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
-    deps = RunDeps(run=run, owner_id="operator", caps=caps, conversation_id=conversation)
-    ctx = RunContext(
-        deps=deps,
-        messages=messages or [],
-        model=TestModel(),
-        usage=RunUsage(),
-        _event_stream_buffer=[],
-        _capability=harness_events_capability(),
-    )
-    ctx.tool_call_approved = approved
-    tools = await _TOOLSET.get_tools(ctx)
-    name = f"files_{tool}"
-    return str(cast(object, await _TOOLSET.call_tool(name, args, ctx, tools[name])))
+from .files_support import README, run_deps
+from .files_support import call_files as _call
+from .files_support import project_caps as _project
 
 
 def _edit(path: str = README) -> dict[str, object]:
@@ -238,6 +168,26 @@ async def test_a_run_with_no_ledger_is_not_gated(tmp_path: Path):
     assert (root / "README.md").read_text() == "the API\n"
 
 
+def test_recent_lists_named_text_files_newest_first():
+    ledger = ReadLedger()
+    ledger.record("c", "/a", "aaaaaaaaaaaa", named="~/a")
+    ledger.record("c", "/seeded", "bbbbbbbbbbbb")
+    ledger.record("c", "/img", "binary", named="~/img")
+    ledger.record("c", "/b", "cccccccccccc", named="~/b")
+    assert ledger.recent("c", 5) == ["~/b", "~/a"]
+    assert ledger.recent("c", 1) == ["~/b"]
+    assert ledger.recent("other", 5) == []
+
+
+def test_reset_keeps_only_what_it_is_given():
+    ledger = ReadLedger()
+    ledger.record("c", "/a", "aaaaaaaaaaaa", named="~/a")
+    ledger.record("c", "/b", "bbbbbbbbbbbb", named="~/b")
+    ledger.reset("c", {"/b": Seen("dddddddddddd", "~/b")})
+    assert ledger.get("c", "/a") is None
+    assert ledger.get("c", "/b") == "dddddddddddd"
+
+
 def test_the_ledger_forgets_the_oldest_conversation_and_path():
     ledger = ReadLedger()
     for number in range(300):
@@ -252,8 +202,7 @@ def test_the_ledger_forgets_the_oldest_conversation_and_path():
 
 async def test_the_unread_refusal_is_available_before_anyone_is_asked(tmp_path: Path):
     caps, _ = await _project(tmp_path)
-    run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
-    deps = RunDeps(run=run, owner_id="operator", caps=caps, conversation_id="conv-1")
+    deps = run_deps(caps)
     args: dict[str, object] = {"path": README, "content": "x"}
     assert await unread_refusal(deps, "files_write_file", args) is not None
     assert await unread_refusal(deps, "files_read_file", args) is None

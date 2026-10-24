@@ -53,6 +53,9 @@ if TYPE_CHECKING:
 #: Written by ``ConversationStore.record_compaction``; a checkpoint without it reads as
 #: "unknown".
 COMPACTION_REASON_KEY = "compaction_reason"
+#: Key on the same metadata listing what the fold re-read after the briefing: home paths,
+#: and ``"plan"`` when the plan came back.
+COMPACTION_RESTORED_KEY = "compaction_restored"
 
 #: Request-metadata key holding a turn's `@` file references, the structured form the
 #: operator's chips are drawn from.
@@ -222,6 +225,8 @@ class MessageView:
     # checkpoint's metadata. None for a checkpoint recorded without one, which must not
     # read as the most common cause.
     compaction_reason: str | None = None
+    # `role="compaction"` only: what the fold re-read after the briefing.
+    restored: list[str] = field(default_factory=list)
     # `role="compaction"` only: `content` split by the same `summary_sections` the live
     # event uses. Server-side because the roster is a security boundary: only a heading
     # naming one of our sections ends a section, so a fetched page's heading cannot open
@@ -549,6 +554,14 @@ def _compaction_reason(message: object) -> str | None:
     return reason if isinstance(reason, str) and reason else None
 
 
+def compaction_restored(message: object) -> list[str]:
+    """What this checkpoint's fold re-read, from its metadata; empty when unrecorded."""
+    raw: object = getattr(message, "metadata", None)
+    metadata = as_dict(raw)
+    items = as_list(metadata.get(COMPACTION_RESTORED_KEY)) if metadata is not None else None
+    return [item for item in items if isinstance(item, str) and item] if items else []
+
+
 def strip_chassis_markers(text: str) -> str:
     """The operator's text with the chassis's attachment and `@` blocks taken back off.
 
@@ -657,6 +670,7 @@ def project_tree(
                     tokens_before=estimate_tokens(since_checkpoint),
                     tokens_after=estimate_tokens([message]),
                     compaction_reason=_compaction_reason(message),
+                    restored=compaction_restored(message),
                 )
             )
             since_checkpoint = [message]

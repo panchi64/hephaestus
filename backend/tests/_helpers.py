@@ -143,9 +143,20 @@ def is_fold_request(messages: Sequence[ModelMessage]) -> bool:
 
     last = messages[-1] if messages else None
     return isinstance(last, ModelRequest) and any(
-        isinstance(part, UserPromptPart) and part.content == COMPACT_INSTRUCTIONS
+        isinstance(part, UserPromptPart)
+        and isinstance(part.content, str)
+        and part.content.startswith(COMPACT_INSTRUCTIONS)
         for part in last.parts
     )
+
+
+def briefing_of(summary: object) -> str:
+    """What the model wrote of a fold's summary, without the operator messages the chassis
+    adds after it."""
+    from prompts.compaction import COMPACT_OPERATOR_SECTION
+
+    assert isinstance(summary, str)
+    return summary.split(f"## {COMPACT_OPERATOR_SECTION}")[0].strip()
 
 
 def fold_aware_model(*, answer: str = "the answer", summary: str = "FOLDED AWAY") -> FunctionModel:

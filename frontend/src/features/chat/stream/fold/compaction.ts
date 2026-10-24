@@ -121,6 +121,7 @@ export function foldCompaction(ev: RunEvent, c: FoldContext): boolean {
         // cold read parses the same stored string with the same function — so the
         // divider seated here and the one a reload seats are the same divider.
         summarySections: ev.sections ?? undefined,
+        restored: ev.restored?.length ? ev.restored : undefined,
       };
       // Idempotent on `message_id`: a reattach replays the run's whole buffer
       // (`fromSeq: 0`) over a transcript that was cold-loaded *with* this turn

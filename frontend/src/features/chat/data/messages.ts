@@ -174,6 +174,7 @@ export function toMessage(dto: MessageDTO): ChatMessage {
     // array is not nullish — so `?? undefined` would hang a useless empty list off every
     // user and assistant turn. Absent-not-empty, the same rule the fields above follow.
     summarySections: dto.sections?.length ? dto.sections : undefined,
+    restored: dto.restored?.length ? dto.restored : undefined,
   };
   if (dto.role !== "assistant") return base;
   const blocks: AssistantBlock[] = [];

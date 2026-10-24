@@ -1,7 +1,7 @@
 """Saying out loud what the chassis put in front of the model.
 
 Every turn carries text the operator never wrote and never sees: the project's own
-`CLAUDE.md`, the skill catalog, the plan reminder, today's date, whatever a manifest
+`CLAUDE.md`, the skill catalog, the task list, today's date, whatever a manifest
 contributes. The context gauge has always been able to say what those *cost* — that is
 ``services.context_budget`` — and has never been able to say what they *said*. Those are
 different questions, and only the second one accounts for a model that behaves as though
@@ -23,7 +23,7 @@ our two registration seams delivered it".
 **Announced once per turn, per distinct text.** The instruction hook fires on every model
 request, so a five-step turn resolves the same brief five times; repeating it would bury
 the turn's real work under a fivefold echo of its preamble. What is *not* deduplicated is
-a contributor whose text changed mid-turn — a plan reminder that grew a task genuinely is
+a contributor whose text changed mid-turn — a task list that grew a task genuinely is
 a new injection, and seeing it arrive is the point.
 
 **The dedup key is a digest, never the block itself.** The capability lives as long as the

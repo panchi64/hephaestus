@@ -601,6 +601,8 @@ export interface ChatMessage {
    *  quoted from a fetched page must not open a section and carry what follows out of the
    *  untrusted fence. Live and cold reads call the same function. */
   summarySections?: SummarySection[];
+  /** Compaction dividers only: the files (and `plan`) the fold re-read after the briefing. */
+  restored?: string[];
   /** Compaction turns only, and only while the fold is in flight: what it is doing and
    *  the summary as the model writes it. The turn exists from the fold's start; when
    *  `conversation.compacted` lands it is dropped and the settled one is seated at the

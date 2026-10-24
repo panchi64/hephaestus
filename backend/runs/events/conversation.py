@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import computed_field
+from pydantic import Field, computed_field
 
 from core.compaction_sections import SummarySection, summary_sections
 
@@ -123,6 +123,9 @@ class ConversationCompacted(Body):
     # nodes, so the backend resolves the position rather than leaving the client to
     # approximate it and land somewhere a reload disagrees with. Null => append.
     after_message_id: str | None = None
+    # What the fold re-read after the briefing: home paths, and "plan" when the plan came
+    # back. The cold read takes the same list off the checkpoint's metadata.
+    restored: list[str] = Field(default_factory=list)
 
     @computed_field
     @property

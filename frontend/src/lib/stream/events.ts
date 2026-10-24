@@ -374,6 +374,9 @@ export interface ConversationCompacted extends Base {
   /** `summary` split into divider sections, by the same function the cold read uses so
    *  live and reload agree. The divider falls back to `summary` when absent. */
   sections?: SummarySection[];
+  /** What the fold re-read after the briefing: home paths, and `plan` when the plan came
+   *  back. Optional for older backends. */
+  restored?: string[];
 }
 
 // --- Context ---------------------------------------------------------------

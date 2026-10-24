@@ -19,7 +19,7 @@ import { CompactionSummary } from "./CompactionSummary";
  *
  *  §10.14 reserves the group for readouts and warns off prose, and the exception is worth
  *  stating rather than assuming. A checkpoint is not an answer read start to finish — it
- *  is a fixed roster of eight named sections, and what the operator does with it is scan
+ *  is a fixed roster of named sections, and what the operator does with it is scan
  *  for the one they care about (*what did it keep about the decisions? the paths?*). That
  *  is the reading a ruled column is for. What the rule guards against is a frame drawn
  *  around ordinary content at the wrong density, and this is not that.
@@ -163,6 +163,7 @@ function Settled(props: { message: ChatMessage }): JSX.Element {
                   },
                 ]
           }
+          restored={m().restored ?? []}
         />
       </div>
     </ConsoleGroup>

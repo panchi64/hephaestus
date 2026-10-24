@@ -222,10 +222,11 @@ async def fold_now(
     context_window: int | None = None,
     context_thresholds: ContextThresholds = DEFAULT_CONTEXT_THRESHOLDS,
     auto_compact: AutoCompactPolicy | None = None,
+    focus: str | None = None,
 ) -> FoldResult:
     """The operator's own fold, on the agent and deps a chat turn on this thread would use,
     so the thread's main model writes the summary as in an automatic fold. No policy: this
-    is not a trigger.
+    is not a trigger. ``focus`` is what the operator asked the briefing to keep.
 
     A landed fold leaves the run with real metrics: the run has no turn to read a gauge
     from, and the registry closes it with its stashed metrics, so an empty frame would blank
@@ -262,7 +263,7 @@ async def fold_now(
         settings=settings,
     )
     assert ctx is not None  # a store and a conversation always make one
-    result = await fold(run, ctx, reason="manual")
+    result = await fold(run, ctx, reason="manual", focus=focus)
     if isinstance(result, CompactionOutcome):
         run.prior_timings = await store.timings(conversation_id)
         run.context_overhead = await store.get_overhead(conversation_id)
