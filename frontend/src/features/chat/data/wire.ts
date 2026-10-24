@@ -1,16 +1,8 @@
 /**
- * What the backend actually sends — the snake_case shapes, and nothing that interprets
- * them.
+ * The backend's snake_case wire shapes, with no interpretation. Kept apart from the
+ * mappers because these change with the backend and the mappers change with the screen.
  *
- * Kept apart from the mappers for one reason: these declarations change when the
- * *backend* changes, and the mappers change when the *screen* needs something different
- * from the same payload. A file holding both would be edited from two directions at once,
- * and a reader trying to answer "what does the wire look like" would have to read past the
- * translation to find out.
- *
- * Nothing here is exported past `data/` — the seam types in `../model` are what the rest
- * of the app sees, which is what lets a field be renamed on the wire without the
- * transcript knowing.
+ * Not exported past `data/`; the rest of the app sees the seam types in `../model`.
  */
 
 import type {
@@ -37,46 +29,36 @@ export interface ConversationSummaryDTO {
   /** The conversation this one was opened from, when it is a thread of an agent tree. */
   parent_id?: string | null;
   preview: string | null;
-  /** Two or three sentences on what the agent did here, written by the backend's
-   *  utility model once the thread had been idle a while and replaced wholesale each
-   *  time it is rewritten. Null until the first sweep has covered the thread.
-   *
-   *  On the *listing* rather than only the detail because the band that shows it reads
-   *  the shared session list, and it is the same class of payload as `preview` beside
-   *  it — a capped excerpt, not a document. */
+  /** Two or three sentences on what the agent did here, written by the utility model
+   *  after the thread went idle and replaced wholesale on each rewrite. Null until the
+   *  first sweep covers the thread. On the listing because the band showing it reads the
+   *  shared session list. */
   work_summary?: string | null;
   model: string | null;
-  /** The live run's status for this thread (`running`, `queued`,
-   *  `awaiting_input`), or null when idle. Registry-derived server-side — the
-   *  thread list renders it without opening each conversation. */
+  /** The live run's status for this thread (`running`, `queued`, `awaiting_input`), or
+   *  null when idle. Registry-derived, so the list needs no per-conversation open. */
   activity?: ChatActivity | null;
-  /** How the most recent **terminal** run for this thread ended, or null when the
-   *  backend has nothing to say. Null is not "it never ran": the run registry is in
-   *  memory and bounded, so a restart or enough traffic drops the answer. Sibling of
-   *  `activity` above, not a replacement — both can be set at once, and `activity` is
-   *  the one that wins while it is. */
+  /** How the most recent terminal run ended, or null when unknown. Null is not "it never
+   *  ran": the run registry is in memory and bounded. Both can be set; `activity` wins
+   *  while it is. */
   last_outcome?: ChatOutcome | null;
-  /** The basename of the directory of the project the thread is filed under, and that
-   *  project's id. Both on the *listing* because the rail files threads under their
-   *  project. The id is what it files *by* — the rail lists every directory, not only the
-   *  ones holding threads, and two of them can share a basename. */
+  /** The basename of the project directory the thread is filed under, and its id. The
+   *  rail files by id because it lists every directory and two can share a basename. */
   workspace?: string | null;
   project_id?: string | null;
   /** The custom agent the thread runs as; null is the default agent. */
   agent_name?: string | null;
 }
 
-/** One image on the wire. The REST detail and the SSE `tool.completed` event carry the
- *  identical shape — deliberately, so `toolImages` is one mapping rather than two that
- *  could drift into disagreeing about the same screenshot. */
+/** The REST detail and the SSE `tool.completed` event carry this identical shape, so
+ *  `toolImages` is one mapping. */
 export interface ToolImageDTO {
   media_type: string;
   data: string;
 }
 
-/** One question an `ask_user` call asked, and what the operator said to it — the cold
- *  twin of the live `question.answered` items, paired by the backend from the same
- *  parked arguments so the card reads the same either way. */
+/** A question an `ask_user` call asked and the operator's answer; the cold twin of the
+ *  live `question.answered` items. */
 export interface ToolCallAnswerDTO {
   question: string;
   selections?: string[];
@@ -103,8 +85,7 @@ export interface ToolCallDTO {
   platform?: boolean;
 }
 
-/** An inline View chip re-attached to the message that minted it — references the
- *  conversation-scoped version by id (the panel reads its bytes/files). */
+/** An inline View chip re-attached to the message that minted it, by version id. */
 export interface MessageVersionRefDTO {
   snapshot_id: string;
   title: string | null;
@@ -121,17 +102,15 @@ export interface ViewSnapshotDTO {
   summary: string;
   preview_kind: "html" | "image" | "text" | "other" | null;
   preview_artifact_id: string | null;
-  /** The operator's durable bookmark on this version. Optional on the wire —
-   *  older/mocked payloads may omit it. */
+  /** The operator's durable bookmark on this version. */
   keeper?: boolean;
 }
 
 export interface MessageDTO {
   id: string;
-  /** "compaction" is a chassis-authored divider, not a turn — the summary the
-   *  thread's earlier turns were folded into, carried in `content`. "subagent" is a
-   *  report from one the agent launched, which arrived as a request message and is not
-   *  the operator speaking. */
+  /** "compaction" is a divider, not a turn: the summary of the folded earlier turns, in
+   *  `content`. "subagent" is a report from an agent the thread launched, not the
+   *  operator speaking. */
   role: "user" | "assistant" | "compaction" | "subagent" | "notice";
   content: string;
   /** User turns: the non-text parts (attachment fallback text, a routine's previous-run
@@ -147,41 +126,34 @@ export interface MessageDTO {
   tools: ToolCallDTO[];
   versions?: MessageVersionRefDTO[];
   created_at?: string | null;
-  /** The model that produced this assistant turn. */
   model?: string | null;
-  /** 0-based index of this turn among its sibling versions. */
+  /** 0-based index among this turn's sibling versions. */
   version_index?: number;
-  /** Total sibling versions for this turn (≥1). */
   version_count?: number;
-  /** Whether the operator has pinned this turn. */
   pinned?: boolean;
   /** User turns: ids of the uploads attached to this message. */
   attachment_ids?: string[];
   /** User turns: workspace-relative paths named with `@`. */
   file_refs?: string[];
-  /** Set when the run behind this assistant turn ended blocked (a usage/loop/
-   *  context/time bound) — the human-readable reason. */
+  /** The human-readable reason the run behind this assistant turn ended blocked (a
+   *  usage/loop/context/time bound). */
   blocked_reason?: string | null;
-  /** Compaction rows: how many **messages** the summary stands in for (not turns —
-   *  the backend counts `ModelMessage`s), an estimate of what was folded, and an
-   *  estimate of the summary that replaced it. The backend sends all three as ints
-   *  (0 when there's nothing to report); optional here only so an older backend
-   *  still renders. Every other row carries 0/0/0. */
+  /** Compaction rows: how many messages (not turns; the backend counts `ModelMessage`s)
+   *  the summary stands in for, and estimated token counts before and after. Ints, 0 when
+   *  nothing to report, on every other row too. */
   messages_compacted?: number | null;
   tokens_before?: number | null;
   tokens_after?: number | null;
-  /** Compaction rows: what triggered the fold, matching the live
-   *  `conversation.compacted` event's `reason`. Null on every other row, and on a
-   *  checkpoint folded before the backend recorded the reason. */
+  /** Compaction rows: what triggered the fold, as in the live `conversation.compacted`
+   *  event. Null elsewhere, and on checkpoints folded before the reason was recorded. */
   compaction_reason?: string | null;
-  /** Compaction rows: the summary split into the sections the divider renders, parsed
-   *  by the backend with the same function the live event uses — so a reload draws the
-   *  divider the operator watched arrive. Empty on every other row, and on a checkpoint
-   *  whose text parses into nothing (the divider falls back to `content`). */
+  /** Compaction rows: the summary split into divider sections by the same parser the
+   *  live event uses. Empty elsewhere, or when the text parses into nothing (the divider
+   *  then falls back to `content`). */
   sections?: SummarySection[] | null;
-  /** Assistant turns: reasoning, calls and answer in the order the model emitted
-   *  them — the order `tools`/`content` flatten away, and the only place a turn's
-   *  reasoning arrives. A `tool` segment names its entry in `tools`. Empty elsewhere. */
+  /** Assistant turns: reasoning, calls and answer in emission order, which `tools` and
+   *  `content` flatten away; the only place a turn's reasoning arrives. A `tool` segment
+   *  names its entry in `tools`. Empty elsewhere. */
   segments?: MessageSegmentDTO[] | null;
 }
 
@@ -194,46 +166,37 @@ export interface ActiveRunDTO {
   kind: string;
   status: string;
   last_seq: number;
-  /** The persisted row the run is answering — the operator's prompt, or on a
-   *  regenerate the request being re-answered. Null for a run that answers nothing
-   *  (a fold), and briefly while a chat run is still queued or in its setup. */
+  /** The persisted row the run answers: the operator's prompt, or the request being
+   *  regenerated. Null for a run that answers nothing (a fold), and briefly while a chat
+   *  run is queued or in setup. */
   prompt_message_id?: string | null;
 }
 
-/** The metric fields shared by the live `run.metrics` frame and the conversation
- *  load's `stats` — the same model server-side, so this is the event type minus its
- *  stream envelope rather than a second declaration that could drift from it. */
+/** The metrics shared by the live `run.metrics` frame and the load's `stats`: the event
+ *  type minus its envelope. */
 export type RunMetricsDTO = Omit<RunMetrics, "type" | "seq" | "ts">;
 
 export interface ConversationDetailDTO extends ConversationSummaryDTO {
   messages: MessageDTO[];
-  /** Context-window state reconstructed from the last turn's usage; null when
-   *  unavailable. Seeds the meter so an existing thread shows fullness on load. */
+  /** Context-window state rebuilt from the last turn's usage; null when unavailable.
+   *  Seeds the meter on load. */
   context: ContextWindow | null;
-  /** The thread's cumulative readout, rebuilt from the stored messages; null for a
-   *  thread that has never run. Seeds the line under the composer on load. */
+  /** The thread's cumulative readout rebuilt from stored messages; null for a thread
+   *  that has never run. Seeds the line under the composer. */
   stats?: RunMetricsDTO | null;
-  /** The in-flight run driving this thread, if a turn is still streaming
-   *  server-side; absent/null otherwise. Lets a cold read reattach to it. */
+  /** The in-flight run, if a turn is still streaming; lets a cold read reattach. */
   active_run?: ActiveRunDTO | null;
-  /** Workspace snapshots captured across the thread (newest last). Conversation-
-   *  scoped — not folded onto a message — so the viewport seeds them separately. */
+  /** Workspace snapshots across the thread, newest last. Not folded onto a message. */
   snapshots?: ViewSnapshotDTO[];
-  /** How far the model may go in this thread. Always populated by the backend, which
-   *  resolves it through its own registry — so a thread that predates the column
-   *  arrives as the level it was effectively running at rather than as nothing. */
+  /** How far the model may go in this thread. Always populated: the backend resolves
+   *  threads that predate the column to their effective level. */
   permission_level?: string | null;
 }
 
 /**
- * Shape of a command tool's result; mirrors the tool's return dict.
- *
- * One interface for both tools that run something, because both now answer the same
- * way: the sandboxed host command and the worktree shell each hand back the streams
- * and the exit code as fields. Every key is optional here and none is nullable-by-
- * convention — the backend **omits** a key that has nothing to say rather than sending
- * a null, so presence is the fact and `exit_code` is the one genuine null (a command
- * that timed out never exited).
+ * A command tool's result, for both the sandboxed host command and the worktree shell.
+ * The backend omits a key with nothing to say rather than sending null, so presence is
+ * the fact; `exit_code` is the one genuine null (a timed-out command never exited).
  */
 export interface HostResult {
   ok?: boolean;
@@ -243,19 +206,18 @@ export interface HostResult {
   timed_out?: boolean;
   /** Wall clock around the spawn, in whole milliseconds. */
   duration_ms?: number;
-  /** What the call declared, and whether an OS fence built from that declaration was
-   *  actually applied. Carried at every permission level, not only where a review ran
-   *  — which is why the terminal reads them off the result rather than off a review. */
+  /** What the call declared, and whether an OS fence built from it was applied. Carried
+   *  at every permission level, so the terminal reads them here rather than off a review. */
   reach?: CommandReach;
   fenced?: boolean;
   /** Whether a VM command ran with the network; absent for a host command. */
   network?: boolean;
   /** Present only when `fenced` is false: one operator-facing sentence saying why. */
   unfenced_reason?: string;
-  /** Present only when the output shows a permission failure the fence itself caused,
-   *  so a denied write reads as the fence holding rather than as the command being
-   *  broken. */
+  /** Present only when the output shows a permission failure the fence caused. */
   fence_note?: string;
+  /** Present only when a VM command's egress was refused and the gateway named the host. */
+  denied_host?: string;
   error?: string;
 }
 
@@ -272,24 +234,21 @@ export interface SnapshotDiffDTO {
 
 export interface ApprovalGrantDTO {
   tool_name: string;
-  /** The command the grant covers, as the leading words it was read as (`["uv", "run",
-   *  "pytest"]`); empty when it covers the whole tool. The words rather than a joined
-   *  string, because this is also what identifies the grant to the revoke endpoint and it
-   *  has to round-trip exactly — joining is for the label, which is this layer's job. */
+  /** The command the grant covers as its leading words (`["uv", "run", "pytest"]`);
+   *  empty when it covers the whole tool. Kept as words because it also identifies the
+   *  grant to the revoke endpoint and must round-trip exactly. */
   command_prefix: string[];
-  /** Whether the operator picked the wider width — the whole tool, everything it runs.
-   *  Sent because the empty prefix above cannot say so on its own. */
+  /** Whether the operator picked the whole tool; the empty prefix cannot say so alone. */
   decisive: boolean;
-  /** Whether this tool's grants are scoped to a command at all. Only there is "any
-   *  command" a real contrast worth putting on the chip. */
+  /** Whether this tool's grants are scoped to a command at all. */
   command_scoped: boolean;
-  // The backend also returns `expires_at`; the strip shows only the scope, so it's
-  // intentionally not mapped into the seam type.
+  // The backend also returns `expires_at`; the strip shows only the scope, so it is not
+  // mapped into the seam type.
 }
 
-/** What settling a park did, beyond resuming the run. Only the standing-yes half is read
- *  here: a "for this conversation" opt-in on a command the backend can scope no grant to
- *  records nothing, and `unscoped` is how that arrives — the approval itself stood. */
+/** What settling a park did beyond resuming the run. Only the standing-yes half is read:
+ *  a "for this conversation" opt-in on a command with no scopable grant records nothing,
+ *  arrives as `unscoped`, and the approval itself stood. */
 export interface ApprovalOutcomeDTO {
   status: string;
   /** The scopes recorded, each as its words; `[]` for a whole-tool grant. */

@@ -1,43 +1,37 @@
-"""``run_code`` — the model writes a script that calls tools, and only what the script
-returns reaches its context.
+"""``run_code``: the model writes a script that calls tools, and only what it returns
+reaches the context.
 
-A turn that has to read twelve files to find the three that mention something, or run a
-search per item in a list, pays for every intermediate result twice: once as a round trip
-and once as context the model reads and then ignores. ``pydantic_ai_harness``'s
-``CodeMode`` removes both: the tools it folds become async Python functions inside a
-Monty sandbox that runs **in this process**, and each call the script makes goes through
-the agent's own tool stack (``ToolManager.handle_call``) — the enabled gate, the approval
-gate, the describing stage, narration and every capability hook still apply to it. The
-sandbox itself has no filesystem, no network and no clock; everything a script does, it
-does by calling a tool. Unlike the library's default, a folded tool **stays a direct call
-as well**: ``run_code`` is for a fan-out, and a single lookup is still a single call.
+Reading twelve files to find three, or searching per list item, pays for every
+intermediate result twice (a round trip, then context the model ignores).
+``pydantic_ai_harness``'s ``CodeMode`` folds tools into async Python functions inside a
+Monty sandbox that runs in this process. Each call a script makes goes through the agent's
+own tool stack (``ToolManager.handle_call``), so the enabled gate, approval gate,
+describing stage, narration and capability hooks all apply. The sandbox has no filesystem,
+network or clock. Unlike the library default, a folded tool also stays a direct call:
+``run_code`` is for fan-outs.
 
-**Which tools a script may call is the permission level's answer, read live.** A tool is
-folded only when it is still an ordinary ``function`` after ``tools/toolsets.py``'s
-approval gate has marked everything the thread's level does not clear — so a tool the
-level would ask about stays a direct call and parks exactly as it did before, and a
-script never holds a call nobody can answer. ``CodeMode`` re-reads the catalog every step,
-so a level that moves mid-conversation moves the catalog with it at the next step. Three
-tools stay direct at every level (:data:`NATIVE_ONLY`): asking the operator a question,
-and entering or submitting a plan — each of which ends or reshapes the turn, which a
-script cannot wait on. A tool whose argument is itself a program (``code_arg_name``
-metadata — ``code_execute``, the shell) stays direct by the library's own rule.
+Which tools a script may call is the permission level's answer, read live. A tool is folded
+only if it is still an ordinary ``function`` after the approval gate in
+``tools/toolsets.py`` marked everything the level doesn't clear, so a tool the level would
+ask about stays direct and parks as before. ``CodeMode`` re-reads the catalog each step, so
+a mid-conversation level change applies at the next. Three tools stay direct at every
+level (:data:`NATIVE_ONLY`): asking a question and entering or submitting a plan, which end
+or reshape the turn. A tool whose argument is itself a program (``code_arg_name`` metadata:
+``code_execute``, the shell) stays direct by the library's rule.
 
-**What still has to be ruled on inside a script** is the call that gates *itself* — a
-global recall, an untrusted external tool, a skill edit — which the catalog cannot see
-coming. :class:`CodeModeCapability` answers those inline with the same ruling a top-level
-batch gets (``agent/gating.py`` — the level, the operator's grants, Auto's review, with
-the turn's own boundary and review budget); a call that would need the operator is
-refused with words telling the model to call the tool directly, where it can park. A
-nested call is recognised by the context it runs in: the sandbox dispatches through a
-``ToolManager`` of its own whose context is the ``run_code`` call's.
+What must still be ruled on inside a script is the call that gates itself (a global recall,
+an untrusted external tool, a skill edit), which the catalog can't foresee.
+:class:`CodeModeCapability` rules inline as a top-level batch gets (``agent/gating.py``: the
+level, grants, Auto's review, the turn's boundary and review budget); a call needing the
+operator is refused with words telling the model to call it directly, where it can park.
+A nested call is recognised by context: the sandbox dispatches through its own
+``ToolManager`` whose context is the ``run_code`` call's.
 
-**And what the operator sees.** The library streams no event for a call a script makes,
-so this capability announces each one (``agent/emit.py``'s ``NestedToolStarted`` /
-``NestedToolFinished``) and ``agent/translate.py`` turns them into the ordinary
-``tool.*`` frames, carrying the script's ``parent_tool_call_id``. A reload rebuilds the
-same rows from the record the library writes on the script's own result
-(``services/conversation_view.py``).
+The library streams no event for a script's call, so this capability announces each
+(``agent/emit.py``'s ``NestedToolStarted`` / ``NestedToolFinished``) and
+``agent/translate.py`` turns them into ordinary ``tool.*`` frames carrying the script's
+``parent_tool_call_id``. A reload rebuilds the rows from the record the library writes on
+the script's result (``services/conversation_view.py``).
 """
 
 from __future__ import annotations
@@ -74,19 +68,17 @@ from services.tool_sensitivity import (
     declared_sensitivity,
 )
 from tools import RunDeps
+from tools.code_mode_marks import RUN_CODE, script_call_of
 from tools.describe import NARRATION_ARG, NARRATION_PROPERTY, add_property, drop_properties
 from tools.recover import describe_failure
+from tools.spill import spill_large
 
 from .emit import NestedToolFinished, NestedToolStarted
 from .gating import settle_deferred
 
-#: The library's name for the tool, and the one name everything here keys on.
-RUN_CODE = "run_code"
-
-#: Tools that stay direct calls at every level, whatever the level clears. Each one ends
-#: or reshapes the turn — a question suspends it for the operator, and entering or
-#: submitting a plan changes what the thread may do — and a script can neither wait for
-#: an answer nor carry on under a level that moved beneath it.
+#: Tools that stay direct at every level. Each ends or reshapes the turn (a question
+#: suspends it; a plan changes what the thread may do), which a script can neither wait for
+#: nor survive.
 NATIVE_ONLY: frozenset[str] = frozenset({"builtin_ask_user", "plan_enter", "plan_submit"})
 
 #: Appended under the signatures, which are bare (``_NarratedCodeModeToolset``).
@@ -96,9 +88,8 @@ _CATALOG_NOTE = (
     "a script when many calls feed one answer and only the answer needs to come back."
 )
 
-# The harness warns once per tool that a folded tool has no return schema, so its
-# signature reads `-> Any`. That is true of most of this catalog and is not something an
-# operator can act on; left alone it is a warning per tool per process in the log.
+# The harness warns once per tool that a folded tool has no return schema (`-> Any`); true of
+# most of this catalog and not actionable, so it would be a log warning per tool per process.
 warnings.filterwarnings(
     "ignore", message=r"CodeMode: tool .* has no return schema", category=UserWarning
 )
@@ -132,25 +123,10 @@ def call_directly_message(tool: str) -> str:
 
 
 def clears_unasked(_ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
-    """Whether a script may call this tool: it is still an ordinary function after the
-    approval gate marked everything this run's level does not clear, and it is not one of
-    the tools that must stay direct. The selector ``CodeMode`` applies each step."""
+    """Whether a script may call this tool: still an ordinary function after the approval
+    gate marked what the level doesn't clear, and not a must-stay-direct tool. The selector
+    ``CodeMode`` applies each step."""
     return tool_def.kind == "function" and tool_def.name not in NATIVE_ONLY
-
-
-def script_call_of(ctx: RunContext[RunDeps]) -> str | None:
-    """The ``run_code`` call a tool hook's call was made from, or None for a direct call.
-
-    The sandbox dispatches through a ``ToolManager`` of its own whose context *is* the
-    ``run_code`` call's, and the library hands each call a context carrying the manager
-    executing it. So a call is nested exactly when its manager's context names
-    ``run_code``; a direct call's manager is the run's, whose context names no tool.
-    """
-    manager = ctx.tool_manager
-    outer = manager.ctx if manager is not None else None
-    if outer is not None and outer.tool_name == RUN_CODE:
-        return outer.tool_call_id
-    return None
 
 
 def _error_text(name: str, error: Exception) -> str:
@@ -162,13 +138,12 @@ def _error_text(name: str, error: Exception) -> str:
 
 @dataclass
 class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
-    """The harness's toolset, with the folded tools kept direct and ``run_code`` stated
-    the way every other tool is.
+    """The harness's toolset, with folded tools kept direct and ``run_code`` stated like every
+    other tool.
 
-    Two additions to the one definition the library builds: the ``narration`` argument
-    every tool in this catalog is offered (``tools/toolsets._narrated`` — ``run_code`` never
-    passes through that stage, since it is added outside it), and its sensitivity class,
-    so a reader of the definition gets the answer ``services/tool_sensitivity.py`` gives.
+    Adds to the library's definition the ``narration`` argument (``tools/toolsets._narrated``;
+    ``run_code`` is added outside that stage) and its sensitivity class
+    (``services/tool_sensitivity.py``).
     """
 
     @staticmethod
@@ -176,17 +151,14 @@ class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
     def _build_description(
         callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool
     ) -> str:
-        """The library's description, with each function stated as a bare signature.
+        """The library's description, with each function as a bare signature.
 
-        Every folded tool is also offered directly (below), with its whole description
-        and schema, so repeating each one as a docstring here would pay for the catalog
-        twice on every request. What a script needs that the direct definition does not
-        give is the Python shape — the parameters, and the return type a script indexes
-        into — so that is what is rendered, and the note says where the prose is.
-        ``narration`` is left out of the signatures too: it is the operator's sentence
-        about one call, and a script's calls are explained by the script's own. (A script
-        that passes one anyway is not refused — the type-check stubs keep it, and it comes
-        off before validation like any other call's.)"""
+        Folded tools are also offered directly with full description and schema, so repeating
+        them as docstrings would pay for the catalog twice per request. Only the Python shape
+        is rendered (parameters and the return type a script indexes), and the note says
+        where the prose is. ``narration`` is omitted: it is the operator's sentence about one
+        call, which the script explains itself. (A script passing one isn't refused: the
+        type-check stubs keep it and it is stripped before validation.)"""
         compact = {
             name: replace(
                 tool_def,
@@ -201,20 +173,31 @@ class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
         return base + _CATALOG_NOTE if compact else base
 
     @override
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, object],
+        ctx: RunContext[RunDeps],
+        tool: ToolsetTool[RunDeps],
+    ) -> object:
+        """A script's own result is spilled here: it never passes the inner stack's
+        recovery layer, which spills every other tool's."""
+        result = cast(object, await super().call_tool(name, tool_args, ctx, tool))
+        return await spill_large(ctx, name, result) if name == RUN_CODE else result
+
+    @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
         tools = await super().get_tools(ctx)
         run_code = tools.pop(RUN_CODE, None)
         if run_code is None:
             return tools
-        # A folded tool stays a direct call too. The library's split is exclusive — a tool
-        # it folds is offered *only* as a function inside `run_code` — which would turn
-        # every file read and every search into a script. `run_code` is the tool for a
-        # fan-out whose intermediate results the model does not need to see; one lookup is
-        # still one call. So every tool the stack produced is offered again (the library's
-        # `search_tools` note kept) and `run_code` joins at the end. The order is the folded
-        # tools first, then the rest, each in the stack's order — the library hands the two
-        # sets back apart, so the interleaving is not recoverable. It is stable within a
-        # level; a level change that moves a tool across the line moves it in the array.
+        # The library offers a folded tool only inside `run_code`, which would turn every
+        # file read and search into a script; one lookup should be one call. So every tool
+        # the stack produced is offered again (the library's `search_tools` note kept) and
+        # `run_code` joins at the end. Order is folded tools then the rest, each in stack
+        # order (the library returns the sets apart, so interleaving is unrecoverable);
+        # stable within a level, though a level change moving a tool across the line moves
+        # it in the array.
         wrapped: dict[str, ToolsetTool[RunDeps]] = getattr(run_code, "wrapped_tools", {})
         tools = {name: tools.get(name, tool) for name, tool in wrapped.items()} | {
             name: tool for name, tool in tools.items() if name not in wrapped
@@ -238,19 +221,17 @@ class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
 
 @dataclass
 class CodeModeCapability(CodeMode[RunDeps]):
-    """``CodeMode`` configured for this chassis, plus the rulings and frames its nested
-    calls need. Every hook below acts only on a call a script made and passes a direct
-    call through untouched — a top-level batch goes to ``settle_deferred`` and the park
-    exactly as it did before this capability existed."""
+    """``CodeMode`` configured for this chassis, plus the rulings and frames nested calls
+    need. Every hook acts only on a script's call and passes direct calls through; a
+    top-level batch still goes to ``settle_deferred`` and the park."""
 
     @override
     def get_wrapper_toolset(
         self, toolset: AbstractToolset[RunDeps]
     ) -> AbstractToolset[RunDeps] | None:
-        # Only the non-eager tier, with no host access and a static catalog: `eager` would
-        # run a statement before any hook saw the finished call, a mount or an OS handler
-        # would hand the sandbox the host, and a dynamic catalog adds an instruction part
-        # that moves every time the catalog does.
+        # Non-eager tier, no host access, static catalog: `eager` runs a statement before
+        # any hook sees the finished call, a mount or OS handler hands the sandbox the host,
+        # and a dynamic catalog adds an instruction part that moves with it.
         return _NarratedCodeModeToolset(
             wrapped=toolset,
             tool_selector=self.tools,
@@ -269,8 +250,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
         tool_def: ToolDefinition,
         args: RawToolArgs,
     ) -> RawToolArgs:
-        """Announce a script's call as it begins. Skipped on the re-validation an approved
-        call goes through, which is the same call already announced."""
+        """Announce a script's call as it begins, skipping an approved call's re-validation."""
         parent = script_call_of(ctx)
         if parent is not None and not ctx.tool_call_approved:
             _ = await ctx.emit(
@@ -312,14 +292,13 @@ class CodeModeCapability(CodeMode[RunDeps]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Send a script's call the thread's level no longer clears back to be ruled on.
+        """Send a script's call the level no longer clears back to be ruled on.
 
-        The script's catalog was read when the step began; a level that moved since (a
-        plan entered beside the script in the same batch) would otherwise let it call
-        what the level now withholds or asks about. Raised as a deferral, so the handler
-        below gives it the ruling the same call made directly would get under the live
-        level — withheld at Plan, reviewed at Auto, refused with the way round where only
-        the operator could answer."""
+        The catalog was read when the step began; a level that moved since (a plan entered in
+        the same batch) would let the script call what is now withheld or asked about.
+        Raised as a deferral so the handler below gives the ruling a direct call would get
+        under the live level: withheld at Plan, reviewed at Auto, refused with the way round
+        where only the operator could answer."""
         if (
             script_call_of(ctx) is not None
             and not ctx.tool_call_approved
@@ -342,8 +321,8 @@ class CodeModeCapability(CodeMode[RunDeps]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> object:
-        """Announce how a script's call ended. A deferral is not an ending — the handler
-        rules on it, and an approved call comes back through here to run."""
+        """Announce how a script's call ended. A deferral is not an ending: the handler rules
+        on it and an approved call returns here to run."""
         parent = script_call_of(ctx)
         if parent is None:
             return cast(object, await handler(args))
@@ -371,12 +350,12 @@ class CodeModeCapability(CodeMode[RunDeps]):
         *,
         requests: DeferredToolRequests,
     ) -> DeferredToolResults | None:
-        """Rule on a script's call that gated itself, inline — the same ruling a top-level
-        batch gets, minus the one outcome a script cannot take: waiting for the operator.
+        """Rule inline on a script's call that gated itself, as a top-level batch is ruled,
+        minus the outcome a script can't take: waiting for the operator.
 
-        The context here is the sandbox manager's own, which is the ``run_code`` call's,
-        so a nested request is one whose context names that tool; a top-level batch's
-        names none and is declined, leaving it to ``settle_deferred`` and the park."""
+        The context here is the sandbox manager's, i.e. the ``run_code`` call's, so a nested
+        request names that tool; a top-level batch names none and is declined, left to
+        ``settle_deferred`` and the park."""
         if ctx.tool_name != RUN_CODE:
             return None
         parent = ctx.tool_call_id or ""
@@ -394,6 +373,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
                 permission=deps.permission,
                 turn_start=deps.turn_start,
                 budget=deps.review_budget,
+                metadata=requests.metadata,
             )
         needs_operator = {call.tool_call_id for call in manual}
         approvals: dict[str, ToolApproved | ToolDenied | bool] = {}

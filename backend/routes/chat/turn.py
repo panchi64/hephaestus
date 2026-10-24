@@ -64,20 +64,18 @@ async def resolve_turn_models(
     *,
     owner_id: str = OPERATOR_ID,
 ) -> TurnModels:
-    """Resolve the `main` model plus the background (utility/title) pair, raising a
-    clear 4xx/503 on misconfiguration.
+    """Resolve the `main` model plus the background (utility/title) pair, raising a clear
+    4xx/503 on misconfiguration.
 
-    Five values: the main model, the background model, its reasoning-off settings, the main
-    model's context window, and whether the main model reads images. A conversation's
-    compaction summary is written by the main model, not the background one, so the
-    operator's own fold resolves through here too.
+    Returns the main model, the background model with its reasoning-off settings, the main
+    model's context window and vision. The compaction summary is written by the main model,
+    so the operator's own fold resolves through here too.
 
-    Kept separate from the submit step so it runs **before** any conversation
-    mutation: a regenerate/edit must not reposition (and persist) the active leaf
-    only to fail here, which would leave the thread truncated with no replacement."""
-    # Resolve the `main` model now (per-conversation endpoint override included),
-    # so a model misconfiguration surfaces as a clear 4xx/503 rather than a run
-    # that starts and immediately errors.
+    Separate from the submit step so it runs before any conversation mutation: a
+    regenerate/edit must not reposition the active leaf only to fail here, leaving the
+    thread truncated with no replacement."""
+    # Resolved now (picker override included) so a misconfiguration is a clear 4xx/503, not
+    # a run that starts and errors.
     try:
         main = await model_registry.resolve_detailed(
             "main",
@@ -89,16 +87,13 @@ async def resolve_turn_models(
         raise HTTPException(status_code=404, detail="model endpoint not found") from None
     except DegradedCapabilityError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    # No context window, no turn. The window is discovered from the provider where the
-    # provider will say (`ModelRegistry.with_model_limits`), so reaching here means
-    # this one won't and the operator hasn't filled it in either.
+    # No context window, no turn. It is discovered from the provider where possible
+    # (`ModelRegistry.with_model_limits`), so reaching here means this one won't say and the
+    # operator hasn't set it.
     #
-    # A hard stop rather than a degraded run, because every guard that keeps a thread
-    # inside the model's limits measures against this number: the context gauge, the
-    # auto-compaction trigger, and the overflow warning. Without it a long thread runs
-    # normally right up until the provider rejects a request outright — no warning, no
-    # fold, and the operator's first indication that anything was wrong is a failed
-    # turn. Refusing up front is the honest version of that, and it names the fix.
+    # A hard stop, not a degraded run: the gauge, the compaction trigger and the overflow
+    # warning all measure against it, so without it a long thread runs until the provider
+    # rejects a request with no warning or fold. Refusing up front names the fix.
     if main.context_window is None:
         raise HTTPException(
             status_code=422,
@@ -110,12 +105,9 @@ async def resolve_turn_models(
         )
     resolved = main.model
 
-    # Background work — verification (opt-in) and auto-titling (on by default) —
-    # runs on the cheap `utility` model, with the title call wanting its
-    # reasoning-off settings too (a fast, no-thinking pass). Resolve the pair only
-    # when a background feature is enabled, so a plain chat with both off pays
-    # nothing; when no `utility` endpoint is bound, reuse the resolved `main` model
-    # (picker override included) so both work without extra setup.
+    # Verification and auto-titling run on the cheap `utility` model, titling with its
+    # reasoning-off settings. Resolved only when one is enabled; with no `utility` endpoint
+    # bound, the resolved `main` model (picker override included) is reused.
     settings = get_settings()
     utility_model = resolved
     title_settings: ModelSettings | None = None
@@ -150,12 +142,11 @@ def compose_turn(
     owner_id: str = OPERATOR_ID,
     attachment_ids: list[str] | None = None,
     file_refs: list[str] | None = None,
-    # The expansion of a slash command this turn was sent with, already resolved by the
-    # caller. Rides the tail of the turn's user prompt and is stripped before the turn is
-    # recorded, so what persists is the `/name` the operator typed.
+    # A slash command's expansion, resolved by the caller; rides the prompt tail and is
+    # stripped before recording, so the `/name` typed is what persists.
     turn_context: str = "",
-    # …and the invocation that produced it, which *is* written down — so a regenerate can
-    # ask what `/reviewer` means now rather than replaying a block built a week ago.
+    # The invocation, which is recorded, so a regenerate resolves `/reviewer` afresh rather
+    # than replaying an old block.
     command: Invocation | None = None,
     ephemeral: bool = False,
     auto_compact: AutoCompactPolicy | None = None,
@@ -164,33 +155,30 @@ def compose_turn(
     wall_clock_timeout_s: float | None | Unset = UNSET,
     kind: str = "chat",
     workspace_key: str = "",
+    run_id: str | None = None,
+    max_requests: int | None = None,
+    ledger_prompt_message_id: str | None = None,
 ) -> ChatCreated:
-    """Build the chat orchestrator from pre-resolved models/capabilities and submit
-    the Run — the one composition path a live chat turn (`submit_turn`, resolving
-    its resources from the `Request` via `routes.deps`) and an unattended scheduled
-    task's execution (`app.py`'s task executor, resolving them straight from
-    `app.state`) both fire through, so approval parking, conversation grants, and the
-    orchestrator's own wiring can never diverge between the two.
+    """Build the chat orchestrator from pre-resolved parts and submit the Run.
 
-    No failure path after the caller's conversation mutation — ``prompt is None``
-    is a regenerate (re-run from a history that already ends in the user request).
-    ``ephemeral`` threads (e.g. the compare panes) are hidden from the listing and
-    show no title, so auto-titling them is invisible work that only takes a turn on the
-    endpoint — skip it by passing no title model.
+    The one composition path for a live chat turn (`submit_turn`) and an unattended
+    scheduled task (`app.py`'s task executor), so approval parking, grants and orchestrator
+    wiring can't diverge.
 
-    ``kind`` says who asked for the turn — the operator (``chat``, the default), the
-    scheduler (``task``), or the agent itself (``linked``). Every one of them composes the
-    identical orchestrator; the kind decides only which concurrency lane the run waits in
-    (``runs/lanes.py``), so unattended work can never hold up the turn someone is sitting
-    in front of."""
+    No failure path follows the caller's conversation mutation. ``prompt is None`` is a
+    regenerate. ``ephemeral`` threads (compare panes) show no title, so auto-titling them is
+    invisible work; skip it by passing no title model.
+
+    ``kind`` says who asked: the operator (``chat``), the scheduler (``task``) or the agent
+    (``linked``). All compose the identical orchestrator; the kind only picks the
+    concurrency lane (``runs/lanes.py``), so unattended work can't hold up a watched turn."""
     resolved, utility_model, background_settings, context_window, vision, endpoint = models
     orchestrator = build_chat_orchestrator(
         prompt,
         model=resolved,
         categories=categories,
-        # Which of those categories start withheld, with the line each is advertised by.
-        # Threaded from the same assembled state the catalog is, so an unattended turn's
-        # agent defers exactly what an interactive one's does.
+        # Same assembled state as the catalog, so an unattended turn defers what an
+        # interactive one does.
         dormant=dormant or {},
         instruction_providers=instruction_providers,
         prompt_context_providers=prompt_context_providers,
@@ -199,8 +187,7 @@ def compose_turn(
         title_model=None if ephemeral else utility_model,
         title_settings=None if ephemeral else background_settings,
         context_window=context_window,
-        # The operator's severity boundaries for that window. They decide only the
-        # `level` on the emitted metrics — the gauge's colour — never the turn itself.
+        # Decide only the gauge colour (`level` on the metrics), never the turn.
         context_thresholds=context_thresholds,
         capabilities=capabilities,
         store=store,
@@ -211,38 +198,32 @@ def compose_turn(
         turn_context=turn_context,
         command=command,
         vision=vision,
-        # The operator's conversation-compaction policy; absent ⇒ the config defaults.
+        # Absent ⇒ the config defaults.
         auto_compact=auto_compact,
-        # While offline mode is active the web services are down, so hide the web
-        # tools from the agent rather than let it discover they're unavailable.
         disabled_tools=disabled_tools,
-        # The thread's workspace and project. Absent ⇒ an unfiled sandbox thread, which is what
-        # a stateless or unattended turn is.
+        # Absent ⇒ an unfiled sandbox thread, which a stateless or unattended turn is.
         binding=binding or ConversationBinding(),
-        # Which workspace this turn's file work happens in. Empty — every turn an operator
-        # sends — means "this conversation's own", filled in by `RunDeps`. A sub-agent's
-        # turn is what passes one: it works in the workspace of the thread that launched
-        # it, or in a delegated child of it (`services/workspace.py`).
+        # Empty means this conversation's own, filled in by `RunDeps`. A sub-agent passes the
+        # launching thread's workspace or a delegated child's (`services/workspace.py`).
         workspace_key=workspace_key or (binding.workspace_key if binding else ""),
+        max_requests=max_requests,
+        ledger_prompt_message_id=ledger_prompt_message_id,
     )
     try:
         run = registry.submit(
             kind=kind,
             owner_id=owner_id,
             orchestrator=orchestrator,
+            run_id=run_id,
             conversation_id=conversation_id,
             endpoint=endpoint,
-            # The operator's inactivity bound, resolved by the interactive caller; the
-            # unattended task path omits it (UNSET) and the registry default applies.
+            # Resolved by the interactive caller; the unattended path leaves both UNSET for
+            # the registry default, so a task is wall-clock unbounded unless the deploy set
+            # `run_wall_clock_timeout_s`.
             inactivity_timeout_s=inactivity_timeout_s,
-            # Same shape for the wall clock — resolved by the interactive caller, UNSET
-            # elsewhere. Both defaults are off, so an unattended turn is unbounded in
-            # wall-clock terms unless the deploy set `run_wall_clock_timeout_s`.
             wall_clock_timeout_s=wall_clock_timeout_s,
         )
     except ConversationBusyError as exc:
-        # The registry's own atomic check-and-claim caught a race the caller's
-        # earlier `require_conversation_free` guard couldn't (two requests that
-        # both saw no active run before either submitted).
+        # The registry's atomic check caught a race the caller's earlier guard couldn't.
         raise HTTPException(status_code=409, detail=deps.CONVERSATION_BUSY_DETAIL) from exc
     return ChatCreated(run_id=run.id, conversation_id=conversation_id)

@@ -1,18 +1,14 @@
 """The second look at a finished answer, and the one correction it is allowed.
 
-A turn that produced an answer is not necessarily a turn that produced a *good* one, and
-the model that wrote it is the last thing that should be asked. So a completed turn goes
-to a judge — an injected one, or the utility model standing in — and a failed verdict
+A completed turn goes to a judge (injected, or the utility model) and a failed verdict
 buys exactly one more pass: a synthetic nudge carrying the reason, re-driven through
-:func:`~agent.turn.drive_turn`, with the rejected answer and the nudge marked for removal
-so the persisted thread reads original request → corrected answer.
+:func:`~agent.turn.drive_turn`, with the rejected answer and nudge marked for removal so the
+persisted thread reads original request → corrected answer.
 
-The bounds are the whole reason this is its own module rather than a branch in the
-orchestrator. The correction is a *second* full pass over a history that has just finished
-its first, so it runs at the turn's peak pressure and it cannot fold (its drop range is a
-pair of absolute indices into the pre-fold history). Every way that can end — no room to
-try, a park for approval, a bound mid-correction — has to carry the drop range somewhere
-the persist will find it, and getting one of them wrong persists an answer nobody wrote.
+The bounds make this its own module. The correction is a second full pass over a just-
+finished history, so it runs at peak pressure and cannot fold (its drop range holds
+absolute pre-fold indices). Every way it ends (no room, a park, a bound mid-correction)
+must carry the drop range where the persist will find it, or an answer nobody wrote persists.
 """
 
 from __future__ import annotations
@@ -37,8 +33,7 @@ from .turn import NO_CAPS, TurnResult, drive_turn
 
 
 def should_verify(settings: Settings, run: Run) -> bool:
-    """The verifier's heuristic trigger: judge only turns that produced a
-    checkable artifact (made a tool call). Off ⇒ judge every answer."""
+    """Judge only turns that made a tool call (a checkable artifact); heuristic off ⇒ all."""
     if not settings.verify_heuristic:
         return True
     return bool(run.metrics and run.metrics.tool_calls)
@@ -64,49 +59,42 @@ async def verify_and_correct(
     context_threshold: float | None = None,
     turn_start: TurnStart | None = None,
     workspace_key: str = "",
+    max_requests: int | None = None,
+    ledger_prompt_message_id: str | None = None,
 ) -> TurnResult:
     """Judge the answer; on failure make a single bounded corrective re-attempt.
 
-    A passing answer returns unchanged. Otherwise the correction's full history
-    is returned with a ``clean_drop`` range that ``finalize`` removes on persist
-    (the rejected answer + the synthetic nudge), so the recorded history reads
-    original request → corrected answer. If the correction itself parks for
-    approval, the drop range rides on the parked payload so the resume cleans too;
-    if it hits a bound, it is returned as-is (no premature persist, no lost answer).
+    A passing answer returns unchanged. Otherwise the correction's full history is returned
+    with a ``clean_drop`` range (rejected answer plus nudge) that ``finalize`` removes on
+    persist. If the correction parks, the range rides on the parked payload so the resume
+    cleans too; if it hits a bound it is returned as-is, with no lost answer.
 
-    ``turn_start`` is the same boundary the first pass ran under, threaded because the
-    correction is *part of that turn* rather than a turn of its own: a call the re-attempt
-    defers is reviewed at the Auto level like any other, and the review's opening line is
-    the operator's request read off this boundary (``agent/gating.py``). Without it the
-    correction reviewed against the tail window alone — at the one moment a turn is
-    guaranteed to have run far past its own opening request.
+    ``turn_start`` is the first pass's boundary: the correction is part of that turn, so a
+    call it defers is reviewed at Auto against the operator's opening request read off it
+    (``agent/gating.py``), not the tail window alone.
     """
     if not turn.answer or not turn.answer.strip():
-        return turn  # nothing checkable to verify
+        return turn
     verdict = await judge(prompt, turn.answer)
     if verdict.ok:
         return turn
     nudge = VERIFIER_NUDGE.format(reason=verdict.reason)
-    # The correction is a *second* full pass over a history that has just finished its
-    # first, so it runs at the turn's peak pressure — and it cannot fold, because its drop
-    # range is a pair of absolute indices into this history. Attempting it against a
-    # window that has no room left buys a context stop in place of an answer that, however
-    # the judge scored it, is a real answer. Keep the answer and say what was skipped.
+    # Peak pressure and no folding (see the module docstring): against a window with no room
+    # a correction buys a context stop in place of a real answer. Keep the answer, say what
+    # was skipped.
     if no_room_for(run, turn.messages, nudge, threshold=context_threshold, settings=settings):
         _ = run.emit(LimitNotice(limit="verify", message="skipped: no room for a re-attempt"))
         return turn
     _ = run.emit(LimitNotice(limit="verify", message=f"re-attempting: {verdict.reason}"))
-    # The range to drop on persist: the rejected ModelResponse (last message of
-    # the original attempt) through the injected nudge ModelRequest (the first
-    # new message of the correction) — two adjacent messages.
+    # The rejected response (last of the original attempt) and the injected nudge (first of
+    # the correction): two adjacent messages.
     clean_drop = (len(turn.messages) - 1, len(turn.messages))
-    # Publish the range before re-driving, so a stop *during* the correction (an
-    # inactivity bound, the operator's Stop) drops the same two messages the completed
-    # path does. Without it, a stop here persists the rejected answer and a user message
-    # nobody typed, and both replay to the model on every later turn.
+    # Published before re-driving so a stop during the correction drops the same two
+    # messages; otherwise it persists the rejected answer and a message nobody typed, and
+    # both replay to the model on every later turn.
     if drop_ref is not None:
         drop_ref[:] = [clean_drop]
-    # One attempt only — no re-verify, so it cannot retry endlessly.
+    # One attempt only, with no re-verify.
     corrected = await drive_turn(
         run,
         agent,
@@ -124,19 +112,20 @@ async def verify_and_correct(
         turn_start=turn_start,
         # No fold under a correction: `clean_drop` indexes the pre-fold history.
         correcting=True,
-        # The correction is this turn continuing, so it works where the turn worked.
+        # The same turn continuing: same workspace, and it spends what the first pass left.
         workspace_key=workspace_key,
         reported=turn.reported,
+        max_requests=max_requests,
+        requests_used=turn.requests_used,
+        ledger_prompt_message_id=ledger_prompt_message_id,
     )
     if run.status is RunStatus.awaiting_input:
-        # The correction needs approval: carry the drop range on the parked turn
-        # so the resume's persist drops the rejected answer + nudge as well.
+        # The resume's persist must drop the rejected answer and nudge too.
         if isinstance(run.parked_payload, ParkedTurn):
             run.parked_payload.clean_drop = clean_drop
         return corrected
     if corrected.answer is None:
-        # Hit a bound — the caller finalizes it, but the drop range has to ride along or
-        # the rejected answer and the synthetic nudge persist as real transcript.
+        # A bound: the range must ride along or the rejected answer and nudge persist as transcript.
         return TurnResult(
             answer=None,
             messages=corrected.messages,

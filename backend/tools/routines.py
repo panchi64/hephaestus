@@ -153,7 +153,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
         routine = await _find(store, ctx, routine_id)
         if routine.approved and not ctx.tool_call_approved:
             raise ApprovalRequired()
-        await store.delete(ctx.deps.owner_id, routine.id)
+        await store.delete(ctx.deps.owner_id, routine.id, by_run=ctx.deps.run.id)
         return {"ok": True, "deleted": routine.title}
 
     @toolset.tool

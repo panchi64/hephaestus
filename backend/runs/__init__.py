@@ -1,8 +1,7 @@
-"""Pillar I + II — the Run substrate and the event protocol (the chassis).
+"""The Run substrate and the event protocol.
 
-A Run is one server-side, background-executing unit of work for one request.
-Chat and agent work both ride it, so continuity, resume, cancellation,
-timeouts, and metrics are written once here and inherited everywhere.
+A Run is one server-side, background-executing unit of work. Chat and agent work both
+ride it, so continuity, resume, cancellation, timeouts and metrics are written once.
 
 - :class:`RunRegistry` — launch/track/bound/cancel Runs (in-process asyncio).
 - :class:`Run` / :class:`RunStatus` — the unit of work and its lifecycle.
@@ -10,7 +9,7 @@ timeouts, and metrics are written once here and inherited everywhere.
 - ``events`` — the frozen v1 typed event union.
 - :func:`sse_response` — stream a Run to a client over SSE.
 
-See docs/architecture/README.md (Pillars I & II).
+See docs/architecture/README.md.
 """
 
 from __future__ import annotations
@@ -87,6 +86,7 @@ from .inbox import (
 )
 from .lanes import CHAT_TURN_KINDS, LANE_BY_KIND, LaneLimits, lane_for
 from .overhead import BriefBlock, ToolGroupOverhead, TurnOverhead
+from .parked import NO_PARKED_JOURNAL, ParkedJournal
 from .prefix import FIRST_REQUEST, PrefixDigest, PrefixLedger, PrefixVerdict
 from .registry import ConversationBusyError, RunRegistry, RunTimeout
 from .run import Orchestrator, PreparingCall, Run, RunStatus
@@ -117,6 +117,8 @@ __all__ = [
     "InboxDispatch",
     "InboxJournal",
     "NO_JOURNAL",
+    "NO_PARKED_JOURNAL",
+    "ParkedJournal",
     "STOP_NOTICE",
     "TurnPayload",
     "Orchestrator",

@@ -1,20 +1,12 @@
-"""A reusable write-behind worker — the background-drainer substrate.
+"""A reusable write-behind worker: one asyncio task draining a queue off the hot path.
 
-A single asyncio task drains a queue off the hot path. Failed items retry with
-bounded exponential backoff; an item that exhausts its retries is handed to an
-``on_drop`` callback so a terminal failure is **surfaced, not silently lost**.
+Failed items retry with bounded exponential backoff; one exhausting its retries goes to an
+``on_drop`` callback so a terminal failure is surfaced, not lost.
 
-Optionally **lock-aware**: a worker whose handler touches the encryption key
-takes the vault's ``unlocked`` event and parks while the vault is locked,
-resuming when it unlocks — rather than erroring on a missing key. A lock that
-lands *mid-handler* is treated as a park, not a failed attempt, so an item is
-never dropped for being in flight when the vault closed. While stopping, a
-lock-parked worker stops waiting so shutdown never hangs.
-
-This is the one place the "we own the queues" substrate lives. The conversation
-persistence drainer is the first instance; the scheduler and notification
-dispatch are meant to reuse it rather than re-implement queue + lifecycle +
-retry + lock-awareness each time.
+Optionally lock-aware: a handler touching the encryption key takes the vault's ``unlocked``
+event and parks while locked rather than erroring on a missing key. A lock landing
+mid-handler is a park, not a failed attempt, so no item is dropped for being in flight; a
+lock-parked worker stops waiting on stop so shutdown never hangs.
 """
 
 from __future__ import annotations
@@ -31,12 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 async def wait_unlocked_or_stop(unlocked: asyncio.Event | None, stopping: asyncio.Event) -> bool:
-    """Park until ``unlocked`` is set or ``stopping`` is. True means the vault is open and
-    the caller may proceed; False means it is stopping while still locked and should give up.
+    """Park until ``unlocked`` or ``stopping`` is set. True: the vault is open, proceed.
+    False: stopping while locked, give up.
 
-    The one spelling of the lock-aware park, shared by every lock-aware loop (this worker,
-    the task scheduler) so they cannot disagree about what a lock mid-shutdown means.
-    ``unlocked=None`` is a handler that never touches the key: always ready.
+    Shared by every lock-aware loop (this worker, the task scheduler) so they agree on what
+    a lock mid-shutdown means. ``unlocked=None`` never touches the key: always ready.
     """
     if unlocked is None or unlocked.is_set():
         return True
@@ -77,14 +68,17 @@ class WriteBehindWorker[T]:
         self._queue: asyncio.Queue[T] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._stopping: asyncio.Event = asyncio.Event()
+        # Queued plus the one being processed, which `qsize()` does not count.
+        self._unfinished: int = 0
 
     def submit(self, item: T) -> None:
         """Hot path: enqueue an item for background processing (never blocks)."""
+        self._unfinished += 1
         self._queue.put_nowait(item)
 
     @property
     def pending(self) -> int:
-        return self._queue.qsize()
+        return self._unfinished
 
     async def start(self) -> None:
         self._stopping.clear()
@@ -95,14 +89,12 @@ class WriteBehindWorker[T]:
         await self._queue.join()
 
     async def stop(self, drain_timeout_s: float | None = None) -> None:
-        """Flush what can be flushed — for at most ``drain_timeout_s`` — then cancel the
-        drainer.
+        """Flush for at most ``drain_timeout_s``, then cancel the drainer.
 
-        When lock-gated and currently locked, processing is parked, so we don't
-        block shutdown on ``join()`` — pending items stay unflushed. The flush is
-        bounded (default ``Settings.shutdown_drain_timeout_s``): a handler stuck on a
-        dead dependency must cost the shutdown seconds, not hang it. Items still queued
-        when the deadline passes are logged, not silently lost.
+        While lock-gated and locked, processing is parked, so shutdown doesn't block on
+        ``join()`` and pending items stay unflushed. The flush is bounded (default
+        ``Settings.shutdown_drain_timeout_s``) so a handler stuck on a dead dependency costs
+        seconds, not a hang. Items left at the deadline are logged.
         """
         self._stopping.set()
         timeout = drain_timeout_s
@@ -115,9 +107,15 @@ class WriteBehindWorker[T]:
                 logger.warning(
                     "%s: %d item(s) unflushed after %.1fs; stopping anyway",
                     self._name,
-                    self._queue.qsize(),
+                    self._unfinished,
                     timeout,
                 )
+        elif self._unfinished:
+            logger.warning(
+                "%s: vault locked at stop; %d item(s) left unflushed",
+                self._name,
+                self._unfinished,
+            )
         await cancel_and_wait(self._task, STOP_TIMEOUT_S)
         self._task = None
 
@@ -127,6 +125,7 @@ class WriteBehindWorker[T]:
             try:
                 await self._process(item)
             finally:
+                self._unfinished -= 1
                 self._queue.task_done()
 
     async def _ready(self) -> bool:
@@ -137,16 +136,14 @@ class WriteBehindWorker[T]:
         """Handle one item: park while locked, retry transient errors, drop at the cap."""
         attempt = 0
         while True:
-            # Park (without spending the retry budget) while the vault is locked;
-            # give up only if we're shutting down before it ever unlocks.
+            # Parks without spending retries while locked; gives up only if stopping first.
             if not await self._ready():
                 return
             try:
                 await self._handler(item)
                 return
             except Exception as exc:  # a bad item must not kill the worker
-                # A lock that landed mid-handler isn't a failure — wait for unlock
-                # and retry without consuming an attempt.
+                # A mid-handler lock isn't a failure: wait and retry without spending an attempt.
                 if self._unlocked is not None and not self._unlocked.is_set():
                     continue
                 attempt += 1

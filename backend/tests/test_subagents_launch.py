@@ -1,23 +1,8 @@
 """A sub-agent, launched as an ordinary turn.
 
-Delegation used to run a bespoke `Agent(...)` loop of its own, inside the calling tool,
-blocking the parent's turn for as long as it took. It is now a conversation composed by
-the same `compose_turn` every other turn goes through. What that buys — and therefore what
-these hold onto — is that the sub-agent is an *ordinary* run: the same engine, the same
-persisted transcript, the same context gauge, the same approval machinery.
-
-The things worth pinning are the ones that would quietly stop being true:
-
-- `launch` **returns before the sub-agent finishes**, which is the whole point of the
-  change and the one property the blocking version could not have;
-- the sub-agent can never do **more than the thread that launched it**;
-- an agent whose definition may not delegate is **not offered the spawn tool**;
-- its thread is **hidden but real** — no one can type into it, and its transcript is a
-  conversation the panel can open by id;
-- it is **registered durably**, because a link held only in memory leaves the operator
-  with unreachable transcripts after a restart;
-- isolation only ever **increases**: the launch may ask a sharing sub-agent to step out of
-  the way, and may never pull an isolated one into the operator's own files.
+A sub-agent is an ordinary `compose_turn` run: `launch` returns before it finishes, it never
+exceeds its parent's permission, its thread is hidden but readable, its link is stored durably,
+and isolation only ever increases.
 """
 
 from __future__ import annotations
@@ -68,19 +53,12 @@ def _terminal_tasks(app: FastAPI) -> list[asyncio.Task[None]]:
 
 
 async def settle_run(app: FastAPI, run_id: str) -> None:
-    """Let the submitted run finish, *and* let the hooks that react to it finish too.
-
-    A run's terminal hooks are background tasks, so awaiting the run alone leaves the wake
-    — which settles the sub-agent's row — still in flight. A test that read the register
-    there would be racing it.
-    """
+    """Let the run and its terminal hooks finish; the wake that settles the row outlives the run."""
     run = app_state(app).runs.get(run_id)
     assert run is not None
     if run.task is not None:
         await run.task
-    # Looped, not a single gather: the dispatcher is invoked as the run settles, so a
-    # snapshot taken the instant the task returns can still be empty, and a hook that
-    # schedules nothing on its first pass may on its second.
+    # Looped: hooks are scheduled as the run settles, so one snapshot can miss them.
     for _ in range(5):
         pending = _terminal_tasks(app)
         if not pending:
@@ -100,8 +78,6 @@ class TestLaunching:
                 "operator", EXPLORER, "find the parser", handle="parser-finder"
             )
 
-            # THE assertion. A tool that awaited this would spend its whole turn here,
-            # which is exactly what the blocking delegation did.
             assert app_state(app).runs.get(started.run_id) is not None
             await settle_run(app, started.run_id)
 
@@ -116,8 +92,6 @@ class TestLaunching:
             summary = await app_state(app).conversations.get_summary(
                 started.conversation_id, "operator"
             )
-            # Nobody wrote this thread's opening message, so without the task in its name
-            # a card reads "Untitled" and the operator cannot tell it from its neighbours.
             assert summary is not None
             assert "find the parser" in (summary.title or "")
 
@@ -131,8 +105,6 @@ class TestLaunching:
 
             listed = await app_state(app).conversations.list_conversations("operator")
             assert started.conversation_id not in {c.id for c in listed}
-            # Hidden from the listing, and still a whole conversation — which is what the
-            # panel opens when a card is expanded, and what keeps the transcript.
             turns = await app_state(app).conversations.messages_view(started.conversation_id)
             assert [t.role for t in turns] == ["user", "assistant"]
 
@@ -149,7 +121,7 @@ class TestWhatItMayDo:
     async def test_it_never_reaches_further_than_its_parent(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            # A worker's own ceiling is the mode's default; the parent is down at Manual.
+            # The worker's own ceiling is the mode default, above the parent's Manual.
             started = await launcher_of(app).launch(
                 "operator",
                 WORKER,
@@ -160,7 +132,6 @@ class TestWhatItMayDo:
             await settle_run(app, started.run_id)
 
             binding = await app_state(app).conversations.binding(started.conversation_id)
-            # Otherwise one approved launch buys a standing level the operator never chose.
             assert binding.permission == "manual"
 
     async def test_an_agent_that_may_not_delegate_is_not_offered_spawning(
@@ -192,11 +163,8 @@ class TestWhatItMayDo:
             )
             await settle_run(app, started.run_id)
 
-            # Not the interactive lane: a burst of sub-agents must never hold up the turn
-            # the operator is sitting in front of (`runs/lanes.py`).
             assert composed["kind"] == "linked"
-            # And a wall clock, because nobody is watching — the inactivity watchdog
-            # cannot end a run that keeps streaming tokens.
+            # The inactivity watchdog cannot end an unattended run that keeps streaming.
             assert composed["wall_clock_timeout_s"]
 
     async def test_a_spec_needing_a_withheld_tool_refuses_rather_than_pretends(
@@ -210,8 +178,6 @@ class TestWhatItMayDo:
                 instructions="do the thing",
                 required=frozenset({"agents_spawn"}),
             )
-            # It may not delegate, so `agents_spawn` is withheld from it — and an agent that
-            # ran anyway would answer from model memory as though it had done the work.
             with pytest.raises(SubagentUnavailableError, match="agents_spawn"):
                 _ = await launcher_of(app).launch(
                     "operator", impossible, "go", handle="the-impossible"
@@ -219,14 +185,7 @@ class TestWhatItMayDo:
 
 
 class TestItsHandle:
-    """The name the *launching model* gives a sub-agent, and the only one it ever sees.
-
-    The uuid it used to be handed had to survive four tool calls and tens of thousands of
-    tokens of other work, with nothing about it to notice a transposed character in. A
-    handle the model chose for the job is legible, and — because it is chosen at launch and
-    made unique in the thread — it is also the thing a report, a card and a thread title can
-    all be named by without any of them disagreeing.
-    """
+    """The launching model's name for a sub-agent, unique within its thread."""
 
     async def test_it_is_normalised_by_the_rule_agent_files_are_read_under(
         self, monkeypatch: pytest.MonkeyPatch
@@ -238,9 +197,6 @@ class TestItsHandle:
             )
             await settle_run(app, started.run_id)
 
-            # One rule, shared with `.claude/agents/*.md`'s own `name:`, because the two are
-            # read in the same places by the same eyes. A model writing the words rather
-            # than the identifier meant exactly one thing.
             assert started.handle == "helper-function-finder"
 
     async def test_a_handle_that_is_not_a_name_is_refused(self, monkeypatch: pytest.MonkeyPatch):
@@ -259,8 +215,6 @@ class TestItsHandle:
             started = await launcher_of(app).launch("operator", EXPLORER, "find it", handle="")
             await settle_run(app, started.run_id)
 
-            # The same fallback the migration backfilled every pre-handle row to, so there
-            # is one answer to "what is this sub-agent called" rather than two.
             assert started.handle == "explorer"
 
     async def test_a_clash_inside_a_thread_is_suffixed_rather_than_refused(
@@ -279,9 +233,6 @@ class TestItsHandle:
                 "operator", EXPLORER, "look everywhere", handle="looker", parent=parent
             )
 
-            # A launch is the expensive thing the model just decided to do; failing it over
-            # a name would spend a retry re-deciding, and `looker-2` is legible enough that
-            # a report naming it is obviously the second one.
             assert [first.handle, second.handle, third.handle] == [
                 "looker",
                 "looker-2",
@@ -306,21 +257,12 @@ class TestItsHandle:
             )
             await settle_run(app, second.run_id)
 
-            # Unique for the life of the *thread*, not of the run: a parent can read a
-            # settled sub-agent's report back by name long afterwards, and re-using the
-            # handle would silently redirect that read to different work.
             assert second.handle == "looker-2"
 
     async def test_launches_in_the_same_step_do_not_take_the_same_handle(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """The case the suffix exists for, launched the way it actually happens.
-
-        A fan-out is parallel tool calls, and a launch does not write its row until a whole
-        turn has been composed — so three launches reading the register would all be told
-        "nothing taken" and all three would be called `looker`. Every direction after that
-        lands on whichever row is newest, and the other two are unaddressable for good.
-        """
+        """The row is written after the turn is composed, so parallel launches must not collide."""
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             parent = SubagentParent(conversation_id="parent-handles-3")
@@ -363,9 +305,6 @@ class TestItsHandle:
                 parent=SubagentParent(conversation_id="thread-b"),
             )
 
-            # Unique *within* a thread and meaningless outside one — which is also why the
-            # lookup takes the conversation, and why an agent cannot reach a sibling
-            # thread's sub-agent by guessing a plausible name.
             assert mine.handle == theirs.handle == "looker"
             for one in (mine, theirs):
                 await settle_run(app, one.run_id)
@@ -382,8 +321,6 @@ class TestItsHandle:
                 started.conversation_id, "operator"
             )
             assert summary is not None
-            # Three `explorer`s produce three titles that differ only in whatever survives
-            # the width; three callsigns and handles differ up front.
             callsign = started.callsign
             assert stem_of(callsign) in CLASSES["kourai"].callsigns
             assert (summary.title or "").startswith(f"{callsign} · parser-finder:")
@@ -406,16 +343,12 @@ class TestTheRegister:
 
             rows = await records_of(app).descendants("parent-1", "operator")
             assert [row.child_conversation_id for row in rows] == [started.conversation_id]
-            # The link is what a restart would otherwise lose, leaving the operator with a
-            # transcript nothing can name.
             assert rows[0].spec_name == "explorer"
 
     async def test_a_stranded_row_is_reconciled_rather_than_left_running(self):
         async with client_app() as (_client, app):
             records = records_of(app)
-            # Written directly rather than by launching one: what a restart leaves behind
-            # is a row with no run, which is exactly this and nothing else. Going through
-            # a real launch would mean racing the very hook that settles it.
+            # Recorded directly: a real launch would race the hook that settles the row.
             subagent_id = f"stranded-{uuid4().hex}"
             await records.record(
                 subagent_id=subagent_id,
@@ -436,14 +369,9 @@ class TestTheRegister:
 
             _ = await records.reconcile_stranded()
 
-            # The count is deliberately not asserted: the pass is global, so it reflects
-            # whatever else the suite has left lying around. What matters is what happened
-            # to *this* row.
+            # The returned count is not asserted: the pass is global.
             row = await records.get(subagent_id, "operator")
             assert row is not None
-            # A row still live after a restart describes work that stopped when the
-            # process did: left alone it counts against the cap and promises a report
-            # that is never coming.
             assert row.status == "cancelled"
             assert row.ended_at is not None
 
@@ -521,9 +449,32 @@ class TestAwaitingReports:
 
 
 class TestTheCap:
-    async def test_there_is_no_limit_until_the_operator_sets_one(
+    async def test_eight_run_at_once_until_the_operator_sets_a_cap(
         self, monkeypatch: pytest.MonkeyPatch
     ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="done")
+            parent = f"p-{uuid4().hex}"
+            # The startup pass closes run-less live rows, so let it finish before recording these.
+            startup = [t for t in asyncio.all_tasks() if t.get_name() == "subagent-reconcile"]
+            _ = await asyncio.gather(*startup)
+            for _ in range(8):
+                _ = await _record_child(records_of(app), parent, f"c-{uuid4().hex}")
+
+            with pytest.raises(SubagentUnavailableError) as refused:
+                _ = await launcher_of(app).launch(
+                    "operator",
+                    EXPLORER,
+                    "look further",
+                    handle="one-more",
+                    parent=SubagentParent(conversation_id=parent),
+                )
+
+            assert "8 agents are already working" in str(refused.value)
+            assert "Wait for a running agent's report" in str(refused.value)
+            assert "do not retry" in str(refused.value)
+
+    async def test_the_default_cap_leaves_room_to_split_work(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = [
@@ -533,8 +484,6 @@ class TestTheCap:
                 for n in range(4)
             ]
 
-            # The default the operator gets without choosing anything. A cap picked in
-            # advance, before anyone knows what the work splits into, would mostly be wrong.
             assert len({s.subagent_id for s in started}) == 4
             for one in started:
                 await settle_run(app, one.run_id)
@@ -554,8 +503,6 @@ class TestTheCap:
                     "operator", EXPLORER, "look there", handle="there-looker"
                 )
 
-            # A model told only "no" retries immediately and spends the turn doing it. This
-            # says what it is waiting for and that the wait ends by itself.
             assert "finishes" in str(refused.value)
             await settle_run(app, first.run_id)
 
@@ -568,8 +515,6 @@ class TestTheCap:
             )
             await settle_run(app, first.run_id)
 
-            # Otherwise the cap is a lifetime budget rather than a concurrency one, and a
-            # long session would stop being able to launch anything at all.
             second = await launcher_of(app).launch(
                 "operator", EXPLORER, "look there", handle="there-looker"
             )
@@ -598,8 +543,6 @@ class TestTheCap:
                     parent=SubagentParent(conversation_id="parent-cap"),
                 )
 
-            # Checked before anything exists, so a refusal leaves no hidden conversation,
-            # no row and no forked workspace behind for the operator to wonder about.
             rows = await records_of(app).descendants("parent-cap", "operator")
             assert len(rows) == 1
             await settle_run(app, first.run_id)
@@ -622,7 +565,6 @@ class TestIsolation:
 
             row = await records_of(app).get(started.subagent_id, "operator")
             assert row is not None
-            # The default: it sees the work in progress, and what it does is simply there.
             assert row.workspace_key == "parent-1"
             assert row.delegation_id is None
 
@@ -661,13 +603,11 @@ class TestIsolation:
             row = await records_of(app).get(started.subagent_id, "operator")
             assert row is not None
             assert row.workspace_policy == "isolated"
-            # Named under the parent, whose scratch it shares.
             assert row.workspace_key == f"{parent}/{row.delegation_id}"
             assert row.base_ref
             opened = await launcher_of(app).worktrees("operator", parent)
             assert [child.handle for child in opened] == ["rewriter"]
             assert (opened[0].path / "hello.txt").read_text() == "unsaved\n"
-            # Not merged: the report says where the work waits, and what to do with it.
             report = (await launcher_of(app).read("operator", parent, "rewriter")).summary
             assert report is not None
             assert opened[0].branch in report
@@ -727,11 +667,7 @@ async def _filed_parent(app: FastAPI, root: Path) -> tuple[str, str]:
 
 
 def _capture_composition(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-    """The arguments the sub-agent's turn was actually composed with.
-
-    Wrapping the real `compose_turn` rather than replacing it: the turn still runs, so
-    these stay tests of a sub-agent that works rather than of a call that was made.
-    """
+    """The arguments the sub-agent's turn was composed with; the real `compose_turn` still runs."""
     seen: dict[str, object] = {}
     monkeypatch.setattr("harness.manifests._subagents.compose_turn", _recording(compose_turn, seen))
     return seen

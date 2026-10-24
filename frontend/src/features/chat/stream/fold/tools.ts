@@ -6,6 +6,7 @@
 
 import { produce } from "solid-js/store";
 import type { RunEvent } from "~/lib/stream";
+import { approvalFromEvent, explanationOf } from "../../approvalEvent";
 import {
   commandBoundary,
   commandReason,
@@ -38,11 +39,9 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
   const { patchById, setMessages } = deps;
   switch (ev.type) {
     case "tool.started":
-      // A command the operator watches run is a terminal, not a generic tool card.
-      // Which tools those are is the table's answer, not a name test here — see
-      // `ToolEntry.terminal`. (tool.started fires before approval.required, so this
-      // seeds the pending terminal.) A call a script made is never one: it nests on
-      // the script's card as a compact row, whatever tool it is.
+      // Terminal tools come from the table (`ToolEntry.terminal`). tool.started fires
+      // before approval.required, so this seeds the pending terminal. A script's call
+      // nests on its card as a compact row, never a terminal.
       if (!ev.parent_tool_call_id && isTerminalTool(ev.name)) {
         patchById(assistantId, (m) => {
           const at = m.blocks?.findIndex(
@@ -103,23 +102,14 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       });
       return true;
     case "tool.progress":
-      // One frame, two readings, and **the block that already exists is what says
-      // which**. A terminal is a command printing as it runs, so its frames are
-      // *deltas* arriving every half-second and they APPEND — dropping the previous
-      // piece would leave a terminal showing only whatever the last half-second
-      // happened to print. Everything else sends a status note ("starting the
-      // sandbox"), which is one fact restated, so it REPLACES.
-      //
-      // Reading it off the block rather than off the tool name is what keeps this
-      // from being a second copy of the tool table: the event carries no name, and a
-      // call's own block already encodes the answer the table gave when the call
-      // started.
+      // The existing block decides the reading: a terminal's frames are deltas and
+      // APPEND, any other tool's frame is a status note and REPLACES. The event carries
+      // no tool name, and the block already encodes the table's answer.
       patchById(assistantId, (m) => {
         const host = findHost(m, ev.tool_call_id);
         if (host) {
           if (ev.partial)
             host.command.streamed = (host.command.streamed ?? "") + ev.partial;
-          // Seconds since the spawn, from the run rather than from a clock here.
           // The settled result carries the authoritative figure and overwrites it.
           if (ev.elapsed_s != null)
             host.command.elapsedMs = Math.round(ev.elapsed_s * 1000);
@@ -134,20 +124,14 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       });
       return true;
     case "tool.completed": {
-      // A call with a result is waiting on nobody — retire the prompt it parked on,
-      // so a replay doesn't re-ask what was already answered.
+      // Retire the prompt the call parked on so a replay doesn't re-ask it.
       patchById(assistantId, (m) => clearPark(m, ev.tool_call_id));
       if (!ev.parent_tool_call_id && isTerminalTool(ev.name)) {
-        // The result is the record: it has the streams apart, where the ticks that
-        // streamed in had them concatenated. So the accumulated text is dropped on
-        // the same patch that replaces it — leaving it would be two copies of one
-        // command's output, one of them worse.
+        // The result keeps the streams apart, so the concatenated streamed text is
+        // dropped in the same patch.
         const outcome = toTerminalOutcome(ev.result);
-        // No outcome and a sentence back means a guard refused the call outright —
-        // a tool the thread cannot use, a host that cannot fence — and it never ran. The cold read
-        // projects the same string the same way, so a reload agrees with what the
-        // operator watched; without this arm a refused command sat lit as running
-        // for the rest of the thread.
+        // No outcome plus a string means a guard refused the call and it never ran; the
+        // cold read projects the same string the same way.
         const patch: Partial<HostCommand> | null =
           outcome ??
           (typeof ev.result === "string" && ev.result
@@ -171,15 +155,14 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
           t.outcome = describeToolResult(ev.name, ev.result);
           t.progress = undefined; // the run is over — drop the spin-up note
           t.images = toolImages(ev.images);
-          // The same read the cold mapper does, so a backgrounded command's
-          // declaration and fence survive a reload identically.
+          // Same read as the cold mapper, so a reload keeps the declaration and fence.
           t.boundary = commandBoundary(ev.result);
         }
       });
       return true;
     }
     case "tool.failed":
-      // A failure settles the call too — same retirement as the completed case.
+      // A failure settles the call too.
       patchById(assistantId, (m) => clearPark(m, ev.tool_call_id));
       if (!ev.parent_tool_call_id && isTerminalTool(ev.name)) {
         patchById(assistantId, (m) =>
@@ -201,9 +184,8 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       });
       return true;
     case "review.started":
-      // The chassis is about to answer for the operator. The row opens now rather than
-      // on the verdict, so a review that costs a model call reads as work in flight —
-      // and so it lands ahead of the tool row it judges, which is where it belongs.
+      // Opens on start, not on the verdict, so a model-call review reads as in flight
+      // and lands ahead of the tool row it judges.
       patchById(assistantId, (m) => {
         if (findReview(m, ev.tool_call_id)) return;
         (m.blocks ?? (m.blocks = [])).push({
@@ -213,9 +195,7 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
             toolCallId: ev.tool_call_id,
             name: ev.name,
             summary: ev.summary,
-            // What the reviewer was given beyond the one-line summary, for the tools
-            // that have any. Undefined rather than null, so the card renders the block
-            // only when there is one.
+            // Undefined rather than null, so the card renders each only when present.
             detail: ev.detail ?? undefined,
             reach: ev.reach ?? undefined,
             network: ev.network ?? undefined,
@@ -230,36 +210,29 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         b.review.decision = ev.decision;
         b.review.stage = ev.stage;
         b.review.reason = ev.reason;
-        // How the call was bounded, not merely whether it was allowed: the tier says
-        // which structural ground cleared it, and `fenced` says whether this host could
-        // hold it there at all — the answer to "why did an ordinary command still ask?"
+        // `tier` is the structural ground that cleared the call; `fenced` is whether
+        // this host could hold it there.
         b.review.tier = ev.tier ?? undefined;
         b.review.fenced = ev.fenced;
-        // Null on the wire means the model stage never ran — the deterministic judge
-        // cleared it, or there was nothing to review with. Undefined here so the card
-        // renders the axes only when there are axes.
+        // Null on the wire means the model stage never ran.
         b.review.risk = ev.risk ?? undefined;
         b.review.authorization = ev.authorization ?? undefined;
         b.review.correctness = ev.correctness ?? undefined;
       });
       return true;
     case "approval.required": {
-      // `args` is typed as always-present, but it arrives as untrusted JSON off
-      // the wire — default it once here, in the mapper, so no consumer of the
-      // stored block has to guard a `Object.keys(args)` or an `args.command`.
+      // `args` is typed as present but arrives as untrusted JSON; default it once here.
       const args: Record<string, unknown> = ev.args ?? {};
-      // At Auto the chassis tried to answer this call first, and what it found rides
-      // onto whichever card ends up asking: a park is now the whole of what an
-      // unrecoverable act produces, so the reviewer's `too_destructive` would otherwise
-      // be visible only on a collapsed row above the prompt being answered. Both
-      // surfaces take it, because the commands that earn that word are shell commands
-      // and those are the ones that render as a terminal.
+      // At Auto the chassis reviewed the call first; its verdict rides onto whichever
+      // card asks (terminal or approval) so e.g. `too_destructive` shows on the prompt.
       if (isTerminalTool(ev.name)) {
         patchById(assistantId, (m) => {
           const review = findReview(m, ev.tool_call_id)?.review;
           upsertHost(m, ev.tool_call_id, ev.name, {
             command: typeof args.command === "string" ? args.command : "",
-            explanation: ev.explanation ?? undefined,
+            explanation: explanationOf(ev),
+            guard: ev.guard ?? undefined,
+            unconfined: ev.unconfined ?? undefined,
             risk: review?.risk,
             reviewReason: review?.reason,
             phase: "pending",
@@ -268,16 +241,21 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         return true;
       }
       patchById(assistantId, (m) => {
+        // A reconnect with an old Last-Event-ID replays the park; one card per call.
+        if (
+          m.blocks?.some(
+            (b) =>
+              b.kind === "approval" &&
+              b.approval.toolCallId === ev.tool_call_id,
+          )
+        )
+          return;
         const review = findReview(m, ev.tool_call_id)?.review;
         (m.blocks ?? (m.blocks = [])).push({
           kind: "approval",
           id: `approval-${ev.tool_call_id}`,
           approval: {
-            toolCallId: ev.tool_call_id,
-            name: ev.name,
-            args,
-            summary: ev.summary,
-            explanation: ev.explanation ?? undefined,
+            ...approvalFromEvent(ev),
             risk: review?.risk,
             reviewReason: review?.reason,
           },
@@ -286,9 +264,7 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       return true;
     }
     case "question.asked":
-      // Same defaulting discipline as `approval.required` above: `questions` is typed
-      // as always-present but arrives as untrusted JSON, so it is defaulted once here
-      // rather than guarded at every consumer of the stored block.
+      // `questions` is defaulted once here, like `args` above.
       patchById(assistantId, (m) => {
         (m.blocks ?? (m.blocks = [])).push({
           kind: "question",
@@ -308,20 +284,13 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       });
       return true;
     case "question.answered":
-      // Marked, not removed — the block stops being a park (nothing left for the dock
-      // to collect) and starts being a row in the transcript. The words of each
-      // question ride on the event rather than being read off the block, because the
-      // backend pairs them from the parked call's own arguments and a cold load is
-      // projected from the same pairing: warm and reloaded must not be two renderings.
+      // The block is kept, no longer a park. Question text rides on the event because the
+      // backend pairs it from the call's arguments, as the cold load does.
       //
-      // Found across the transcript rather than on the fold target, for the same reason
-      // the dock stopped keying its park on "the last streaming message": a
-      // `message.injected` boundary retargets the fold, so the question can sit on the
-      // segment *before* the one events are landing on now. Addressed by its call id,
-      // which is unique, so the wider search cannot hit the wrong block.
+      // Searched across the transcript: a `message.injected` boundary retargets the fold,
+      // so the question can sit on an earlier segment. The call id is unique.
       //
-      // An empty list is deliberately not written: a malformed call that parsed to no
-      // questions would otherwise be kept as a card with a heading and nothing under it.
+      // An empty list is not written, to avoid a card with a heading and no content.
       if ((ev.answers ?? []).length > 0)
         setMessages(
           produce((list) => {

@@ -26,19 +26,20 @@ from contextlib import suppress
 from fastapi import FastAPI, HTTPException
 
 from agent.injected import injected_text
+from agent.recompose import ParkedFacts, Recomposed, register_recompose
 from agent.summarize import resolve_auto_compact_policy
 from harness.manifest import DormantCategory, HarnessContext
+from models.subagent import SubagentRecord
 from routes.chat import (
     ConversationBusyError,
     WallClockOverride,
     compose_turn,
-    resolve_turn_models,
     submit_queued,
 )
+from routes.chat.thread_composer import ThreadComposer
 from routes.deps import app_state
 from runs import QueuedMessage, Run, RunRegistry
 from services.agents import AgentCatalog, lower_of
-from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
 from services.conversations import ConversationStore
 from services.notifications import NotificationService
 from services.offline import OfflineModeService
@@ -46,8 +47,8 @@ from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
 from services.settings_store import SettingsStore, get_context_thresholds
 from services.subagent_store import SubagentStore
-from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
+from services.workspace import split_workspace_key
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,9 @@ WAKE_CHAIN_LIMIT = 25
 
 #: How many thread→root mappings are remembered.
 _ROOTS_CACHED = 512
+
+#: How many message-to-ledger-prompt notes are remembered.
+_LEDGER_NOTES_CACHED = 512
 
 #: The longest :meth:`InboxDispatcher.settle` waits on each thing it waits for.
 SETTLE_TIMEOUT_S = 3.0
@@ -83,9 +87,39 @@ class InboxDispatcher:
         # the tree. In memory on purpose: a rail against a runaway loop, not a fact.
         self._chain: OrderedDict[str, int] = OrderedDict()
         self._roots: OrderedDict[str, str] = OrderedDict()
+        # The (ledger thread, prompt) a delivered message was sent under, by message id. A
+        # restart drops it and the wake falls back to the prompt stored on the agent's row.
+        self._message_ledger: OrderedDict[str, tuple[str, str]] = OrderedDict()
         # Threads of each tree left waiting at the ceiling, by root.
         self._stalled: dict[str, set[tuple[str, str]]] = {}
         self._kicks: set[asyncio.Task[None]] = set()
+        self._composer: ThreadComposer = ThreadComposer(
+            agents=self._agents,
+            model_registry=self._models,
+            conversations=self._conversations,
+            settings_store=self._settings,
+            offline=self._offline,
+            settings=ctx.settings,
+            capabilities=ctx.capabilities,
+            categories=ctx.tool_categories,
+            dormant=DormantCategory.summaries(ctx.dormant_categories),
+            instruction_providers=ctx.instruction_providers,
+            availability=ctx.category_availability,
+            projects=ctx.services.get_optional(ProjectStore),
+            worktrees=ctx.services.get_optional(WorktreeManager),
+        )
+        register_recompose(self._runs, WAKE_KIND, self._recompose)
+
+    async def _recompose(self, facts: ParkedFacts) -> Recomposed:
+        records = self._ctx.services.get_optional(SubagentStore)
+        row = (
+            await records.by_child(facts.conversation_id)
+            if records is not None and facts.conversation_id is not None
+            else None
+        )
+        return await self._composer.recompose(
+            facts, kind=WAKE_KIND, depth=row.depth if row is not None else 0
+        )
 
     @property
     def pending(self) -> bool:
@@ -124,6 +158,24 @@ class InboxDispatcher:
         self._roots.move_to_end(conversation_id)
         while len(self._roots) > _ROOTS_CACHED:
             _ = self._roots.popitem(last=False)
+
+    def note_ledger_prompt(self, message_id: str, prompt: str | None, thread: str | None) -> None:
+        """Remember which turn's prompt a message's sender was running under, and the
+        thread whose ledger that prompt belongs to."""
+        if prompt is None or thread is None:
+            return
+        self._message_ledger[message_id] = (thread, prompt)
+        while len(self._message_ledger) > _LEDGER_NOTES_CACHED:
+            _ = self._message_ledger.popitem(last=False)
+
+    def _wake_prompt(self, message_id: str, row: SubagentRecord) -> str | None:
+        """The prompt a wake of this agent files its changes under: the sender's, when the
+        sender files in the ledger this agent does, else the one stored on its row."""
+        owner, _ = split_workspace_key(row.workspace_key or "")
+        noted = self._message_ledger.get(message_id)
+        if noted is not None and noted[0] == (owner or row.child_conversation_id):
+            return noted[1]
+        return row.ledger_prompt_message_id
 
     async def root_of(self, conversation_id: str) -> str:
         cached = self._roots.get(conversation_id)
@@ -251,17 +303,8 @@ class InboxDispatcher:
         records = self._ctx.services.get_optional(SubagentStore)
         row = await records.by_child(conversation_id) if records is not None else None
         try:
-            applied = await resolve_thread_agent(
-                self._agents,
-                owner_id,
-                await self._conversations.binding(conversation_id),
-                conversation_id,
-                projects=self._ctx.services.get_optional(ProjectStore),
-                worktrees=self._ctx.services.get_optional(WorktreeManager),
-            )
-            models = await resolve_turn_models(
-                self._models, applied.agent.endpoint_id, applied.agent.model, owner_id=owner_id
-            )
+            thread = await self._composer.resolve(owner_id, conversation_id)
+            applied, models = thread.applied, thread.models
         except Exception as exc:
             # Nothing can run the thread (its endpoint or agent is gone). Retrying on every
             # dispatch would leave every delivery behind this one stuck in silence, so the
@@ -270,21 +313,15 @@ class InboxDispatcher:
             reason = str(exc.detail) if isinstance(exc, HTTPException) else type(exc).__name__
             await self._stall(root, owner_id, conversation_id, reason=reason)
             return
-        disabled = await effective_disabled_tools(
-            self._settings,
-            self._offline,
+        # Nobody is in front of a wake turn, so it is not offered the tools that stop and
+        # wait for someone.
+        disabled = await self._composer.disabled(
             owner_id,
-            vision=models[4],
-            # Nobody is in front of a wake turn, so it is not offered the tools that stop
-            # and wait for someone.
             kind=WAKE_KIND,
-            availability=self._ctx.category_availability,
-            caps=self._ctx.capabilities,
+            vision=models.vision,
+            applied=applied,
+            depth=row.depth if row is not None else 0,
         )
-        disabled |= applied.withheld
-        depth = row.depth if row is not None else 0
-        if not may_delegate(applied.agent, depth, self._ctx.settings.agent_max_depth):
-            disabled |= DELEGATION_TOOLS
         # A spawned agent's turn gets the wall clock its first one had: nobody is watching.
         timeouts: WallClockOverride = {}
         if row is not None:
@@ -301,7 +338,7 @@ class InboxDispatcher:
             capabilities=self._ctx.capabilities,
             categories=self._ctx.tool_categories,
             dormant=DormantCategory.summaries(self._ctx.dormant_categories),
-            instruction_providers=(*self._ctx.instruction_providers, *applied.instructions),
+            instruction_providers=thread.instruction_providers,
             prompt_context_providers=self._ctx.prompt_context_providers,
             registry=self._runs,
             store=self._conversations,
@@ -313,6 +350,11 @@ class InboxDispatcher:
             context_thresholds=await get_context_thresholds(self._settings, owner_id),
             auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             ephemeral=row is not None,
+            max_requests=applied.agent.max_requests,
+            # Edits belong to the turn that sent the message when it files in the same
+            # thread's ledger as this agent, else to the one that launched the agent. A wake
+            # that took several messages files under its lead message's prompt.
+            ledger_prompt_message_id=(self._wake_prompt(lead.id, row) if row is not None else None),
             **timeouts,
         )
         self._runs.inbox(conversation_id, owner_id).take(lead)

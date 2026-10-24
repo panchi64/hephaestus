@@ -21,49 +21,36 @@ import { NumberSetting, SettingHeader, wholeNumber } from "./NumberSetting";
 
 const Rule = (): JSX.Element => <div class="border-line border-t" />;
 
-/** This panel's policy for a bound that isn't set: fall back to the shared seed, so
- *  switching the limit on and pressing Save writes something sensible instead of erroring
- *  on a blank field. The conversion itself is `wallClockMinutes`. */
+/** Falls back to the shared seed for an unset bound, so switching the limit on and saving
+ *  doesn't error on a blank field. */
 function minutesOr(seconds: number | null): number {
   return wallClockMinutes(seconds ?? DEFAULT_WALL_CLOCK_S);
 }
 
-/* Operator preferences for how a turn runs: how many model round-trips one turn may
-   spend, how long it may go silent before the watchdog stops it, when the composer's
-   context gauge starts showing colour, and the one context reduction there is — when
-   whole earlier turns are folded into a summary. Each editable value seeds from the
-   backend resource and saves back to it. */
+/* Operator preferences for how a turn runs. Each value seeds from the backend resource
+   and saves back to it. */
 export function ChatSection(): JSX.Element {
   const chatSettings = useChatSettings();
-  // How long (minutes) a run may take in total, however busy it is. Off unless the
-  // operator switches it on — the step limit is what bounds a runaway turn, so this
-  // exists for the case nothing else covers: a run that keeps emitting and so never
-  // looks idle to the watchdog. Edited in minutes, stored in seconds.
+  // Off unless switched on: the step limit bounds a runaway turn, so this covers a run
+  // that keeps emitting and never looks idle. Edited in minutes, stored in seconds.
   const [wallClockOn, setWallClockOn] = createSignal(false);
   const [wallClockMin, setWallClockMin] = createSignal("");
   const [savingWallClock, setSavingWallClock] = createSignal(false);
-  // How many sub-agents the agent may have going at once. Off by default — the agent
-  // launches these to save the operator time, and a number picked before anyone knows what
-  // the work splits into is mostly the wrong one. Same off-is-null shape as the wall clock.
+  // Off by default (null): a limit picked before the work's shape is known is mostly wrong.
   const [subagentCapOn, setSubagentCapOn] = createSignal(false);
   const [subagentCap, setSubagentCap] = createSignal("");
   const [savingSubagentCap, setSavingSubagentCap] = createSignal(false);
-  // Conversation compaction: fold whole earlier turns into a summary once the context
-  // window fills. The threshold is stored as a fraction and edited as a percentage — the
-  // number the operator actually thinks in.
+  // Stored as a fraction, edited as a percentage.
   const [autoCompactEnabled, setAutoCompactEnabled] = createSignal(true);
   const [autoCompactPct, setAutoCompactPct] = createSignal("");
   const [savingAutoCompact, setSavingAutoCompact] = createSignal(false);
-  // How long a thread must sit untouched before the backend writes its recap.
   const [workSummaryMins, setWorkSummaryMins] = createSignal("");
   const [savingWorkSummary, setSavingWorkSummary] = createSignal(false);
-  // Where the composer's context figure stops being plain text. Two fractions, edited as
-  // percentages and saved together, because the pair is only valid in order.
+  // Edited as percentages and saved together, because the pair is only valid in order.
   const [warnPct, setWarnPct] = createSignal("");
   const [alertPct, setAlertPct] = createSignal("");
   const [savingContext, setSavingContext] = createSignal(false);
-  // Read off what is *saved*, not off the inputs above: a half-typed "7" is not a band
-  // the operator has chosen, and a note that flickers while someone types is noise.
+  // Read from what is saved, not the inputs: a half-typed value would flicker the note.
   const inert = () => {
     const s = chatSettings();
     return s
@@ -88,9 +75,8 @@ export function ChatSection(): JSX.Element {
     setAlertPct(String(Math.round(s.contextAlertThreshold * 100)));
   });
   const saveWallClock = async () => {
-    // Off sends `null` — a value the backend acts on (remove the bound), not an omission.
-    // The minutes field is only read when the switch is on, so a blank one can't block
-    // turning the limit off.
+    // Off sends `null` (remove the bound), not an omission. A blank field can't block
+    // turning it off.
     const minutes = wallClockOn() ? wholeNumber(wallClockMin()) : null;
     if (wallClockOn() && minutes === null) {
       toast.error("Enter whole minutes (1 or more).");
@@ -112,8 +98,7 @@ export function ChatSection(): JSX.Element {
   };
 
   const saveSubagentCap = async () => {
-    // Off sends `null` — remove the cap — rather than omitting the field. The number is
-    // only read when the switch is on, so a blank box cannot block turning the cap off.
+    // Off sends `null` (remove the cap), not an omission.
     const cap = subagentCapOn() ? wholeNumber(subagentCap()) : null;
     if (subagentCapOn() && cap === null) {
       toast.error("Enter a whole number of sub-agents (1 or more).");
@@ -135,8 +120,7 @@ export function ChatSection(): JSX.Element {
   };
 
   const saveAutoCompact = async () => {
-    // Above 0 and at most 100: a 0% threshold would fire on an empty thread, and there is
-    // nothing above "the window is full" to wait for.
+    // 0% would fire on an empty thread; 100% is a full window.
     const pct = wholeNumber(autoCompactPct(), { max: 100 });
     if (pct === null) {
       toast.error("Enter a whole percentage between 1 and 100.");
@@ -158,9 +142,8 @@ export function ChatSection(): JSX.Element {
     }
   };
   const saveWorkSummary = async () => {
-    // Floored at 1: a zero-minute wait would summarize a thread between two turns of
-    // one sitting, which is the case the delay exists to avoid. The ceiling is the
-    // backend's and is repeated here only for immediate feedback.
+    // Floored at 1 so a thread isn't summarized between two turns of one sitting. The
+    // ceiling is the backend's, repeated for immediate feedback.
     const mins = wholeNumber(workSummaryMins(), { min: 1, max: 1440 });
     if (mins === null) {
       toast.error("Enter a whole number of minutes between 1 and 1440.");
@@ -179,17 +162,15 @@ export function ChatSection(): JSX.Element {
   };
 
   const saveContextThresholds = async () => {
-    // 99 is the ceiling on the warning, not 100: at 100 the amber band is unreachable,
-    // since the ring would go straight to red on a full window.
+    // At 100 the amber band would be unreachable.
     const warn = wholeNumber(warnPct(), { max: 99 });
     const alert = wholeNumber(alertPct(), { min: 2, max: 100 });
     if (warn === null || alert === null) {
       toast.error("Enter whole percentages — warning 1–99, alert 2–100.");
       return;
     }
-    // Checked here for immediate feedback, and again by the backend, which owns the
-    // rule: equal boundaries leave no amber band at all, and inverted ones walk the
-    // gauge backwards through severity as the window fills.
+    // The backend owns this rule; checked here for immediate feedback. Equal boundaries
+    // leave no amber band, inverted ones run the gauge backwards.
     if (warn >= alert) {
       toast.error("The warning percentage must be below the alert percentage.");
       return;
@@ -296,17 +277,17 @@ export function ChatSection(): JSX.Element {
 
           <SettingHeader title="Sub-agents at once">
             The agent can hand pieces of work to sub-agents that go off and do
-            them on their own, and it decides how many the work splits into.
-            There's no limit unless you set one — each is a separate agent
-            spending model requests of its own, so this is the ceiling on how
-            much can be running while you're not watching. Over the limit, the
-            agent is told to wait rather than refused: nothing is lost, it just
-            launches the next one as one finishes.
+            them on their own, and it decides how many the work splits into. Up
+            to 8 run at once unless you set a different limit — each is a
+            separate agent spending model requests of its own, so this is the
+            ceiling on how much can be running while you're not watching. Over
+            the limit, the agent is told to wait rather than refused: nothing is
+            lost, it just launches the next one as one finishes.
           </SettingHeader>
           <Toggle
             checked={subagentCapOn()}
             onChange={setSubagentCapOn}
-            label="Limit how many sub-agents can run at once"
+            label="Set my own limit on how many sub-agents run at once"
           />
           <Row gap={4} align="end">
             <Stack gap={1}>
@@ -385,14 +366,8 @@ export function ChatSection(): JSX.Element {
               {savingContext() ? "Saving…" : "Save"}
             </Button>
           </Row>
-          {/* The two dials above and the fold threshold below are independent by design —
-              a warning wants to be early and a fold wants to be late — but independent is not the
-              same as unrelated, and one arrangement of them is quietly inert: a band set
-              above the fold point is one a thread with folding on never reaches, because
-              the window is emptied before it gets there. Said here rather than on the
-              gauge, because this is the screen where both numbers are visible and both
-              can be changed. Stated, never corrected: which of the three to move is the
-              operator's call, and the defaults are left exactly as they set them. */}
+          {/* A band above the fold point is never reached on a thread with folding on.
+              Stated here, where both numbers are editable, and never auto-corrected. */}
           <Show when={inert()}>
             {(band) => (
               <Text variant="micro" tone="dim">

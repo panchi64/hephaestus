@@ -1,16 +1,12 @@
 """Project a conversation's ``ModelMessage`` history into a render-ready view.
 
-The durable record stores full-fidelity Pydantic AI ``ModelMessage`` blobs so a
-cold session rehydrates exactly. The frontend needs a flat shape instead: an
-ordered list of user/assistant turns, each assistant turn carrying its reasoning,
-answer and tool calls in the order they were emitted, the calls stitched to their
-results.
+The durable record stores full-fidelity ``ModelMessage`` blobs; the frontend needs an
+ordered list of user/assistant turns, each assistant turn carrying its reasoning, answer
+and tool calls in emission order, with calls stitched to their results.
 
-This is the static-history counterpart to the live translator in
-``agent/translate.py`` — the same part→domain mapping, applied to a settled
-message list rather than a stream. Both share ``core.serde.jsonable`` for the
-tool-result coercion; the shared helper lives in ``core`` so this lower layer
-need not import the orchestrator.
+This is the settled-history counterpart to the live translator in ``agent/translate.py``;
+both share ``core.serde.jsonable`` for tool-result coercion, which lives in ``core`` so
+this layer need not import the orchestrator.
 """
 
 from __future__ import annotations
@@ -37,6 +33,7 @@ from core.diagnostics import is_platform_failure
 from core.envelopes import ContentPart, result_parts, split_envelopes
 from core.serde import jsonable
 from core.text import chars_to_tokens
+from core.untrusted import strip_envelope_note
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
 from services.commands.spec import Invocation
 from services.notices import notice_body
@@ -49,50 +46,37 @@ from services.subagents.report import (
     report_sender,
 )
 
-if TYPE_CHECKING:  # a type, not a dependency — nothing here calls into the run substrate
+if TYPE_CHECKING:
     from runs import TurnOverhead
 
-#: Where a compaction checkpoint records **why** it folded, on its own
-#: ``ModelRequest.metadata``. Written by ``ConversationStore.record_compaction`` and read
-#: back here, so a cold read reports the same cause the live ``conversation.compacted``
-#: event did. It rides the sealed message blob rather than a column: the reason is a fact
-#: about one message, and a schema migration for a three-value string the projection is
-#: the only reader of would buy nothing. A checkpoint written before this existed simply
-#: has no such key, which the projection reports as "unknown" rather than guessing.
+#: Key on a compaction checkpoint's ``ModelRequest.metadata`` recording why it folded.
+#: Written by ``ConversationStore.record_compaction``; a checkpoint without it reads as
+#: "unknown".
 COMPACTION_REASON_KEY = "compaction_reason"
 
-#: Where a turn's `@` file references ride — the same metadata channel, chosen for the
-#: same reasons. The marker naming them is already in the persisted prompt, so this is not
-#: how the *model* learns about them; it is the structured form the operator's chips are
-#: drawn from, which reading back out of the marker's prose would be a parser nobody wants.
+#: Request-metadata key holding a turn's `@` file references, the structured form the
+#: operator's chips are drawn from.
 FILE_REFS_KEY = "file_refs"
 
-#: How the `@` marker opens. Declared here, in the module that has to *remove* it, and
-#: imported by the one that writes it (`agent/file_refs.py`) — never the other way round,
-#: since `services` sits below `agent`.
+#: How the `@` marker opens. Defined here and imported by its writer
+#: (`agent/file_refs.py`), since `services` sits below `agent`.
 #:
-#: The marker has to persist, so that a regenerate replaying this turn still tells the
-#: model which files were meant. It must not be *rendered*, because the bubble it lands in
-#: is captioned with the operator's name and they did not write it. Those two pull in
-#: opposite directions and a sentinel is what settles them: one exact string, owned by the
-#: pair of functions on either side of it, rather than a parser trying to recognise prose.
+#: The marker persists so a regenerate still tells the model which files were meant, but is
+#: never rendered because the bubble it lands in is captioned with the operator's name. One
+#: exact sentinel serves both rather than a parser recognising prose.
 FILE_REFS_MARKER_OPEN = "[The operator referenced these files with @:"
 
 #: How the attachment marker opens (`agent/attachments.py`). Same contract as the `@`
 #: marker: it persists for regenerate and is never rendered; the files show as chips.
 ATTACHMENTS_MARKER_OPEN = "[Attached file(s):"
 
-#: Where the slash command a turn was sent with rides — the same metadata channel again,
-#: and the only one of the three the **backend** reads back rather than the operator.
+#: Request-metadata key holding the slash command a turn was sent with; unlike the others,
+#: the backend reads it back.
 #:
 #: A command's expansion is never persisted (``services/commands/expand``), so a regenerate
-#: replaying this turn's history would otherwise hand the model the bare ``/reviewer …``
-#: token and nothing else. Writing down the *invocation* instead of the expansion is what
-#: closes that without the stale copy: the name and the argument are facts about what the
-#: operator did, and the block is built again from whatever that name resolves to now.
-#:
-#: Read by ``ConversationStore.turn_stamps`` and re-expanded by the chat route, which is
-#: the layer that holds the registry. Nothing in ``agent/`` resolves a command name.
+#: would replay a bare ``/reviewer …`` token. Storing the invocation lets the chat route
+#: (which holds the registry; ``agent/`` resolves no command names) re-expand it against
+#: whatever the name resolves to now. Read by ``ConversationStore.turn_stamps``.
 COMMAND_KEY = "command"
 
 _NO_IDS: frozenset[str] = frozenset()
@@ -100,17 +84,12 @@ _NO_IDS: frozenset[str] = frozenset()
 
 @dataclass
 class ToolImageView:
-    """An image a tool handed back — a browser screenshot, today.
+    """An image a tool handed back (a browser screenshot).
 
-    A tool that returns pixels returns them *for the model*: Pydantic AI puts the bytes
-    in a user-role part so a vision model can see them, since no provider accepts an
-    image inside a tool result. That is a wire detail, not something the operator took
-    part in — so the image belongs to the call that produced it, in the work log, and
-    this is what carries it there.
-
-    Base64 rather than a URL because a tool result is already inline in this projection
-    (``ToolView.result``), and a second convention for the same turn's output would mean
-    a second lifetime to reason about."""
+    Pydantic AI puts these bytes in a user-role part for the model, since no provider
+    accepts an image inside a tool result; the operator took no part in that, so the image
+    is attached to the call that produced it. Base64 rather than a URL, like the rest of
+    ``ToolView.result``, to avoid a second lifetime."""
 
     media_type: str
     data: str  # base64, no data-URI scheme — the renderer adds it
@@ -128,22 +107,19 @@ class ToolView:
     result_parts: list[ContentPart] | None = None
     error: str | None = None
     images: list[ToolImageView] = field(default_factory=list)
-    # `ask_user` only — the questions this call asked and what the operator said to each,
-    # taken apart from the prose the call returned (`services/answers.py`). The live stream
-    # carries the same list on `question.answered`, built from the replies before they were
-    # rendered, so the card a reload draws is the card the operator watched arrive. Empty
-    # for every other tool, and for an asking call the operator never answered.
+    # `ask_user` only: the questions asked and the operator's reply to each, parsed from
+    # the returned prose (`services/answers.py`). Matches the live `question.answered`
+    # list. Empty for other tools and for an unanswered call.
     answers: list[AnsweredQuestion] = field(default_factory=list)
-    # The `run_code` call this one was made from, when a script made it; None for a call
-    # the model made directly. Rebuilt from that call's result (`_script_calls`).
+    # The `run_code` call that made this one, rebuilt from its result (`_script_calls`);
+    # None for a call the model made directly.
     parent_tool_call_id: str | None = None
     #: The failure was the platform's own fault (``core/diagnostics.py``).
     platform: bool = False
 
 
 def _field(item: object, name: str) -> object:
-    """One field of a part a script's result recorded — the library object while the
-    thread is still in memory, the plain dict it serialized to once it has been stored."""
+    """One field of a recorded script part: a library object in memory, a dict once stored."""
     recorded = as_dict(item)
     if recorded is not None:
         return recorded.get(name)
@@ -154,13 +130,11 @@ def _field(item: object, name: str) -> object:
 def _script_calls(part: ToolReturnPart) -> list[ToolView]:
     """The calls a ``run_code`` script made, rebuilt as rows of their own.
 
-    A script's calls never appear as ``ToolCallPart``s in the history — the model made one
-    call, and that call made the rest — so the only record of them is what the code-mode
-    capability wrote on the script's own result: ``tool_calls`` in the order they started
-    and ``tool_returns`` for those that returned or were refused
-    (``pydantic_ai_harness.code_mode``). A call with no return raised; the record keeps no
-    account of why, so the row says only that it did not complete. The live stream showed
-    the reason (``tool.failed``), and a reload is the one place that is not kept.
+    A script's calls are not ``ToolCallPart``s in the history; the only record is the
+    code-mode capability's metadata on the script's result: ``tool_calls`` in start order and
+    ``tool_returns`` for those that returned or were refused (``pydantic_ai_harness.code_mode``).
+    A call with no return raised, and the record keeps no reason, so a reload shows only
+    that it did not complete.
     """
     raw_metadata: object = getattr(part, "metadata", None)
     metadata = as_dict(raw_metadata)
@@ -201,83 +175,61 @@ def _script_calls(part: ToolReturnPart) -> list[ToolView]:
 
 @dataclass
 class MessageView:
-    # "compaction" is a chassis-authored divider, not a turn either party took: the
-    # conversation was folded into a summary here (`content`), and the turns above it are
-    # what the model now replays as that summary.
-    #
-    # "subagent" is the other turn nobody in the room took: a sub-agent the agent launched
-    # has reported back, and the report reached the thread as the one shape the model has
-    # for a message from outside itself. Left as "user" it would claim the operator typed
-    # something they have not even read.
-    #
-    # "notice" is a chassis notice (`services/notices.py`): `notice` names its kind and
-    # `content` is the body without the envelope.
+    # "compaction" is a divider where the conversation was folded into a summary
+    # (`content`). "subagent" is a sub-agent's message or report reaching the thread; as
+    # "user" it would claim the operator typed it. "notice" is a chassis notice
+    # (`services/notices.py`): `notice` names its kind, `content` is the body without the
+    # envelope.
     role: str  # "user" | "assistant" | "compaction" | "subagent" | "notice"
     content: str = ""
-    # On a "subagent" turn that is a message rather than a report, the handle of the agent
-    # that sent it.
+    # On a "subagent" message, the sending agent's handle.
     author: str | None = None
-    # On a "subagent" turn that is a report, the handle of the agent that reported.
+    # On a "subagent" report, the reporting agent's handle.
     reporter: str | None = None
     notice: str | None = None
-    # On a "user" turn whose text carried untrusted fences (an attachment's fallback text,
-    # a routine's previous-run fence): those fences in order, with `content` keeping only
-    # the surrounding text. None when there were none.
+    # On a "user" turn carrying untrusted fences (an attachment's fallback text, a
+    # routine's previous-run fence): the fences in order, `content` keeping the text around
+    # them. None when there were none.
     parts: list[ContentPart] | None = None
     tools: list[ToolView] = field(default_factory=list)
     timestamp: datetime | None = None
-    # The model that produced this assistant turn (the last response's model_name —
-    # the one that wrote the answer). None for user turns and turns older than this
-    # projection. Surfaced so the UI can show what a chat actually last ran on.
+    # The last response's model_name; None for user turns.
     model: str | None = None
-    # The id of the tree node that *defines this turn's branch point* — the user
-    # request for a user turn, the first response for an assistant turn. It is what
-    # the frontend addresses to regenerate / edit / delete / switch this turn.
+    # The tree node that defines this turn's branch point (the user request, or an
+    # assistant turn's first response); the frontend addresses it to regenerate, edit,
+    # delete or switch.
     id: str = ""
-    # Position among this turn's sibling versions (0-based) and how many there are.
-    # 1 ⇒ no alternatives; >1 ⇒ the turn has been regenerated/edited.
+    # Position among sibling versions (0-based) and their count; >1 means regenerated/edited.
     version_index: int = 0
     version_count: int = 1
-    # The operator's durable pin on this turn (a bookmark), from the branch node.
+    # The operator's pin (bookmark), from the branch node.
     pinned: bool = False
-    # Upload ids the operator attached to this (user) turn — the frontend renders them
-    # as file chips. Empty for assistant turns and turns sent without attachments.
+    # Upload ids attached to this user turn, rendered as file chips.
     attachment_ids: list[str] = field(default_factory=list)
-    # Workspace-relative paths the operator named with `@` on this (user) turn — chips
-    # again, beside the attachments. Read off the request's metadata rather than a column;
-    # empty for assistant turns and for turns that referenced nothing.
+    # Workspace-relative paths named with `@` on this user turn, read from request metadata.
     file_refs: list[str] = field(default_factory=list)
-    # Set when the run behind this assistant turn ended `outcome: "blocked"` (a
-    # usage/loop/context/time bound) — the human-readable reason. Filled in by the
-    # store from the branch node, like `pinned`; None for every other turn.
+    # Human-readable reason when the run ended `outcome: "blocked"` (a usage, loop, context
+    # or time bound); filled in by the store from the branch node, like `pinned`.
     blocked_reason: str | None = None
-    # `role="compaction"` only — what this divider actually cost, so the UI can say
-    # "14 messages folded, ~62k → ~4k" without counting or estimating anything itself.
-    # `messages_compacted` is how many messages the summary stands in for;
-    # `tokens_before`/`tokens_after` are coarse `estimate_tokens` figures over the folded
-    # messages and over the summary. The same three values ride the live
-    # `conversation.compacted` event, computed the same way, so a live divider and the
-    # one a reload draws report identical numbers. 0 on every other role.
+    # `role="compaction"` only: the divider's cost. `messages_compacted` is how many
+    # messages the summary stands in for; `tokens_before`/`tokens_after` are coarse
+    # `estimate_tokens` figures over the folded messages and the summary. The live
+    # `conversation.compacted` event computes the same values, so live and reload agree.
     messages_compacted: int = 0
     tokens_before: int = 0
     tokens_after: int = 0
-    # `role="compaction"` only — what triggered the fold (`threshold`/`overflow`/`manual`),
-    # read off the checkpoint's own metadata. `None` on every other role, and on a
-    # checkpoint recorded before the reason was stored: a fold whose cause was never
-    # written down has to read as absent, not as the most common one.
+    # `role="compaction"` only: the trigger (`threshold`/`overflow`/`manual`) from the
+    # checkpoint's metadata. None for a checkpoint recorded without one, which must not
+    # read as the most common cause.
     compaction_reason: str | None = None
-    # `role="compaction"` only — `content` split into the roster sections a divider
-    # renders, by the same `summary_sections` the live `conversation.compacted` event
-    # derives its own from. Shared rather than mirrored in the client because the roster
-    # is a security boundary: only a heading naming one of *our* sections ends a section,
-    # so a fetched page's own heading cannot open one and carry what follows it out of the
-    # untrusted fence. Empty on every other role.
+    # `role="compaction"` only: `content` split by the same `summary_sections` the live
+    # event uses. Server-side because the roster is a security boundary: only a heading
+    # naming one of our sections ends a section, so a fetched page's heading cannot open
+    # one and carry what follows out of the untrusted fence.
     sections: list[SummarySection] = field(default_factory=list)
-    # `role="assistant"` only — the turn's parts in the order the model emitted them,
-    # which `content`/`tools` flatten away. A reload replays this so the
-    # transcript keeps the think → call → text → … sequence the live stream drew,
-    # instead of regrouping it into one lane per kind. Adjacent passages of one kind
-    # merge, the same rule the live fold applies to deltas. Empty on every other role.
+    # `role="assistant"` only: the turn's parts in emission order, which `content`/`tools`
+    # flatten away, so a reload keeps the think -> call -> text sequence. Adjacent passages
+    # of one kind merge, as live deltas do.
     segments: list[Segment] = field(default_factory=list)
 
 
@@ -286,9 +238,8 @@ SegmentKind = Literal["thinking", "text", "tool"]
 
 @dataclass
 class Segment:
-    """One step of an assistant turn in emission order: a reasoning or answer passage
-    carrying its text, or a tool call naming the ``ToolView`` it refers to (by id,
-    so the call's data is not carried twice)."""
+    """One step of an assistant turn in emission order: a reasoning or answer passage, or a
+    tool call referring to its ``ToolView`` by id."""
 
     kind: SegmentKind
     text: str = ""
@@ -296,11 +247,10 @@ class Segment:
 
 
 def _append_passage(view: MessageView, kind: SegmentKind, text: str) -> None:
-    """Add a passage to the turn's ordered segments, extending the trailing one when it
-    is the same kind — each kind change starts a new segment, as live deltas do.
+    """Add a passage to the turn's segments, extending the trailing one of the same kind.
 
-    An empty passage records nothing, because the live translator emits no delta for
-    one: kept, it would split two passages of one kind that the stream drew as one."""
+    An empty passage records nothing: the live translator emits no delta for one, and
+    keeping it would split a passage the stream drew as one."""
     if not text:
         return
     last = view.segments[-1] if view.segments else None
@@ -310,52 +260,37 @@ def _append_passage(view: MessageView, kind: SegmentKind, text: str) -> None:
         view.segments.append(Segment(kind=kind, text=text))
 
 
-#: The class of message content measured for the readout but not counted in the footprint
-#: wholesale. Reasoning is a model's own scratch work, and whether it comes back is
-#: **template-dependent** rather than never: see :func:`_tag_mode_reasoning_chars`, which
-#: adds back the half that does. Excluding the class here and adding one half back is not a
-#: roundabout way of writing a filter — the breakdown answers a different question ("what is
-#: this thread spending on reasoning?", which has its own lever) and wants the whole figure.
+#: Classes the readout measures but the footprint excludes wholesale; whether reasoning is
+#: re-sent depends on the template, so :func:`_tag_mode_reasoning_chars` adds back the half
+#: that is. The readout's breakdown still wants the whole figure.
 _UNSENT_CLASSES = frozenset({"reasoning"})
 
-#: The ``ThinkingPart.id`` the library uses for thinking it read out of the response's own
-#: ``content`` rather than out of a provider field. See :func:`_tag_mode_reasoning_chars`.
+#: The ``ThinkingPart.id`` for thinking the library read out of the response's ``content``
+#: rather than a provider field. See :func:`_tag_mode_reasoning_chars`.
 _TAG_MODE_ID = "content"
 
 
 def estimate_tokens(messages: Sequence[ModelMessage]) -> int:
     """A coarse token estimate for what ``messages`` cost **on the wire**.
 
-    The fallback for endpoints that report no usage — local servers commonly return
-    ``input_tokens=0``, which ``services.conversations.context_footprint`` (rightly) treats
-    as unmeasured rather than as a real zero. Without an estimate, conversation compaction
-    would be dead on exactly the self-hosted endpoints this workspace is built for.
+    The fallback for endpoints that report no usage: local servers commonly return
+    ``input_tokens=0``, which ``services.conversations.context_footprint`` treats as
+    unmeasured, so compaction would otherwise never fire there. Lives here because a cold
+    read of a compaction divider must report the figure the live event did.
 
-    Two things it deliberately does not count. **The standing brief**, because a
-    ``SystemPromptPart`` at the head of the history is already measured by
-    ``agent/overhead.py`` and :func:`estimate_footprint` adds it back once, not twice.
-    And **binary parts**: a retained inline image is base64 in the blob, and measuring it
-    by character length would read a single screenshot as hundreds of thousands of phantom
-    tokens. Ignoring image tokens under-counts instead — the safe direction, since the
-    run's own context-overflow stop is still there behind this.
+    Not counted: **the standing brief**, which ``agent/overhead.py`` measures and
+    :func:`estimate_footprint` adds back once; and **binary parts**, since a base64 image
+    measured by length would read as hundreds of thousands of phantom tokens (the
+    under-count is the safe direction, behind the run's context-overflow stop).
 
-    **Reasoning is counted in half**, which used to be none at all on the claim that it is
-    never re-sent. It is: the library maps a ``ThinkingPart`` back onto an outgoing request,
-    and in tag mode it becomes ordinary assistant *text* that no chat template can remove.
-    What genuinely vanishes is the field-mode half, which Qwen, DeepSeek and GLM templates
-    strip from the rendered prompt. Counting both would be the worse error of the two, and
-    the reason is :func:`agent.summarize.should_compact`: it takes the **larger** of the
-    provider's reported prompt size and this estimate, so an inflated estimate would override
-    an accurate server-reported figure on exactly the templates that do the stripping, and
-    fold those threads early.
+    **Reasoning is counted in half.** In tag mode a ``ThinkingPart`` is re-sent as ordinary
+    assistant text that no template can remove; the field-mode half is stripped by Qwen,
+    DeepSeek and GLM templates. Counting both would inflate the estimate, and
+    :func:`agent.summarize.should_compact` takes the larger of the provider's reported
+    size and this one, so it would override an accurate figure and fold those threads early.
 
-    Prose and serialized structure convert at their own rates (``core.text``) rather than
-    one shared divisor, so this figure and the context readout's split are the same
-    measurement rather than two that drift apart.
-
-    It lives here rather than beside the compaction code that first needed it because the
-    projection needs the same number: a compaction divider reports what it folded, and a
-    cold read must report the same figure the live event did."""
+    Prose and structure convert at their own rates (``core.text``), matching the context
+    readout's split."""
     sent = sum(
         chars_to_tokens(chars.prose, chars.structured)
         for name, chars in message_class_chars(messages).items()
@@ -367,21 +302,17 @@ def estimate_tokens(messages: Sequence[ModelMessage]) -> int:
 def _tag_mode_reasoning_chars(messages: Sequence[ModelMessage]) -> int:
     """Characters of thinking that will be re-sent as assistant text, whatever the template.
 
-    The library decides per part. Thinking it read out of a **provider field** goes back into
-    that same field (``reasoning_content`` and its kin), which the Qwen, DeepSeek and GLM
-    chat templates drop when they render the prompt — so it costs the next request nothing.
-    Thinking it read out of the response's own ``content`` — marked with
-    ``id == 'content'``, or carrying no id at all — is re-wrapped in thinking tags and
-    appended to the assistant message's **text**. There is no template hook that removes
-    that: it is indistinguishable from anything else the assistant said.
+    The library decides per part. Thinking read from a **provider field** goes back into
+    that field (``reasoning_content`` and kin), which Qwen, DeepSeek and GLM templates drop,
+    so it costs nothing. Thinking read from the response's ``content`` (``id == 'content'``
+    or no id) is re-wrapped in tags and appended to the assistant **text**, which no
+    template removes.
 
-    A part whose id names a *different* provider's field takes the tag path too, and this
-    deliberately does not try to reproduce that case. It needs the model the next request
-    will go to, which nothing at this seam knows; it arises only on a history moved between
-    providers; and the direction of the error is the safe one — undercounting, behind the
-    run's own overflow stop, rather than overriding a server-reported figure.
+    A part whose id names a different provider's field also takes the tag path; this does
+    not reproduce that case, since it needs the next request's model and arises only on
+    histories moved between providers. The error undercounts, the safe direction.
 
-    Prose, never structured: this content is English going into a text field.
+    Counted as prose, never structured.
     """
     return sum(
         len(part.content)
@@ -399,17 +330,13 @@ def estimate_footprint(
 ) -> int:
     """What a request carrying ``messages`` would weigh, brief and tool schemas included.
 
-    :func:`estimate_tokens` measures the conversation; a request is the conversation
-    *plus* the standing brief and every tool schema, which on a full catalog is a five-
-    figure number all by itself. Measuring only the messages is what let a thread sit
-    comfortably under the compaction threshold and still overflow on the next turn.
+    A request is the conversation (:func:`estimate_tokens`) plus the standing brief and
+    every tool schema, which alone can reach five figures.
 
-    ``overhead`` is the thread's last recorded ``TurnOverhead`` (characters, split system
-    vs. tools) — converted at the prose and JSON rates respectively, since a brief is
-    prose and a schema is JSON. When the thread has none — every turn it ever ran predates
-    the per-thread record, or it has not run one yet — ``fallback_overhead_tokens`` stands
-    in. **A guess, not a zero**: assuming no overhead is assuming the request is smaller
-    than it can possibly be, which is the one error a limit guard must not make."""
+    ``overhead`` is the thread's last recorded ``TurnOverhead``, converted at the prose rate
+    for the brief and the JSON rate for schemas. Without one, ``fallback_overhead_tokens``
+    stands in: a guess, not zero, since a limit guard must not assume a smaller request
+    than is possible."""
     overhead_tokens = (
         fallback_overhead_tokens
         if overhead is None
@@ -422,13 +349,9 @@ def estimate_footprint(
 class ContentChars:
     """Message characters, split by how they tokenize.
 
-    Prose and JSON do not tokenize at the same rate — measured against cl100k, prose runs
-    about 4.8 characters per token and serialized JSON about 4.1, because JSON spends a
-    third of its characters on punctuation and short repeated keys. Keeping the two apart
-    is what lets every measurement built on this — the context readout's split, the
-    footprint the compaction trigger projects — apply the right rate to each rather than
-    inflating whichever part is prose by about a fifth. The rates themselves live in
-    ``core.text``, so there is one pair of them for the whole codebase."""
+    Against cl100k, prose runs about 4.8 characters per token and serialized JSON about
+    4.1. Keeping them apart lets each measurement apply the right rate; the rates live in
+    ``core.text``."""
 
     prose: int
     structured: int
@@ -436,17 +359,11 @@ class ContentChars:
 
 #: What each kind of message part counts as, for the context readout's message split.
 #:
-#: The four classes are the ones an operator can *do* something about. A thread that is
-#: mostly ``tool_results`` is a thread whose tools return too much (or are called too
-#: often); one that is mostly ``conversation`` wants a compaction or a fresh thread; one
-#: that is mostly ``reasoning`` wants a lower thinking budget. Splitting any finer — by
-#: role, by turn — would name things the operator has no separate lever for.
+#: Each class has its own operator lever: mostly ``tool_results`` means tools return too
+#: much, ``conversation`` wants a compaction, ``reasoning`` a lower thinking budget.
 #:
-#: ``SystemPromptPart`` is deliberately **absent**: it lives at the head of the history,
-#: but it is the standing brief, and ``agent/overhead.py`` already counts it there.
-#: Counting it in both places was a real double-count — small, but it made the parts sum
-#: to more than the whole before scaling pulled them back, quietly shrinking every other
-#: row to pay for it.
+#: ``SystemPromptPart`` is absent because ``agent/overhead.py`` already counts the standing
+#: brief; counting it twice made the parts sum past the whole.
 _PART_CLASSES: tuple[tuple[type, str], ...] = (
     (ThinkingPart, "reasoning"),
     (ToolCallPart, "tool_calls"),
@@ -456,9 +373,8 @@ _PART_CLASSES: tuple[tuple[type, str], ...] = (
     (TextPart, "conversation"),
 )
 
-#: The order the classes are reported in — largest-typical first, and stable regardless
-#: of what a given thread happens to contain, so two threads' breakdowns read the same
-#: way. A class with nothing in it is dropped by the caller rather than shown as a zero.
+#: Report order: largest-typical first and stable across threads. The caller drops empty
+#: classes.
 MESSAGE_CLASSES = ("conversation", "tool_results", "tool_calls", "reasoning")
 
 
@@ -469,24 +385,17 @@ def _part_class(part: ModelRequestPart | ModelResponsePart) -> str | None:
     for kind, name in _PART_CLASSES:
         if isinstance(part, kind):
             return name
-    # Anything the library grows later still lands somewhere real rather than vanishing
-    # from a total that is supposed to be exhaustive.
+    # Parts the library adds later still count toward the exhaustive total.
     return "conversation"
 
 
 def _part_chars(part: ModelRequestPart | ModelResponsePart) -> tuple[int, int]:
     """One part as (prose, structured) characters.
 
-    The classification is by content shape, not by part type, because that is exactly the
-    distinction that tokenizes differently: a string is prose wherever it appears, and a
-    dict is JSON by the time the model sees it. Binary content contributes nothing, on
-    the same grounds as :func:`estimate_tokens`.
-
-    A tool call is the exception that has to be read off another attribute — its payload
-    is ``args``, not ``content`` — and it used to be scored as nothing at all. On a
-    thread of many small calls that is a real slice of the window, and it was landing in
-    the one place guaranteed to mislead: unattributed, so scaling spread it across the
-    parts that *were* measured."""
+    Classified by content shape, since that is what tokenizes differently: a string is
+    prose, a dict is JSON by the time the model sees it. Binary content contributes nothing
+    (see :func:`estimate_tokens`). A tool call's payload is ``args`` rather than
+    ``content``, so it is read separately."""
     if isinstance(part, ToolCallPart):
         return 0, len(_content_text(part.args))
     content: object = getattr(part, "content", None)
@@ -503,9 +412,7 @@ def _part_chars(part: ModelRequestPart | ModelResponsePart) -> tuple[int, int]:
 def message_class_chars(messages: Sequence[ModelMessage]) -> dict[str, ContentChars]:
     """Characters across ``messages``, split by class and by how each tokenizes.
 
-    Keyed by the classes in :data:`MESSAGE_CLASSES`; a class with no characters is
-    omitted rather than reported as zero, so a thread that has never called a tool grows
-    no empty rows."""
+    Keyed by :data:`MESSAGE_CLASSES`; a class with no characters is omitted."""
     prose: dict[str, int] = {}
     structured: dict[str, int] = {}
     for message in messages:
@@ -526,8 +433,7 @@ def message_class_chars(messages: Sequence[ModelMessage]) -> dict[str, ContentCh
 def message_chars(messages: Sequence[ModelMessage]) -> ContentChars:
     """Characters across ``messages``, split prose vs. serialized-structure.
 
-    The whole-conversation figure, summed from :func:`message_class_chars` so the total
-    and the per-class rows can never disagree about what the thread weighs."""
+    Summed from :func:`message_class_chars` so the total and the per-class rows agree."""
     by_class = message_class_chars(messages).values()
     return ContentChars(
         prose=sum(part.prose for part in by_class),
@@ -538,31 +444,19 @@ def message_chars(messages: Sequence[ModelMessage]) -> ContentChars:
 def _content_text(content: object) -> str:
     """A part's content as the text a model would actually be sent.
 
-    **Structured content counts.** A tool result is usually a dict — a search's hits, a
-    file listing, a page of rows — and it reaches the model as serialized JSON, keys
-    included. Reading only `str` content scored every one of those as zero, which on a
-    tool-heavy thread is most of the window: the footprint fallback under-reported by
-    multiples, so auto-compaction held off on precisely the threads filling up fastest,
-    and the context breakdown credited the whole weight to the tool *schemas* instead of
-    to the results they returned.
-
-    **Anything unrecognised still counts as nothing**, which is what keeps the binary
-    rule intact. A `BinaryContent` — a retained screenshot, base64 in the blob — falls
-    through to `""` rather than being measured by its character length, because a single
-    image would otherwise read as hundreds of thousands of phantom tokens. Under-counting
-    is the safe direction and the run's own context-overflow stop is still behind this."""
+    Structured content counts: a dict tool result reaches the model as serialized JSON,
+    keys included, and scoring only `str` content under-reported tool-heavy threads by
+    multiples. Anything unrecognised counts as nothing; in particular a `BinaryContent`
+    (base64 screenshot) falls through to `""` instead of being measured by length."""
     if isinstance(content, str):
         return content
-    # `bool` before the numbers: it is an `int` subclass, and "True" is not what a model
-    # is sent for a boolean field anyway.
     if isinstance(content, bool):
         return str(content)
     if isinstance(content, int | float):
         return str(content)
     mapping = as_dict(content)
     if mapping is not None:
-        # Keys as well as values: they are serialized alongside the data and are a real
-        # share of a wide row's tokens.
+        # Keys are serialized alongside the values.
         return " ".join(f"{key} {_content_text(value)}" for key, value in mapping.items())
     items = as_list(content)
     if items is not None:
@@ -573,10 +467,8 @@ def _content_text(content: object) -> str:
 def flatten_content(content: object) -> str:
     """Flatten a message part's content (str or multimodal sequence) to text.
 
-    A multimodal turn keeps its text parts; non-text parts (images, files) are
-    represented by a single ``[attachment]`` marker so an image-only turn still
-    renders as a turn rather than vanishing into an empty bubble. Defensive — the
-    composer is text-only today, so this only guards future multimodal input."""
+    Non-text parts collapse to one ``[attachment]`` marker so an image-only turn does not
+    render as an empty bubble."""
     if isinstance(content, str):
         return content
     items = as_list(content)
@@ -588,23 +480,17 @@ def flatten_content(content: object) -> str:
     return ""
 
 
-#: The most an image may weigh before the work log declines to carry it, in source bytes.
-#: The browser harness caps a capture at 5 MB of PNG, which is ~6.7 MB of base64 on a
-#: single stream frame *and* again in every read of the conversation thereafter. A
-#: viewport screenshot is a fraction of this; what approaches it is a full-page capture of
-#: something enormous, and shipping one would spend the transcript's whole load budget on
-#: one picture. The call still reports what it did in words — that is the part the model
-#: read and the part the operator needs.
+#: The most an image may weigh, in source bytes, before the work log declines to carry it.
+#: The browser harness allows 5 MB of PNG (~6.7 MB of base64) on the stream frame and again
+#: on every read of the conversation; the call still reports in words.
 MAX_TOOL_IMAGE_BYTES = 2_000_000
 
 
 def tool_images(content: object) -> list[ToolImageView]:
     """The images in a tool's returned content, in order.
 
-    Shared with the live translator so a screenshot looks the same warm and cold. Only
-    images: a tool may hand back a PDF or an audio clip for the model to read, and a
-    work-log card has nothing useful to do with either. Oversized ones are dropped rather
-    than shrunk — re-encoding here would put an image pipeline in a projection."""
+    Shared with the live translator. Only images: a work-log card has no use for a returned
+    PDF or audio clip. Oversized ones are dropped rather than re-encoded."""
     listed = as_list(content)
     items = [content] if listed is None else listed
     return [
@@ -623,16 +509,11 @@ def _attach_tool_images(
 ) -> None:
     """Hang a tool-return request's image payloads on the calls that produced them.
 
-    Pydantic AI appends one user part per image-bearing call, in call order, *after* all
-    the tool parts — the pairing is order-preserving but carries no call id, so it can
-    only be recovered positionally. With one image-bearing call in the step, which is
-    what a screenshot is, that is exact. A step where two calls both return pixels and
-    a third sits between them could hang an image on the neighbouring card; the image
-    still reaches the work log, and the alternative is persisting an association Pydantic
-    AI does not give us for a case the browser toolset does not produce.
-
-    The live path does not have this problem — ``FunctionToolResultEvent`` carries the
-    call id and its content together — so a warm render is always exact."""
+    Pydantic AI appends one user part per image-bearing call, in call order, after all the
+    tool parts, with no call id, so the pairing is positional. That is exact for one
+    image-bearing call per step (a screenshot); with two such calls and one between them,
+    an image could land on the neighbouring card. The live path is always exact, since
+    ``FunctionToolResultEvent`` carries the call id."""
     candidates = [p for p in returns if isinstance(p, ToolReturnPart)]
     for part, tool_return in zip(user_parts, candidates, strict=False):
         images = tool_images(part.content)
@@ -646,27 +527,20 @@ def _attach_tool_images(
 def _attach_answers(tool: ToolView) -> None:
     """Put a settled ``ask_user`` call's answers back on its row, as structure.
 
-    Live, the answers reach the client on ``question.answered`` before they are ever
-    rendered. Cold, the only record that survived is the prose in the call's own result —
-    so it is read back here rather than by the client, for the same reason the questions
-    were parsed here in the first place: one side owns the format, and it is the side that
-    writes it.
-
-    The questions come from the **call's** arguments and the answers from its **result**,
-    which is what keeps the pair honest: a card is drawn only where both halves of the
-    exchange are present, and an unanswered or unreadable one leaves the row as it was."""
+    Live, answers arrive on ``question.answered``; cold, the only record is the prose in the
+    call's result, parsed here because this side writes the format. Questions come from the
+    call's arguments and answers from its result, so an unanswered or unreadable exchange
+    leaves the row unchanged."""
     if tool.name != ASK_USER_TOOL or not isinstance(tool.result, str):
         return
     tool.answers = parse_answer(questions_of(tool.args), tool.result)
 
 
 def _compaction_reason(message: object) -> str | None:
-    """Why this checkpoint folded, off its own ``ModelRequest.metadata`` — or ``None``.
+    """Why this checkpoint folded, from its ``ModelRequest.metadata``, or ``None``.
 
-    ``None`` covers both a checkpoint recorded before the reason was stored and any
-    metadata shape this doesn't recognise. The divider is written to read correctly
-    without the segment, so an absent reason costs nothing; a *wrong* one would tell the
-    operator the provider forced a fold they asked for themselves."""
+    ``None`` covers an unrecorded or unrecognised value; a wrong reason would mislead the
+    operator about who triggered the fold."""
     raw: object = getattr(message, "metadata", None)
     metadata = as_dict(raw)
     if metadata is None:
@@ -678,11 +552,9 @@ def _compaction_reason(message: object) -> str | None:
 def strip_chassis_markers(text: str) -> str:
     """The operator's text with the chassis's attachment and `@` blocks taken back off.
 
-    Both blocks persist on purpose (see ``FILE_REFS_MARKER_OPEN``), and the bubble they
-    would show in carries the operator's name. The files are still reported as chips from
-    the structured fields beside this. Both close the prompt, so everything from the first
-    sentinel on is chassis text. Splits on exact sentinels, so a message that only talks
-    about a marker is untouched unless it reproduces one.
+    Both blocks persist on purpose (see ``FILE_REFS_MARKER_OPEN``); the files show as chips
+    from the structured fields. Both close the prompt, so everything from the first exact
+    sentinel on is chassis text.
     """
     found = [text.find(marker) for marker in (ATTACHMENTS_MARKER_OPEN, FILE_REFS_MARKER_OPEN)]
     cut = min((at for at in found if at >= 0), default=-1)
@@ -692,10 +564,8 @@ def strip_chassis_markers(text: str) -> str:
 def stamped_file_refs(message: object) -> list[str]:
     """The `@` paths stamped on this request, or an empty list.
 
-    Read defensively for the same reason ``_compaction_reason`` is: a turn recorded before
-    this existed has no such key, and metadata is a free-form dict the library round-trips
-    without inspecting — so anything unrecognised reads as "none", never as a crash in the
-    projection every transcript load goes through.
+    Metadata is a free-form dict, so anything unrecognised reads as none rather than
+    crashing the projection every transcript load goes through.
     """
     raw: object = getattr(message, "metadata", None)
     metadata = as_dict(raw)
@@ -711,11 +581,8 @@ def stamped_file_refs(message: object) -> list[str]:
 def stamped_command(message: object) -> Invocation | None:
     """The slash command this request was sent with, or ``None``.
 
-    Read as defensively as the two above, and for one more reason besides: this one is fed
-    straight back into a resolver on the regenerate path, so a malformed stamp must read as
-    "no command" rather than as a name made of the wrong type. A turn recorded before this
-    existed simply has no key, and replays exactly as it did before — which is the correct
-    outcome, not a degraded one.
+    It feeds a resolver on the regenerate path, so a malformed stamp must read as no command
+    rather than as a name of the wrong type.
     """
     raw: object = getattr(message, "metadata", None)
     metadata = as_dict(raw)
@@ -732,14 +599,10 @@ def stamped_command(message: object) -> Invocation | None:
 
 
 def _summary_part(message: ModelMessage) -> UserPromptPart | None:
-    """A checkpoint's summary part — the one the divider renders.
+    """A checkpoint's summary part, the one the divider renders.
 
-    Found by type rather than by position: a fold carries the dormant groups the folded
-    stretch had revealed forward on the checkpoint, as a leading
-    ``ToolAvailabilityDeltaPart``, so the summary is no longer reliably ``parts[0]``. That
-    part is bookkeeping the model reads as a change in what it may call and the operator
-    reads as nothing at all, which is why the divider looks past it rather than rendering
-    it."""
+    Found by type: a leading ``ToolAvailabilityDeltaPart`` carries revealed tool groups
+    forward, so the summary is not reliably ``parts[0]``."""
     return next((part for part in message.parts if isinstance(part, UserPromptPart)), None)
 
 
@@ -749,52 +612,37 @@ def project_tree(
     """Fold an active-path ``(node_id, ModelMessage)`` sequence into ordered
     user/assistant view turns.
 
-    ``compacted_ids`` names the conversation-compaction checkpoints among ``nodes``. Each
-    becomes its own ``role="compaction"`` view — a divider carrying the summary — instead
-    of the user turn its underlying ``UserPromptPart`` would otherwise read as. This stays
-    purely order-driven: the caller hands the nodes in the order it wants them rendered.
+    ``compacted_ids`` names the compaction checkpoints among ``nodes``; each becomes a
+    ``role="compaction"`` divider carrying the summary instead of a user turn. The caller
+    supplies the nodes in render order.
 
-    A checkpoint's divider also reports **what the fold cost** — how many messages it
-    stands in for, and a coarse before/after token estimate — derived here rather than
-    persisted. The caller hands the nodes in operator order, where a checkpoint sits
-    immediately after the last node it covers, so the messages since the *previous*
-    checkpoint (that checkpoint included) are exactly the set the fold replaced — the same
-    set the live ``conversation.compacted`` event counted, so the two agree. Its **reason**
-    is the one part not re-derived: it is a fact about why the chassis acted, not about the
-    messages, so it is read back off the checkpoint's metadata where the fold wrote it.
+    The divider's cost (messages folded, coarse before/after tokens) is derived here: a
+    checkpoint sits right after the last node it covers, so the messages since the previous
+    checkpoint (included) are the set the fold replaced, matching the live
+    ``conversation.compacted`` event. The reason is read from the checkpoint's metadata,
+    since it is not derivable from the messages.
 
-    One turn = one view. A user turn is a request carrying a ``UserPromptPart``.
-    An assistant turn is the run of everything after it until the next user turn —
-    one or more ``ModelResponse`` messages plus the interleaved tool-return
-    requests — **merged into a single assistant view** whose ``segments`` keep the
-    order its reasoning, calls and answer were emitted in, with each call stitched to
-    its result. This matches the live stream,
-    which renders one assistant bubble per turn, so a cold read and a warm one look
-    identical.
+    One turn is one view. A user turn is a request carrying a ``UserPromptPart``. An
+    assistant turn is everything after it until the next user turn (responses plus
+    interleaved tool-return requests), merged into one view whose ``segments`` keep
+    emission order, matching the live stream's single bubble.
 
-    Each view's ``id`` is the node that *defines the turn's branch point*: the user
-    request for a user turn, the first response for an assistant turn — i.e. the
-    node whose siblings are this turn's versions. Version index/count are filled in
-    later by the store, which holds the tree.
+    A view's ``id`` is the node defining the turn's branch point, whose siblings are the
+    turn's versions; the store fills version index/count since it holds the tree.
 
-    Tool calls surface on the assistant turn that issued them; a later request's
-    ``ToolReturnPart``/``RetryPromptPart`` mutates the same (shared) ``ToolView``
-    already attached, so results stitch back in place.
+    A later request's ``ToolReturnPart``/``RetryPromptPart`` mutates the shared ``ToolView``
+    already attached to the issuing turn.
     """
     views: list[MessageView] = []
     by_call: dict[str, ToolView] = {}
-    # The turn each call was issued on, so the rows a script's result rebuilds land on the
-    # same turn as the script, whatever else has happened since.
+    # The turn each call was issued on, so a script's rebuilt rows land on the script's turn.
     owner: dict[str, MessageView] = {}
     assistant: MessageView | None = None  # the open assistant turn, if any
-    # The messages a checkpoint would fold: everything since the previous one (which is
-    # itself part of the set — a second fold summarizes the first summary plus what
-    # followed it, exactly as `compaction_plan` collects them).
+    # Everything since the previous checkpoint, itself included, as `compaction_plan`
+    # collects the set a fold summarizes.
     since_checkpoint: list[ModelMessage] = []
     for node_id, message in nodes:
         if node_id in compacted_ids:
-            # A conversation-compaction checkpoint: its own turn, not the operator's.
-            # It closes any open assistant turn, exactly as a user turn would.
             assistant = None
             summary_part = _summary_part(message)
             summary_text = flatten_content(summary_part.content) if summary_part else ""
@@ -817,15 +665,11 @@ def project_tree(
         if isinstance(message, ModelRequest):
             user_parts = [p for p in message.parts if isinstance(p, UserPromptPart)]
             returns = [p for p in message.parts if isinstance(p, ToolReturnPart | RetryPromptPart)]
-            # A request carrying tool returns is the agent's own round-trip, even when it
-            # *also* carries a user part: a tool that hands back pixels (a screenshot)
-            # gets them appended here as user content, because no provider accepts an
-            # image inside a tool result. Reading that as an operator turn spoke for
-            # somebody who never said anything — and cost two more things, since opening
-            # a user turn closed the assistant turn mid-work and skipped the very results
-            # this branch exists to stitch.
+            # A request with tool returns is the agent's own round-trip even when it also
+            # has a user part (a screenshot's pixels are appended as user content). Reading
+            # it as an operator turn would close the assistant turn mid-work and skip the
+            # results to stitch.
             if user_parts and not returns:
-                # A new user turn closes any open assistant turn.
                 assistant = None
                 part = user_parts[0]
                 text = flatten_content(part.content)
@@ -835,28 +679,21 @@ def project_tree(
                         MessageView(
                             role="notice",
                             notice=notice[0],
-                            content=notice[1],
+                            content=strip_envelope_note(notice[1]),
                             timestamp=part.timestamp,
                             id=node_id,
                         )
                     )
                     continue
-                # A sub-agent's report arrives in the one shape the model has for a
-                # message from outside itself, so on the way back out it would claim the
-                # operator typed it — and they have not even seen it. Recognised by the
-                # envelope `agent/injected.py` writes, which is a constant of ours rather
-                # than a shape guessed at from the text.
-                # The prose half only: a report may end with a machine-readable block of
-                # findings, which is the panel's copy of the same report. Both in the
-                # bubble would be the operator reading it twice, the second time as JSON.
+                # A sub-agent's report arrives as a user-shaped message and would claim the
+                # operator typed it; recognised by the envelope `agent/injected.py` writes.
+                # Prose half only: a trailing machine-readable findings block is the
+                # panel's copy of the same report.
                 envelope = report_body(text)
                 report = None if envelope is None else report_prose(envelope)
-                # The same link read the other way: the launching agent's mid-flight
-                # direction, in a sub-agent's own thread. Only the envelope is stripped —
-                # the message stays a `user` turn, because in a thread nobody else can type
-                # in, the agent that launched it *is* the one giving it direction, and a
-                # role of its own would be a new vocabulary word for a distinction the
-                # reader of that transcript cannot act on.
+                # The launching agent's direction inside a sub-agent's thread: only the
+                # envelope is stripped, and it stays a `user` turn since nobody else can
+                # type in that thread.
                 direction = None if report is not None else direction_body(text)
                 sent = None if report is not None else message_body(text)
                 if sent is not None:
@@ -864,14 +701,14 @@ def project_tree(
                         MessageView(
                             role="subagent",
                             author=sent[0],
-                            content=sent[1],
+                            content=strip_envelope_note(sent[1]),
                             timestamp=part.timestamp,
                             id=node_id,
                         )
                     )
                     continue
                 body = report if report is not None else direction
-                content = strip_chassis_markers(text if body is None else body)
+                content = strip_chassis_markers(text if body is None else strip_envelope_note(body))
                 parts: list[ContentPart] | None = None
                 if report is None:
                     split = split_envelopes(content, vouched_only=True)
@@ -905,8 +742,7 @@ def project_tree(
                         tool.result = jsonable(part.content)
                         tool.result_parts = result_parts(tool.result)
                         _attach_answers(tool)
-                        # A script's own calls follow it on the turn, each naming it as
-                        # its parent — the order a client nests them in.
+                        # A script's calls follow it on the turn, each naming it as parent.
                         owner[part.tool_call_id].tools.extend(_script_calls(part))
                 elif isinstance(part, RetryPromptPart):
                     tool = by_call.get(part.tool_call_id)
@@ -916,11 +752,9 @@ def project_tree(
             _attach_tool_images(user_parts, returns, by_call)
         else:
             if assistant is None:
-                # First response of the turn — its node id is the branch point.
                 assistant = MessageView(role="assistant", timestamp=message.timestamp, id=node_id)
                 views.append(assistant)
-            # A turn can span several responses (tool round-trips); the last one
-            # carrying a name is the model that wrote the final answer.
+            # The last response carrying a name wrote the final answer.
             assistant.model = message.model_name or assistant.model
             for part in message.parts:
                 if isinstance(part, TextPart):

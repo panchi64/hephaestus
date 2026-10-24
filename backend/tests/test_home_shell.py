@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+
+import pytest
 
 from core.config import Settings
 from core.vault import Vault
@@ -10,7 +13,7 @@ from services.home.backend import Mount
 from services.home.paths import HOME, SCRATCH, Place
 from services.sandbox import SandboxSessionManager
 from services.sandbox.home_shell import HomeShell
-from services.vm.platform import WORKSPACE_PROXY, HomeBind
+from services.vm.platform import WORKSPACE_PROXY, HomeBind, JobState
 from services.vm.project import ProjectCopies
 
 from .conftest import egress_policy
@@ -144,6 +147,61 @@ async def test_a_finished_background_command_is_retired_once(tmp_path: Path) -> 
     assert second == first
     assert not shell.busy
     assert all(not copy.jobs for copy in (copies.acquire(m.root) for m in mounts))
+
+
+async def test_a_check_reads_the_end_of_the_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    shell = _shell(f"{HOME}/projects/api")
+    command_id = await shell.start(session, copies, "npm test", mounts=mounts)
+    tails: list[bool] = []
+    real_job = vm.job
+
+    async def watched(
+        name: str, *, out_offset: int = 0, err_offset: int = 0, tail: bool = False
+    ) -> JobState:
+        tails.append(tail)
+        return await real_job(name, out_offset=out_offset, err_offset=err_offset, tail=tail)
+
+    monkeypatch.setattr(vm, "job", watched)
+    _ = await shell.check(copies, command_id)
+    assert tails == [True]
+
+
+async def test_two_readers_of_a_finishing_job_both_get_its_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The guest gives a finished job's output to the first read only; a second read
+    # that overlapped it would retire the job again with nothing.
+    vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    shell = _shell(f"{HOME}/projects/api")
+    command_id = await shell.start(session, copies, "npm test", mounts=mounts)
+    vm.log = "the output"
+    real_job = vm.job
+    reads = 0
+
+    async def once(
+        name: str, *, out_offset: int = 0, err_offset: int = 0, tail: bool = False
+    ) -> JobState:
+        nonlocal reads
+        reads += 1
+        await asyncio.sleep(0.05)
+        if reads > 1:
+            return JobState(
+                running=False, exit_code=None, stdout="", stderr="", out_end=0, err_end=0
+            )
+        return await real_job(name, out_offset=out_offset, err_offset=err_offset, tail=tail)
+
+    monkeypatch.setattr(vm, "job", once)
+    first, second = await asyncio.gather(
+        shell.check(copies, command_id), shell.check(copies, command_id)
+    )
+    assert first is not None and first.stderr == "the output"
+    assert second == first
+    assert reads == 1
 
 
 def test_a_command_reaches_at_most_a_handful_of_projects(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import override
 
@@ -21,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 class DrainerMixin(StoreCore):
+    _save_failed_listener: Callable[[str], None] | None = None
+
+    def set_save_failed_listener(self, listener: Callable[[str], None] | None) -> None:
+        """Replace the callback given the conversation id when a write is dropped for good.
+        It runs on the drainer's task, so it must not block."""
+        self._save_failed_listener = listener
+
     @override
     async def _persist(self, job: PersistJob) -> None:
         if job.kind == "messages":
@@ -41,14 +49,11 @@ class DrainerMixin(StoreCore):
         self._release(job)
 
     async def _persist_messages(self, job: PersistJob) -> None:
-        # Embed off the DB thread, before the write — vectors travel into work() as
-        # encrypted blobs keyed by row id. Best-effort: a missing/degraded embedder
-        # yields no vectors, and those messages persist for keyword-only recall.
+        # Embed off the DB thread, before the write; a missing embedder yields no vectors.
         vectors = await self._embed_rows(job)
 
         def work(session: Session) -> None:
-            # The conversation may have been deleted while this write sat in the
-            # queue — don't resurrect it as orphaned message rows.
+            # Deleted while queued: do not resurrect it as orphaned message rows.
             conversation = session.get(Conversation, job.conversation_id)
             if conversation is None:
                 return
@@ -84,9 +89,8 @@ class DrainerMixin(StoreCore):
     async def _embed_rows(
         self, job: PersistJob
     ) -> dict[str, tuple[str | None, int | None, str | None]]:
-        """Embed each row's searchable text for cross-chat recall, returning
-        ``row_id -> (model, dim, encrypted_vector)``. Empty when there's nothing to
-        embed or the embedder is unavailable — the write then stores no vectors."""
+        """Embed each row's text for cross-chat recall as ``row_id -> (model, dim,
+        encrypted_vector)``; empty when there is nothing to embed or no embedder."""
         if self._embedder is None:
             return {}
         texts = [(row.id, row.text) for row in job.rows if row.text.strip()]
@@ -96,11 +100,8 @@ class DrainerMixin(StoreCore):
         owner_id = await self.owner_of(job.conversation_id)
         if owner_id is None:
             return {}
-        # Embedding is strictly best-effort: it must never fail or stall a durable
-        # write. A degraded embedder is the silent, expected case; any other error
-        # (timeout, 5xx, connection reset) is logged and the turn persists without a
-        # vector — keyword recall still covers it. Letting the embed raise here would
-        # consume the drainer's retry budget and could ultimately drop the turn.
+        # Best-effort: a raise here would burn the drainer's retry budget and could drop
+        # the turn, which keyword recall covers without a vector.
         try:
             batch = await self._embedder.embed(owner_id, [text for _id, text in texts])
         except DegradedCapabilityError:
@@ -142,8 +143,7 @@ class DrainerMixin(StoreCore):
 
     async def _persist_pin(self, job: PersistJob) -> None:
         def work(session: Session) -> None:
-            # Deliberately does not bump updated_at: pinning is a bookmark, not
-            # activity, and must not float the conversation in the newest-first list.
+            # No updated_at bump: a pin is a bookmark, not activity.
             row = session.get(Message, job.message_id) if job.message_id else None
             if row is not None:
                 row.pinned = job.pinned
@@ -152,9 +152,8 @@ class DrainerMixin(StoreCore):
 
     async def _persist_unblock(self, job: PersistJob) -> None:
         def work(session: Session) -> None:
-            # Like the pin write, deliberately does not bump updated_at: retiring a
-            # stop marker is bookkeeping on an old turn, and the turn that actually
-            # resumes it floats the conversation on its own.
+            # No updated_at bump: retiring a stop marker is bookkeeping, and the resuming
+            # turn floats the conversation itself.
             row = session.get(Message, job.message_id) if job.message_id else None
             if row is not None:
                 row.blocked_reason = None
@@ -163,9 +162,8 @@ class DrainerMixin(StoreCore):
 
     async def _persist_block(self, job: PersistJob) -> None:
         def work(session: Session) -> None:
-            # Queued behind the prompt's own insert (the drainer is FIFO), so the row is
-            # there; like an unblock it is bookkeeping on a turn already written, and the
-            # insert it follows is what moved `updated_at`.
+            # FIFO behind the prompt's insert, so the row exists and that insert moved
+            # `updated_at`.
             row = session.get(Message, job.message_id) if job.message_id else None
             if row is not None:
                 row.blocked_reason = job.blocked_reason
@@ -182,6 +180,10 @@ class DrainerMixin(StoreCore):
             len(job.deleted_ids),
             exc,
         )
-        # Terminal, so the pin goes even though the write never landed — holding it
-        # would keep this conversation resident for the life of the process.
+        # Terminal: release the pin or the conversation stays resident forever.
         self._release(job)
+        if self._save_failed_listener is not None:
+            try:
+                self._save_failed_listener(job.conversation_id)
+            except Exception:
+                logger.exception("save-failed listener raised for %s", job.conversation_id)

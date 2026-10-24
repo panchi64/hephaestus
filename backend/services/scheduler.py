@@ -1,25 +1,18 @@
-"""The task scheduler — the in-process tick loop behind `ScheduledTask` (`TASK-1..6`).
+"""The task scheduler: the in-process tick loop behind `ScheduledTask`.
 
-Single-instance, in-process: one asyncio task sleeps until the earliest
-`next_run_at`, wakes, fires whatever is due, and sleeps again. It owns exactly the
-scheduling mechanics — due-detection, non-overlap, lock-awareness, and recording each
-firing as a `TaskRun` — and knows nothing about *how* a task actually runs: an agent
-task is driven by an injected `executor` callable, a reminder by an injected `notify`
-callable. Composing those two into "an agent task becomes an ordinary Run in a fresh
-conversation" / "a reminder becomes a notification" is the caller's job (`app.py`,
-wired by a later phase) — this module stays reusable by anything that can produce a
-`TaskRunResult` for a `ScheduledTaskView`.
+One asyncio task sleeps until the earliest `next_run_at`, fires whatever is due, and sleeps
+again. It owns the scheduling mechanics (due-detection, lock-awareness, recording each
+firing as a `TaskRun`) and not how a task runs: an agent task goes to an injected
+`executor`, a reminder to an injected `notify`, composed by the caller (`app.py`).
 
-**Lock-aware** like `core.worker.WriteBehindWorker`: task prompts are encrypted, so
-the loop parks whenever the vault is locked rather than erroring, and resumes on unlock.
-A locked/parked scheduler (or a long boot) can leave a task's `next_run_at` in the past;
-the due-check doubles as the catch-up path, firing an overdue task **once** and counting
-its next occurrence from *now*, so a gap never floods a burst of missed fires.
+**Lock-aware** like `core.worker.WriteBehindWorker`: task prompts are encrypted, so the
+loop parks while the vault is locked and resumes on unlock. A park or long boot can leave
+`next_run_at` in the past; the due-check doubles as catch-up, firing an overdue task once
+and counting its next occurrence from now, so a gap never floods missed fires.
 
-**Every occurrence fires on time.** A due fire first advances the task's schedule — that
-write is what claims the occurrence, so no later tick can fire it again — and then starts
-its run. A run of the same task still going (parked on an approval, say) does not hold
-the next one back: each occurrence is its own run.
+**Every occurrence fires on time.** A due fire first advances the schedule, which claims
+the occurrence so no later tick fires it again, then starts its run. A still-running
+earlier run (parked on an approval, say) does not hold the next one back.
 """
 
 from __future__ import annotations
@@ -27,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from zoneinfo import ZoneInfo
@@ -55,37 +48,32 @@ class _Keep(Enum):
 # Passed as `next_run_at` to leave the stored value as it is.
 _KEEP = _Keep.KEEP
 
-# The tick loop's own floor on how soon it re-checks after finding something already
-# due — see `_wait_for`.
+# Floor on how soon the loop re-checks after finding something already due (`_wait_for`).
 _MIN_POLL_S = 0.05
 
-# Bounded retry for SQLite's transient "database is locked"/"database is busy" on the
-# scheduler's own bookkeeping writes (`_retry_locked`). `core.db` sets a busy_timeout
-# so a colliding write normally just waits the lock out, but a wait can still lose
-# under pathological contention, and an escaped advance delays a due fire to a later
-# tick. Bounded so a genuinely broken database still surfaces instead of looping forever.
+# Bounded retry for SQLite's transient "database is locked"/"busy" on the scheduler's
+# bookkeeping writes (`_retry_locked`). `core.db`'s busy_timeout usually suffices, but an
+# escaped advance delays a due fire; bounded so a broken database still surfaces.
 DB_LOCK_RETRIES = 5
 _DB_LOCK_RETRY_BASE_S = 0.05
 _DB_LOCK_RETRY_MAX_S = 0.5
 
-# How long shutdown waits for in-flight executions to finalize their own `TaskRun` rows
-# before giving up on them. Generous enough for a turn to flush, short enough that one
-# wedged execution can't stop the process from exiting.
+# How long shutdown waits for in-flight executions to finalize their `TaskRun` rows, so
+# one wedged execution cannot stop the process from exiting.
 _SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
 
 
 def _is_transient_lock(exc: OperationalError) -> bool:
-    """A SQLite "busy" — another connection holds the write lock *right now* — as
-    opposed to a genuinely broken database (missing table, corrupt file), which no
-    amount of retrying will fix."""
+    """A SQLite "busy" (another connection holds the write lock right now), as opposed to
+    a broken database that retrying will not fix."""
     message = str(exc.orig if exc.orig is not None else exc).lower()
     return "database is locked" in message or "database is busy" in message
 
 
 @dataclass(frozen=True)
 class ScheduledTaskView:
-    """A task's decrypted content, plus the metadata an executor/notifier needs —
-    the shape passed into the two injected callables. Never persisted itself."""
+    """A task's decrypted content plus the metadata an executor/notifier needs; never
+    persisted."""
 
     id: str
     owner_id: str
@@ -95,13 +83,20 @@ class ScheduledTaskView:
     output: str  # TaskOutput
     pre_authorized: list[str]
     agent_name: str | None = None
+    #: The open `TaskRun` this fire records. An executor that starts a run links it with
+    #: `SchedulerService.link_task_run` so the row can be found again after a restart.
+    task_run_id: str | None = None
+
+
+class TaskRunSuspended(Exception):
+    """Raised by an executor whose run outlives this process (parked on the operator at
+    shutdown). The `TaskRun` stays open: whoever settles the restored run finalizes it."""
 
 
 @dataclass(frozen=True)
 class TaskRunResult:
-    """What an ``executor`` reports back for one agent-task execution. A ``notify``
-    call for a reminder never produces one of these — the scheduler synthesizes an
-    ``ok`` outcome itself unless ``notify`` raises."""
+    """What an ``executor`` reports for one agent-task execution. A reminder's ``notify``
+    produces none; the scheduler records ``ok`` unless ``notify`` raises."""
 
     outcome: str  # TaskOutcome
     run_id: str | None = None
@@ -122,16 +117,12 @@ def compute_next_run(
     cron_expr: str | None = None,
     timezone: str = "UTC",
 ) -> datetime | None:
-    """The next `next_run_at` for a schedule, given an anchor (the fire time it's
-    counted forward from, for interval/cron — "anchored on last fire"). A cron's fields
-    are read in ``timezone``, so "9am on weekdays" stays 9am across DST. Deterministic
-    and side-effect-free so both the scheduler and the future task-creation route can
-    share it. Degrades to `None` ("never due") for a malformed schedule (missing
-    interval, missing cron) rather than raising — the write-side route is where a bad
-    schedule gets rejected, not this always-safe read path."""
+    """The next `next_run_at` for a schedule; ``anchor`` is the fire time interval and cron
+    count forward from. A cron's fields are read in ``timezone``, so "9am on weekdays"
+    stays 9am across DST. Pure. A malformed schedule gives `None` ("never due") rather than
+    raising; the write-side route rejects bad schedules."""
     if schedule_type == ScheduleType.ONCE:
-        # The single fire time itself; the caller disables the task once it has
-        # actually fired rather than looping this function again.
+        # The caller disables the task once it has fired.
         return run_at
     if schedule_type == ScheduleType.INTERVAL:
         if every_seconds is None or every_seconds <= 0:
@@ -142,7 +133,7 @@ def compute_next_run(
             return None
         local = anchor.astimezone(ZoneInfo(timezone))
         return croniter(cron_expr, local).get_next(datetime).astimezone(UTC)
-    return None  # ScheduleType.WEBHOOK (or an unrecognized value) — never time-due
+    return None  # a webhook (or unrecognized value) is never time-due
 
 
 class SchedulerService:
@@ -182,18 +173,16 @@ class SchedulerService:
         self._task = asyncio.create_task(self._run(), name="scheduler")
 
     async def stop(self) -> None:
-        """Stop the tick loop and let any in-flight executions finish naturally —
-        each one is responsible for its own `TaskRun` finalize, so cutting them off
-        would strand a row `finished_at`-less forever."""
+        """Stop the tick loop and let in-flight executions finish: each finalizes its own
+        `TaskRun`, so cutting them off would strand a row without `finished_at`. A run
+        parked on the operator ends with `TaskRunSuspended` and leaves its row open."""
         self._stopping.set()
         self._wake.set()  # unstick a park on `_wait_unlocked`/`_wait_for`
         await cancel_and_wait(self._task, STOP_TIMEOUT_S)
         self._task = None
         if self._running:
-            # Bounded: an execution that will not settle must not take the whole shutdown
-            # with it. Letting one finalize its own `TaskRun` row is worth waiting for;
-            # waiting forever means every lifecycle unit registered before this one never
-            # gets to stop either, and the process hangs instead of exiting.
+            # Bounded, or an unsettled execution would stop earlier lifecycle units from
+            # stopping and hang the process.
             try:
                 _ = await asyncio.wait_for(
                     asyncio.gather(*list(self._running.values()), return_exceptions=True),
@@ -208,12 +197,9 @@ class SchedulerService:
                 )
 
     def wake(self) -> None:
-        """Re-arm the sleep — call after any task create/update/delete so a changed
-        `next_run_at` is picked up immediately rather than waiting out whatever the
-        loop was already sleeping toward."""
+        """Re-arm the sleep; call after any task create/update/delete so a changed
+        `next_run_at` is picked up immediately."""
         self._wake.set()
-
-    # --- the tick loop ----------------------------------------------------------
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
@@ -225,17 +211,13 @@ class SchedulerService:
             await self._wait_for(sleep_for)
 
     async def _wait_unlocked(self) -> bool:
-        """Park while the vault is locked (task prompts are encrypted). Returns False only
-        if stopping while still locked — the loop should simply exit, not tick against an
-        unreadable vault."""
+        """Park while the vault is locked. False only if stopping while still locked."""
         return await wait_unlocked_or_stop(self._vault.unlocked_event, self._stopping)
 
     async def _wait_for(self, seconds: float | None) -> None:
-        """Sleep until the earliest due task, a wake, or a stop — whichever first.
-        `seconds is None` means "nothing scheduled": wait indefinitely for a wake/stop.
-        A non-positive (or tiny) `seconds` is floored to `_MIN_POLL_S` rather than
-        producing a zero-wait re-tick, so a task whose schedule advance just failed is
-        retried at a bounded rate rather than in a busy loop."""
+        """Sleep until the earliest due task, a wake, or a stop. `None` means nothing is
+        scheduled. A tiny `seconds` is floored to `_MIN_POLL_S` so a task whose advance
+        failed is retried at a bounded rate, not in a busy loop."""
         if self._stopping.is_set():
             self._wake.clear()
             return
@@ -264,8 +246,7 @@ class SchedulerService:
 
     async def _fire_due(self, task: ScheduledTask, now: datetime) -> None:
         """Claim this occurrence by advancing the schedule, then start its run. A failed
-        advance leaves the task due, so the next tick tries again rather than firing an
-        occurrence nothing has claimed."""
+        advance leaves the task due for the next tick rather than firing it unclaimed."""
         try:
             if task.schedule_type == ScheduleType.ONCE:
                 await self.advance(task.id, next_run_at=None, enabled=False)
@@ -284,13 +265,10 @@ class SchedulerService:
             return
         _ = self._start(task, now)
 
-    # --- on-demand fire (manual run_now / an inbound webhook) ----------------------
-
     async def fire_now(self, task_id: str) -> str | None:
-        """Fire ``task_id`` immediately, leaving its schedule as it is — the manual
-        ``run_now`` and webhook entry point. Returns the id of the `TaskRun` it records,
-        or ``None`` if the task does not exist, is disabled, or awaits approval: an
-        operator turning a task off stops its webhook too, not only its schedule."""
+        """Fire ``task_id`` immediately without touching its schedule (manual ``run_now``
+        and webhooks). Returns the `TaskRun` id, or ``None`` if the task does not exist, is
+        disabled, or awaits approval: turning a task off stops its webhook too."""
 
         def work(session: Session) -> ScheduledTask | None:
             return session.get(ScheduledTask, task_id)
@@ -299,8 +277,6 @@ class SchedulerService:
         if task is None or not task.enabled or not task.approved:
             return None
         return self._start(task, utcnow())
-
-    # --- firing ---------------------------------------------------------------------
 
     def _start(self, task: ScheduledTask, fire_time: datetime) -> str:
         run_row_id = new_id()
@@ -314,12 +290,14 @@ class SchedulerService:
     async def _fire(self, task: ScheduledTask, fire_time: datetime, run_row_id: str) -> None:
         await self._insert_task_run(id=run_row_id, task_id=task.id, started_at=fire_time)
         try:
-            view = self._decrypt_view(task)
+            view = replace(self._decrypt_view(task), task_run_id=run_row_id)
             if task.kind == TaskKind.REMINDER:
                 await self._notify(view)
                 result = TaskRunResult(outcome=TaskOutcome.OK.value)
             else:
                 result = await self._executor(view)
+        except TaskRunSuspended:
+            return
         except Exception as exc:  # a bad task must never kill the loop
             logger.exception("scheduler: task %s execution failed", task.id)
             result = TaskRunResult(outcome=TaskOutcome.ERROR.value, summary=str(exc))
@@ -332,8 +310,7 @@ class SchedulerService:
             conversation_id=result.conversation_id,
             summary=result.summary,
         ):
-            # Stopping while the vault stayed locked through the whole park: the row
-            # stays unfinalized, like `WriteBehindWorker.stop()` leaving a locked queue.
+            # Stopped with the vault still locked: the row stays unfinalized.
             return
         # Bookkeeping only; a failure here must never kill the loop.
         try:
@@ -353,13 +330,9 @@ class SchedulerService:
             agent_name=task.agent_name,
         )
 
-    # --- persistence --------------------------------------------------------------
-
     async def _load_due(self, now: datetime) -> list[ScheduledTask]:
-        # The due check itself runs in Python (not a SQL `WHERE next_run_at <= :now`)
-        # so the naive round-trip `as_utc` corrects for can't produce a wrong
-        # comparison at the SQL layer — the same reasoning `approval_grants.py`
-        # documents for its own expiry check.
+        # The due check runs in Python, not SQL, because SQLite returns naive datetimes
+        # that `as_utc` corrects.
         def work(session: Session) -> list[ScheduledTask]:
             return list(
                 session.exec(
@@ -371,9 +344,7 @@ class SchedulerService:
             )
 
         rows = await in_session(self._engine, work)
-        # `next_run_at` is nullable on the model and only the SQL filter above excludes
-        # the nulls, which no reader of this expression can see — so it is re-checked
-        # here rather than assumed.
+        # Nullable on the model; only the SQL filter excludes nulls, so re-check for typing.
         return [
             row for row in rows if row.next_run_at is not None and as_utc(row.next_run_at) <= now
         ]
@@ -409,17 +380,12 @@ class SchedulerService:
         summary: str | None,
     ) -> bool:
         """Finalize a `TaskRun`, parking and retrying if the vault locks mid-flight
-        (the operator locks it while an agent task is still executing, so
-        `encrypt_str` on the summary raises `VaultLocked` after the executor has
-        already returned) — mirrors `WriteBehindWorker`'s "a lock landing
-        mid-handler is a park, not a failed attempt" rule rather than letting the
-        exception escape the bare `asyncio.create_task` in `_tick` and strand this
-        run's row and the task's own reschedule forever. A transient locked
-        database is ridden out the same way (`_retry_locked`) — bounded rather than
-        parked, since unlike a vault lock nothing signals when it clears. Returns
-        False only if the loop is stopping while the vault never unlocked again —
-        same as `WriteBehindWorker.stop()` leaving a locked queue's items
-        unflushed."""
+        (`encrypt_str` on the summary raises `VaultLocked` after the executor returned).
+        Like `WriteBehindWorker`, a lock is a park, not a failed attempt; otherwise the
+        exception would escape the bare task and strand the row and the reschedule. A
+        transient locked database is bounded-retried (`_retry_locked`) rather than parked,
+        since nothing signals when it clears. Returns False only if the loop is stopping
+        while the vault never unlocked."""
         while True:
             try:
                 await self._retry_locked(
@@ -456,24 +422,122 @@ class SchedulerService:
 
         def work(session: Session) -> None:
             row = session.get(TaskRun, run_row_id)
-            if row is None:
+            if row is None or row.finished_at is not None:
                 return
             row.finished_at = finished_at
             row.outcome = outcome
-            row.run_id = run_id
-            row.conversation_id = conversation_id
+            row.run_id = run_id or row.run_id
+            row.conversation_id = conversation_id or row.conversation_id
             row.summary_enc = summary_enc
             session.add(row)
 
         await in_session(self._engine, work)
 
+    async def link_task_run(
+        self, run_row_id: str, *, run_id: str | None, conversation_id: str | None
+    ) -> None:
+        """Point an open `TaskRun` at the run it drives, so a restored run finds its row;
+        ``None`` takes the pointer back when that run was never started."""
+
+        def work(session: Session) -> None:
+            row = session.get(TaskRun, run_row_id)
+            if row is None or row.finished_at is not None:
+                return
+            row.run_id = run_id
+            row.conversation_id = conversation_id
+            session.add(row)
+
+        await self._retry_locked(
+            lambda: in_session(self._engine, work), what=f"task run {run_row_id} link"
+        )
+
+    async def settle_restored(
+        self, run_id: str, *, outcome: str, summary: str | None
+    ) -> ScheduledTaskView | None:
+        """Finalize the open `TaskRun` linked to ``run_id``, for a run that ended in a
+        process other than the one that fired it. Returns the routine's view when a row
+        was closed, ``None`` when none was open."""
+
+        def find(session: Session) -> tuple[str, ScheduledTask] | None:
+            row = session.exec(
+                select(TaskRun)
+                .where(TaskRun.run_id == run_id)
+                .where(col(TaskRun.finished_at).is_(None))
+            ).first()
+            task = session.get(ScheduledTask, row.task_id) if row is not None else None
+            return (row.id, task) if row is not None and task is not None else None
+
+        found = await in_session(self._engine, find)
+        if found is None:
+            return None
+        run_row_id, task = found
+        finished = utcnow()
+        _ = await self._finalize_parked(
+            run_row_id,
+            finished_at=finished,
+            outcome=outcome,
+            run_id=run_id,
+            conversation_id=None,
+            summary=summary,
+        )
+        try:
+            await self.advance(task.id, last_run_at=finished)
+        except Exception:
+            logger.exception("scheduler: task %s last-run stamp failed", task.id)
+        return self._decrypt_view(task)
+
+    async def records_run(self, run_id: str) -> bool:
+        """Whether a `TaskRun` is linked to ``run_id``, i.e. its routine still exists."""
+
+        def work(session: Session) -> bool:
+            return (
+                session.exec(select(TaskRun.id).where(TaskRun.run_id == run_id)).first() is not None
+            )
+
+        return await in_session(self._engine, work)
+
+    async def open_run_ids(self, task_id: str) -> list[str]:
+        """The runs linked to ``task_id``'s unfinished `TaskRun` rows."""
+
+        def work(session: Session) -> list[str]:
+            rows = session.exec(
+                select(TaskRun.run_id)
+                .where(TaskRun.task_id == task_id)
+                .where(col(TaskRun.finished_at).is_(None))
+                .where(col(TaskRun.run_id).is_not(None))
+            )
+            return [run_id for run_id in rows if run_id is not None]
+
+        return await in_session(self._engine, work)
+
+    async def close_stranded(self, is_live: Callable[[str], bool]) -> int:
+        """Finalize every open `TaskRun` that nothing is going to finish: not an execution
+        of this process, and not linked to a run for which ``is_live`` holds. Returns how
+        many were closed."""
+
+        def open_rows(session: Session) -> list[tuple[str, str | None]]:
+            rows = session.exec(select(TaskRun).where(col(TaskRun.finished_at).is_(None)))
+            return [(row.id, row.run_id) for row in rows]
+
+        closed = 0
+        for run_row_id, run_id in await in_session(self._engine, open_rows):
+            if run_row_id in self._running or (run_id is not None and is_live(run_id)):
+                continue
+            _ = await self._finalize_parked(
+                run_row_id,
+                finished_at=utcnow(),
+                outcome=TaskOutcome.ERROR.value,
+                run_id=run_id,
+                conversation_id=None,
+                summary="the app stopped before this run finished",
+            )
+            closed += 1
+        return closed
+
     async def _retry_locked(self, attempt: Callable[[], Awaitable[None]], *, what: str) -> None:
-        """Run a DB write, riding out SQLite's transient `database is locked`/`busy`
-        (another connection — typically a write-behind drainer mid-flush — holds the
-        single write lock). `core.db`'s busy_timeout makes this rare, but not
-        impossible, and the scheduler's bookkeeping writes must not escape on a moment's
-        contention. Bounded with backoff so a genuinely permanent error (or a lock that
-        outlives every attempt) still surfaces rather than looping."""
+        """Run a DB write, riding out SQLite's transient `database is locked`/`busy` (often a
+        write-behind drainer mid-flush). Bounded with backoff so a permanent error still
+        surfaces."""
         delay = _DB_LOCK_RETRY_BASE_S
         for attempts_left in range(DB_LOCK_RETRIES - 1, -1, -1):
             try:
@@ -503,9 +567,8 @@ class SchedulerService:
         last_run_at: datetime | None = None,
         enabled: bool | None = None,
     ) -> None:
-        """Update a task's schedule row, riding out a transient locked database. Moving
-        `next_run_at` is what claims an occurrence before it fires, so a moment's lock
-        contention must not push the fire to a later tick."""
+        """Update a task's schedule row, riding out a transient locked database; moving
+        `next_run_at` claims an occurrence, so brief contention must not delay the fire."""
         await self._retry_locked(
             lambda: self.advance_once(
                 task_id, next_run_at=next_run_at, last_run_at=last_run_at, enabled=enabled

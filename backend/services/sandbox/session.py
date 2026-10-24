@@ -1,20 +1,18 @@
 """One conversation's live sandbox: its workspace and the guest copy commands run in.
 
-A conversation gets one workspace, a host-side directory that holds the agent's files
-for as long as the conversation exists. Commands do not run here; they run in the
-platform VM (:mod:`services.vm`), against a guest copy of the workspace that is piped in
-before a command and back out after it. Nothing is created until the agent first runs
-code, and an idle session is reaped by wiping the guest copy, which costs nothing: a
-`.venv` the agent installed, a `dist/` it built and the `.git` of a repository it cloned
-are all in the host directory, and come back with the next command.
+A conversation gets one workspace, a host-side directory holding the agent's files for as
+long as the conversation exists. Commands run in the platform VM (:mod:`services.vm`)
+against a guest copy that is piped in before a command and back out after it. Nothing is
+created until the agent first runs code, and reaping an idle session wipes only the guest
+copy: a `.venv`, a `dist/` or a cloned `.git` live in the host directory and come back with
+the next command.
 
-Each command is confined to its own workspace inside the VM, and reaches the network only
+Each command is confined to its own workspace inside the VM and reaches the network only
 through the egress gateway with this session's credentials, which hold it to the
-conversation's allowlist. Installing a package and burning CPU are what the workspace is
-*for* and cost no approval; what is fenced is where bytes may go.
+conversation's allowlist.
 
-A session knows only about itself. *When* it is created and *when* it is reaped are
-policies over the whole set, and live in :mod:`services.sandbox.manager`.
+When a session is created and reaped is policy over the whole set, in
+:mod:`services.sandbox.manager`.
 """
 
 from __future__ import annotations
@@ -24,29 +22,24 @@ import logging
 import shutil
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
 
 from core import net
-from core.fork import MergeReport
 from core.vault import Vault
 from services.vm import GuestWorkspace, VMError
 from services.vm.host import SessionHost
 from services.vm.platform import WORKSPACE_PROXY
 
 from .base import SandboxError, SandboxResult, SandboxSpec, contained_path
-from .fork import clone_workspace, fork_marker, manifest_of, merge_workspace
 from .legacy_seal import adopt_legacy_archive, partial_marker, retire_superseded_archive
+from .limits import TIMEOUT_EXIT, VM_WAIT_S
 from .preview import PreviewHandle
 from .walk import walk_files
 
 logger = logging.getLogger(__name__)
 
-#: The guest's own timeout reports this exit; the command was stopped, not failed.
-_TIMEOUT_EXIT = 124
-#: How long a first command waits for a VM that is still booting.
-_VM_WAIT_S = 120.0
 #: Workspace-relative dirs the env defaults point at, created before a run so the first
 #: command already finds them. Scratch, and excluded from what a walk reports.
 _TMP_SUBDIR = ".tmp"
@@ -71,8 +64,7 @@ def proxy_env(credentials: str | None) -> dict[str, str]:
     cargo, go and git read the uppercase pair.
 
     Without credentials the gateway answers every request with a 407, which a client
-    reports as a proxy refusal rather than as a DNS failure that reads like no network
-    exists."""
+    reports as a proxy refusal rather than a DNS failure."""
     url = f"http://{credentials}@{WORKSPACE_PROXY}" if credentials else f"http://{WORKSPACE_PROXY}"
     direct = "localhost,127.0.0.1"
     return {
@@ -89,12 +81,9 @@ class LiveWork(Protocol):
     """Just enough of a ``runs.Run`` for a session to know whether the work that claimed
     it is still going.
 
-    A protocol rather than the class because the sandbox has no business depending on the
-    run substrate to answer a question this small — and, more importantly, because a claim
-    read this way is **released by asking, never by a hand-back**. The caller that would
-    owe the hand-back is precisely the one that gets cancelled, times out, or dies with an
-    unhandled error, and a claim leaked on those paths pins a guest copy for the life of
-    the process.
+    A claim is released by asking, never by a hand-back: the caller owing the hand-back is
+    the one that gets cancelled or dies, and a leaked claim pins a guest copy for the life
+    of the process.
     """
 
     @property
@@ -114,62 +103,41 @@ class SandboxSession:
         vm: SessionHost,
         vault: Vault,
         excludes: Iterable[str],
-        ephemeral: bool = False,
     ) -> None:
         self.key: str = key
         self.workspace: Path = workspace
-        #: Where this key's pre-existing sealed archive would be, if the installation
-        #: ever ran the build that wrote them. Read once and retired — see
-        #: :mod:`services.sandbox.legacy_seal`.
+        #: Where a legacy sealed archive for this key would be; read once and retired (see
+        #: :mod:`services.sandbox.legacy_seal`).
         self.sealed: Path = sealed
-        # A fork taken for a delegated agent: a copy of a workspace that still exists
-        # under its parent's key. It is deleted where an ordinary session's workspace
-        # is kept — see :meth:`shutdown`.
-        self.ephemeral: bool = ephemeral
-        # The parent's files as they stood when this fork was taken, ``{relpath: sha256}``
-        # — what :func:`services.sandbox.fork.merge_workspace` decides against. Empty on
-        # every session that is not a fork.
-        self.fork_manifest: dict[str, str] = {}
-        # This workspace's allowlist directory, owned by the egress policy, which
-        # rewrites it whenever the operator approves a domain; the gateway re-reads it,
-        # so a grant lands on the next request.
+        # Owned by the egress policy, which rewrites it on each approval; the gateway
+        # re-reads it, so a grant lands on the next request.
         self._egress_dir: Path = egress_dir
         self._vm: SessionHost = vm
         self._guest: GuestWorkspace = GuestWorkspace(vm, key, workspace)
         self._credentials: str | None = None
         self._preview_name: str = f"preview-{key}"
         self._vault: Vault = vault
-        # What a walk of this workspace skips — reporting only, never deletion. See
-        # :mod:`services.sandbox.walk`.
+        # Reporting only, never deletion (:mod:`services.sandbox.walk`).
         self._walk_excludes: tuple[str, ...] = tuple(excludes)
         self._preview: PreviewHandle | None = None
         self._last_used: float = time.monotonic()
         self._lock: asyncio.Lock = asyncio.Lock()
-        # Guards the multi-step disk transitions on this workspace against each other:
-        # materialising it (`_ensure_workspace`, which may still be adopting a
-        # sealing-era archive), a fork's walk-and-copy, and the merge back. They are
-        # reachable at the same instant because the file tools deliberately take no
-        # session lock — a run parked on an approval can be reaped while it still holds
-        # this session object, and its next write lands mid-merge. A thread lock rather
-        # than the asyncio one because every side is synchronous and some of them do not
-        # run on the loop at all; it is uncontended except in exactly that race.
-        # Reentrant because `merge_fork` holds it across a materialisation that takes it
-        # too.
+        # Orders `_ensure_workspace` (which may adopt a legacy archive) against the file
+        # tools, which take no session lock. A thread lock because the sides are
+        # synchronous and some run off the loop.
         self._disk: threading.RLock = threading.RLock()
         self._holders: list[LiveWork] = []
 
     @property
     def is_busy(self) -> bool:
-        """A call is in flight on this session *right now* — one exec, one preview
-        launch, one teardown. Deliberately narrow: it is the lock, and the lock spans a
-        single call, not the turn the call belongs to. See :attr:`is_claimed`."""
+        """A call (exec, preview launch or teardown) is in flight right now. This is the
+        lock, which spans one call and not the turn; see :attr:`is_claimed`."""
         return self._lock.locked()
 
     def hold(self, holder: LiveWork | None) -> None:
-        """Claim this session for a unit of work, until that work reaches a terminal
-        state. Idempotent — re-claiming from the same run is what every later tool call
-        in a turn does. ``None`` claims nothing: it is a caller with no lifetime to tie a
-        guest copy to (a proxy request, a route, a test), and it still costs the prune."""
+        """Claim this session for a unit of work until it reaches a terminal state.
+        Idempotent. ``None`` claims nothing (a caller with no lifetime to tie a guest copy
+        to) but still prunes finished claims."""
         self._holders = [h for h in self._holders if not h.is_terminal and h is not holder]
         if holder is not None:
             self._holders.append(holder)
@@ -178,38 +146,30 @@ class SandboxSession:
     def is_claimed(self) -> bool:
         """Whether a run that has not finished is still working in here.
 
-        The gap this covers is the one the lock cannot: a turn is a *sequence* of execs
-        with model thinking in between, and between two of them the session looks idle
-        while being very much in use. Pruned on read rather than on release, because the
-        run that would do the releasing is the one being cancelled."""
+        Covers the gap the lock cannot: between two execs of one turn the session looks
+        idle. Pruned on read because the run that would release is the one being cancelled."""
         self._holders = [h for h in self._holders if not h.is_terminal]
         return bool(self._holders)
 
     @property
     def is_displaceable(self) -> bool:
         """Whether displacing this session at the live-session cap would take it from
-        nobody. Three ways it would not:
+        somebody. It would if:
 
-        - a call is in flight, and wiping the guest copy mid-exec fails the tool call the
-          operator is watching;
-        - a run that has not finished is between tool calls, and while its files would
-          survive the reap, the live process and system state around them would not —
-          an interpreter left running, a server it started, a shell's directory;
-        - a preview is live, and reaping it drops the token the proxy resolves, turning a
-          page the operator may be looking at into a 404.
+        - a call is in flight, since wiping the guest copy mid-exec fails the tool call;
+        - a run is between tool calls, whose files would survive but not its live
+          processes and shell state;
+        - a preview is live, since reaping drops the proxy's token and 404s the page.
 
-        The idle sweep asks a deliberately different question (busy, plus the TTL): a
-        preview nobody has loaded in half an hour, or a run parked on an approval nobody
-        answered, *should* be collected eventually. Time bounds everything; the count
-        bounds only what nobody is using right now.
+        The idle sweep asks a different question (busy, plus the TTL): a stale preview or a
+        run parked on an unanswered approval should be collected eventually.
         """
         return not self.is_busy and not self.is_claimed and self._preview is None
 
     @property
     def is_warm(self) -> bool:
-        """True when the guest already holds this workspace, so a run executes at once.
-        False before the first run (or after a reap), when ``run()`` must first pipe the
-        workspace in — a wait the caller may want to announce."""
+        """True when the guest already holds this workspace; False before the first run or
+        after a reap, when ``run()`` must first pipe it in."""
         return self._guest.is_in
 
     @property
@@ -233,11 +193,6 @@ class SandboxSession:
     def lock(self) -> asyncio.Lock:
         """The lock that spans one call; held while a call is in flight."""
         return self._lock
-
-    @property
-    def disk_lock(self) -> threading.RLock:
-        """The thread lock that orders the multi-step disk transitions on this workspace."""
-        return self._disk
 
     @property
     def credentials(self) -> str | None:
@@ -276,14 +231,15 @@ class SandboxSession:
                 timeout_s=spec.timeout_s,
                 stdin=spec.stdin,
             )
-            await self._guest.bring_out()
+            lost = await self._guest.bring_out()
         except VMError as exc:
             raise SandboxError(str(exc)) from exc
         return SandboxResult(
             exit_code=result.exit_code,
             stdout=result.stdout,
             stderr=result.stderr,
-            timed_out=result.exit_code == _TIMEOUT_EXIT,
+            timed_out=result.exit_code == TIMEOUT_EXIT,
+            notes=(lost,) if lost is not None else (),
         )
 
     def _network_env(self) -> dict[str, str]:
@@ -296,19 +252,18 @@ class SandboxSession:
         self._ensure_workspace()
         await self._ensure_up()
 
-    async def bring_out(self) -> None:
-        """Bring back what a command changed in the guest copy. The caller holds
-        :attr:`lock`."""
+    async def bring_out(self) -> str | None:
+        """Bring back what a command changed in the guest copy, returning a note when the
+        copy was lost to a VM restart. The caller holds :attr:`lock`."""
         try:
-            await self._guest.bring_out()
+            return await self._guest.bring_out()
         except VMError as exc:
             raise SandboxError(f"could not bring the work back from the VM: {exc}") from exc
 
     def command_env(self, *, network: bool) -> dict[str, str]:
-        """The environment a home command runs with: the package-manager defaults, and the
+        """The environment a home command runs with: the package-manager defaults and the
         egress proxy, with credentials only when it may reach the network. ``HOME`` is left
-        to the confinement, which points it at the home so ``~/projects`` means what the
-        agent was told."""
+        to the confinement so ``~/projects`` resolves."""
         defaults = {name: value for name, value in _ENV_DEFAULTS.items() if name != "HOME"}
         return {**defaults, **(self._network_env() if network else proxy_env(None))}
 
@@ -322,10 +277,8 @@ class SandboxSession:
         return target.read_bytes()
 
     def write_file(self, relpath: str, content: bytes) -> None:
-        """Stage a file *into* this session's workspace, whether or not the guest
-        holds it. Writes the host copy, which the next code run pushes in, and it
-        outlives a reap like everything else in the workspace. Guards against escape —
-        the same invariant as :meth:`read_file`, in reverse."""
+        """Stage a file into this session's workspace, whether or not the guest holds it.
+        Writes the host copy, which the next run pushes in. Guards against escape."""
         self._ensure_workspace()
         target = contained_path(self.workspace, relpath)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -361,9 +314,8 @@ class SandboxSession:
                 command=tuple(command),
                 forward=forward,
             )
-            # Wait until it answers over HTTP, so the iframe's first fetch (which fires
-            # the instant `view.live` is emitted) lands on a real response. A server that
-            # is merely slow is still worth opening; one that has exited is not.
+            # The iframe fetches the instant `view.live` is emitted, so wait for a real
+            # response. A merely slow server is still opened; an exited one is not.
             serving = await net.await_http_ready(
                 f"http://127.0.0.1:{forward.port}/", startup_timeout_s
             )
@@ -393,37 +345,15 @@ class SandboxSession:
             logger.info("sandbox %s: the preview server could not be stopped", self.key)
 
     async def shutdown(self) -> None:
-        """Bring the work out of the guest and wipe the guest copy. The workspace stays
-        exactly where it is.
-
-        This is the whole of a reap. A conversation's files are not what a reap is trying
-        to reclaim — the guest copy, its processes and its preview are — so they are left
-        on disk, which is also the only way a `.venv` the agent installed or the `.git` of
-        a repository it cloned survive to the next turn.
-
-        A fork is the one exception, and it is a deletion rather than a saving: its
-        files are a copy of a parent workspace that still exists under its own key, and
-        by now they have either been merged back or abandoned."""
+        """Bring the work out of the guest and wipe the guest copy, leaving the workspace
+        on disk. This is the whole of a reap: it reclaims the guest copy, its processes
+        and its preview, not the files."""
         async with self._lock:
             await self._release()
-            if self.ephemeral:
-                await asyncio.to_thread(self._drop_workspace)
-
-    def _drop_workspace(self) -> None:
-        """Remove a fork's plaintext, and the markers that describe it.
-
-        Under ``_disk``: a file tool arriving on this session mid-teardown must wait
-        rather than recreate the directory being removed."""
-        with self._disk:
-            shutil.rmtree(self.workspace, ignore_errors=True)
-            fork_marker(self.workspace).unlink(missing_ok=True)
-            partial_marker(self.workspace).unlink(missing_ok=True)
 
     async def discard(self) -> None:
         """Bring the work out and release the guest copy, run when a conversation is being
-        deleted and before a fork's files are read back into its parent. Unlike
-        :meth:`shutdown` it never deletes a fork's workspace — the merge still has to read
-        it; disk cleanup has a single home (``SandboxSessionManager._purge_disk``)."""
+        deleted. Disk cleanup has a single home (``SandboxSessionManager._purge_disk``)."""
         async with self._lock:
             await self._release()
 
@@ -432,8 +362,7 @@ class SandboxSession:
         try:
             await self._guest.evict()
         except VMError:
-            # The guest copy goes with the VM if it cannot be reached; the host copy is
-            # the workspace and is untouched either way.
+            # The guest copy goes with the VM if unreachable; the host copy is untouched.
             logger.warning("sandbox %s: could not bring the guest copy out", self.key)
             self._guest.forget()
         if self._credentials is not None:
@@ -443,12 +372,9 @@ class SandboxSession:
     def collect_text_files(
         self, *, max_file_bytes: int = 262_144, max_files: int = 2000
     ) -> dict[str, bytes]:
-        """The workspace's text files (relpath → bytes) for a history snapshot — the
-        same files every other walk reports, minus binaries and oversized ones. Prunes
-        the bloat (caches, virtualenvs, ``node_modules``, ``.git``), skips files over
-        ``max_file_bytes`` and anything that isn't valid UTF-8. Empty when the
-        conversation has never put anything in its workspace. Synchronous file IO —
-        call off the event loop."""
+        """The workspace's text files (relpath → bytes) for a history snapshot: the files
+        every other walk reports, minus those over ``max_file_bytes`` and anything that
+        isn't valid UTF-8. Synchronous file IO; call off the event loop."""
         root = self.workspace
         if not root.exists():
             return {}
@@ -463,91 +389,50 @@ class SandboxSession:
             except OSError:
                 continue
             if b"\x00" in data:
-                continue  # NUL byte ⇒ binary (a NUL is valid UTF-8, so the
-                # decode check below wouldn't catch it) — history is text only
+                continue  # a NUL is valid UTF-8, so the decode below wouldn't catch it
             try:
                 _ = data.decode("utf-8")
             except UnicodeDecodeError:
-                continue  # binary — skipped (history is code + text diffs)
+                continue
             files[rel] = data
         return files
 
     def ensure_workspace(self) -> Path:
-        """The workspace directory, materialized and ready to read or write, **without
-        touching the VM**. This is the seam the file tools bind to: browsing,
-        reading and editing files costs no VM round trip at all.
+        """The workspace directory, materialized and ready to read or write, without
+        touching the VM. This is the seam the file tools bind to.
 
-        Counts as activity (``touch``), so a session being worked on purely through file
-        tools is not reaped out from under the run that is using it."""
+        Counts as activity, so a session worked on purely through file tools is not reaped."""
         self._ensure_workspace()
         self.touch()
         return self.workspace
 
-    def clone_into(self, child: Path) -> dict[str, str]:
-        """Copy this workspace onto a fork's path, and record what it held at that moment.
-
-        Blocking IO; call it off the event loop. ``_disk`` is held for the whole
-        materialise-copy-and-hash, exactly as :meth:`merge_fork` holds it for the walk:
-        a second writer landing mid-copy leaves a torn copy whose manifest would record
-        the tear as the fork point, so the merge back would read the parent's surviving
-        files as never having existed.
-
-        The manifest is hashed from the *copy*, which is the fork point by construction:
-        re-reading this workspace afterwards would record a write it took since the clone
-        as the base, and the merge back would then undo that write with the child's older
-        copy.
-        """
-        with self._disk:
-            self._ensure_workspace()
-            clone_workspace(self.workspace, child)
-            self.touch()
-            return manifest_of(child, self._walk_excludes)
-
-    def merge_fork(self, child: Path, manifest: Mapping[str, str]) -> MergeReport:
-        """Land what a fork of this workspace changed, and report what could not.
-
-        Blocking IO; call it off the event loop. ``_disk`` is held for the whole
-        walk-and-copy, with the workspace materialised *inside* that hold: judging what
-        is on disk and then writing to it are one transaction, and a second writer
-        between the two would have the merge decide against a tree that no longer
-        stands."""
-        with self._disk:
-            self._ensure_workspace()
-            return merge_workspace(
-                child=child, parent=self.workspace, manifest=manifest, excludes=self._walk_excludes
-            )
-
     def _ensure_workspace(self) -> None:
-        # Under `_disk` so the one-way adoption below cannot interleave with a merge
-        # holding the same lock — two writers on one directory. See `_disk`.
+        # Under `_disk` so two adoptions never write one directory.
         with self._disk:
             marker = partial_marker(self.workspace)
             if marker.exists():
-                # A sealing-era restore that never finished: the directory holds less
-                # than the archive beside it, so throw the fragment away and let the
-                # adoption run again rather than hand the agent half its files.
+                # An unfinished legacy restore: discard the fragment and adopt again
+                # rather than hand the agent half its files.
                 shutil.rmtree(self.workspace, ignore_errors=True)
                 marker.unlink(missing_ok=True)
             if not self.workspace.exists():
-                # Nothing writes an archive any more; one still sitting here was
-                # written by the build that sealed on reap, and this is where it is
-                # read back and retired. See :mod:`services.sandbox.legacy_seal`.
+                # Nothing writes archives any more; one here predates that, and is read
+                # back and retired (:mod:`services.sandbox.legacy_seal`).
                 if not adopt_legacy_archive(self.sealed, self.workspace, self._vault):
                     self.workspace.mkdir(parents=True, exist_ok=True)
             else:
-                # Both on disk means an adoption died between its last two steps. The
-                # directory is the live copy, so the archive is residue.
+                # Both on disk means an adoption died between its last two steps; the
+                # directory is the live copy.
                 retire_superseded_archive(self.sealed, self.workspace)
-            # The build-temp dir is not something a walk reports, and an adopted archive
-            # never carried it, so recreate it every time — a missing TMPDIR breaks
-            # mktemp and silently shrinks pip's scratch space.
+            # Recreated every time: an adopted archive never carried them, and a missing
+            # TMPDIR breaks mktemp.
             for sub in (_TMP_SUBDIR, _HOME_SUBDIR):
                 (self.workspace / sub).mkdir(parents=True, exist_ok=True)
 
     async def _ensure_up(self) -> None:
         """Pipe the workspace into the guest, with this session's egress credentials
         granted first, so no command runs before its fence is in place."""
-        if not self._vm.available and not await self._vm.wait_ready(_VM_WAIT_S):
+        if not self._vm.available and not await self._vm.wait_ready(VM_WAIT_S):
             if self._vm.failure:
                 raise SandboxError(
                     f"the platform VM is unavailable: {self._vm.failure}",

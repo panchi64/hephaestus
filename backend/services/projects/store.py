@@ -1,35 +1,27 @@
 """The project catalog: CRUD, the active selection, and the git probe.
 
-Three things here are worth knowing before changing anything.
-
 **Null means unfiled, and unfiled is visible everywhere.** `visible_project_ids` is the
-one place the scope rule lives, and every filtered query in the app reads it rather than
-writing its own `WHERE`. The rule is:
+one place the scope rule lives; every filtered query reads it:
 
     visible   = unfiled  ∪  the active project
     invisible = every other project
 
-That is what makes the scope safe to introduce over an existing database — every row
-that already exists is unfiled, so activating a project *adds* to what the operator sees
-and never subtracts. It is also why lists and recall use the same helper: a project chat
-that could not reach the operator's general memory would be a worse assistant, and a
-chat that could reach *another* project's notes would be a leak.
+Existing rows are all unfiled, so activating a project only adds to what the operator
+sees. A project chat must reach the general memory, and must not reach another project's
+notes.
 
 **The path is sealed; the git facts are not.** A directory path names the operator's
-clients and employers, so `root_path_enc` is vault-sealed like any other content. Whether
-the directory is a repo, and how many changes are uncommitted, are facts about the
-world that we re-probe on every read anyway.
+clients, so `root_path_enc` is vault-sealed. Repo status is re-probed on every read.
 
-**`probe` never mutates.** It answers "what is this directory" so the UI can ask the
-operator whether to `git init` — running one is a separate, explicitly confirmed act
-(`services/projects/worktree.py`). A read that quietly created a repository in someone's
-directory would be exactly the kind of surprise this feature exists to avoid.
+**`probe` never mutates.** `git init` is a separate, explicitly confirmed act
+(`services/projects/worktree.py`).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +41,7 @@ from models.subagent import SubagentRecord
 from models.task import ScheduledTask
 from models.thread_change import ThreadChange
 from models.thread_worktree import ThreadWorktree
+from services.sandbox.gitenv import GIT_ARG_PINS, git_config_pins
 from services.settings_store import ACTIVE_PROJECT_KEY, SettingsStore
 
 from .slugs import slug_for
@@ -56,11 +49,8 @@ from .slugs import slug_for
 #: How many times a registration picks a slug before a clash is reported.
 _SLUG_ATTEMPTS = 3
 
-#: Every entity that carries a `project_id`. Written out because there is no shared base
-#: class — each model declares `owner_id` inline too — and because deleting a project has
-#: to unfile *all* of them or the ones it misses vanish from every listing forever.
-#: `tests/test_projects.py` pins this against the live schema, so a fourth scoped entity
-#: fails there rather than silently losing its rows on the next project delete.
+#: Every entity that carries a `project_id`; there is no shared base class, and deleting a
+#: project must unfile all of them. `tests/test_projects.py` pins this against the schema.
 SCOPED_MODELS: tuple[type[Conversation | ScheduledTask | CorpusSource | SubagentRecord], ...] = (
     Conversation,
     ScheduledTask,
@@ -79,14 +69,11 @@ def project_clause(
 ) -> ColumnElement[bool] | None:
     """The scope rule as one SQL clause, or ``None`` for no filtering at all.
 
-    Every scoped query goes through this rather than writing its own ``WHERE``, because
-    the rule has a trap in it: SQL ``IN`` never matches NULL, so the obvious
-    ``column.in_(visible)`` silently drops every **unfiled** row — which is every row
-    that existed before projects did. A query written that way looks correct, passes a
-    test that only uses filed rows, and blanks the operator's history in production.
+    SQL ``IN`` never matches NULL, so ``column.in_(visible)`` would silently drop every
+    unfiled row, which includes all history that predates projects. Scoped queries use this
+    instead of their own ``WHERE``.
 
-    ``visible=None`` means the caller asked for everything (the ALL PROJECTS scope) and
-    gets no clause at all.
+    ``visible=None`` is the ALL PROJECTS scope and gets no clause.
     """
     if visible is None:
         return None
@@ -102,7 +89,7 @@ class RepoProbe:
 
     exists: bool
     is_git_repo: bool
-    # None when the path is not a repo — distinct from 0, which means a clean tree.
+    # None when the path is not a repo; 0 is a clean tree.
     uncommitted_changes: int | None = None
     current_branch: str | None = None
 
@@ -126,8 +113,10 @@ async def _run_git(cwd: Path, *args: str) -> tuple[int, str]:
     """One `git` invocation with a fixed argv and no shell. Returns (code, stdout)."""
     proc = await asyncio.create_subprocess_exec(
         "git",
+        *GIT_ARG_PINS,
         *args,
         cwd=str(cwd),
+        env=git_config_pins(os.environ),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -160,15 +149,12 @@ class ProjectStore:
         self._db: Engine = db_engine
         self._vault: Vault = vault
         self._settings: SettingsStore = settings
-        # owner → {project id: directory}, in most-recently-opened order — the whole
-        # answer `workspace_roots` gives, memoised. See it for why, and `_forget` for
-        # what clears it. Dropped on lock, so decrypted paths never outlive the key that
-        # protects them: a locked vault answers exactly as it did before this cache, by
-        # failing to decrypt rather than by serving what it read while unlocked.
+        # owner -> {project id: directory}, most recently opened first: the memoised
+        # `workspace_roots` answer, cleared by `_forget` and on lock so decrypted paths
+        # never outlive the key.
         self._roots: dict[str, dict[str, Path]] = {}
         vault.register_on_lock(self._roots.clear)
-        # owner → {project id: slug}, cleared by the same writes; a run's home reads it on
-        # every resolution.
+        # owner -> {project id: slug}, cleared by the same writes.
         self._slugs: dict[str, dict[str, str]] = {}
 
     @property
@@ -203,7 +189,7 @@ class ProjectStore:
             return list(session.exec(query.order_by(col(Project.last_opened_at).desc())).all())
 
         rows = await in_session(self._db, work)
-        # Probes shell out, so fan them out rather than paying serially per project.
+        # Probes shell out, so run them concurrently.
         return list(await asyncio.gather(*(self._view(row) for row in rows)))
 
     async def get(self, owner_id: str, project_id: str) -> ProjectView:
@@ -252,16 +238,12 @@ class ProjectStore:
     def _resolve_root(root_path: str) -> Path:
         """The absolute, symlink-resolved directory a caller named, or a refusal.
 
-        Split out of :meth:`create` because :meth:`ensure_for_path` has to compare against
-        the *same* normalisation the stored rows were written with — two spellings of one
-        directory (a symlink, a trailing slash, ``~``) would otherwise file as two
-        projects and cut two worktrees from the same repository.
+        Shared with :meth:`ensure_for_path` so two spellings of one directory (symlink,
+        trailing slash, ``~``) do not file as two projects.
         """
         root = Path(root_path).expanduser()
         if not root.is_absolute():
-            # A browser cannot produce an absolute host path, so the operator either
-            # typed one or used the native picker. A relative path here would resolve
-            # against the *server's* cwd, which is never what they meant.
+            # A relative path would resolve against the server's cwd.
             raise InvalidInputError("project path must be absolute")
         if not root.is_dir():
             raise InvalidInputError(f"no such directory: {root}")
@@ -270,27 +252,18 @@ class ProjectStore:
     async def ensure_for_path(self, owner_id: str, root_path: str) -> ProjectView:
         """The project for this directory, creating one the first time it is used.
 
-        A project is the storage and the git machinery a worktree thread needs; it was never
-        meant to be a thing the operator files paperwork for before they can start
-        working. This is the difference: point at any directory and it *is* a project,
-        named after itself, with whatever git facts it already has.
+        Any directory is a project, named after itself, with whatever git facts it has.
 
-        Matching is on the **decrypted** path rather than on the ciphertext, which is not
-        an optimisation to skip: sealing is randomised, so the same directory encrypts to
-        a different string every time and a ciphertext comparison would create a second
-        row for a directory that already has one. The backup importer resolves the
-        ``root_path_enc`` natural key the same way, for the same reason.
+        Matching is on the decrypted path: sealing is randomised, so comparing ciphertext
+        would create a second row for the same directory. The backup importer resolves the
+        ``root_path_enc`` natural key the same way.
 
-        Never revives an archived project silently — an archived row still matches, and
-        returning it archived would leave the operator with a session in a project their
-        listing does not show. It is unarchived, because pointing at the directory again
-        is exactly the act of saying they work here after all.
+        An archived match is unarchived, since pointing at the directory again says the
+        operator works there and returning it archived would leave a session in a project
+        their listing hides.
 
-        Creating a row is the *only* thing this does to the directory. Whether it is a
-        repository stays a fact we read (:func:`probe_repo`, on every view) and never one
-        we establish — ``git init`` remains the separate, explicitly confirmed act it has
-        always been, so the returned view is what tells the caller a repository is still
-        needed.
+        Creating a row is all this does to the directory; whether it is a repository is read
+        (:func:`probe_repo`), and ``git init`` stays a separate confirmed act.
         """
         resolved = self._resolve_root(root_path)
 
@@ -312,25 +285,19 @@ class ProjectStore:
     async def workspace_roots(self, owner_id: str) -> dict[str, Path]:
         """Each project id mapped to its directory, most recently opened first.
 
-        Cheaper than :meth:`list` on purpose — no git probe, which shells out once per
-        project and would put N subprocesses behind every refresh of the thread list and
-        behind every click on a file path in an answer.
+        Cheaper than :meth:`list`: no git probe, which would put one subprocess per project
+        behind every thread-list refresh and every file-path click.
 
-        Insertion order is load-bearing for the second of those: opening a path the model
-        named means searching the operator's directories for it, and the one they worked
-        in most recently is the one they meant.
+        Insertion order is load-bearing: opening a path the model named searches these
+        directories in order, and the most recently used is the likeliest.
 
-        **Memoised, because this is on the polling path.** The conversation rail re-reads
-        it on every refresh — which is every couple of seconds while anything is running
-        — and each read was a full table scan plus one AEAD decrypt per project, to
-        rebuild a map that only changes when a project is written. The memo is dropped by
-        every write that goes through this store (:meth:`_forget`) and by a vault lock, so
-        the only way to serve a stale answer is to write ``project`` rows around the store
-        entirely — which is the backup importer, already outside every cache in the app.
+        **Memoised, because the conversation rail polls it** every couple of seconds. The
+        memo is dropped by every write through this store (:meth:`_forget`) and by a vault
+        lock; only writes that bypass the store (the backup importer) can leave it stale.
         """
         cached = self._roots.get(owner_id)
         if cached is not None:
-            return dict(cached)  # a copy: a caller's mutation must not edit the memo
+            return dict(cached)  # a copy, so a caller's mutation cannot edit the memo
 
         def work(session: Session) -> list[Project]:
             query = select(Project).where(Project.owner_id == owner_id)
@@ -361,20 +328,16 @@ class ProjectStore:
         return dict(slugs)
 
     def _forget(self, owner_id: str) -> None:
-        """Drop this owner's memoised roots and slugs. Called by every write that can change
-        what :meth:`workspace_roots` or :meth:`slugs` answers — which includes
-        :meth:`activate`, because the roots' *order* is part of the answer and touching
-        ``last_opened_at`` reorders it."""
+        """Drop this owner's memoised roots and slugs; called by every write that can change
+        them, including :meth:`activate`, whose ``last_opened_at`` touch reorders the roots."""
         _ = self._roots.pop(owner_id, None)
         _ = self._slugs.pop(owner_id, None)
 
     async def workspace_names(self, owner_id: str) -> dict[str, str]:
         """Each project id mapped to the **basename** of its directory.
 
-        What the sidebar groups worktree threads under. Deliberately not the path: a
-        conversation listing is the one screen that is always on display, and the full
-        path names the operator's clients across the whole width of the rail. The
-        basename is the part that identifies the work.
+        What the sidebar groups worktree threads under; not the full path, which would
+        display the operator's clients across the always-visible rail.
         """
         return {pid: root.name for pid, root in (await self.workspace_roots(owner_id)).items()}
 
@@ -413,11 +376,8 @@ class ProjectStore:
     async def delete(self, owner_id: str, project_id: str) -> None:
         """Remove the project and **unfile everything that was in it**.
 
-        Unfiling is the whole point. The scope rule is `visible = unfiled ∪ active`, and a
-        deleted id can never be active again — so rows left pointing at it would drop out
-        of every listing permanently, with no way back from the UI. The operator deleted a
-        *label*, not a year of conversations. Returning them to unfiled makes them visible
-        everywhere again, which is exactly where they were before projects existed.
+        A deleted id can never be active again, so rows left pointing at it would vanish
+        from every listing; the operator deleted a label, not their conversations.
         """
         row = await self._row(owner_id, project_id)
 
@@ -428,8 +388,7 @@ class ProjectStore:
                     .where(col(model_cls.project_id) == row.id)
                     .values(project_id=None)
                 )
-            # A worktree of a project that no longer exists is nothing a thread can work in,
-            # and a change to its folder is nothing anyone can put back from here.
+            # Neither a worktree nor a recorded change of a deleted project is usable.
             for gone in (ThreadWorktree, ThreadChange):
                 _ = session.exec(delete(gone).where(col(gone.project_id) == row.id))
             stored = session.get(Project, row.id)
@@ -463,7 +422,6 @@ class ProjectStore:
         await self._settings.set(owner_id, ACTIVE_PROJECT_KEY, project_id or "")
 
     async def root_path(self, owner_id: str, project_id: str) -> Path:
-        """The decrypted host root. The one accessor the worktree layer needs, kept here
-        so nothing else has to know the column is sealed."""
+        """The decrypted host root, so nothing else needs to know the column is sealed."""
         row = await self._row(owner_id, project_id)
         return Path(self._vault.decrypt_str(row.root_path_enc))

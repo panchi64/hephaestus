@@ -6,7 +6,7 @@
  *  - tokens.css is the single source of truth for colors/spacing/type.
  *  - Cosmetic differences are variant props, never forked components.
  *  - No eased/decorative spinners — use LoadingText / EmptyState. (The one live
- *    "working" indicator is Frames: hard-stepped glyph cycling, see design §8.)
+ *    "working" indicator is Frames: hard-stepped glyph cycling.)
  */
 
 // utils
@@ -96,7 +96,7 @@ export {
   type InstrumentBandProps,
   type BandCell,
 } from "./components/InstrumentBand";
-// The mission-control register (§10.14, §10.16, §11.1). The dot field is the one
+// The mission-control register. The dot field is the one
 // expressive device per screen, and belongs only in a region with nothing to
 // compete with.
 export {
@@ -296,7 +296,10 @@ export {
 } from "./components/Toast";
 export {
   confirm,
+  choose,
   ConfirmHost,
+  type ConfirmChoice,
+  type ChooseOptions,
   type ConfirmTone,
   type ConfirmOptions,
 } from "./components/Confirm";

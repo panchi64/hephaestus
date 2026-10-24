@@ -1,20 +1,23 @@
-"""The attention surface (`AE-3.2`) — a durable notification record + its own live
-stream, separate from the frozen per-run event protocol.
+"""The attention surface: a durable notification record and its own live stream, separate
+from the per-run event protocol.
 
-The substrate records/streams what it's told; the *emit policy* — which run
-outcomes are noteworthy — lives here too, as run-terminal hooks: the
+The emit policy (which run outcomes are noteworthy) lives here as run-terminal hooks: the
 approval-backstop resolve and the conversation-linked completion/failure notices.
-Out-of-band channels (email through the operator's own mailbox, a push webhook)
-compose in at construction.
+Out-of-band channels (email through the operator's mailbox, a push webhook) compose in at
+construction.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import Callable
 
 from core.api_scopes import ScopeClaim
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from harness.run_terminal import RunTerminalDispatcher
+from models.notification import NotificationKind
 from routes import notifications as notifications_routes
 from routes.deps import OPERATOR_ID
 from runs import Run, RunStatus
@@ -27,13 +30,50 @@ from services.settings_store import SettingsStore
 
 logger = logging.getLogger(__name__)
 
+#: A conversation whose saves keep failing is announced once per this window.
+SAVE_FAILED_WINDOW_S = 600.0
+
+
+def save_failure_reporter(
+    notifications: NotificationService,
+    *,
+    window_s: float = SAVE_FAILED_WINDOW_S,
+    clock: Callable[[], float] = time.monotonic,
+) -> Callable[[str], None]:
+    """A store drop listener that raises a `save_failed` notice, at most once per
+    conversation per window. It must be called with an event loop running."""
+    last: dict[str, float] = {}
+    tasks: set[asyncio.Task[None]] = set()
+
+    async def _notify(conversation_id: str) -> None:
+        try:
+            _ = await notifications.notify(
+                OPERATOR_ID,
+                NotificationKind.SAVE_FAILED,
+                "A conversation could not be saved",
+                body="The latest messages were not written to disk and may be lost on restart.",
+                conversation_id=conversation_id,
+            )
+        except Exception:
+            logger.exception("notifications: failed to report a save failure")
+
+    def report(conversation_id: str) -> None:
+        now = clock()
+        previous = last.get(conversation_id)
+        if previous is not None and now - previous < window_s:
+            return
+        last[conversation_id] = now
+        task = asyncio.get_running_loop().create_task(_notify(conversation_id))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    return report
+
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     conversations = ctx.services.get(ConversationStore)
-    # The email channel takes the mail service as a *callable* rather than a value
-    # because the dependency runs both ways — mail raises triage alerts through this
-    # surface, and this surface sends through mail. Resolving late is what breaks
-    # the cycle; the channel is only ever called long after both exist.
+    # The email channel takes mail as a callable because the dependency runs both ways
+    # (mail raises triage alerts here; this sends through mail); resolving late breaks the cycle.
     notifications = NotificationService(
         ctx.engine,
         ctx.vault,
@@ -44,38 +84,29 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         ),
     )
     await ctx.lifecycle.start("notifications", start=notifications.start, stop=notifications.stop)
-    # In-flight run-terminal tasks are this surface's writers — cancel and await
-    # them right before it stops (registered after ⇒ stops earlier), so a run
-    # finishing at shutdown never leaves a task notifying through a stopped store.
+    conversations.set_save_failed_listener(save_failure_reporter(notifications))
+    # In-flight run-terminal tasks write here; registered after so they stop first, and a run
+    # finishing at shutdown never notifies through a stopped store.
     ctx.lifecycle.on_stop("run-terminal-notifies", ctx.services.get(RunTerminalDispatcher).drain)
 
     async def _resolve_dangling_approvals(run: Run, _watched: bool) -> None:
-        """The backstop: a cancel-while-parked never reaches the approve route, and
-        even a normal completion may still carry a dangling approval_needed if the
-        operator never decided it."""
+        """The backstop: a cancel-while-parked never reaches the approve route, and a normal
+        completion may still carry an undecided approval_needed."""
         try:
             _ = await notifications.resolve_for_run(OPERATOR_ID, run.id)
         except Exception:
             logger.exception("notifications: failed to resolve run %s at terminal", run.id)
 
     async def _notify_conversation_terminal(run: Run, watched: bool) -> None:
-        """Only conversation-linked runs notify (a stateless/detached run has no thread
-        to deep-link to); cancelled and blocked outcomes stay silent — the operator asked
-        for the cancel, and a bound/limit stop isn't a noteworthy failure.
+        """Only conversation-linked runs notify (a detached run has no thread to deep-link);
+        cancelled and blocked outcomes stay silent, being asked-for or non-failure stops.
 
-        A **hidden** thread is the exception. A notification is a deep link, and an
-        ephemeral conversation is deliberately kept out of the session list — so one
-        finishing announces a thread the operator cannot find their way back to.
-
-        Sub-agents are what made this worth fixing: a fan-out of six researchers finishing
-        unwatched is six such notices at once, and what the operator watches is the card,
-        which is where the report lands anyway. The thread that launched them still
-        notifies for itself when its own turn ends.
-
-        **Compare panes are ephemeral too, and are deliberately included.** They lose the
-        `run_failed` notice they used to get unconditionally, which is the right trade for
-        the same reason: the operator is looking at the pane, the failure is on it, and the
-        link would have gone somewhere they cannot reach from the session list."""
+        A hidden thread is the exception: a notification is a deep link, and an ephemeral
+        conversation is kept out of the session list, so announcing one points somewhere
+        unreachable. This matters for sub-agents (a fan-out of six unwatched would raise six
+        notices while the operator watches the cards; the launching thread still notifies
+        when its own turn ends). Compare panes are ephemeral too and lose their
+        `run_failed` notice by design: the failure is on the pane being watched."""
         if run.conversation_id is None or run.status in (RunStatus.cancelled, RunStatus.blocked):
             return
         try:
@@ -91,7 +122,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             if run.status is RunStatus.error:
                 _ = await notifications.notify(
                     OPERATOR_ID,
-                    "run_failed",
+                    NotificationKind.RUN_FAILED,
                     f'{agent} hit an error in "{title}"',
                     body=run.error,
                     conversation_id=run.conversation_id,

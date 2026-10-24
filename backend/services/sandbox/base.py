@@ -7,7 +7,7 @@ allowlist. Outputs return explicitly (stdout/stderr, and the workspace's files p
 out); nothing escapes as a side effect.
 
 Not everything the agent runs arrives there: the approval-gated host command executes
-on the operator's own machine under OS-level confinement (:mod:`services.sandbox.host`),
+on the operator's own machine under OS-level confinement (:mod:`services.sandbox.fence`),
 which fences the same domains and hides the credential paths, but is a different
 boundary.
 """
@@ -27,10 +27,8 @@ _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 def safe_key(key: str) -> str:
     """A directory-safe token for a workspace key (leading char guaranteed).
 
-    Here rather than beside the session manager because the key names more than a
-    workspace directory: the egress policy derives a workspace's allowlist directory from
-    the same key, and a second spelling of "safe" would file an allowlist under a
-    different name from the workspace.
+    The egress policy derives a workspace's allowlist directory from the same key, so both
+    must share this spelling.
     """
     return "s" + _SAFE.sub("-", key)
 
@@ -45,24 +43,16 @@ class HostExecutionError(HephaestusError):
     """The host command could not be launched (a non-zero exit is a normal
     :class:`SandboxResult`, not this).
 
-    Down here with the other error rather than beside the runner that raises it most
-    (``process.py``), because the *fence* raises it too — a scratch directory someone else
-    planted refuses the command before a process is ever started — and ``process.py``
-    imports ``host.py`` for the fence. One of the two had to stop owning the name, and an
-    error type is exactly what this module is for."""
+    Lives here because both ``process.py`` and ``fence.py`` raise it and ``process.py``
+    imports ``fence.py``."""
 
 
 def contained_path(root: Path, relpath: str, *, what: str = "path") -> Path:
     """Resolve ``relpath`` under ``root``, refusing anything that escapes it.
 
-    The one place this check lives. It was written out at each of the four call
-    sites — staging inputs, copying outputs, and the session's read/write — and had
-    already drifted: three raised on an escape and the fourth silently dropped the
-    file, which turns a traversal attempt into a missing output rather than an error.
-    A containment check that fails quietly is not a containment check.
-
-    ``root`` is resolved too, so a symlinked workspace doesn't read as an escape from
-    itself.
+    Raises rather than dropping the path, so a traversal attempt is an error and not a
+    missing output. ``root`` is resolved too, so a symlinked workspace doesn't read as an
+    escape from itself.
     """
     resolved_root = root.resolve()
     target = (root / relpath).resolve()
@@ -72,18 +62,10 @@ def contained_path(root: Path, relpath: str, *, what: str = "path") -> Path:
 
 
 def contained_file(root: Path, relpath: str) -> Path | None:
-    """:func:`contained_path`, as an **answer** rather than an exception, and only for a
-    file that is actually there.
+    """:func:`contained_path` as ``None`` instead of an exception, and only for an existing file.
 
-    Two callers need exactly this shape and neither is acting on a path the agent chose:
-    the file picker, describing what the operator may reference, and the turn composer,
-    resolving the references they sent. For both, a path that does not resolve is an
-    ordinary outcome — the operator is typing, and half a list beats an error — while for
-    every existing caller of ``contained_path`` an escape is a fault to raise on. Same
-    check, different register; the check itself is not restated.
-
-    A directory is refused too. ``@src`` is not a file reference, and letting one through
-    would hand the model a path its read tool cannot open.
+    For the file picker and the turn composer, where an unresolvable path is an ordinary
+    outcome of operator typing. A directory is refused too: its read tool cannot open it.
     """
     if not relpath or relpath.startswith("/") or "\0" in relpath:
         return None
@@ -118,6 +100,8 @@ class SandboxResult:
     stdout: str
     stderr: str
     timed_out: bool = False
+    #: What the agent should know about bringing its changes back, such as a VM restart.
+    notes: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:

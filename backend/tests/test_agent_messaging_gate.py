@@ -30,9 +30,21 @@ RECIPIENTS = {
 class FakeLauncher:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
+        self.filed_under: list[str | None] = []
 
-    async def message(self, _owner_id: str, _conversation_id: str, to: str, text: str) -> str:
+    async def message(
+        self,
+        _owner_id: str,
+        _conversation_id: str,
+        to: str,
+        text: str,
+        *,
+        ledger_prompt_message_id: str | None = None,
+        ledger_thread: str | None = None,
+    ) -> str:
+        del ledger_thread
         self.sent.append((to, text))
+        self.filed_under.append(ledger_prompt_message_id)
         return RECIPIENTS[to].label
 
 

@@ -1,5 +1,5 @@
-"""Wire shapes of the chat surface: the send / regenerate / edit bodies, the created-run
-reply, and the operator's chat preferences."""
+"""Wire shapes of the chat surface: send, regenerate and edit bodies, the created-run reply
+and chat preferences."""
 
 from __future__ import annotations
 
@@ -15,21 +15,18 @@ from services.settings_store import WORK_SUMMARY_IDLE_MINUTES_MAX
 class CommandInvocation(BaseModel):
     """Which slash command was picked, and what the operator typed after it."""
 
-    #: A bare name (``reviewer``) or a qualified one (``agent:reviewer``). Resolved against
-    #: the same narrowed catalog the picker was served, so a command this thread is not
-    #: offered cannot be reached by typing its name.
+    #: A bare name (``reviewer``) or qualified (``agent:reviewer``), resolved against the
+    #: narrowed catalog the picker was served, so an unoffered command can't be typed in.
     name: str
     argument: str = ""
 
     def recorded(self) -> Invocation:
-        """The wire shape as the fact that gets written onto the turn.
+        """The wire shape as the fact written onto the turn.
 
-        Two near-identical two-field records, kept apart on purpose: this one is a
-        client's claim and is validated as one, while :class:`~services.commands.Invocation`
-        is what the store stamps and what a regenerate reads back. Collapsing them would
-        put a Pydantic model from a route into the conversation store's signature — and
-        into the sealed blob's metadata — which is the wrong direction for a dependency
-        that already runs the other way.
+        Kept apart from :class:`~services.commands.Invocation` (what the store stamps and a
+        regenerate reads back): merging them would put a route's Pydantic model into the
+        conversation store's signature and the sealed blob's metadata, against the
+        dependency direction.
         """
         return Invocation(name=self.name, argument=self.argument)
 
@@ -37,48 +34,41 @@ class CommandInvocation(BaseModel):
 class ChatCreate(BaseModel):
     prompt: str
     conversation_id: str | None = None  # continue an existing conversation
-    # Per-conversation `main` override from the chat picker: which provider
-    # (`endpoint_id`) and which model on it (`model`, discovered from the provider).
+    # Per-conversation `main` override from the picker: the provider and a model on it.
     endpoint_id: str | None = None
     model: str | None = None
-    # Files the operator attached to this message (existing upload ids — the client
-    # uploads first via POST /uploads, then sends the ids here). They're handed to the
-    # model for this turn and enrolled in the knowledge base via the upload pipeline.
+    # Existing upload ids (the client uploads first via POST /uploads). They go to the
+    # model for this turn and are enrolled in the knowledge base.
     attachment_ids: list[str] = []
-    # Files the operator named with `@` in the composer, relative to the run's workspace.
-    # A **reference only**: the turn names the paths and the model reads what it wants
-    # with the file tools. Nothing here is read on the way in, so a reference cannot go
-    # stale in history the way a pasted copy would.
+    # Paths named with `@`, relative to the run's workspace. A reference only: the model
+    # reads what it wants, so a reference can't go stale in history like a pasted copy.
     file_refs: list[str] = []
-    # When creating a fresh conversation, mark it a scratch thread the listing
-    # hides (the side-by-side compare panes set this). Ignored when continuing an
-    # existing conversation.
+    # Marks a fresh conversation as a scratch thread the listing hides (compare panes);
+    # ignored when continuing one.
     ephemeral: bool = False
-    # The project a *new* thread is filed under; ignored when continuing one. A filed
-    # thread works in that project's folder.
+    # The project a new thread is filed under (it works in that folder); ignored when continuing.
     project_id: str | None = None
-    # How far the model may go this turn, and from this turn onwards:
-    # the level is persisted on the thread, so switching mid-conversation is a plain send
-    # rather than a separate call, and a reload comes back at the level the operator left
-    # it. Absent means "whatever the thread is already at" (a new thread starts at the
-    # default), so a client that never learned about levels keeps working.
+    # How far the model may go, from this turn on. Persisted on the thread so switching is
+    # a plain send and a reload keeps it. Absent means the thread's current level (new
+    # threads get the default), so a client unaware of levels keeps working.
     permission_level: PermissionLevel | None = None
-    # The agent this thread runs (`services/agents`), by name. Like the level it persists
-    # and may change on any send; absent keeps the thread's, and a new thread starts on the
-    # default agent.
+    # The agent this thread runs (`services/agents`); persists and may change on any send.
+    # Absent keeps the thread's, new threads get the default.
     agent: str | None = None
-    # Set when this turn is the operator resuming a turn a bound stopped (the
-    # "Continue" button under a stop marker): the branch node id of the turn that
-    # carries the marker. Accepting the turn retires that marker durably, so the
-    # warning doesn't outlive the thing it was asking for. Ignored on a new
-    # conversation — nothing there can be blocked yet.
+    # Set when the operator resumes a bound-stopped turn ("Continue" under a stop marker):
+    # the branch node id carrying the marker. Accepting retires the marker durably. Ignored
+    # on a new conversation.
     continues_message_id: str | None = None
-    # A slash command the operator picked in the composer. The prompt above is still their
-    # literal `/review the auth route` — this says which command that token was, so the
-    # backend can resolve it and expand it. Deliberately *not* a pre-expanded prompt: what
-    # a command means is the backend's to decide, and a client that sent the expansion
-    # would be sending a turn the operator never wrote.
+    # The slash command picked in the composer; the prompt stays the literal
+    # `/review the auth route`. Not a pre-expanded prompt: the backend decides what a
+    # command means, and a client-sent expansion would be a turn the operator never wrote.
     command: CommandInvocation | None = None
+
+
+class RestoreFiles(BaseModel):
+    """Confirms the file rewind a dry run previewed (``GET /conversations/{id}/changes/rewind``)."""
+
+    preview_token: str
 
 
 class RegenerateCreate(BaseModel):
@@ -87,6 +77,8 @@ class RegenerateCreate(BaseModel):
     # Optional per-turn model override — regenerate with a different provider/model.
     endpoint_id: str | None = None
     model: str | None = None
+    # Put the files back to before the re-answered turn first.
+    restore_files: RestoreFiles | None = None
 
 
 class EditCreate(BaseModel):
@@ -95,9 +87,11 @@ class EditCreate(BaseModel):
     prompt: str  # the edited message
     endpoint_id: str | None = None
     model: str | None = None
-    # Attachments for the edited turn — a fresh user request, so the same direct-inject
-    # path as a new message (regenerate, which adds no new request, takes none).
+    # An edit is a fresh user request, so it injects attachments like a new message
+    # (regenerate adds no request and takes none).
     attachment_ids: list[str] = []
+    # Put the files back to before the replaced turn first.
+    restore_files: RestoreFiles | None = None
 
 
 class ChatCreated(BaseModel):
@@ -110,72 +104,51 @@ class ChatQueued(BaseModel):
 
     conversation_id: str
     queued_message_id: str
-    # The run it queued behind, or None when the thread is held by something about to
-    # start one (a regenerate's claim).
+    # The run it queued behind; None when held by something about to start one (a
+    # regenerate's claim).
     run_id: str | None = None
 
 
 class ChatSettings(BaseModel):
     """Operator-tunable chat preferences. The ``auto_compact*`` fields tune conversation
-    compaction — the product's one context reduction: fold older *turns* into a
-    summary the thread's own model writes once the context window fills. They're optional
-    on a PUT — an omitted one is left unchanged — and always populated on a GET.
-    snake_case out, matching the rest of the ``/chat`` surface.
+    compaction, which folds older turns into a summary the thread's own model writes once
+    the window fills. Every field is optional on a PUT (omitted ⇒ unchanged) and populated
+    on a GET; bounds reject nonsensical values. snake_case out, like the rest of ``/chat``.
 
-    On a PUT, ``wall_clock_timeout_s`` is the one field where ``null`` is a *value* (no
-    bound) rather than an omission, so the handler reads ``model_fields_set`` for it
-    instead of testing against ``None`` like the rest. On a GET, ``null`` is meaningful in
-    two fields, not one: an absent wall clock, and an ``inactivity_timeout_s`` a deploy
-    disabled outright."""
+    On a PUT, ``null`` is a value (not an omission) for ``wall_clock_timeout_s`` and
+    ``subagent_max_concurrent``, so the handler reads ``model_fields_set`` for them. On a
+    GET, ``null`` is also meaningful for an ``inactivity_timeout_s`` a deploy disabled."""
 
-    # `extra="forbid"` so a mistyped/unknown field is a 422, not a silent no-op: with every
-    # field optional (omitted ⇒ unchanged), a typo'd key would otherwise be dropped and the PUT
-    # would return 200 having changed nothing.
+    # Forbid extras so a typo'd key is a 422, not a 200 that changed nothing.
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
-    # All fields are optional on a PUT (an omitted one is left unchanged) and always
-    # populated on a GET; the bounds still reject a nonsensical value when one is provided.
-    # Conversation auto-compaction: whether to fold older turns into a summary, and how
-    # full the model's context window must get first. A **fraction**, not a percentage —
-    # the same 0–1 quantity the context meter reports, so the client formats one number
-    # rather than the wire carrying two conventions. Bounded above 0 (a 0 threshold would
-    # fire on an empty thread) and at 1 (above it, compaction could never fire at all).
+    # Whether to fold older turns, and how full the window must get first. A fraction, the
+    # same 0–1 quantity the context meter reports, so the wire has one convention. Above 0
+    # (0 would fire on an empty thread) and at most 1 (above it, compaction never fires).
     auto_compact_enabled: bool | None = None
     auto_compact_threshold: float | None = Field(default=None, gt=0, le=1)
-    # How many minutes a thread must be quiet before the background sweep writes its work
-    # summary — the account of what the agent did that the re-entry band shows when the
-    # operator comes back to it. ``ge=1``: a zero-minute window is not a faster setting but
-    # a broken one, since every thread would qualify the instant its turn finished and the
-    # sweep would be summarizing conversations that are still going. The ceiling keeps the
-    # window inside a day, past which the band would never appear on a thread worked on in
-    # a normal week — which is indistinguishable from the feature being switched off.
+    # Minutes a thread must be quiet before the sweep writes its work summary. ``ge=1``:
+    # zero would qualify threads the instant a turn finished, summarizing live
+    # conversations. The ceiling keeps the window inside a day, past which the band would
+    # never appear in a normal week, indistinguishable from the feature being off.
     work_summary_idle_minutes: int | None = Field(
         default=None, ge=1, le=WORK_SUMMARY_IDLE_MINUTES_MAX
     )
-    # The context gauge's severity boundaries — the fullness at which the ring under the
-    # composer turns amber, then red. Fractions, like the compaction threshold above and
-    # for the same reason. The per-field bounds here only reject a value that is
-    # nonsensical on its own; the pair's ordering (`warn` below `alert`) is checked
-    # against the *merged* values in the PUT, since either may be omitted.
+    # Fullness at which the composer's ring turns amber, then red; fractions like the
+    # compaction threshold. The bounds reject only individually nonsensical values; the
+    # `warn` < `alert` ordering is checked against the merged values in the PUT, since
+    # either may be omitted.
     context_warn_threshold: float | None = Field(default=None, gt=0, lt=1)
     context_alert_threshold: float | None = Field(default=None, gt=0, le=1)
-    # How long a turn waits for the model's first token, in seconds: the silent stretch
-    # while a local model reads a long prompt. A deploy-level ``None`` leaves that wait to
-    # the inactivity watchdog.
+    # Seconds a turn waits for the first token (the silent stretch while a local model
+    # reads a long prompt). A deploy-level ``None`` leaves it to the inactivity watchdog.
     first_token_timeout_s: float | None = Field(default=None, gt=0)
-    # The inactivity watchdog's bound in seconds: how long a run may go without emitting
-    # an event before it is stopped. ``gt=0`` (a 0 bound would stop every turn
-    # immediately); the config default applies when the operator hasn't set one, and a
-    # deploy-level ``None`` disables the watchdog entirely.
+    # Seconds a run may emit nothing before it is stopped. ``gt=0`` (0 would stop every
+    # turn); the config default applies when unset, and a deploy-level ``None`` disables it.
     inactivity_timeout_s: float | None = Field(default=None, gt=0)
-    # The wall-clock bound in seconds: how long a run may take in total, however busy it
-    # is. Off unless the operator sets one; it catches a run that keeps emitting (a tool
-    # streaming progress, a model streaming tokens) and so refreshes the inactivity
-    # watchdog forever. ``gt=0`` for the same reason as above; ``null`` removes the bound.
+    # Total seconds a run may take, off unless set. Catches a run that keeps emitting and
+    # so refreshes the inactivity watchdog forever. ``null`` removes the bound.
     wall_clock_timeout_s: float | None = Field(default=None, gt=0)
-    # How many sub-agents the agent may have running at once. ``null`` is *no cap*, which
-    # is the default — so this is the second field where ``null`` is a value rather than an
-    # omission, and the handler reads ``model_fields_set`` for it too. ``ge=1``: a cap of 0
-    # would be a way of disabling the feature through a number, and the tool catalog
-    # already disables it honestly.
+    # Sub-agents running at once; ``null`` (the default) is no cap. ``ge=1``: 0 would
+    # disable the feature through a number, which the tool catalog already does honestly.
     subagent_max_concurrent: int | None = Field(default=None, ge=1)

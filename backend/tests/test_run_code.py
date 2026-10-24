@@ -1,12 +1,7 @@
 """`run_code`: the tools a thread's level clears unasked, callable from one script.
 
-Two halves. **What a script may call** is read off the composed stack the engine hands the
-agent — a tool is folded only while the approval gate leaves it an ordinary function at the
-live level, and the three turn-shaping tools and the code runners stay direct whatever the
-level. **What happens to a call a script makes** is the other half: it runs through the
-same stack, a call that gates itself is ruled on inline the way a top-level batch is, and
-one that would need the operator is refused with words telling the model to call it
-directly — while the same call made directly still parks.
+Covers what a script may call (read off the composed stack at the live level) and what
+happens to a call it makes (ruled on inline, or refused with a pointer to call it directly).
 """
 
 from __future__ import annotations
@@ -34,7 +29,6 @@ from pydantic_ai.usage import RunUsage
 from agent import stream_agent_run
 from agent.code_mode import (
     NATIVE_ONLY,
-    RUN_CODE,
     CodeModeLimits,
     code_mode_capability,
     code_mode_limits,
@@ -45,6 +39,7 @@ from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolProgress, ToolSt
 from services.conversation_view import ToolView, project_tree
 from services.permissions import PermissionLevel, blocked_message
 from tools import RunDeps, build_agent_toolsets, core_categories
+from tools.code_mode_marks import RUN_CODE
 
 from ._json import s
 
@@ -61,7 +56,7 @@ def _run() -> Run:
 
 
 def _probe_category() -> FunctionToolset[RunDeps]:
-    """One tool per class the levels split on, declared rather than guessed."""
+    """One tool per sensitivity class the levels split on."""
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
@@ -155,7 +150,6 @@ class TestWhatAScriptMayCall:
         assert tool_def.metadata is not None
         assert tool_def.metadata["sensitivity"] == "read"
         assert "narration" in tool_def.parameters_json_schema["properties"]
-        # Bare signatures: the prose is on the direct definition, not repeated here.
         description = tool_def.description
         assert description is not None
         assert "async def x_look(" in description
@@ -166,9 +160,6 @@ class TestTheLimits:
     def test_the_call_cap_is_the_scripts_own(self):
         assert code_mode_limits(Settings()).max_tool_calls == 25
         assert code_mode_limits(Settings(code_mode_max_tool_calls=10)).max_tool_calls == 10
-
-
-# --- a script's calls, end to end -------------------------------------------------------
 
 
 def _script_then_answer(code: str, *, direct: tuple[str, dict[str, str]] | None = None):
@@ -195,8 +186,8 @@ def _script_then_answer(code: str, *, direct: tuple[str, dict[str, str]] | None 
 
 
 def _gated_categories(calls: list[str]) -> dict[str, AbstractToolset[RunDeps]]:
-    """A catalog read (`corpus_retrieve`) and an unclassified tool, both gating themselves
-    the way a global recall does: approval needed until the call comes back approved."""
+    """A catalog read (`corpus_retrieve`) and an unclassified tool; both raise ApprovalRequired
+    until approved."""
     corpus: FunctionToolset[RunDeps] = FunctionToolset()
 
     @corpus.tool
@@ -208,8 +199,8 @@ def _gated_categories(calls: list[str]) -> dict[str, AbstractToolset[RunDeps]]:
 
     other: FunctionToolset[RunDeps] = FunctionToolset()
 
-    # Declared a read, so the level folds it — and still not one the shipped catalog
-    # classifies, so the Auto judge will not clear it without a reviewer.
+    # Declared a read so the level folds it, but absent from the shipped catalog, so Auto
+    # won't clear it unreviewed.
     @other.tool(metadata={"sensitivity": "read"})
     async def recall(ctx: RunContext[RunDeps], query: str) -> str:
         _ = query
@@ -272,7 +263,6 @@ class TestAScriptsCalls:
         assert _result_of(completed) == "passages for q"
         script = _script_result(run)
         assert _result_of(script) == "passages for q"
-        # Live, and in order: the script opens, its call runs inside it, the script closes.
         order = [(f.type, f.tool_call_id) for f in _frames(run)]
         assert order == [
             ("tool.started", "s"),
@@ -280,7 +270,6 @@ class TestAScriptsCalls:
             ("tool.completed", "s__1"),
             ("tool.completed", "s"),
         ]
-        # The Auto review announced its ruling against the nested call's own id.
         reviewed = [e.body for e in run.stream.replay() if e.body.type == "review.completed"]
         assert [r.tool_call_id for r in reviewed] == ["s__1"]
 
@@ -316,8 +305,8 @@ class TestAScriptsCalls:
 
     @staticmethod
     async def _narrowed_to(level: PermissionLevel) -> tuple[list[str], Run]:
-        """A script that narrows the thread to ``level`` and then calls a workspace write
-        its catalog still offers — the catalog was read before the level moved."""
+        """A script that narrows the thread to ``level``, then calls a write its earlier
+        catalog offers."""
         calls: list[str] = []
         categories = _gated_categories(calls)
         narrow: FunctionToolset[RunDeps] = FunctionToolset()
@@ -342,8 +331,6 @@ class TestAScriptsCalls:
         return calls, run
 
     async def test_a_level_that_moved_under_the_script_refuses_what_it_no_longer_clears(self):
-        """The script's catalog was read at the start of the step; a level narrowed since —
-        by a plan entered beside it — must not let it call what the level now asks about."""
         calls, run = await self._narrowed_to("manual")
 
         assert calls == []
@@ -352,9 +339,7 @@ class TestAScriptsCalls:
         assert "directly, outside `run_code`" in failed.error
 
     async def test_a_level_that_now_withholds_the_tool_says_so_rather_than_the_way_round(self):
-        """At Plan the call made directly would be refused too, so the script is told what
-        the level says — pointing the model at a tool it has been withheld would send it
-        after a call it cannot make."""
+        """At Plan a direct call is refused too, so "call it directly" would mislead the model."""
         calls, run = await self._narrowed_to("plan")
 
         assert calls == []
@@ -363,8 +348,7 @@ class TestAScriptsCalls:
         assert failed.error == blocked_message("plan", "x_jot")
 
     async def test_a_call_deferred_for_someone_else_to_run_fails_with_the_way_round(self):
-        """A tool that hands its call off to be run elsewhere cannot be waited on from
-        inside a script: the call fails in place, and its row settles rather than spinning."""
+        """A deferred call can't be awaited in a script: it fails in place and its row settles."""
         calls: list[str] = []
         categories = _gated_categories(calls)
         elsewhere: FunctionToolset[RunDeps] = FunctionToolset()
@@ -405,8 +389,8 @@ class TestAScriptsCalls:
         assert "2 nested tool calls" in retry.model_response()
 
     async def test_a_reload_rebuilds_the_scripts_rows(self):
-        """The cold view reads the script's calls back off its own result — through the
-        store's serialization, where the library's parts become plain dicts."""
+        """The cold view rebuilds the script's calls from its own result, after store
+        serialization turns parts into dicts."""
         from pydantic import TypeAdapter
         from pydantic_ai.messages import ModelMessage
 
@@ -445,7 +429,6 @@ class TestAScriptsCalls:
             assert nested[2].error is not None
             assert "directly, outside `run_code`" in nested[2].error
 
-        # And the route hands the parent on, which is what a client nests the row by.
         from routes.conversations import message_out
 
         out = message_out(project_tree([(str(i), m) for i, m in enumerate(stored)])[-1], {})

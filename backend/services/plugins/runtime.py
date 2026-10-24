@@ -24,6 +24,7 @@ from pathlib import Path
 
 from core.serde import parse_json
 from services.revisions import Bundle, encode_bundle
+from services.sandbox.limits import TIMEOUT_EXIT
 from services.sandbox.session import proxy_env
 from services.vm.driver import VMError
 from services.vm.egress import ALLOW_FILE, Secret
@@ -34,8 +35,9 @@ from .store import SecretValue
 
 CALL_TIMEOUT_S = 120.0
 INSTALL_TIMEOUT_S = 900.0
-#: The most of a tool's result handed back; the rest is cut.
-RESULT_MAX_CHARS = 64 * 1024
+#: A memory bound on one result, which a script's call receives whole. The context is
+#: protected by spilling (`tools/spill.py`), not by this.
+RESULT_MAX_CHARS = 2_000_000
 _LOG_TAIL_CHARS = 2000
 _INSTALL_HOSTS = ("pypi.org", "files.pythonhosted.org")
 _CA_PATH = "/usr/local/share/ca-certificates/hephaestus-egress.crt"
@@ -129,7 +131,7 @@ class PluginRuntime:
             shutil.rmtree(allow_dir, ignore_errors=True)
             await self._vm.wipe(key)
         log = result.stderr[-_LOG_TAIL_CHARS:]
-        if result.exit_code == 124:
+        if result.exit_code == TIMEOUT_EXIT:
             return CallResult(False, f"{tool.name} took longer than {timeout_s:.0f}s", log)
         try:
             reply = parse_json(result.stdout.strip().splitlines()[-1])

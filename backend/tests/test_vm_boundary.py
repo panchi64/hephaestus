@@ -96,7 +96,7 @@ async def test_files_cross_both_ways_and_deletions_follow(vm: PlatformVM, tmp_pa
         env={},
         timeout_s=20,
     )
-    await workspace.bring_out()
+    assert await workspace.bring_out() is None
     assert (root / "copy.txt").read_text() == "from the host"
     assert (root / "out" / "a").read_text() == "built\n"
     assert not (root / "stale.txt").exists()
@@ -264,9 +264,6 @@ async def test_a_preview_is_reached_through_the_mux(vm: PlatformVM, tmp_path: Pa
             break
         await asyncio.sleep(0.1)
     assert not (await vm.job("preview-s-web")).running
-
-
-# --- what the host accepts back ---------------------------------------------------------
 
 
 def _archive(tmp_path: Path, *members: tuple[tarfile.TarInfo, bytes | None]) -> Path:

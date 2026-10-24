@@ -172,7 +172,9 @@ class FakeVM(SessionHost, ProjectHost):
             self.background[name]["running"] = False
 
     @override
-    async def job(self, name: str, *, out_offset: int = 0, err_offset: int = 0) -> JobState:
+    async def job(
+        self, name: str, *, out_offset: int = 0, err_offset: int = 0, tail: bool = False
+    ) -> JobState:
         running = bool(self.background.get(name, {}).get("running"))
         return JobState(
             running=running,

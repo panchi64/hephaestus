@@ -128,3 +128,11 @@ def truncate_middle(text: str, max_chars: int) -> tuple[str, str, int]:
     tail = text[len(text) - tail_len :] if tail_len else ""
     elided = len(text) - head_len - tail_len
     return head, tail, elided
+
+
+def elide_middle(text: str, max_chars: int) -> str:
+    """``text`` cut to a head and a tail around an omission marker; unchanged when it fits."""
+    head, tail, elided = truncate_middle(text, max_chars)
+    if not elided:
+        return text
+    return f"{head}\n[… {elided:,} characters omitted …]\n{tail}"

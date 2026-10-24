@@ -70,7 +70,16 @@ class _Launcher(SubagentLauncher):
         raise NotImplementedError
 
     @override
-    async def message(self, owner_id: str, conversation_id: str, to: str, text: str) -> str:
+    async def message(
+        self,
+        owner_id: str,
+        conversation_id: str,
+        to: str,
+        text: str,
+        *,
+        ledger_prompt_message_id: str | None = None,
+        ledger_thread: str | None = None,
+    ) -> str:
         raise NotImplementedError
 
     @override

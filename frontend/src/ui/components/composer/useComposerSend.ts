@@ -24,9 +24,8 @@ export interface ComposerSend {
 
 /**
  * Sending, and the hold-then-send around it. SEND with files still in flight holds the
- * message and fires it the moment they land. Sending without them silently dropped the
- * file; refusing would make the operator watch a chip and press SEND a second time. The
- * field stays editable while it waits, and a second press (or Escape) calls the wait off.
+ * message and fires it when they land (sending without them would drop the file). The
+ * field stays editable while it waits; a second press or Escape calls the wait off.
  */
 export function createComposerSend(deps: {
   props: ComposerProps;
@@ -43,8 +42,7 @@ export function createComposerSend(deps: {
       .filter((a) => a.status === "ready")
       .map((a) => a.id);
 
-  // A chip that is uploading or extracting counts toward "something to send": the
-  // send is then held (below) rather than refused. A failed one doesn't — it can't go.
+  // An uploading chip counts as something to send (the send is held); a failed one can't go.
   const hasAttachment = () => items().some((a) => a.status !== "error");
   const canSend = () =>
     !props.disabled &&
@@ -52,13 +50,10 @@ export function createComposerSend(deps: {
     (Boolean(text().trim()) || hasAttachment());
 
   const [awaiting, setAwaiting] = createSignal(false);
-  // The inline note when a held file fails — the chip says which, this says why the
-  // message didn't go.
   const [uploadFailed, setUploadFailed] = createSignal(false);
   const gate = () => attachmentGate(items());
 
   createEffect(() => {
-    // A failure that has been retried or removed takes its note with it.
     if (gate() !== "failed") setUploadFailed(false);
   });
 
@@ -71,13 +66,11 @@ export function createComposerSend(deps: {
       setUploadFailed(true);
       return;
     }
-    // Everything landed. If the message can no longer go — a blocker appeared, the
-    // field was emptied — the wait simply ends; the draft is still in the field.
+    // If the message can no longer go (a blocker appeared, the field emptied) the wait just ends.
     untrack(() => (canSend() ? submit() : setAwaiting(false)));
   });
 
-  // A held send belongs to the conversation it was pressed in. Switching away calls
-  // it off, or the uploads landing later would send the *new* conversation's draft.
+  // Switching conversations calls a held send off, or late uploads would send the new draft.
   createEffect(() => {
     void props.storageKey;
     setAwaiting(false);
@@ -88,11 +81,8 @@ export function createComposerSend(deps: {
     field()?.focus();
   };
 
-  /** Restore a refused send under the key it was sent from — a refusal that lands
-   *  after a conversation switch goes back into *that* conversation's draft rather
-   *  than into whichever one is open now. Put **above** anything written since, the
-   *  way a prefill joins a draft: the operator may already be on the next message,
-   *  and neither text is theirs to lose. */
+  /** Restores a refused send under the key it was sent from (a refusal landing after a
+   *  switch goes to that conversation's draft), above anything written since. */
   const restoreRefused = (
     draft: string,
     key: string | undefined,
@@ -139,15 +129,16 @@ export function createComposerSend(deps: {
       );
   }
 
-  // Stop, carrying the draft when there is one.
   const stop = (): void => {
     setAwaiting(false);
+    // Nothing is generating, so the draft and its attachments stay in the field.
+    if (!props.streaming) return props.onStop?.(undefined);
     const correction = text().trim();
     props.onStop?.(correction || undefined);
     if (correction) {
-      setText(""); // clears the persisted draft via the draft effect
+      setText("");
       props.attachments?.clear();
-    } else field()?.focus(); // nothing to say yet — put the caret where saying it happens
+    } else field()?.focus();
   };
 
   return { awaiting, uploadFailed, canSend, submit, cancelAwaiting, stop };
