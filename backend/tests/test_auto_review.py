@@ -958,6 +958,16 @@ class TestTheOpeningRequestIsAlwaysRead:
         assert not any(text.startswith("old") for text in texts)
         assert sum(len(text) for text in texts) <= 500
 
+    def test_the_operators_words_outlast_the_assistants_prose(self):
+        messages = [
+            ModelRequest(parts=[UserPromptPart("tidy the branch")]),
+            ModelRequest(parts=[UserPromptPart("but do not push anything")]),
+            *[ModelResponse(parts=[TextPart(f"step {i} " + "x" * 200)]) for i in range(6)],
+        ]
+        transcript = review_transcript(messages, turn_start=TurnStart(0), total_chars=600)
+        assert "but do not push anything" in _texts(transcript)
+        assert sum(len(entry.text) for entry in transcript) <= 600
+
     def test_the_opening_request_is_kept_whatever_the_budget(self):
         messages = [
             ModelRequest(parts=[UserPromptPart("do " * 300)]),

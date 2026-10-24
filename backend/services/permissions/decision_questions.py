@@ -16,15 +16,32 @@ from collections.abc import Mapping
 
 from pydantic import JsonValue
 
-from core.text import clip
+from core.text import truncate_middle
 from core.untrusted import untrusted_fence, untrusted_preamble
 from services.decisions import Noul, Question, Score
+from services.permissions.capability import Capability
 from services.permissions.reviewer import ReviewRequest
 
 #: Caps on the action's summary and detail, each, and on an approved call's summary, for
-#: the reason the transcript is capped (``reviewer.TRANSCRIPT_CHARS``).
+#: the reason the transcript is capped (``reviewer.TRANSCRIPT_CHARS``). A longer action is
+#: shown by its two ends and the length withheld, and is never read as low risk
+#: (``decision_reviewer.py``); a longer approved call is left out.
 ACTION_CHARS = 600
 APPROVED_SUMMARY_CHARS = 200
+
+
+def readable_whole(capability: Capability) -> bool:
+    """Whether the model is shown the action without a cut."""
+    return all(len(text) <= ACTION_CHARS for text in (capability.summary, capability.detail or ""))
+
+
+def _shown(text: str) -> str:
+    """``text`` within ``ACTION_CHARS``, saying how much of its middle was withheld."""
+    head, tail, elided = truncate_middle(text, ACTION_CHARS)
+    if not elided:
+        return head
+    return f"{head}\n[{elided} of {len(text)} characters withheld]\n{tail}"
+
 
 #: The ground rules every question restates, because each one is answered on its own.
 _RULES = (
@@ -104,15 +121,15 @@ def build_state(request: ReviewRequest) -> JsonValue:
         {
             "tool": prior.tool_name,
             "approved_by": prior.approved_by,
-            "summary": untrusted_fence(
-                clip(prior.summary, APPROVED_SUMMARY_CHARS), nonce, source="approved-call"
-            ),
+            "summary": untrusted_fence(prior.summary, nonce, source="approved-call"),
         }
         for prior in request.approved_calls
+        # Left out, not clipped: a cut summary could pass for a longer act it never named.
+        if len(prior.summary) <= APPROVED_SUMMARY_CHARS
     ]
-    described: dict[str, str] = {"summary": clip(capability.summary, ACTION_CHARS)}
+    described: dict[str, str] = {"summary": _shown(capability.summary)}
     if capability.detail is not None:
-        described["detail"] = clip(capability.detail, ACTION_CHARS)
+        described["detail"] = _shown(capability.detail)
     measured: dict[str, JsonValue] = {
         "tool": capability.tool,
         "reads": list(capability.reads),

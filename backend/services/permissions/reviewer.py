@@ -181,19 +181,24 @@ def fit_transcript(
     pinned: Sequence[TranscriptEntry] = (),
     total_chars: int,
 ) -> tuple[TranscriptEntry, ...]:
-    """``entries`` in order, within ``total_chars``: every pinned entry, then the newest of
-    the rest that fit, the oldest of those clipped to what is left."""
+    """``entries`` in order, within ``total_chars``: every pinned entry, then the operator's
+    newest words, then the assistant's, each clipping its oldest to what is left.
+
+    The operator's words go first because a refusal lives there, and assistant prose that
+    crowded one out would let a refused act run.
+    """
     left = total_chars - sum(len(entry.text) for entry in entries if entry in pinned)
-    fitted: list[TranscriptEntry] = []
-    for entry in reversed(entries):
-        if entry not in pinned:
-            if left < _MIN_CLIPPED_CHARS:
+    kept = {i: entry for i, entry in enumerate(entries) if entry in pinned}
+    for role in ("operator", "assistant"):
+        for i in reversed(range(len(entries))):
+            entry = entries[i]
+            if i in kept or entry.role != role or left < _MIN_CLIPPED_CHARS:
                 continue
             if len(entry.text) > left:
                 entry = TranscriptEntry(entry.role, clip(entry.text, left))
             left -= len(entry.text)
-        fitted.append(entry)
-    return tuple(reversed(fitted))
+            kept[i] = entry
+    return tuple(kept[i] for i in sorted(kept))
 
 
 def _prose(messages: Sequence[ModelMessage], chars: int) -> tuple[TranscriptEntry, ...]:
