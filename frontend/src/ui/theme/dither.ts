@@ -107,17 +107,66 @@ export function strikePoint(
   };
 }
 
-/** The strikes still flashing at `now`, newest last, at most `max` of them. */
-export function liveStrikes(
-  strikes: readonly Strike[],
-  now: number,
-  max: number = MAX_STRIKES,
-): Strike[] {
-  const live = strikes.filter(
-    (s) => now >= s.at && now - s.at <= STRIKE_LIFE_MS,
-  );
-  return live.slice(-max);
+/** The canvas's box in viewport CSS px: the disc and its halo, clipped to the
+ *  viewport, on the cell grid so the Bayer pattern doesn't move with the box. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
+
+export function planetBox(width: number, height: number): Box {
+  const { cx, cy, r } = planetDisc(width, height);
+  const reach = HALO * r;
+  const snap = (v: number) => Math.floor(v / CELL) * CELL;
+  const x = Math.max(0, snap(cx - reach));
+  const y = Math.max(0, snap(cy - reach));
+  const right = Math.min(width, cx + reach);
+  const bottom = Math.min(height, cy + reach);
+  return {
+    x,
+    y,
+    width: Math.max(CELL, Math.ceil((right - x) / CELL) * CELL),
+    height: Math.max(CELL, Math.ceil((bottom - y) / CELL) * CELL),
+  };
+}
+
+/** How far past the limb (in radii) the halo and aurora reach. */
+export const HALO = 1.2;
+
+/** Zonal shear speeds the fastest band to this multiple of the rotation. */
+export const SHEAR = 0.3;
+
+/** Milliseconds until the fastest visible cloud has moved one cell: the field never
+ *  redraws a frame that would look the same. */
+export function cloudInterval(r: number, load: number): number {
+  const perMs = advancePhase(0, 1, load) * (1 + SHEAR);
+  return 1 / (perMs * (r / CELL));
+}
+
+/** The cloud deck is baked into a texture in band space (rotated longitude by
+ *  latitude) and only looked up per frame. `BAKE_ROWS` rows bake per draw. */
+export const BAKE_W = 2048;
+export const BAKE_H = 1024;
+export const STILL_BAKE_W = 512;
+export const STILL_BAKE_H = 256;
+export const BAKE_ROWS = 8;
+/** The first bake has nothing to show until it ends, so it takes bigger strips. */
+export const FIRST_BAKE_ROWS = 128;
+/** Each new bake is this much rotation phase ahead of the last; the field crossfades
+ *  over the same span. */
+export const BAKE_STEP = 0.15;
+/** The bake phase wraps here, so the noise lattice stays within float precision. */
+export const BAKE_WRAP = 100;
+
+export const TONE_INDEX: Record<StrikeTone, number> = {
+  neutral: 0,
+  info: 1,
+  nominal: 2,
+  warn: 3,
+  alert: 4,
+};
 
 export type Rgb = readonly [number, number, number];
 

@@ -1,5 +1,7 @@
 import {
+  Show,
   createEffect,
+  createSignal,
   onCleanup,
   onMount,
   type Accessor,
@@ -8,19 +10,15 @@ import {
 import { useMediaQuery } from "~/lib/useMediaQuery";
 import { accentOverrides } from "../theme/accent-overrides";
 import {
-  AURORA_MAX,
-  CELL,
-  MAX_STRIKES,
   STRIKE_TONES,
-  advancePhase,
-  liveStrikes,
   mixRgb,
-  planetDisc,
+  planetBox,
   type Rgb,
   type Strike,
   type StrikeTone,
 } from "../theme/dither";
-import { FRAGMENT_SHADER, VERTEX_SHADER } from "../theme/dither-shader";
+import { createFieldLoop, type FieldState } from "../theme/dither-loop";
+import type { FromWorker, ToWorker } from "../theme/dither.worker";
 import { useTheme } from "../theme/useTheme";
 
 export interface DitherFieldProps {
@@ -30,11 +28,6 @@ export interface DitherFieldProps {
   aurora: Accessor<number>;
   strikes: Accessor<readonly Strike[]>;
 }
-
-/** Stepped redraws, in the machine register: the field never eases between frames.
- *  The clouds are slow enough for a quarter second; lightning flickers on tenths. */
-const CLOUD_FRAME_MS = 250;
-const STRIKE_FRAME_MS = 100;
 
 const TONE_VAR: Record<Exclude<StrikeTone, "neutral">, string> = {
   info: "--accent-info",
@@ -53,218 +46,190 @@ function toRgb(probe: CanvasRenderingContext2D, color: string): Rgb {
   return [r, g, b];
 }
 
-interface Gl {
-  gl: WebGLRenderingContext;
-  size: WebGLUniformLocation | null;
-  disc: WebGLUniformLocation | null;
-  time: WebGLUniformLocation | null;
-  phase: WebGLUniformLocation | null;
-  aurora: WebGLUniformLocation | null;
-  strikes: WebGLUniformLocation | null;
-  palette: WebGLUniformLocation | null;
-  ground: WebGLUniformLocation | null;
-}
-
-function compile(
-  gl: WebGLRenderingContext,
-  type: number,
-  source: string,
-): WebGLShader | null {
-  const shader = gl.createShader(type);
-  if (!shader) return null;
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return shader;
-  console.error("DitherField:", gl.getShaderInfoLog(shader));
-  return null;
-}
-
-/** The program and its one full-screen triangle, or null where WebGL can't run it. */
-function setup(canvas: HTMLCanvasElement): Gl | null {
-  const gl = canvas.getContext("webgl", {
-    alpha: false,
-    antialias: false,
-    depth: false,
-    stencil: false,
-    preserveDrawingBuffer: false,
+/** The tone palette at `--dither-tint` and the ground, as 0–1 RGB, from the tokens. */
+function readPalette(): [Float32Array, Float32Array] | null {
+  const probe = document.createElement("canvas").getContext("2d", {
+    willReadFrequently: true,
   });
-  if (!gl) return null;
-  const vs = compile(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
-  const fs = compile(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
-  const program = gl.createProgram();
-  if (!vs || !fs || !program) return null;
-  gl.attachShader(program, vs);
-  gl.attachShader(program, fs);
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null;
-  gl.useProgram(program);
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(
-    gl.ARRAY_BUFFER,
-    new Float32Array([-1, -1, 3, -1, -1, 3]),
-    gl.STATIC_DRAW,
+  if (!probe) return null;
+  const cs = getComputedStyle(document.documentElement);
+  const token = (name: string) => cs.getPropertyValue(name).trim();
+  const on = toRgb(probe, token("--dither-on"));
+  const tint = (Number.parseFloat(token("--dither-tint")) || 0) / 100;
+  const palette = STRIKE_TONES.flatMap((tone) =>
+    tone === "neutral"
+      ? on
+      : mixRgb(on, toRgb(probe, token(TONE_VAR[tone])), tint),
   );
-  const pos = gl.getAttribLocation(program, "aPos");
-  gl.enableVertexAttribArray(pos);
-  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
-  const at = (name: string) => gl.getUniformLocation(program, name);
-  return {
-    gl,
-    size: at("uSize"),
-    disc: at("uDisc"),
-    time: at("uTime"),
-    phase: at("uPhase"),
-    aurora: at("uAurora"),
-    strikes: at("uStrikes"),
-    palette: at("uPalette"),
-    ground: at("uGround"),
-  };
+  return [
+    new Float32Array(palette.map((c) => c / 255)),
+    new Float32Array(toRgb(probe, token("--bg")).map((c) => c / 255)),
+  ];
+}
+
+/** Draws in a worker where the browser can hand it the canvas. */
+const workerCapable = (): boolean =>
+  typeof Worker === "function" &&
+  "transferControlToOffscreen" in HTMLCanvasElement.prototype;
+
+/** The field's commands, wherever it draws. */
+interface Sink {
+  state(next: Partial<FieldState>): void;
+  resize(width: number, height: number): void;
+  colors(palette: Float32Array, ground: Float32Array): void;
+  stop(): void;
 }
 
 /**
- * The ambient field behind every page (§11.1): a gas giant in the bottom-right corner,
- * ordered-dithered on 2px cells, shaded on the GPU one canvas pixel per cell and scaled
- * up hard. Opaque objects occlude it; dialogs sit over it. It stops drawing while the
- * tab is hidden, holds a still frame with no lightning under reduced motion, and draws
- * nothing where WebGL is unavailable.
+ * The ambient field (§11.1): a gas giant in the bottom-right corner, ordered-dithered
+ * on 2px cells. The canvas covers only the planet's box, one canvas pixel per cell,
+ * scaled up hard. Opaque objects occlude it; dialogs sit over it.
+ *
+ * It draws in a worker on an OffscreenCanvas, so neither the compile nor a draw ever
+ * lands on the page's thread; where a worker can't (no WebGL2 there), on the page.
+ * Pacing lives in `createFieldLoop`. Without WebGL2 it draws nothing.
  *
  * Decorative, so `aria-hidden` and `pointer-events: none`.
  */
 export function DitherField(props: DitherFieldProps): JSX.Element {
-  let canvas!: HTMLCanvasElement;
   const reduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   const theme = useTheme();
+  const [where, setWhere] = createSignal<"worker" | "page">(
+    workerCapable() ? "worker" : "page",
+  );
+  let sink: Sink | null = null;
 
-  let gl: Gl | null = null;
-  const slots = new Float32Array(MAX_STRIKES * 4);
-  let phase = 0;
-  let last = performance.now();
-
-  /** Draws one frame and says whether a strike is still flashing. */
-  const draw = (): boolean => {
-    if (!gl) return false;
-    const now = performance.now();
-    const still = reduced();
-    if (!still) phase = advancePhase(phase, now - last, props.load());
-    last = now;
-    const live = still ? [] : liveStrikes(props.strikes(), now);
-    slots.fill(-1);
-    live.forEach((s, i) => {
-      slots.set([s.x, s.y, now - s.at, STRIKE_TONES.indexOf(s.tone)], i * 4);
-    });
-    const disc = planetDisc(window.innerWidth, window.innerHeight);
-    const g = gl.gl;
-    g.uniform2f(gl.size, canvas.width, canvas.height);
-    g.uniform3f(gl.disc, disc.cx, disc.cy, disc.r);
-    g.uniform1f(gl.time, still ? 0 : now / 1000);
-    g.uniform1f(gl.phase, phase);
-    g.uniform1f(gl.aurora, Math.min(props.aurora(), AURORA_MAX));
-    g.uniform4fv(gl.strikes, slots);
-    g.drawArrays(g.TRIANGLES, 0, 3);
-    return live.length > 0;
-  };
-
-  const resize = (): void => {
-    // A window not yet laid out reports 0, and a zero-sized buffer can't be drawn.
-    canvas.width = Math.max(1, Math.ceil(window.innerWidth / CELL));
-    canvas.height = Math.max(1, Math.ceil(window.innerHeight / CELL));
-    gl?.gl.viewport(0, 0, canvas.width, canvas.height);
-    draw();
-  };
-
-  const readPalette = (): void => {
-    if (!gl) return;
-    const probe = document.createElement("canvas").getContext("2d", {
-      willReadFrequently: true,
-    });
-    if (!probe) return;
-    const cs = getComputedStyle(document.documentElement);
-    const token = (name: string) => cs.getPropertyValue(name).trim();
-    const on = toRgb(probe, token("--dither-on"));
-    const tint = (Number.parseFloat(token("--dither-tint")) || 0) / 100;
-    const palette = STRIKE_TONES.flatMap((tone) =>
-      tone === "neutral"
-        ? on
-        : mixRgb(on, toRgb(probe, token(TONE_VAR[tone])), tint),
-    );
-    gl.gl.uniform3fv(
-      gl.palette,
-      palette.map((c) => c / 255),
-    );
-    gl.gl.uniform3fv(
-      gl.ground,
-      toRgb(probe, token("--bg")).map((c) => c / 255),
-    );
-    draw();
-  };
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const stop = (): void => {
-    clearTimeout(timer);
-    timer = undefined;
-  };
-  const running = (): boolean => !!gl && !document.hidden && !reduced();
-  const tick = (): void => {
-    const flashing = draw();
-    timer = running()
-      ? setTimeout(tick, flashing ? STRIKE_FRAME_MS : CLOUD_FRAME_MS)
-      : undefined;
-  };
-  const sync = (): void => {
-    if (!running()) stop();
-    else if (timer === undefined) tick();
-  };
-
-  const init = (): void => {
-    gl = setup(canvas);
-    resize();
-    readPalette();
-    sync();
-  };
-  const onLost = (e: Event): void => {
-    e.preventDefault();
-    stop();
-    gl = null;
-  };
-
-  onMount(() => {
-    init();
-    window.addEventListener("resize", resize);
-    document.addEventListener("visibilitychange", sync);
-    canvas.addEventListener("webglcontextlost", onLost);
-    canvas.addEventListener("webglcontextrestored", init);
-    onCleanup(() => {
-      stop();
-      window.removeEventListener("resize", resize);
-      document.removeEventListener("visibilitychange", sync);
-      canvas.removeEventListener("webglcontextlost", onLost);
-      canvas.removeEventListener("webglcontextrestored", init);
-    });
+  const state = (): FieldState => ({
+    load: props.load(),
+    aurora: props.aurora(),
+    strikes: props.strikes(),
+    reduced: reduced(),
+    hidden: document.hidden,
   });
+
+  const place = (canvas: HTMLCanvasElement): void => {
+    const box = planetBox(window.innerWidth, window.innerHeight);
+    const s = canvas.style;
+    s.left = `${box.x}px`;
+    s.top = `${box.y}px`;
+    s.width = `${box.width}px`;
+    s.height = `${box.height}px`;
+    sink?.resize(window.innerWidth, window.innerHeight);
+  };
+
+  const inWorker = (canvas: HTMLCanvasElement): Sink => {
+    const worker = new Worker(
+      new URL("../theme/dither.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    const post = (m: ToWorker, transfer: Transferable[] = []) =>
+      worker.postMessage(m, transfer);
+    // The worker's clock starts with it, so strike times travel absolute.
+    const absolute = (strikes: readonly Strike[]) =>
+      strikes.map((s) => ({ ...s, at: s.at + performance.timeOrigin }));
+    worker.addEventListener("message", (e: MessageEvent<FromWorker>) => {
+      if (e.data.kind === "drawn") canvas.style.visibility = "visible";
+      else setWhere("page");
+    });
+    const offscreen = canvas.transferControlToOffscreen();
+    const initial = state();
+    post(
+      {
+        kind: "start",
+        canvas: offscreen,
+        state: { ...initial, strikes: absolute(initial.strikes) },
+        width: window.innerWidth,
+        height: window.innerHeight,
+      },
+      [offscreen],
+    );
+    return {
+      state: (next) =>
+        post({
+          kind: "state",
+          state: next.strikes
+            ? { ...next, strikes: absolute(next.strikes) }
+            : next,
+        }),
+      resize: (width, height) => post({ kind: "resize", width, height }),
+      colors: (palette, ground) => post({ kind: "colors", palette, ground }),
+      stop: () => worker.terminate(),
+    };
+  };
+
+  const onPage = (canvas: HTMLCanvasElement): Sink | null => {
+    const loop = createFieldLoop(canvas, state(), () => {
+      canvas.style.visibility = "visible";
+    });
+    if (!loop) return null;
+    loop.resize(window.innerWidth, window.innerHeight);
+    return {
+      state: (next) => loop.update(next),
+      resize: (w, h) => loop.resize(w, h),
+      colors: (p, g) => loop.colors(p, g),
+      stop: () => loop.stop(),
+    };
+  };
+
+  const paint = (): void => {
+    const p = readPalette();
+    if (p) sink?.colors(...p);
+  };
+
+  /** One canvas: a canvas handed to a worker can't be drawn on by the page, so the
+   *  fallback gets a fresh one. */
+  const Surface = (p: { mode: "worker" | "page" }): JSX.Element => {
+    let canvas!: HTMLCanvasElement;
+    const onResize = () => place(canvas);
+    const onVisibility = () => sink?.state({ hidden: document.hidden });
+    onMount(() => {
+      sink = p.mode === "worker" ? inWorker(canvas) : onPage(canvas);
+      place(canvas);
+      paint();
+      window.addEventListener("resize", onResize);
+      document.addEventListener("visibilitychange", onVisibility);
+    });
+    onCleanup(() => {
+      sink?.stop();
+      sink = null;
+      window.removeEventListener("resize", onResize);
+      document.removeEventListener("visibilitychange", onVisibility);
+    });
+    return (
+      <canvas
+        ref={canvas}
+        class="heph-dither-field"
+        style={{ visibility: "hidden" }}
+        aria-hidden="true"
+      />
+    );
+  };
 
   createEffect(() => {
     void theme.resolved;
     void accentOverrides();
     // `data-theme` and the override sheet land after this effect flushes; read the
     // tokens once they have.
-    queueMicrotask(readPalette);
+    queueMicrotask(paint);
   });
-  createEffect(() => {
-    void reduced();
-    sync();
-  });
-  // A new strike flashes now, not at the end of a quarter-second cloud frame.
-  createEffect(() => {
-    void props.strikes();
-    if (timer === undefined) return;
-    stop();
-    tick();
-  });
-  // A still field still owes the operator its aurora.
-  createEffect(() => {
-    void props.aurora();
-    if (reduced()) draw();
-  });
+  // Read before the `?.`: an optional call skips its arguments while there's no
+  // sink yet, and an effect that read nothing never runs again.
+  const forward = <K extends keyof FieldState>(
+    key: K,
+    read: () => FieldState[K],
+  ) =>
+    createEffect(() => {
+      const value = read();
+      sink?.state({ [key]: value });
+    });
+  forward("load", () => props.load());
+  forward("aurora", () => props.aurora());
+  forward("strikes", () => props.strikes());
+  forward("reduced", reduced);
 
-  return <canvas ref={canvas} class="heph-dither-field" aria-hidden="true" />;
+  return (
+    <Show when={where()} keyed>
+      {(mode) => <Surface mode={mode} />}
+    </Show>
+  );
 }
