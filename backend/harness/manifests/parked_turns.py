@@ -73,6 +73,10 @@ class _Journal(ParkedJournal):
             self._conversations.unpin(conversation_id)
 
     @override
+    def advance(self, run_id: str, last_seq: int) -> None:
+        self._store.advance(run_id, last_seq)
+
+    @override
     def forget(self, run_id: str) -> None:
         self._store.forget(run_id)
 

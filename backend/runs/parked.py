@@ -20,12 +20,21 @@ class ParkedJournal(Protocol):
         restore it."""
         ...
 
+    def advance(self, run_id: str, last_seq: int) -> None:
+        """The parked run's stream reached ``last_seq``: keep the stored seq from trailing
+        it, without rewriting the continuation."""
+        ...
+
     def forget(self, run_id: str) -> None:
         """Drop it: the run resumed, was cancelled or ended."""
         ...
 
 
 class _NoParkedJournal(ParkedJournal):
+    @override
+    def advance(self, run_id: str, last_seq: int) -> None:
+        pass
+
     @override
     def record(self, run: Run) -> bool:
         return False

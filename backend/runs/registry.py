@@ -13,6 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from enum import Enum
+from functools import partial
 from typing import Literal
 from uuid import uuid4
 
@@ -206,6 +207,7 @@ class RunRegistry:
             run.inbox = self.inbox(run.conversation_id, run.owner_id)
         self.register(run)
         self._journalled.add(run.id)
+        run.on_parked_emit = partial(self._parked_journal.advance, run.id)
         for body in announcements:
             _ = run.emit(body)
 
@@ -253,6 +255,7 @@ class RunRegistry:
             stored = False
         if stored:
             self._journalled.add(run.id)
+            run.on_parked_emit = partial(self._parked_journal.advance, run.id)
         return stored
 
     def _forget_park(self, run_id: str) -> None:

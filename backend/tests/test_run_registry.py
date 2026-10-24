@@ -598,6 +598,10 @@ class _StoringJournal(ParkedJournal):
         return True
 
     @override
+    def advance(self, run_id: str, last_seq: int) -> None:
+        pass
+
+    @override
     def forget(self, run_id: str) -> None:
         pass
 

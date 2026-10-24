@@ -158,6 +158,9 @@ class Run:
     # has no task to interrupt: persists the parked turn, including the operator's prompt.
     # Called after ``run.status`` is already ``cancelled``. A raising hook is swallowed.
     on_park_cancel: Callable[[], None] | None = None
+    # Told the stream's new last seq whenever an event is emitted into the run while it is
+    # parked, so the stored row never trails what a client may already have seen.
+    on_parked_emit: Callable[[int], None] | None = None
 
     def touch(self) -> None:
         """Mark activity now — feeds the inactivity watchdog."""
@@ -192,7 +195,10 @@ class Run:
 
     def emit(self, body: EventBody) -> Event:
         self.touch()
-        return self.stream.emit(body)
+        event = self.stream.emit(body)
+        if self.on_parked_emit is not None and self.status is RunStatus.awaiting_input:
+            self.on_parked_emit(event.seq)
+        return event
 
     def block(self, detail: str | None = None) -> None:
         """Orchestrator declares it cannot proceed."""
