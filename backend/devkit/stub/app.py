@@ -18,6 +18,7 @@ editing the backend restarts the backend and leaves the pushed script standing.
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 from collections.abc import AsyncGenerator, Iterable
 
@@ -28,7 +29,7 @@ from pydantic import BaseModel, JsonValue
 from devkit.stub.embeddings import embed as embed_text
 from devkit.stub.scripts import Scenario, ScriptBook, last_user_prompt
 from devkit.stub.wire import Reply, ToolCall, completion, stream
-from services.decisions import PROBE_QUESTION
+from services.permissions.decision_reviewer import PROBE_NONCE
 
 #: The model id the stub advertises and the seeded endpoint binds to.
 MODEL_ID = "hephaestus-stub"
@@ -146,7 +147,7 @@ def create_stub() -> FastAPI:
         # The bind-time probe never takes one, so rebinding cannot eat a scripted review.
         book.requests.append(body)
         questions = body.get("questions")
-        probing = isinstance(questions, dict) and PROBE_QUESTION in questions
+        probing = PROBE_NONCE in json.dumps(body.get("state"))
         override = decisions.pop(0) if decisions and not probing else {}
         answers: dict[str, JsonValue] = {}
         for name, question in (questions if isinstance(questions, dict) else {}).items():

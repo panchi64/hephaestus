@@ -324,13 +324,18 @@ class Settings(BaseSettings):
     # goes to the `decision` model. A timeout parks the call, like every other failure.
     # `review_transcript_entries` counts entries of prose (the operator's and the
     # assistant's own words), not messages; the turn's opening request is kept on top of
-    # it. `review_max_per_turn` caps decision calls per turn; past it the calls park.
-    # `review_ledger_entries` is how many of the conversation's approved calls the model
-    # reads.
-    review_timeout_s: float = 10.0
+    # it. `review_transcript_chars` caps them all together, and with
+    # `review_ledger_entries` (how many of the conversation's approved calls the model
+    # reads) bounds a review's time: a decision model re-reads the prompt for every
+    # question. `review_max_per_turn` caps decision calls per turn; past it the calls park.
+    # Both timeouts cover a local server loading the model on first request; the bind
+    # probe also waits out a cold load from disk.
+    review_timeout_s: float = 30.0
+    review_probe_timeout_s: float = 120.0
     review_transcript_entries: int = 12
+    review_transcript_chars: int = 2_000
     review_max_per_turn: int = 12
-    review_ledger_entries: int = 20
+    review_ledger_entries: int = 3
     # Thresholds over the decision model's probabilities (`decision_scoring.py`).
     # `too_destructive` at P(irreversible) >= destroy_min. `low` needs at most
     # low_tail_max on the two upper levels, at most low_irreversible_max on the top one,

@@ -44,6 +44,7 @@ from pydantic_ai import (
     ToolDenied,
 )
 
+from core.text import clip
 from runs import ApprovalRequired, QuestionAsked, Run
 from services.answers import questions_of
 from services.conversations import ConversationBinding, ConversationStore
@@ -167,18 +168,8 @@ def summarize_call(name: str, args: Mapping[str, object]) -> str:
     that says what this call does. The whole-line cap is the backstop for the other shape —
     a call with many small arguments, each innocent by itself.
     """
-    rendered = ", ".join(f"{k}={_clip(repr(v), VALUE_MAX_CHARS)}" for k, v in args.items())
-    return _clip(f"{name}({rendered})", SUMMARY_MAX_CHARS)
-
-
-def _clip(value: str, limit: int) -> str:
-    """``value`` at no more than ``limit`` characters, ending in an ellipsis if it was cut.
-
-    The ellipsis is the whole point: a summary that was silently truncated reads as a call
-    with a shorter argument than the one actually being approved, which is the one lie this
-    function must not tell.
-    """
-    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+    rendered = ", ".join(f"{k}={clip(repr(v), VALUE_MAX_CHARS)}" for k, v in args.items())
+    return clip(f"{name}({rendered})", SUMMARY_MAX_CHARS)
 
 
 async def park_for_input(

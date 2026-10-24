@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage, ModelRequest, TextPart, UserPromptPart
 
 from core.compaction_sections import is_checkpoint
+from core.text import clip
 from core.untrusted import new_nonce
 from services.permissions.capability import Capability
 
@@ -35,6 +36,13 @@ TRANSCRIPT_ENTRIES = 12
 
 #: Per-message cap, so one pasted file cannot crowd out the turns around it.
 MESSAGE_CHARS = 2_000
+
+#: The whole transcript's cap. A decision model re-reads the prompt for every question, so
+#: this is what bounds a review's time.
+TRANSCRIPT_CHARS = 2_000
+
+#: An older entry is clipped to fit what is left only when at least this much is left.
+_MIN_CLIPPED_CHARS = 200
 
 type Risk = Literal["low", "high", "too_destructive"]
 
@@ -133,6 +141,7 @@ def review_transcript(
     turn_start: TurnBoundary | None = None,
     limit: int = TRANSCRIPT_ENTRIES,
     chars: int = MESSAGE_CHARS,
+    total_chars: int = TRANSCRIPT_CHARS,
 ) -> tuple[TranscriptEntry, ...]:
     """The thread as the reviewer may see it: the operator's requests and the assistant's
     prose, in order, and nothing else.
@@ -145,7 +154,8 @@ def review_transcript(
     this turn, which a window counted from the end loses first. An opening entry the window
     dropped goes back in front, since it is older than everything in the window; one the
     window still holds keeps its place, so a superseded instruction never reads as the
-    latest.
+    latest. The whole is then fitted to ``total_chars`` (:func:`fit_transcript`), with the
+    opening requests always kept.
     """
     entries = _prose(messages, chars)
     opening = (
@@ -162,7 +172,28 @@ def review_transcript(
         entry for entry in opening if entry not in window
     )
     kept.update(dict.fromkeys(window))
-    return tuple(kept)
+    return fit_transcript(tuple(kept), pinned=opening, total_chars=total_chars)
+
+
+def fit_transcript(
+    entries: Sequence[TranscriptEntry],
+    *,
+    pinned: Sequence[TranscriptEntry] = (),
+    total_chars: int,
+) -> tuple[TranscriptEntry, ...]:
+    """``entries`` in order, within ``total_chars``: every pinned entry, then the newest of
+    the rest that fit, the oldest of those clipped to what is left."""
+    left = total_chars - sum(len(entry.text) for entry in entries if entry in pinned)
+    fitted: list[TranscriptEntry] = []
+    for entry in reversed(entries):
+        if entry not in pinned:
+            if left < _MIN_CLIPPED_CHARS:
+                continue
+            if len(entry.text) > left:
+                entry = TranscriptEntry(entry.role, clip(entry.text, left))
+            left -= len(entry.text)
+        fitted.append(entry)
+    return tuple(reversed(fitted))
 
 
 def _prose(messages: Sequence[ModelMessage], chars: int) -> tuple[TranscriptEntry, ...]:

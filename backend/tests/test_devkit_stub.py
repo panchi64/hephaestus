@@ -28,10 +28,9 @@ from core.config import Settings
 from devkit.stub import MODEL_ID, create_stub
 from devkit.stub.embeddings import DIMENSIONS, embed
 from devkit.stub.scripts import REQUEST_LOG_LIMIT
-from services.decisions import probe
 from services.endpoint_spec import EndpointSpec
 from services.permissions import ReviewRequest, ScoredVerdict, capability_of
-from services.permissions.decision_reviewer import make_decision_reviewer
+from services.permissions.decision_reviewer import make_decision_reviewer, probe
 
 from ._json import arr, obj, parse_json
 
@@ -337,7 +336,9 @@ async def test_the_bind_probe_leaves_a_pushed_override_for_the_review():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
         _ = await client.post("http://stub/_stub/decisions", json=[{"refused": {"noul": 0.9}}])
         await probe(
-            EndpointSpec(base_url="http://stub/v1", model=MODEL_ID), timeout_s=5, client=client
+            EndpointSpec(base_url="http://stub/v1", model=MODEL_ID),
+            settings=Settings(),
+            client=client,
         )
         pending = await client.post("http://stub/_stub/decisions", json=[])
     assert parse_json(pending.content) == {"pending": 1}

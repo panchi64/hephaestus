@@ -143,6 +143,19 @@ LOCAL = EndpointSpec(base_url="http://127.0.0.1:8080/v1", model="kev")
             },
             id="levels-not-keyed-from-zero",
         ),
+        pytest.param(
+            {
+                "answers": {
+                    **GOOD_ANSWERS,
+                    "level": {
+                        "score": 1.0,
+                        "legend": {"0": "Awful", "1": "Bad", "2": "Fine"},
+                        "probabilities": {"0": 0.1, "1": 0.6, "2": 0.3},
+                    },
+                }
+            },
+            id="levels-reordered",
+        ),
         pytest.param({"choices": []}, id="chat-shaped"),
     ],
 )
@@ -167,6 +180,10 @@ async def test_a_failing_status_is_refused(status: int):
         ),
         pytest.param({"error": "There are no downloaded decision models."}, id="bare"),
         pytest.param({"detail": "There are no downloaded decision models."}, id="detail"),
+        pytest.param(
+            {"detail": [{"msg": "There are no downloaded decision models.", "loc": ["body"]}]},
+            id="detail-list",
+        ),
     ],
 )
 async def test_a_refusal_carries_what_the_server_said(body: object):
@@ -175,6 +192,13 @@ async def test_a_refusal_carries_what_the_server_said(body: object):
             DecisionUnavailable, match="answered 400: There are no downloaded decision models"
         ):
             _ = await decisions.ask(LOCAL, None, QUESTIONS, timeout_s=5, client=client)
+
+
+async def test_a_long_refusal_is_cut_with_an_ellipsis():
+    async with _client(_json({"error": "word " * 100}, 500), []) as client:
+        with pytest.raises(DecisionUnavailable) as raised:
+            _ = await decisions.ask(LOCAL, None, QUESTIONS, timeout_s=5, client=client)
+    assert str(raised.value).endswith("word…")
 
 
 async def test_score_probabilities_keyed_by_level_name_are_read_through_the_legend():
@@ -197,10 +221,3 @@ async def test_an_unreachable_server_is_refused():
     async with _client(refuse, []) as client:
         with pytest.raises(DecisionUnavailable, match="couldn't reach"):
             _ = await decisions.ask(LOCAL, None, QUESTIONS, timeout_s=5, client=client)
-
-
-async def test_the_probe_asks_one_question():
-    seen: list[httpx.Request] = []
-    async with _client(_json({"answers": {"probe": {"noul": 0.99}}}), seen) as client:
-        await decisions.probe(LOCAL, timeout_s=5, client=client)
-    assert list(obj(obj(JSON.validate_json(seen[0].content))["questions"])) == ["probe"]

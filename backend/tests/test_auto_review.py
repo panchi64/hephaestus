@@ -942,6 +942,30 @@ class TestTheOpeningRequestIsAlwaysRead:
         transcript = review_transcript(messages, turn_start=TurnStart(0), limit=2)
         assert [entry.text for entry in transcript] == ["the opening request", "first", "second"]
 
+    def test_the_budget_keeps_the_opening_request_and_the_newest_words(self):
+        messages = [
+            ModelRequest(parts=[UserPromptPart("the opening request")]),
+            ModelResponse(parts=[TextPart("old " * 200)]),
+            ModelResponse(parts=[TextPart("middle " * 100)]),
+            ModelResponse(parts=[TextPart("newest")]),
+        ]
+        transcript = review_transcript(messages, turn_start=TurnStart(0), total_chars=500)
+        texts = [entry.text for entry in transcript]
+        assert texts[0] == "the opening request"
+        assert texts[-1] == "newest"
+        # The oldest that fits in part is cut with a mark; anything older goes.
+        assert texts[1].startswith("middle") and texts[1].endswith("…")
+        assert not any(text.startswith("old") for text in texts)
+        assert sum(len(text) for text in texts) <= 500
+
+    def test_the_opening_request_is_kept_whatever_the_budget(self):
+        messages = [
+            ModelRequest(parts=[UserPromptPart("do " * 300)]),
+            ModelResponse(parts=[TextPart("later")]),
+        ]
+        transcript = review_transcript(messages, turn_start=TurnStart(0), total_chars=100)
+        assert [entry.role for entry in transcript] == ["operator"]
+
     async def test_the_gate_hands_the_boundary_to_the_transcript(
         self, monkeypatch: pytest.MonkeyPatch
     ):

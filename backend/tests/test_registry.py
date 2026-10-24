@@ -19,10 +19,11 @@ from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelRole
 from runs import Endpoint, EndpointGate
-from services import decisions, embeddings, llm
+from services import embeddings, llm
 from services.decisions import DecisionUnavailable
 from services.endpoint_spec import EndpointSpec
 from services.gated_model import EndpointGatedModel
+from services.permissions import decision_reviewer
 from services.registry import ModelRegistry
 
 from ._helpers import client_app
@@ -299,7 +300,7 @@ async def test_decision_role_rejects_an_endpoint_that_cannot_decide(
     async def failing(spec: EndpointSpec, **_kwargs: object) -> None:
         raise DecisionUnavailable(f"{spec.model!r} answered 501")
 
-    monkeypatch.setattr(decisions, "probe", failing)
+    monkeypatch.setattr(decision_reviewer, "probe", failing)
     with pytest.raises(ValueError, match="501"):
         await reg.set_role(OWNER, "decision", [ep.id])
     assert await reg.get_role(OWNER, "decision") == []
@@ -315,7 +316,7 @@ async def test_the_auto_reviewer_is_the_bound_decision_model(monkeypatch: pytest
     async def passing(_spec: EndpointSpec, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr(decisions, "probe", passing)
+    monkeypatch.setattr(decision_reviewer, "probe", passing)
     ep = await reg.create_endpoint(OWNER, name="kev", base_url="http://127.0.0.1:8080", model="k")
     await reg.set_role(OWNER, "decision", [ep.id])
     assert (await reg.resolve_raw_spec(OWNER, "decision")).model == "k"

@@ -110,6 +110,14 @@ def truncate_on_boundary(text: str, max_chars: int) -> str:
     return cut.rstrip()
 
 
+def clip(value: str, limit: int) -> str:
+    """``value`` at no more than ``limit`` characters, ending in an ellipsis if it was cut.
+
+    The ellipsis is the point: a silently cut line reads as the whole of what was said.
+    """
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+
+
 def truncate_middle(text: str, max_chars: int) -> tuple[str, str, int]:
     """Cap ``text`` to ``max_chars`` by keeping a **head and a tail** and eliding the
     middle — the mirror image of :func:`truncate_on_boundary`, which keeps only the

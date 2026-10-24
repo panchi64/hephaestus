@@ -24,6 +24,7 @@ from typing import cast
 import yaml
 from pydantic_ai_harness.repo_context import RepoContext
 
+import core.text
 from core.frontmatter import FrontmatterError, split_frontmatter
 from prompts.voice import CLASSES
 from services.agents.definition import (
@@ -168,9 +169,9 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
 
     return AgentDefinition(
         name=spec_name,
-        description=_clip(description, DESCRIPTION_MAX_CHARS) if clip else description,
+        description=core.text.clip(description, DESCRIPTION_MAX_CHARS) if clip else description,
         agent_class=_declared_class(fields, name=spec_name),
-        instructions=_clip(brief, BRIEF_MAX_CHARS) if clip else brief,
+        instructions=core.text.clip(brief, BRIEF_MAX_CHARS) if clip else brief,
         tools=_declared_tools(fields),
         permission_ceiling=_declared_ceiling(fields, name=spec_name),
         workspace=_declared_workspace(fields, name=spec_name),
@@ -257,10 +258,6 @@ def _text(raw: object, *, field: str | None = None) -> str:
             return ""
         raise AgentFileError(f"{field} must be text")
     return _WHITESPACE_RUN.sub(" ", raw).strip()
-
-
-def _clip(value: str, limit: int) -> str:
-    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
 def _declared_class(fields: dict[str, object], *, name: str) -> str:

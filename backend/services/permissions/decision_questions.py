@@ -16,9 +16,15 @@ from collections.abc import Mapping
 
 from pydantic import JsonValue
 
+from core.text import clip
 from core.untrusted import untrusted_fence, untrusted_preamble
 from services.decisions import Noul, Question, Score
 from services.permissions.reviewer import ReviewRequest
+
+#: Caps on the action's summary and detail, each, and on an approved call's summary, for
+#: the reason the transcript is capped (``reviewer.TRANSCRIPT_CHARS``).
+ACTION_CHARS = 600
+APPROVED_SUMMARY_CHARS = 200
 
 #: The ground rules every question restates, because each one is answered on its own.
 _RULES = (
@@ -98,13 +104,15 @@ def build_state(request: ReviewRequest) -> JsonValue:
         {
             "tool": prior.tool_name,
             "approved_by": prior.approved_by,
-            "summary": untrusted_fence(prior.summary, nonce, source="approved-call"),
+            "summary": untrusted_fence(
+                clip(prior.summary, APPROVED_SUMMARY_CHARS), nonce, source="approved-call"
+            ),
         }
         for prior in request.approved_calls
     ]
-    described: dict[str, str] = {"summary": capability.summary}
+    described: dict[str, str] = {"summary": clip(capability.summary, ACTION_CHARS)}
     if capability.detail is not None:
-        described["detail"] = capability.detail
+        described["detail"] = clip(capability.detail, ACTION_CHARS)
     measured: dict[str, JsonValue] = {
         "tool": capability.tool,
         "reads": list(capability.reads),

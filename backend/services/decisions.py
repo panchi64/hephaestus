@@ -1,7 +1,7 @@
 """The decision capability: typed questions answered with probabilities, not text.
 
 Speaks the TypeSafe wire format (``{state, questions}`` → ``{answers}``) that llama.cpp's
-``llama-server`` serves at ``/v1/systemone`` and OpenRouter serves at
+``llama-server`` and LM Studio serve at ``/v1/systemone`` and OpenRouter serves at
 ``/api/alpha/decisions``. Every failure raises :class:`DecisionUnavailable`; what that
 means for the caller is the caller's to say.
 """
@@ -15,14 +15,24 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 from core.exceptions import DegradedCapabilityError
+from core.text import clip
 from services.endpoint_spec import EndpointSpec
 
 type Probability = Annotated[float, Field(ge=0.0, le=1.0)]
 
 _KEYED: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+_NAMES: TypeAdapter[list[str]] = TypeAdapter(list[str])
 
 
 class DecisionUnavailable(DegradedCapabilityError):
@@ -65,33 +75,41 @@ class ChoiceAnswer(BaseModel):
     confidence: float | None = None
 
 
+def _by_position(keyed: dict[str, JsonValue]) -> list[JsonValue]:
+    """The values of a map keyed ``"0"`` to ``"n-1"``, in that order."""
+    try:
+        return [keyed[str(i)] for i in range(len(keyed))]
+    except KeyError as exc:
+        raise ValueError("score answers must be keyed by level position") from exc
+
+
 class ScoreAnswer(BaseModel):
     #: The probability-weighted level index, so it can be fractional.
     score: float
+    #: The level names the server answered for, lowest first, when it says them.
+    legend: list[str] | None = None
     #: Per level, lowest first.
     probabilities: list[Probability]
     confidence: float | None = None
 
-    @model_validator(mode="before")
+    @field_validator("legend", mode="before")
     @classmethod
-    def _levels_in_order(cls, data: object) -> object:
-        """The Jev wire keys each level's probability by its position (``{"0": p, …}``); a
-        map keyed by level name is read through ``legend`` (position → name)."""
-        if not isinstance(data, dict):
-            return data
-        raw = _KEYED.validate_python(data)
-        probabilities = raw.get("probabilities")
-        if not isinstance(probabilities, dict):
-            return raw
-        keys = [str(i) for i in range(len(probabilities))]
-        legend = raw.get("legend")
-        if not all(key in probabilities for key in keys) and isinstance(legend, dict):
-            keys = [name if isinstance(name := legend.get(key), str) else key for key in keys]
-        try:
-            ordered: list[JsonValue] = [probabilities[key] for key in keys]
-        except KeyError as exc:
-            raise ValueError("score probabilities must be keyed by level position") from exc
-        return {**raw, "probabilities": ordered}
+    def _legend_in_order(cls, value: object) -> object:
+        """The Jev wire keys each level's name by its position (``{"0": name, …}``)."""
+        return _by_position(_KEYED.validate_python(value)) if isinstance(value, dict) else value
+
+    @field_validator("probabilities", mode="before")
+    @classmethod
+    def _levels_in_order(cls, value: object, info: ValidationInfo) -> object:
+        """Keyed by level position on the Jev wire, or by level name through ``legend``."""
+        if not isinstance(value, dict):
+            return value
+        keyed = _KEYED.validate_python(value)
+        legend = info.data.get("legend")
+        if legend is not None and not all(str(i) in keyed for i in range(len(keyed))):
+            names = _NAMES.validate_python(legend)
+            keyed = {str(i): keyed[name] for i, name in enumerate(names) if name in keyed}
+        return _by_position(keyed)
 
 
 type Answer = NoulAnswer | ChoiceAnswer | ScoreAnswer
@@ -108,11 +126,15 @@ class _ErrorMessage(BaseModel):
     message: str
 
 
+class _ErrorDetail(BaseModel):
+    msg: str
+
+
 class _ErrorBody(BaseModel):
-    """OpenAI-style ``{"error": {"message"}}``, a bare ``{"error": "…"}``, or ``{"detail"}``."""
+    """OpenAI ``{"error": {"message"}}``, bare ``{"error"}``, or FastAPI ``{"detail"}``."""
 
     error: _ErrorMessage | str | None = None
-    detail: str | None = None
+    detail: str | list[_ErrorDetail] | None = None
 
 
 _ERROR_BODY = TypeAdapter(_ErrorBody)
@@ -120,8 +142,7 @@ _SAID_MAX = 200
 
 
 def _said(response: httpx.Response) -> str:
-    """What the server said about a failed call, short and on one line, so a bind that fails
-    can tell the operator why."""
+    """The server's reason for a failed call, on one line, so the operator can act on it."""
     if response.status_code == 501:
         return " (the model is not a decision model)"
     try:
@@ -129,8 +150,11 @@ def _said(response: httpx.Response) -> str:
     except ValidationError:
         return ""
     error = body.error.message if isinstance(body.error, _ErrorMessage) else body.error
-    message = " ".join((error or body.detail or "").split())
-    return f": {message[:_SAID_MAX]}" if message else ""
+    detail = body.detail
+    if isinstance(detail, list):
+        detail = "; ".join(item.msg for item in detail)
+    message = " ".join((error or detail or "").split())
+    return f": {clip(message, _SAID_MAX)}" if message else ""
 
 
 def decisions_url(base_url: str) -> str:
@@ -162,8 +186,15 @@ def _matches(question: Question, answer: Answer) -> bool:
             return True
         case Choice(_, criteria), ChoiceAnswer(choice=choice, probabilities=probabilities):
             return choice in criteria and set(probabilities) <= set(criteria)
-        case Score(_, criteria), ScoreAnswer(score=score, probabilities=probabilities):
-            return len(probabilities) == len(criteria) and 0 <= score <= len(criteria) - 1
+        case Score(_, criteria), ScoreAnswer(
+            score=score, legend=legend, probabilities=probabilities
+        ):
+            # Levels a server reordered would be read against the wrong ones.
+            return (
+                len(probabilities) == len(criteria)
+                and 0 <= score <= len(criteria) - 1
+                and (legend is None or legend == list(criteria))
+            )
         case _:
             return False
 
@@ -214,20 +245,3 @@ async def ask(
         if answer is None or not _matches(question, answer):
             raise DecisionUnavailable(f"the decision endpoint {url!r} did not answer {name!r}")
     return {name: answers[name] for name in questions}
-
-
-#: The question name the bind-time probe asks, so a scripted server can tell it apart.
-PROBE_QUESTION = "probe"
-
-
-async def probe(
-    spec: EndpointSpec, *, timeout_s: float, client: httpx.AsyncClient | None = None
-) -> None:
-    """One real question, so a chat-only server is rejected when the role is bound."""
-    _ = await ask(
-        spec,
-        "The sky is blue.",
-        {PROBE_QUESTION: Noul("Does the text describe a colour?")},
-        timeout_s=timeout_s,
-        client=client,
-    )

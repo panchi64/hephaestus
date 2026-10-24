@@ -332,7 +332,10 @@ async def review_batch(
         else []
     )
     transcript = review_transcript(
-        messages, turn_start=turn_start, limit=settings.review_transcript_entries
+        messages,
+        turn_start=turn_start,
+        limit=settings.review_transcript_entries,
+        total_chars=settings.review_transcript_chars,
     )
     nonce = new_nonce()
     root = await _judged_root(deps, calls)

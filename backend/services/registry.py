@@ -32,8 +32,9 @@ from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelEndpoint, ModelRole
 from runs import Endpoint, EndpointGate
-from services import decisions, embeddings, llm
+from services import embeddings, llm
 from services.endpoint_spec import EndpointSpec
+from services.permissions import decision_reviewer
 from services.providers import DEFAULT_PROVIDER_ID, get_provider
 from services.providers.base import ModelLimits
 
@@ -328,9 +329,9 @@ class ModelRegistry:
             await self._validate_embedding_endpoints(endpoints, model)
         if role == "decision" and endpoints:
             try:
-                await decisions.probe(
+                await decision_reviewer.probe(
                     self._to_spec(endpoints[0], role, model_override=model),
-                    timeout_s=get_settings().review_timeout_s,
+                    settings=get_settings(),
                     client=self._http_client,
                 )
             except DegradedCapabilityError as exc:
