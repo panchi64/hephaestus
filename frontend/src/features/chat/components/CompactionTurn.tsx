@@ -1,6 +1,7 @@
 import { Show, type JSX } from "solid-js";
-import { ConsoleGroup, Frames, Text } from "~/ui";
+import { ConsoleGroup, Disclosure, Frames, Text } from "~/ui";
 import { compactCount } from "~/lib/format";
+import type { SummarySection } from "~/lib/stream";
 import { asCompactionReason, compactionReasonCause } from "../compactionReason";
 import type { ChatMessage } from "../model";
 import { CompactionRow as Row } from "./CompactionRow";
@@ -79,13 +80,27 @@ export function CompactionTurn(props: { message: ChatMessage }): JSX.Element {
   );
 }
 
-/** The fold, once it has landed: what it cost, and what the model is left holding. */
+/** The fold, once it has landed: what it cost, and what the model is left holding.
+ *
+ *  **One line at rest, the briefing behind it.** What the operator needs every time is
+ *  that a fold happened and why; what the model kept is an audit they reach for now and
+ *  then. The line still names the sections present, so a closed divider says what was
+ *  kept without being read. */
 function Settled(props: { message: ChatMessage }): JSX.Element {
   const m = () => props.message;
   const before = () => m().tokensBefore ?? 0;
   const after = () => m().tokensAfter ?? 0;
   const freed = () => Math.max(0, before() - after());
   const folded = () => m().foldedMessages ?? 0;
+  const sections = (): SummarySection[] =>
+    m().summarySections?.length
+      ? (m().summarySections ?? [])
+      : [{ key: "", body: m().content, untrusted: false, voice: "prose" }];
+  const kept = () =>
+    [
+      ...sections().map((section) => section.key || "Briefing"),
+      ...((m().restored?.length ?? 0) > 0 ? ["Restored"] : []),
+    ].join(" · ");
   return (
     <ConsoleGroup
       label="Context compacted"
@@ -102,9 +117,11 @@ function Settled(props: { message: ChatMessage }): JSX.Element {
         </Text>
       }
     >
-      <div class="divide-line divide-y">
-        <Row legend="Fold">
-          <Text variant="code" tone="dim">
+      <Disclosure
+        label="Summary"
+        triggerClass="w-full px-2 py-1.5"
+        labelNode={
+          <Text variant="code" tone="dim" class="min-w-0 truncate">
             <Show when={folded() > 0}>
               {folded()} {folded() === 1 ? "message" : "messages"}
               {" · "}
@@ -112,8 +129,12 @@ function Settled(props: { message: ChatMessage }): JSX.Element {
             {compactionReasonCause(
               asCompactionReason(m().compactionReason) ?? "threshold",
             )}
+            {" — "}
+            {kept()}
           </Text>
-        </Row>
+        }
+        class="divide-line divide-y border-t border-line"
+      >
         {/* What the summary costs, and what it cost before — on the legend line of the
             thing they measure rather than in a row of their own. They had one, and a
             whole ruled row spending a `plate` legend on two figures is the shape §1.1
@@ -151,21 +172,10 @@ function Settled(props: { message: ChatMessage }): JSX.Element {
             the parse existed and for one whose text the summarizer drifted away from:
             those degrade to one keyless section rather than to nothing. */}
         <CompactionSummary
-          sections={
-            m().summarySections?.length
-              ? (m().summarySections ?? [])
-              : [
-                  {
-                    key: "",
-                    body: m().content,
-                    untrusted: false,
-                    voice: "prose",
-                  },
-                ]
-          }
+          sections={sections()}
           restored={m().restored ?? []}
         />
-      </div>
+      </Disclosure>
     </ConsoleGroup>
   );
 }
