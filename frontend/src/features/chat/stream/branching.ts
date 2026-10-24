@@ -278,8 +278,9 @@ export function createBranchingOps(ctx: BranchingContext) {
 
   /** Fold older turns into a summary now instead of at the automatic threshold.
    *  It drives a run, so `fold.ts` renders its frames whichever trigger fired. Nothing is
-   *  reseated afterwards: `conversation.compacted` already carries the checkpoint. */
-  async function compactNow(): Promise<void> {
+   *  reseated afterwards: `conversation.compacted` already carries the checkpoint.
+   *  `focus` is what the operator asked the summary to keep. */
+  async function compactNow(focus?: string): Promise<void> {
     const conversationId = ctx.conversationId();
     if (conversationId === null || ctx.sending()) return;
     // The claim is taken before the first await. Failure is reported inside the task so
@@ -290,7 +291,7 @@ export function createBranchingOps(ctx: BranchingContext) {
         ctx.setSending(true);
         const started = await api.post<ChatCreatedDTO>(
           `/conversations/${conversationId}/compact`,
-          {},
+          focus ? { focus } : {},
         );
         // No anchor message: the compaction frames seat their own turn.
         await ctx.driveRun(started.run_id, "");

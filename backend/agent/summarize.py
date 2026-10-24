@@ -61,12 +61,12 @@ from services.settings_store import (
 )
 from tools import RunDeps
 
+from .compaction_carry import carried_anchors, merge_anchors, merge_operator_messages
+from .compaction_restore import restore_after_fold
 from .compaction_summary import (
     DeltaSink,
     SummaryCalledTool,
-    carried_anchors,
     fence_tool_facts,
-    merge_anchors,
     write_summary,
 )
 from .factory import TurnAgent
@@ -155,6 +155,8 @@ class CompactionOutcome:
     # checkpoint — one value, so the divider a reload draws names the same cause the live
     # one did.
     reason: CompactionReason = "threshold"
+    # What the fold re-read after the briefing, as also written onto the checkpoint.
+    restored: tuple[str, ...] = ()
 
 
 #: What one fold answers with. Three outcomes rather than one nullable value, because a
@@ -239,6 +241,8 @@ async def compact_conversation(
     agent: TurnAgent,
     deps: RunDeps,
     reason: CompactionReason,
+    settings: Settings | None = None,
+    focus: str | None = None,
     on_plan: Callable[[CompactionPlan], None] | None = None,
     on_delta: DeltaSink | None = None,
 ) -> FoldResult:
@@ -270,15 +274,28 @@ async def compact_conversation(
     ``reason`` is required rather than defaulted, and travels all the way onto the stored
     checkpoint. Each of the three callers knows which trigger it is — the threshold, the
     mid-turn overflow recovery, the operator's own button — and a default here would let a
-    new one silently record the most common answer instead of its own."""
+    new one silently record the most common answer instead of its own.
+
+    ``focus`` is what the operator asked the briefing to keep, on their own fold only.
+    After the briefing, the files the thread was working in and its live plan are re-read
+    onto the checkpoint (:mod:`agent.compaction_restore`)."""
+    cfg = settings or get_settings()
     plan = await store.compaction_plan(conversation_id)
     if plan is None:
         return NothingToFold()
     if on_plan is not None:
         on_plan(plan)
-    summary = await summarize_history(agent, deps, plan.messages, on_delta=on_delta)
+    summary = await summarize_history(
+        agent,
+        deps,
+        plan.messages,
+        focus=focus,
+        operator_budget_tokens=cfg.compaction_operator_messages_tokens,
+        on_delta=on_delta,
+    )
     if isinstance(summary, FoldFailed):
         return summary
+    restored = await restore_after_fold(deps, cfg)
     # Labelled on the way in, not on the way out: the stored text is what both the model
     # replays and the operator reads, and it needs to announce itself as a summary in both
     # places. The same framed text rides the event, so the divider a live client draws and
@@ -298,6 +315,8 @@ async def compact_conversation(
         # checkpoint's carried delta is inside this fold, so a second fold inherits the
         # first's without special-casing.
         revealed_tools=revealed_tools(plan.messages),
+        restored=restored.part,
+        restored_names=restored.names,
     )
     if message_id is None:
         # The active leaf moved while the summary was being written (a version switch or a
@@ -313,10 +332,17 @@ async def compact_conversation(
         # the folded messages, and the stored checkpoint text — so the live divider and
         # the reloaded one report the same numbers.
         tokens_before=estimate_tokens(plan.messages),
-        tokens_after=estimate_tokens([ModelRequest(parts=[UserPromptPart(labelled)])]),
+        tokens_after=estimate_tokens(
+            [ModelRequest(parts=[UserPromptPart(labelled), *_present(restored.part)])]
+        ),
         after_message_id=plan.anchor_id,
         reason=reason,
+        restored=tuple(restored.names),
     )
+
+
+def _present(part: UserPromptPart | None) -> list[UserPromptPart]:
+    return [] if part is None else [part]
 
 
 async def summarize_history(
@@ -324,6 +350,8 @@ async def summarize_history(
     deps: RunDeps,
     messages: list[ModelMessage],
     *,
+    focus: str | None = None,
+    operator_budget_tokens: int | None = None,
     on_delta: DeltaSink | None = None,
 ) -> str | FoldFailed:
     """Summarize a stretch of conversation into the briefing that will stand in for it, or
@@ -345,7 +373,7 @@ async def summarize_history(
     ``summarizer_empty``, and a reply that called a tool despite being told not to is
     ``tool_call`` — the call is never run."""
     try:
-        summary = await write_summary(agent, deps, messages, on_delta=on_delta)
+        summary = await write_summary(agent, deps, messages, focus=focus, on_delta=on_delta)
     except SummaryCalledTool:
         logger.warning("conversation compaction summary failed: the model called a tool")
         return FoldFailed("tool_call")
@@ -360,6 +388,13 @@ async def summarize_history(
     # previous checkpoint's exact paths, ids and numbers across verbatim rather than asking
     # a model to restate them one more time.
     summary = merge_anchors(summary, carried_anchors(messages))
+    # The operator's own words are copied, never restated, so they cannot drift fold by fold.
+    budget = (
+        operator_budget_tokens
+        if operator_budget_tokens is not None
+        else get_settings().compaction_operator_messages_tokens
+    )
+    summary = merge_operator_messages(summary, messages, budget_tokens=budget)
     # Fenced on the way out, because this text is stored as a user-shaped checkpoint the
     # main model replays as its own memory: the one section that repeats what a page or a
     # document said must stay marked as data.

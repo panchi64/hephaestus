@@ -1,6 +1,6 @@
 """The compaction summary's section contract, as a parser.
 
-``prompts/utility.py`` asks the summarizer for a fixed roster of headings, and that roster is a
+``prompts/compaction.py`` asks the summarizer for a fixed roster of headings, and that roster is a
 **parsed contract rather than a style guide**: the carry-forward reads `Anchors` out of it
 verbatim, and `fence_tool_facts` uses it to decide where the untrusted fence closes. Both
 of those, and the operator's own transcript, need the same answer to "what are this
@@ -15,10 +15,12 @@ the cold-read projection can all reach it.
 
 **The roster is a security boundary, not a convenience.** The summarizer is asked to quote
 its sources, so a fetched page's own ``## Notes for the assistant`` arrives inside the
-summary looking exactly like a heading. Only a heading naming one of *our* sections ends a
-section; anything else is body text wherever it appears. Getting that wrong closes the
-untrusted fence early and leaves whatever followed it stored as the workspace's own voice,
-which is the injection the fence exists to stop.
+summary looking exactly like a heading. Only a heading naming one of *our* sections, later
+in the roster than the section it would end, ends a section; anything else is body text
+wherever it appears. Getting that wrong closes the untrusted fence early and leaves
+whatever followed it stored as the workspace's own voice, which is the injection the fence
+exists to stop. The two sections copied forward verbatim, Operator messages and Anchors,
+both precede the tools section, so nothing quoted there can open either.
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ from prompts.compaction import (
     COMPACT_ANCHORS_SECTION,
     COMPACT_CLOSE,
     COMPACT_MARKER,
+    COMPACT_OPERATOR_SECTION,
+    COMPACT_OPERATOR_TAG,
     COMPACT_PREAMBLE,
     COMPACT_SECTIONS,
     COMPACT_TOOLS_SECTION,
@@ -83,22 +87,60 @@ def _known_key(name: str) -> str | None:
     return next((section for section in _SECTION_KEYS if key.startswith(section)), None)
 
 
+def _headings(text: str) -> list[tuple[re.Match[str], int]]:
+    """The headings that open one of our sections, with each one's roster position.
+
+    Only a heading **later in the roster** than the last one counts: the sections are asked
+    for in order, so a roster name appearing after a later section is a line quoted from
+    somewhere — a page that wrote its own ``## Anchors`` inside the tools section — and is
+    body text there."""
+    out: list[tuple[re.Match[str], int]] = []
+    last = -1
+    for match in _HEADING.finditer(text):
+        key = _known_key(match.group("name"))
+        if key is None:
+            continue
+        position = _SECTION_KEYS.index(key)
+        if position > last:
+            out.append((match, position))
+            last = position
+    return out
+
+
 def _span(text: str, name: str) -> tuple[int, int] | None:
     """Where the named section's body starts and ends, matching the heading loosely (case,
     punctuation and any restated gloss are the model's choice, the section is ours).
 
-    The section runs to the next heading **we asked for**, or to the end of the text — see
-    ``_SECTION_KEYS``: a heading-shaped line the summarizer copied out of a tool result is
-    part of that result, not the start of a new section."""
-    wanted = section_key(name)
-    matches = [m for m in _HEADING.finditer(text) if _known_key(m.group("name")) is not None]
-    for index, match in enumerate(matches):
-        if not section_key(match.group("name")).startswith(wanted):
+    The section runs to the next heading :func:`_headings` accepts, or to the end of the
+    text: a heading-shaped line the summarizer copied out of a tool result is part of that
+    result, not the start of a new section."""
+    wanted = _known_key(name)
+    headings = _headings(text)
+    for index, (match, _) in enumerate(headings):
+        if _known_key(match.group("name")) != wanted:
             continue
-        start = match.end()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        return start, end
+        end = headings[index + 1][0].start() if index + 1 < len(headings) else len(text)
+        return match.end(), end
     return None
+
+
+def first_section_start(text: str) -> int | None:
+    """Where the first heading naming one of our sections starts, or ``None``."""
+    headings = _headings(text)
+    return headings[0][0].start() if headings else None
+
+
+def insert_section(text: str, name: str, body: str) -> str:
+    """``text`` with the named section set to ``body``: replaced when present, otherwise
+    placed at its roster position so :func:`_headings` accepts it."""
+    if _span(text, name) is not None:
+        return replace_section(text, name, body)
+    position = _SECTION_KEYS.index(section_key(name))
+    after = next((m for m, at in _headings(text) if at > position), None)
+    section = f"## {name}\n{body}"
+    if after is None:
+        return f"{text.rstrip()}\n\n{section}" if text.strip() else section
+    return f"{text[: after.start()]}{section}\n\n{text[after.start() :]}"
 
 
 def section_body(text: str, name: str) -> str | None:
@@ -192,6 +234,28 @@ class SummarySection(BaseModel):
     voice: Literal["prose", "machine"] = "prose"
 
 
+_MESSAGE_OPEN = re.compile(rf'^<{COMPACT_OPERATOR_TAG} at="(?P<at>[^"]*)">$', re.MULTILINE)
+_MESSAGE_CLOSE = re.compile(rf"^</{COMPACT_OPERATOR_TAG}>$\n?", re.MULTILINE)
+_HEADING_LIKE = re.compile(r"^(?=[ \t]*(?:#|\*\*))", re.MULTILINE)
+_ESCAPED_HEADING = re.compile(r"^\\(?=[ \t]*(?:#|\*\*))", re.MULTILINE)
+
+
+def escape_headings(text: str) -> str:
+    """``text`` with every heading-shaped line backslashed, so copied text cannot end the
+    section it is copied into. :func:`unescape_headings` reverses it."""
+    return _HEADING_LIKE.sub("\\\\", text)
+
+
+def unescape_headings(text: str) -> str:
+    return _ESCAPED_HEADING.sub("", text)
+
+
+def _readable_messages(body: str) -> str:
+    """The copied operator messages as the operator reads them: each under its time, with
+    the tags addressed to the model taken off and escaped heading lines restored."""
+    return unescape_headings(_MESSAGE_CLOSE.sub("", _MESSAGE_OPEN.sub(r"\g<at>", body)))
+
+
 def is_checkpoint(text: str) -> bool:
     """Whether ``text`` is a stored compaction summary, in the tagged or the legacy form."""
     return text.lstrip().startswith((COMPACT_MARKER, LEGACY_COMPACT_MARKER))
@@ -221,7 +285,8 @@ def summary_sections(text: str) -> list[SummarySection]:
     **Degrades to one keyless section** holding the whole preamble-stripped text when no
     roster heading matches — an old checkpoint, or a summarizer that drifted off the
     format. That keeps one rendering path rather than making every caller carry a fallback,
-    and it never claims a structure the text does not have. Empty in and empty out."""
+    and it never claims a structure the text does not have. Text before the first roster
+    heading leads as a keyless section too. Empty in and empty out."""
     body = strip_preamble(text)
     if not body:
         return []
@@ -232,6 +297,8 @@ def summary_sections(text: str) -> list[SummarySection]:
             continue
         untrusted = name == COMPACT_TOOLS_SECTION
         content = _fenced_content(raw) if untrusted else _FENCE_MARKER.sub("", raw).strip()
+        if name == COMPACT_OPERATOR_SECTION:
+            content = _readable_messages(content)
         if not content:
             continue
         sections.append(
@@ -244,4 +311,8 @@ def summary_sections(text: str) -> list[SummarySection]:
         )
     if not sections:
         return [SummarySection(key="", body=body)]
-    return sections
+    # Text ahead of the first heading of ours is the summarizer's own, unsectioned; it
+    # leads as the keyless section rather than vanishing.
+    start = first_section_start(body)
+    lead = _FENCE_MARKER.sub("", body[:start]).strip() if start else ""
+    return [SummarySection(key="", body=lead), *sections] if lead else sections

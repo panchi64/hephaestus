@@ -40,9 +40,16 @@ from pydantic_ai.exceptions import ApprovalRequired
 
 from runs.lanes import is_attended
 from services.permissions import stricter_permission
-from services.plan_mode import ACTING_LEVEL, PLAN_SUBMIT_TOOL, PLANNING_LEVEL, PlanMode
+from services.plan_mode import ACTING_LEVEL, PLAN_SUBMIT_TOOL, PLANNING_LEVEL, Plan, PlanMode
 
 from .deps import RunDeps
+
+
+def render_plan(plan: Plan) -> str:
+    """The plan as ``plan_read`` shows it: title, status, body and numbered steps."""
+    steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.steps, start=1))
+    return f"# {plan.title}\n\n({plan.status})\n\n{plan.body}\n\n## Steps\n\n{steps}"
+
 
 #: The conditionally-gated name this category contributes — it raises ``ApprovalRequired``
 #: from inside the call, which no amount of inspection can discover.
@@ -155,8 +162,7 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
         plan = await plans.current(ctx.deps.run.owner_id, conversation_id)
         if plan is None:
             return "This conversation has no plan."
-        steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.steps, start=1))
-        return f"# {plan.title}\n\n({plan.status})\n\n{plan.body}\n\n## Steps\n\n{steps}"
+        return render_plan(plan)
 
     @toolset.tool(name="submit")
     async def submit(

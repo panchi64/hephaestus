@@ -151,6 +151,8 @@ export interface MessageDTO {
    *  live event uses. Empty elsewhere, or when the text parses into nothing (the divider
    *  then falls back to `content`). */
   sections?: SummarySection[] | null;
+  /** Compaction rows: what the fold re-read after the briefing. Empty elsewhere. */
+  restored?: string[] | null;
   /** Assistant turns: reasoning, calls and answer in emission order, which `tools` and
    *  `content` flatten away; the only place a turn's reasoning arrives. A `tool` segment
    *  names its entry in `tools`. Empty elsewhere. */

@@ -473,6 +473,14 @@ class Settings(BaseSettings):
     # (per-thread enablement via `/conversations/{id}`).
     auto_compact_enabled: bool = True
     auto_compact_threshold: float = 0.80
+    # What a fold copies in verbatim besides the briefing: the operator's own messages,
+    # newest first up to this many tokens, and then the thread's most recently read files
+    # re-read fresh, each and all together capped. They count toward the new footprint, so
+    # their sum must stay well under the room the threshold leaves.
+    compaction_operator_messages_tokens: int = 20_000
+    compaction_restore_files: int = 5
+    compaction_restore_file_tokens: int = 8_000
+    compaction_restore_total_tokens: int = 25_000
 
     # Per-turn overhead (instructions, system prompt, tool schemas) the footprint estimator
     # assumes when a thread has no measured `TurnOverhead` record. The catalog measures

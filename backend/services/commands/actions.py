@@ -34,6 +34,7 @@ BUILTIN_ACTIONS: tuple[CommandSpec, ...] = (
         description=(
             "Fold this thread's earlier turns into a summary without waiting for the threshold."
         ),
+        argument_hint="what the summary should keep",
     ),
     CommandSpec(
         name="fork",

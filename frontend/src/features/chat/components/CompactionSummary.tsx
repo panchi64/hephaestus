@@ -16,7 +16,7 @@ import { QuotedBlock } from "./QuotedBlock";
  *  **Read as a readout, not as a passage.** A summary stands in for a whole stretch of a
  *  conversation, so rendered flat it is a screenful of undifferentiated prose sitting in
  *  the middle of the transcript, which is the one shape guaranteed not to be read. The
- *  summarizer is asked for eight fixed headings and the backend parses them, so the
+ *  summarizer is asked for fixed headings and the backend parses them, so the
  *  structure is already there; this sets it so the operator can *scan*: every heading
  *  engraved at once, each body clamped to a few lines, and one control on the section they
  *  actually want.
@@ -50,24 +50,39 @@ import { QuotedBlock } from "./QuotedBlock";
  */
 export function CompactionSummary(props: {
   sections: SummarySection[];
+  /** What the fold re-read after the briefing, listed as Anchors are set. */
+  restored: string[];
 }): JSX.Element {
   return (
-    <For each={props.sections}>
-      {(section) => (
-        <Row legend={section.key || "Briefing"}>
-          <Show
-            when={section.untrusted}
-            fallback={<SectionBody section={section} />}
+    <>
+      <For each={props.sections}>
+        {(section) => (
+          <Row legend={section.key || "Briefing"}>
+            <Show
+              when={section.untrusted}
+              fallback={<SectionBody section={section} />}
+            >
+              {/* The same "this came from outside" the fence makes to the model, in the
+                  form the operator reads. */}
+              <QuotedBlock>
+                <SectionBody section={section} />
+              </QuotedBlock>
+            </Show>
+          </Row>
+        )}
+      </For>
+      <Show when={props.restored.length > 0}>
+        <Row legend="Restored">
+          <Text
+            variant="micro"
+            tone="dim"
+            class="block break-words whitespace-pre-wrap"
           >
-            {/* The same "this came from outside" the fence makes to the model, in the
-                form the operator reads. */}
-            <QuotedBlock>
-              <SectionBody section={section} />
-            </QuotedBlock>
-          </Show>
+            {props.restored.join("\n")}
+          </Text>
         </Row>
-      )}
-    </For>
+      </Show>
+    </>
   );
 }
 

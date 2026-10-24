@@ -66,7 +66,13 @@ from services.conversation_view import estimate_tokens, project_tree
 from services.conversations import ConversationStore
 from services.registry import ModelRegistry, ResolvedModel
 
-from ._helpers import client_app, fold_aware_model, fold_with, patch_model_resolution
+from ._helpers import (
+    briefing_of,
+    client_app,
+    fold_aware_model,
+    fold_with,
+    patch_model_resolution,
+)
 from ._json import arr, json_body, n, obj, s
 
 
@@ -394,7 +400,7 @@ async def test_summarize_history_strips_a_leaked_think_block(raw: str, expected:
     summary = await summarize_history(
         messages=[ModelRequest(parts=[UserPromptPart(content="hi")])], **fold_with(raw)
     )
-    assert summary == expected
+    assert briefing_of(summary) == expected
 
 
 async def test_summarize_history_fails_when_only_reasoning_came_back():
@@ -424,7 +430,11 @@ async def test_compact_conversation_end_to_end():
         # The stored summary is labelled, so the model can't read it as the operator's own
         # words once the provider merges it with the next turn's prompt — and the event
         # carries the same string the divider renders on a reload.
-        assert outcome.summary == f"{COMPACT_PREAMBLE}\n\nthe story so far\n{COMPACT_CLOSE}"
+        assert outcome.summary.startswith(f"{COMPACT_PREAMBLE}\n\nthe story so far\n")
+        assert outcome.summary.endswith(COMPACT_CLOSE)
+        # The operator's own words ride along verbatim, oldest first.
+        assert [q in outcome.summary for q in ("q0", "q1", "q2", "q3")] == [True] * 4
+        assert outcome.summary.index("q0") < outcome.summary.index("q3")
         assert outcome.messages_compacted == 8  # q0/a0 … q3/a3
         assert _texts(await store.model_history(cid))[0] == outcome.summary
 
@@ -662,8 +672,8 @@ async def test_a_full_thread_compacts_before_the_turn_and_announces_it():
 
         events = [e.body for e in run.stream.replay() if e.body.type == "conversation.compacted"]
         assert len(events) == 1
-        assert events[0].summary.endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
-        assert events[0].summary.startswith(COMPACT_PREAMBLE)
+        assert events[0].summary.startswith(f"{COMPACT_PREAMBLE}\n\nFOLDED AWAY\n")
+        assert events[0].summary.endswith(COMPACT_CLOSE)
         assert events[0].conversation_id == cid
         assert events[0].messages_compacted > 0
         # The event carries the cost of the fold, so the divider can state it without the
@@ -678,7 +688,7 @@ async def test_a_full_thread_compacts_before_the_turn_and_announces_it():
         # The model's view now opens on the summary, and the turn that ran persisted
         # normally on top of it.
         replayed = _texts(await store.model_history(cid))
-        assert replayed[0].endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
+        assert replayed[0] == events[0].summary
         assert replayed[-2:] == ["next question", "the answer"]
 
 

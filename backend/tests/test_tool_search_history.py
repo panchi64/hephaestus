@@ -641,7 +641,8 @@ async def test_the_carried_reveal_persists_with_the_checkpoint():
         assert isinstance(checkpoint.parts[0], ToolAvailabilityDeltaPart)
         view = await store.messages_view(cid)
         divider = next(m for m in view if m.role == "compaction")
-        assert divider.content.endswith(f"so far\n{COMPACT_CLOSE}")
+        assert "so far\n" in divider.content
+        assert divider.content.endswith(COMPACT_CLOSE)
         assert divider.compaction_reason == "manual"
 
 

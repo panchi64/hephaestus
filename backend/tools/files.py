@@ -16,17 +16,19 @@ files (``tools/briefing.py``).
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import override
 
 from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness import FileSystem
+from pydantic_ai_harness.filesystem import FileSystemToolset
 
 from core.config import get_settings
 from core.diagnostics import render_tool_error
 from core.untrusted import wrap_untrusted
+from services.home.backend import Mount
 from services.home.paths import HOME, SCRATCH, absolute, climbs_out
 from services.home.table import RunHome
 from services.projects.worktree import WorktreeBusyError
@@ -124,15 +126,59 @@ class _HomeFiles(ReboundToolset):
         if log is not None and located is not None:
             await log.after(located[0], [located[1]])
         ledger = ledger_of(ctx.deps.caps)
-        if ledger is not None and located is not None:
+        if ledger is not None and located is not None and isinstance(path, str):
             if (fresh := hash_reported(name, result)) is not None:
-                ledger.record(thread_of(ctx.deps), str(located[0].root / located[1]), fresh)
+                host = str(located[0].root / located[1])
+                ledger.record(thread_of(ctx.deps), host, fresh, named=path)
         if home is None or located is None:
             return result
         mount, rel = located
-        if name == "read_file" and mount.place == SCRATCH and is_untrusted_spill(rel):
+        if name == "read_file" and _is_fenced(mount, rel):
             return wrap_untrusted(str(result), source="saved tool output")
         return await with_brief(ctx, home, [mount.place], result)
+
+
+@dataclass(frozen=True)
+class FileRead:
+    """A home file read outside a tool call, as ``files_read_file`` would have returned it."""
+
+    path: str
+    host: str
+    text: str
+    content_hash: str
+
+
+async def read_again(deps: RunDeps, path: str, *, max_chars: int) -> FileRead | None:
+    """``path`` read through the run's home, at most ``max_chars`` long, or ``None`` when
+    the home or the file is gone or the file is binary."""
+    home = await home_of(deps)
+    if home is None:
+        return None
+    try:
+        located = home.locate(path)
+    except ModelRetry:
+        return None
+    if located is None:
+        return None
+    reader = FileSystem[RunDeps](
+        root_dir=HOME,
+        max_read_lines=get_settings().sandbox_files_max_read_lines,
+        max_read_chars=max_chars,
+    ).get_toolset()
+    if not isinstance(reader, FileSystemToolset):
+        return None
+    result = await reader.read_file(path, workspace=home.backend)
+    fresh = hash_reported("read_file", result)
+    if fresh is None or fresh == BINARY:
+        return None
+    mount, rel = located
+    text = wrap_untrusted(result, source="saved tool output") if _is_fenced(mount, rel) else result
+    return FileRead(path=path, host=str(mount.root / rel), text=text, content_hash=fresh)
+
+
+def _is_fenced(mount: Mount, rel: str) -> bool:
+    """Whether a read of this file reaches the model fenced: a saved untrusted tool output."""
+    return mount.place == SCRATCH and is_untrusted_spill(rel)
 
 
 def _host_key(tool: str, args: dict[str, object], home: RunHome) -> str | None:
