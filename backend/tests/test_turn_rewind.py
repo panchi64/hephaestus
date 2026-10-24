@@ -357,6 +357,31 @@ async def test_a_regenerate_whose_restore_could_not_write_still_runs_and_tells_t
         assert notice.kind == "system" and "app.py" in (notice.body or "")
 
 
+@pytest.mark.parametrize("route", ["regenerate", "edit"])
+async def test_a_restore_aimed_at_an_invalid_point_is_a_404_and_writes_no_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, route: str
+):
+    patch_model_resolution(monkeypatch)
+    root = _project(tmp_path)
+    async with client_app() as (client, app):
+        conv, _user, assistant = await _conversation_with_a_turn(client, app, root)
+        preview = json_body(
+            await client.get(f"/conversations/{conv}/changes/rewind?messageId={assistant}")
+        )
+        response = await client.post(
+            f"/chat/{route}",
+            json={
+                "conversation_id": conv,
+                "message_id": "missing",
+                "prompt": "again",
+                "restore_files": {"preview_token": preview["previewToken"]},
+            },
+        )
+
+        assert response.status_code == 404
+        assert (root / "app.py").read_text() == "changed\n"
+
+
 async def test_edit_without_a_token_leaves_the_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):

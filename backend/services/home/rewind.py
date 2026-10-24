@@ -10,18 +10,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 from sqlmodel import Session, col, select
 
-from core.db import in_session
 from core.exceptions import StaleRewindError
 from models.thread_change import ThreadChange
 
-from .changes import ThreadChangeFile, ThreadChanges, latest_row, sha, sha_now, target_of
+from .changes import ThreadChangeFile, latest_row, sha, sha_now, target_of
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +53,21 @@ class RewindPlan:
     preview_token: str = ""
 
 
+class _ChangeRows(Protocol):
+    """The reads a rewind makes of the change store."""
+
+    async def run[T](self, work: Callable[[Session], T]) -> T: ...
+
+    def unseal(self, sealed: bytes) -> bytes: ...
+
+    def files(
+        self, session: Session, owner_id: str, conversation_id: str
+    ) -> dict[tuple[str, str], list[ThreadChange]]: ...
+
+
 class Rewinder:
-    def __init__(self, store: ThreadChanges) -> None:
-        self._store: ThreadChanges = store
+    def __init__(self, store: _ChangeRows) -> None:
+        self._store: _ChangeRows = store
 
     async def plan(
         self,
@@ -70,7 +82,7 @@ class Rewinder:
         def work(session: Session) -> RewindPlan:
             return self._plan(session, owner_id, conversation_id, prompt_ids, roots)[0]
 
-        return await in_session(self._store.engine, work)
+        return await self._store.run(work)
 
     async def apply(
         self,
@@ -95,7 +107,7 @@ class Rewinder:
                 raise StaleRewindError("the files changed since the rewind was previewed")
             return plan, actions
 
-        plan, actions = await in_session(self._store.engine, plan_work)
+        plan, actions = await self._store.run(plan_work)
 
         def write() -> list[_Action]:
             done: list[_Action] = []
@@ -130,7 +142,7 @@ class Rewinder:
                 session.add(row)
 
         if ids:
-            await in_session(self._store.engine, mark_work)
+            await self._store.run(mark_work)
         return plan
 
     def _plan(
@@ -181,9 +193,7 @@ class Rewinder:
             if disk == first.original_sha:
                 continue
             original = (
-                None
-                if first.original_enc is None
-                else self._store.vault.decrypt_bytes(first.original_enc)
+                None if first.original_enc is None else self._store.unseal(first.original_enc)
             )
             (plan.delete if original is None else plan.restore).append(file)
             entries.append(

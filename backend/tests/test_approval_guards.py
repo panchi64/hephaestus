@@ -133,7 +133,7 @@ async def _unplaceable(monkeypatch: pytest.MonkeyPatch, *, restored: bool) -> No
     async def no_home(_deps: RunDeps) -> None:
         return None
 
-    monkeypatch.setattr("routes.runs.home_of", no_home)
+    monkeypatch.setattr("agent.approval_guards.home_of", no_home)
     if restored:
 
         async def not_rebuilt(*_args: object) -> bool:

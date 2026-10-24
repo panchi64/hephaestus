@@ -475,6 +475,26 @@ async def test_a_script_that_called_personal_data_is_not_spilled(tmp_path: Path)
     assert _saved(workspace) == []
 
 
+async def test_a_script_that_called_only_external_tools_is_cut_and_not_saved(tmp_path: Path):
+    messages, workspace = await _run_tool(
+        tmp_path, RUN_CODE, {"code": "await x_small()\nawait external_read()"}
+    )
+    text = str(_content(messages, RUN_CODE))
+    assert "characters omitted" in text and len(text) < len(BIG)
+    assert "not saved" in text
+    assert _saved(workspace) == []
+
+
+async def test_a_script_that_called_external_and_another_personal_tool_is_not_cut(
+    tmp_path: Path,
+):
+    messages, workspace = await _run_tool(
+        tmp_path, RUN_CODE, {"code": "await external_read()\nawait mail_read()"}
+    )
+    assert BIG in str(_content(messages, RUN_CODE))
+    assert _saved(workspace) == []
+
+
 async def test_a_failed_save_gives_a_preview_without_a_path(tmp_path: Path):
     messages, workspace = await _run_tool(tmp_path, "x_big", fail=True)
     text = str(_content(messages, "x_big"))

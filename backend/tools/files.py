@@ -104,7 +104,7 @@ class _HomeFiles(ReboundToolset):
         tool_args = _in_home_terms(name, tool_args, home)
         path = tool_args.get("path")
         if name in _FILE_WRITES and home is not None:
-            _seed_ledger(ctx, home)
+            _seed_ledger(ctx, home, name, tool_args)
         refusal, pinned = check_read(ctx.deps, name, tool_args, home)
         if refusal is not None:
             return refusal
@@ -135,23 +135,33 @@ class _HomeFiles(ReboundToolset):
         return await with_brief(ctx, home, [mount.place], result)
 
 
-def _seed_ledger(ctx: RunContext[RunDeps], home: RunHome) -> None:
+def _host_key(tool: str, args: dict[str, object], home: RunHome) -> str | None:
+    if tool not in _FILE_WRITES and tool != "read_file":
+        return None
+    path = _in_home_terms(tool, args, home).get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        located = home.locate(path)
+    except ModelRetry:
+        return None
+    return str(located[0].root / located[1]) if located is not None else None
+
+
+def _seed_ledger(
+    ctx: RunContext[RunDeps], home: RunHome, name: str, tool_args: dict[str, object]
+) -> None:
     """Refill the ledger from the run's history, which a parked turn restored after a
-    restart still carries."""
+    restart still carries. Skipped once the ledger has a record for this call's file."""
     ledger = ledger_of(ctx.deps.caps)
     if ledger is None or not ctx.messages:
         return
-
-    def host_path(tool: str, args: dict[str, object]) -> str | None:
-        if tool not in _FILE_WRITES and tool != "read_file":
-            return None
-        try:
-            located = home.locate(str(_in_home_terms(tool, args, home).get("path")))
-        except ModelRetry:
-            return None
-        return str(located[0].root / located[1]) if located is not None else None
-
-    seed_from_history(ledger, thread_of(ctx.deps), ctx.messages, host_path)
+    target = _host_key(name, tool_args, home)
+    if target is not None and ledger.get(thread_of(ctx.deps), target) is not None:
+        return
+    seed_from_history(
+        ledger, thread_of(ctx.deps), ctx.messages, lambda tool, args: _host_key(tool, args, home)
+    )
 
 
 def check_read(

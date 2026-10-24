@@ -62,6 +62,14 @@ class NavigationMixin(StoreCore):
         self._move_leaf(conversation_id, tree.active_leaf_id)
         return True
 
+    async def is_reseat_point(
+        self, conversation_id: str, message_id: str, *, regenerate: bool
+    ) -> bool:
+        """Whether :meth:`regenerate_point` (``regenerate``) or :meth:`edit_point` would
+        accept ``message_id``, without moving the leaf."""
+        node = (await self.tree(conversation_id)).nodes.get(message_id)
+        return node is not None and not (regenerate and node.parent_id is None)
+
     async def regenerate_point(self, conversation_id: str, message_id: str) -> bool:
         """Set up a regenerate of the assistant turn whose branch node is
         ``message_id``: move the active leaf back to the user request that preceded

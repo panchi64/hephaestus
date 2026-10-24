@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -121,13 +121,13 @@ class ThreadChanges:
         self._vault: Vault = vault
         self._limit: int = max_kept_bytes
 
-    @property
-    def engine(self) -> Engine:
-        return self._engine
+    async def run[T](self, work: Callable[[Session], T]) -> T:
+        """Run ``work`` in a committed session on this store's database."""
+        return await in_session(self._engine, work)
 
-    @property
-    def vault(self) -> Vault:
-        return self._vault
+    def unseal(self, sealed: bytes) -> bytes:
+        """The plaintext of a kept original."""
+        return self._vault.decrypt_bytes(sealed)
 
     async def before(
         self,
