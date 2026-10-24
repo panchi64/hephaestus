@@ -35,8 +35,9 @@ export const LOAD_CAP = 5;
 /** Live sub-agents past this add no more aurora curtains. */
 export const AURORA_MAX = 6;
 /** The first curtain's angle on the limb (rad, 0 to the right, negative upward); the
- *  rest follow 0.16 rad apart toward the right, all left of the viewport's edge. */
-export const AURORA_FROM = -1.9;
+ *  rest follow 0.16 rad apart toward the pole, which sits on the viewport's right
+ *  edge, so all of them stay on screen. */
+export const AURORA_FROM = -2.5;
 
 /** One strike is `FLASHES` flashes, each `FLASH_MS` long, starting up to
  *  `FLASH_SPREAD_MS` apart; the whole strike is over by `STRIKE_LIFE_MS`. */
@@ -60,10 +61,10 @@ export function advancePhase(phase: number, dt: number, load: number): number {
 }
 
 /** Unit vector toward the sun, in the disc's frame (x right, y down, z toward the
- *  viewer): from the upper left and in front, so every part of the disc that can be
- *  on screen is lit and the night side stays past the viewport's edge. */
+ *  viewer): raking from the left. Only the disc's upper-left quarter is ever on
+ *  screen, so all of it is day and the terminator stays past the right edge. */
 export const LIGHT: readonly [number, number, number] = (() => {
-  const v = [-0.5, -0.45, 0.75];
+  const v = [-1, -0.3, 0.12];
   const l = Math.hypot(...v);
   return [v[0] / l, v[1] / l, v[2] / l];
 })();
@@ -79,11 +80,12 @@ export interface Disc {
   r: number;
 }
 
-/** The planet in viewport CSS px: low in the bottom-right corner, sized by height,
- *  and by width on a narrow screen. */
+/** The planet in viewport CSS px: its centre on the right edge, a quarter radius
+ *  below the bottom, so only its upper-left shoulder shows in the corner. Sized by
+ *  height, and by width on a narrow screen. */
 export function planetDisc(width: number, height: number): Disc {
-  const r = Math.min(0.72 * height, 0.9 * width);
-  return { cx: width - 0.54 * r, cy: 0.92 * height, r };
+  const r = Math.min(0.96 * height, 1.2 * width);
+  return { cx: width, cy: height + 0.25 * r, r };
 }
 
 /** A random point on the visible disc, for an event's lightning. */
@@ -103,8 +105,8 @@ export function strikePoint(
     if (nx * nx + ny * ny < STRIKE_REACH) return { x, y };
   }
   return {
-    x: Math.min(cx + 0.4 * r, width - MARGIN),
-    y: Math.max(cy - 0.4 * r, MARGIN),
+    x: Math.max(cx - 0.4 * r, MARGIN),
+    y: Math.max(cy - 0.5 * r, MARGIN),
   };
 }
 

@@ -48,15 +48,29 @@ function seeded(seed: number): () => number {
 }
 
 describe("planetDisc", () => {
-  test("sits low in the bottom-right corner, sized by height", () => {
+  test("centres on the right edge below the bottom, sized by height", () => {
     const { cx, cy, r } = planetDisc(1600, 1000);
-    expect(r).toBe(720);
-    expect(cx).toBeCloseTo(1600 - 0.54 * 720);
-    expect(cy).toBe(920);
+    expect(r).toBe(960);
+    expect(cx).toBe(1600);
+    expect(cy).toBe(1240);
   });
 
   test("is sized by width on a narrow screen", () => {
-    expect(planetDisc(390, 844).r).toBeCloseTo(351);
+    expect(planetDisc(390, 844).r).toBeCloseTo(468);
+  });
+
+  test("shows only a corner of the disc", () => {
+    for (const [w, h] of [
+      [1600, 1000],
+      [390, 844],
+      [3840, 2160],
+    ]) {
+      const { cx, cy, r } = planetDisc(w, h);
+      // Visible: x ≤ cx and y ≤ cy - r/4, under a quarter of the disc.
+      expect(cx).toBe(w);
+      expect(cy - h).toBeCloseTo(0.25 * r);
+      expect(cy - r).toBeGreaterThan(0);
+    }
   });
 });
 

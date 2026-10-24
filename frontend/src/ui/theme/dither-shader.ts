@@ -175,9 +175,9 @@ float noise(vec2 p) {
 
 /** The densest aurora curtain at a disc-relative point (unit radius). */
 float aurora(vec2 d, float r) {
-  // The curtains reach from about -2.1 to -0.9 rad: the top of the limb, either
-  // side of the pole, where every one of them is on screen.
-  if (uAurora < 0.5 || r < 0.9 || r > 1.16 || d.y > 0.0 || d.x < -0.6) return 0.0;
+  // The curtains reach from about -2.7 to -1.5 rad: the upper-left limb up to the
+  // pole, where every one of them is on screen.
+  if (uAurora < 0.5 || r < 0.9 || r > 1.16 || d.y > 0.0 || d.x > 0.1) return 0.0;
   float a = atan(d.y, d.x);
   float best = 0.0;
   // Curtains are 0.16 rad apart and reach 0.21, so only the nearest three can show.
