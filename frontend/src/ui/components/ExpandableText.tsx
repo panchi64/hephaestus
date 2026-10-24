@@ -1,5 +1,6 @@
 import { Show, createSignal, splitProps, type JSX } from "solid-js";
 import { cx } from "../cx";
+import { clipText } from "./clipText";
 import { Text, type TextTone, type TextVariant } from "../primitives/Text";
 
 export interface ExpandableTextProps {
@@ -28,10 +29,7 @@ export function ExpandableText(props: ExpandableTextProps): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const limit = () => local.limit ?? 160;
   const truncatable = () => local.text.length > limit();
-  const shown = () =>
-    !truncatable() || open()
-      ? local.text
-      : local.text.slice(0, limit()).trimEnd() + "…";
+  const shown = () => (open() ? local.text : clipText(local.text, limit()));
 
   return (
     <Text

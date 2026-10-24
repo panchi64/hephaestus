@@ -187,8 +187,8 @@ async def generate_title(
         # asyncio.TimeoutError is an Exception subclass (caught below); CancelledError
         # is not, so a cancelled run still propagates rather than degrading to a title.
         result = await (asyncio.wait_for(run, timeout_s) if timeout_s else run)
-    except Exception as exc:  # noqa: BLE001 — titling is best-effort, never fails a turn
-        logger.warning("conversation title generation failed: %s", exc)
+    except Exception:  # titling is best-effort, never fails a turn
+        logger.warning("conversation title generation failed", exc_info=True)
         return None
     return clean_title(result.output)
 

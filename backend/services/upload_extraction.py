@@ -241,7 +241,7 @@ def pdf_has_text_layer(raw: bytes) -> bool:
     has no text layer to read). Any read failure ⇒ assume no text layer."""
     try:
         pdf = pdfium.PdfDocument(raw)
-    except Exception:  # an unreadable PDF simply has no detectable text
+    except pdfium.PdfiumError, ValueError:  # an unreadable PDF has no detectable text
         return False
     try:
         for index in range(min(len(pdf), _TEXT_PROBE_PAGES)):

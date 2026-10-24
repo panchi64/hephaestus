@@ -65,8 +65,8 @@ const TIER: Record<NonNullable<Review["tier"]>, string> = {
  *  not: it is the model's own claim, and reading it beside the verdict is how an operator
  *  notices a command that declared less than it did. */
 const REACH: Record<NonNullable<Review["reach"]>, string> = {
-  workspace: "Declared reach: the worktree.",
-  network: "Declared reach: the worktree and the network.",
+  offline: "Declared reach: the VM, offline.",
+  network: "Declared reach: the VM and the allowed domains.",
   host: "Declared reach: your whole machine.",
 };
 
@@ -185,6 +185,12 @@ export function ReviewCard(props: {
                 {REACH[reach()]}
               </Text>
             )}
+          </Show>
+          <Show when={props.review.reach === "offline" && props.review.network}>
+            <Text variant="micro" tone="dim">
+              It installs, clones or names an address, so it runs with the
+              allowed domains anyway.
+            </Text>
           </Show>
           <Show when={props.review.stage}>
             {(stage) => (

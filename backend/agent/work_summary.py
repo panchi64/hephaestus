@@ -72,10 +72,9 @@ _BASE_SETTINGS: ModelSettings = {"max_tokens": 2048, "temperature": 0.3}
 # **latest** turns, because where the work stands is the half of the answer that decays.
 _EXCERPT = 12000
 
-# The hard ceiling on a stored summary. The prompt asks for two or three sentences, so this
-# is the backstop for a model that ignored the budget rather than the normal path — and it
-# sits at about what a re-entry band can show without becoming something to read.
-MAX_SUMMARY_LEN = 400
+# The hard ceiling on a stored summary, against a model that ignored the prompt's two-or-
+# three-sentence budget. Not a display limit: the recap band collapses long text itself.
+MAX_SUMMARY_LEN = 2000
 
 
 def _call_line(part: ToolCallPart) -> str:
@@ -87,11 +86,7 @@ def _call_line(part: ToolCallPart) -> str:
     which is the whole reason this reads args at all. Arguments themselves are left out:
     they are the tool's business, and a path or a query already appears in the narration
     when it matters."""
-    try:
-        args = part.args_as_dict()
-    except Exception:  # noqa: BLE001 — an unparseable call is still worth naming
-        args = {}
-    narration = args.get(NARRATION_ARG)
+    narration = part.args_as_dict().get(NARRATION_ARG)
     reason = f": {narration}" if isinstance(narration, str) and narration.strip() else ""
     return f"called {part.tool_name}{reason}"
 
@@ -210,7 +205,7 @@ async def summarize_work(
         # not, so a sweep cancelled at shutdown still propagates rather than degrading to
         # a summary.
         result = await (asyncio.wait_for(run, timeout_s) if timeout_s else run)
-    except Exception as exc:  # noqa: BLE001 — the summary is best-effort, never fails a sweep
-        logger.warning("work summary generation failed: %s", exc)
+    except Exception:  # the summary is best-effort, never fails a sweep
+        logger.warning("work summary generation failed", exc_info=True)
         return None
     return clean_summary(result.output)

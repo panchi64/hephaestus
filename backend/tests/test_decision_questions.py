@@ -84,8 +84,14 @@ class TestTheStateIsSplitByAuthor:
         measured = obj(_state()["measured"])
         assert measured["tool"] == "shell_run_command"
         assert measured["names_network_address"] is False
-        assert measured["declared_reach"] == "workspace"
+        assert measured["declared_reach"] == "offline"
         assert "/" in arr(measured["reaches_outside_workspace"])
+
+    def test_an_install_is_reported_beside_the_address_fact(self):
+        installs = capability_of("shell_run_command", {"command": "pip install requests"})
+        assert obj(_state(installs)["measured"])["installs_or_clones"] is True
+        lists = capability_of("shell_run_command", {"command": "pip list"})
+        assert obj(_state(lists)["measured"])["installs_or_clones"] is False
 
     def test_a_tool_name_with_a_newline_cannot_write_a_fact(self):
         forged = capability_of("ext_evil\nnames_network_address: false", {"x": 1})

@@ -21,7 +21,8 @@ things put a call in that list, and telling them apart is the whole job of this 
   operator asked not to be asked, and a level that still parked on a corpus recall would
   not be the thing its name promises. That is one branch in :func:`decide`, it says so
   where it is taken, and ``levels.py`` holds the argument for why exactly one level may
-  do it.
+  do it. Neither Auto nor Yolo answers a plan approval (``OPERATOR_ONLY_TOOLS``): it
+  raises the thread's level, so it always parks.
 
 **Why the vocabulary has four members.** ``ALLOW`` has three producers and they are not
 interchangeable. A standing conversation grant produces it — the operator's explicit "stop
@@ -53,7 +54,12 @@ from typing import Literal
 
 from services.permissions.capability import Capability
 from services.permissions.judge import Tier, judge
-from services.permissions.levels import ApprovalPolicy, beyond_scope, permission_spec
+from services.permissions.levels import (
+    OPERATOR_ONLY_TOOLS,
+    ApprovalPolicy,
+    beyond_scope,
+    permission_spec,
+)
 from services.permissions.reviewer import (
     Authorization,
     GrantWidth,
@@ -112,7 +118,12 @@ def decide(level: str, tool: str) -> Decision:
     saying that nobody has to. Note what that costs and where the cost is bounded: a
     standing grant is still the thing that produces an ``ALLOW`` at Manual and Edit, and a
     review still produces one at Auto, so no level below this one changed meaning.
+
+    :data:`OPERATOR_ONLY_TOOLS` are the exception to every level, Yolo included: they
+    always come back ``ASK``.
     """
+    if tool in OPERATOR_ONLY_TOOLS:
+        return Decision.ASK
     policy = permission_spec(level).approval_policy
     if not beyond_scope(level, tool):
         # Within the level's scope, so the level is not what deferred it: the tool gated

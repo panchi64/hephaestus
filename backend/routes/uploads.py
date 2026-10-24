@@ -296,4 +296,4 @@ async def delete_upload(upload_id: str, request: Request) -> None:
         raise HTTPException(status_code=404, detail="upload not found") from None
     # The upload may also be a chat attachment; drop the now-dangling reference from any
     # message that listed it, so the conversation never points at bytes that are gone.
-    await deps.store(request).detach_upload(OPERATOR_ID, upload_id)
+    await deps.store(request).detach_uploads(OPERATOR_ID, [upload_id])

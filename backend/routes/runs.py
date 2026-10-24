@@ -1,12 +1,12 @@
 """Substrate HTTP surface: observe, stream, and cancel a Run.
 
-These are the transport-level endpoints every orchestrator inherits. Creating a
-Run is a feature concern (the chat and agent routes), not here — those call
-``deps.registry(request).submit(...)`` and hand the client back the run id.
+Creating a Run is a feature concern (the chat and agent routes call
+``deps.registry(request).submit(...)``), not here.
 """
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal
@@ -17,7 +17,9 @@ from pydantic_ai import ToolApproved, ToolDenied
 from pydantic_ai.messages import ToolCallPart
 
 from agent import ParkedTurn, build_resume_orchestrator
+from agent.approval_guards import guarded_approvals
 from agent.gating import GrantApproved
+from agent.recompose import RecomposeError, recompose
 from core.config import get_settings
 from routes import deps
 from runs import (
@@ -28,16 +30,18 @@ from runs import (
     parse_last_event_id,
     sse_response,
 )
+from runs.run import StopCause
 from services.answers import (
     AnswerError,
     answered_questions,
     questions_of,
     render_answer,
 )
-from services.approval_grants import ONCE_ONLY_TOOLS, GrantInfo, grant_scopes, grant_width
+from services.approval_grants import GrantInfo, grant_scopes, grant_width, grantable
 from services.approval_ledger import LedgerEntry
 from services.plan_mode import PLAN_SUBMIT_TOOL
 from services.settings_store import get_inactivity_timeout, get_wall_clock_timeout
+from services.subagents import SubtreeStopper
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -45,11 +49,9 @@ router = APIRouter(prefix="/runs", tags=["runs"])
 def refusal_message(intent: str, written: str | None) -> str:
     """What the model is told in place of the result, when the operator said no.
 
-    The two are not the same instruction and a model handed the wrong one wastes the turn:
-    a denial that read as "try again" produces a second attempt at something already
-    refused, and a revision request that read as a flat no produces an apology and a stop.
-    The operator's own words are quoted where they wrote any; the framing around them is
-    what the intent decides.
+    Denial and revision are different instructions: a denial read as "try again" repeats a
+    refused act, and a revision read as a flat no ends in an apology. The operator's words
+    are quoted; the intent decides the framing.
     """
     if intent == "revise":
         detail = f": {written}" if written else ", without saying what to change"
@@ -63,8 +65,8 @@ def refusal_message(intent: str, written: str | None) -> str:
 
 
 class RunView(BaseModel):
-    # The older fields serialize as snake_case. The two conversation fields serialize as
-    # camelCase to match the newer surfaces (corpus, uploads, notifications).
+    # The older fields are snake_case; the two conversation fields are camelCase to match
+    # the newer surfaces (corpus, uploads, notifications).
     id: str
     kind: str
     status: str
@@ -75,15 +77,12 @@ class RunView(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     last_seq: int
-    # Lets the dashboard label and link an in-flight run without a second lookup.
     conversation_id: str | None = Field(default=None, serialization_alias="conversationId")
     conversation_title: str | None = Field(default=None, serialization_alias="conversationTitle")
 
 
 def _view(run: Run, title: str | None) -> RunView:
-    """One run projected for the client. The conversation title is passed in rather than
-    looked up here: the listing resolves every run's title in a single query, and a helper
-    that reached for the store itself would put that back to one read per run."""
+    """One run for the client; the title is passed in so a listing resolves all in one query."""
     return RunView(
         id=run.id,
         kind=run.kind,
@@ -109,8 +108,7 @@ def _require_run(request: Request, run_id: str) -> Run:
 
 @router.get("", response_model=list[RunView])
 async def list_runs(request: Request, active: Annotated[bool, Query()] = True) -> list[RunView]:
-    """The operator's runs, newest first. ``active=True`` (default) returns only
-    the ones still in flight (not yet terminal) — what the home page surfaces."""
+    """The operator's runs, newest first; ``active=True`` (default) keeps only non-terminal ones."""
     runs = deps.registry(request).list(deps.OPERATOR_ID)
     if active:
         runs = [r for r in runs if not r.is_terminal]
@@ -162,15 +160,29 @@ async def cancel_run(
         # Before the cancel, so the run ending finds the inbox already held.
         inbox = registry.inbox(run.conversation_id, run.owner_id)
         held = (inbox, inbox.stop())
+    if run is not None and not run.is_terminal and run.stop_cause is None:
+        run.stop_cause = StopCause.operator
     cancelled = await registry.cancel(run_id)
     if not cancelled:
         if held is not None:
             held[0].undo_stop(held[1])
-        # Unknown, or already terminal — surface the distinction.
         run = registry.get(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
         raise HTTPException(status_code=409, detail=f"run already {run.status.value}")
+    stopper = deps.capabilities(request).get_optional(SubtreeStopper)
+    if run is not None and run.conversation_id and stopper is not None:
+        # The stopped agents' reports must not start a turn on the thread just stopped.
+        inbox = registry.inbox(run.conversation_id, run.owner_id)
+        mark = None if held is not None else inbox.stop()
+        try:
+            stopped = await stopper.stop_below(run.owner_id, run.conversation_id)
+        except BaseException:
+            if mark is not None:
+                inbox.undo_stop(mark)
+            raise
+        if mark is not None and not stopped:
+            inbox.undo_stop(mark)
     return {"status": "cancelling"}
 
 
@@ -179,38 +191,30 @@ class ApprovalDecision(BaseModel):
     approved: bool
     message: str | None = None  # shown to the model on denial
     override_args: dict[str, object] | None = None  # replace args on approval
-    # How long this yes lasts. "once" is this call only. "conversation" records an
-    # auto-approval grant so the same *act* isn't re-prompted for the rest of the thread —
-    # which on a tool that runs a command is that command, derived here from the parked
-    # call. "conversation_tool" is the operator's wider pick: the whole tool, everything it
-    # runs, offered on the card in its own words because it is a materially larger thing to
-    # say and the narrow one must stay the easy path.
+    # "once" is this call only. "conversation" records a grant so the same act isn't
+    # re-prompted for the thread (for a command tool, that command, derived from the parked
+    # call). "conversation_tool" is the wider pick, the whole tool, offered separately
+    # because it says far more and the narrow one must stay the easy path.
     scope: Literal["once", "conversation", "conversation_tool"] = "once"
-    # Which kind of no this is. Read only when `approved` is False, and it changes nothing
-    # about what runs — both stop the call — only what the model is told happened. "deny"
-    # is the operator refusing the act; "revise" is them asking for a different version of
-    # it, which is a materially different instruction and the one a model most often gets
-    # wrong on a bare refusal. Generic rather than plan-specific: any deferred call can be
-    # sent back for another attempt, and the surface that most needs it (a submitted plan)
-    # is only the first to offer it.
+    # Read only when `approved` is False; both stop the call and differ only in what the
+    # model is told. "revise" asks for a different version, which models often mishandle
+    # as a bare refusal. Generic: any deferred call can be sent back, a submitted plan is
+    # just the first surface to offer it.
     intent: Literal["deny", "revise"] = "deny"
 
 
 class QuestionReply(BaseModel):
     """What the operator said to one question."""
 
-    # The labels they chose, exactly as offered. Labels rather than indices so a reply
-    # cannot silently land on the wrong option if the two sides ever disagree about
-    # order — and the server checks them against the parked call either way.
+    # Labels as offered, not indices, so a reply can't land on the wrong option if the sides
+    # disagree about order; the server checks them against the parked call regardless.
     selections: list[str] = Field(default_factory=list)
-    # What they wrote instead of, or in addition to, choosing. Always available: the
-    # options are the model's guesses at the answer, not the range of possible answers.
+    # Always available: the options are the model's guesses, not the range of answers.
     text: str | None = None
 
 
 class QuestionAnswer(BaseModel):
-    """One parked ``ask_user`` call, answered. ``replies`` is positional — one per
-    question in the call, in the order they were asked."""
+    """One parked ``ask_user`` call, answered; ``replies`` is positional, one per question."""
 
     tool_call_id: str
     replies: list[QuestionReply]
@@ -222,39 +226,29 @@ class ApprovalDecisions(BaseModel):
 
 
 class ApprovalOutcome(BaseModel):
-    """What settling the park did — the resume, and what became of the standing yeses.
+    """What settling the park did: the resume, and what became of the standing yeses.
 
-    The second half is here because it can differ from what was asked for, silently and
-    for a good reason. A "for this conversation" opt-in on a command no scope could stand
-    for records **nothing** (`services/approval_grants.py`), and a client that assumed
-    otherwise would leave the operator with a ticked box, no chip on the strip and no
-    account of why. So the route says what it wrote and which calls it could not write,
-    and the client is left with something true to say.
+    A "for this conversation" opt-in on a command no scope could stand for records nothing
+    (`services/approval_grants.py`), so the response says what was written and which calls
+    could not be, rather than leaving a ticked box with no chip and no explanation.
     """
 
     status: Literal["resuming"] = "resuming"
-    #: The scopes recorded by this call, as the words each names — `[]` for a whole-tool
-    #: grant, and the whole list empty when nothing was asked for.
+    #: The scopes recorded, as their words (`[]` for a whole-tool grant).
     granted: list[list[str]] = Field(default_factory=list)
-    #: The calls whose conversation opt-in could not be scoped, by tool call id. The
-    #: approval itself still stands; only the standing part of it was refused.
+    #: Tool call ids whose conversation opt-in could not be scoped; the approval itself stands.
     unscoped: list[str] = Field(default_factory=list)
 
 
 def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[GrantInfo]) -> bool:
-    """Whether the grant that settled this call still covers it, **at the width it needed**.
+    """Whether the grant that settled this call still covers it, at the width it needed.
 
-    A grant can be revoked, or lapse, while the run waits — so an allow made without the
-    operator is re-checked before the turn resumes. What it is re-checked *against* is the
-    part this has to get right, because the two widths stopped buying the same thing: only
-    a whole-tool grant clears an act nobody can undo
-    (:func:`services.permissions.decide.review`).
-
-    That one allow is re-checked at the wider width and nothing less. Asking only "is this
-    covered at all" would, on a command-scoped tool, let a surviving grant over one command
-    stand in for the revoked whole-tool one — and that narrower grant is precisely the one
-    the risk axis refused. Every other grant-driven allow keeps the question it always had:
-    covered by a grant of either width, since either is what produced it.
+    A grant can be revoked or lapse while the run waits, so the allow is re-checked before
+    resume. Only a whole-tool grant clears an act nobody can undo
+    (:func:`services.permissions.decide.review`), so that allow is re-checked at the wider
+    width: otherwise a surviving command-scoped grant would stand in for the revoked
+    whole-tool one, which the risk axis refused. Other grant-driven allows need a grant of
+    either width.
     """
     width = grant_width(call.tool_name, call.args_as_dict(), active)
     return width == "tool" if settled.needs_whole_tool else width != "none"
@@ -262,12 +256,10 @@ def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[
 
 @router.post("/{run_id}/approve", status_code=202)
 async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) -> ApprovalOutcome:
-    """Settle everything a parked run is awaiting — permissions and answers — then
-    resume it.
+    """Settle everything a parked run awaits, permissions and answers, then resume it.
 
-    One endpoint for both because a run parks once and resumes once: a turn that stopped
-    on an approval *and* a question is waiting on a single set, and a client that could
-    send half of it would leave the other half with no way to arrive.
+    One endpoint because a run parks and resumes once: a turn stopped on an approval and a
+    question waits on a single set.
     """
     registry = deps.registry(request)
     run = registry.get(run_id)
@@ -277,21 +269,15 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         raise HTTPException(status_code=409, detail=f"run is not awaiting approval ({run.status})")
 
     parked: ParkedTurn = run.parked_payload
-    # The operator only decides the calls that weren't already settled without them — by
-    # an active conversation grant, or by the thread's permission level refusing outright.
-    # Those ride on the parked payload and merge back below.
+    # The operator decides only calls not already settled by an active grant or by the
+    # permission level refusing outright; those ride on the parked payload and merge back below.
     call_by_id = {call.tool_call_id: call for call in parked.requests.approvals}
     pending = set(call_by_id) - set(parked.settled)
-    # The questions are pending too, and unconditionally: nothing settles one ahead of
-    # the operator. Both piles are checked against one set because the run resumes once —
-    # a body covering only the approvals would resume a turn whose question still has no
-    # answer, and Pydantic AI would have nothing to hand that call.
+    # Questions are always pending (nothing settles one ahead of the operator), and the run
+    # resumes once, so a body missing an answer would resume a call with nothing to hand it.
     asked = {call.tool_call_id: call.args_as_dict() for call in parked.requests.calls}
-    # Each pile is checked against *its own* ids, not just against the union. A body
-    # that answered an approval — or decided a question — would satisfy a union check
-    # while leaving the call it named with the wrong kind of result: the two piles are
-    # settled by different code below, and each would then index the map the id is not
-    # in. Checked separately, a swapped id is a 400 rather than a 500.
+    # Checked per pile, not against the union: a swapped id would pass a union check and
+    # then index the wrong map below, giving a 500 instead of a 400.
     decided = {d.tool_call_id for d in body.decisions}
     answered = {a.tool_call_id for a in body.answers}
     if decided != pending or answered != set(asked):
@@ -304,15 +290,21 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             ),
         )
 
-    # The answers, rendered from the *parked arguments* rather than from anything the
-    # client sent as prose. The client says which options it chose; what those options
-    # said is read back off the call the model actually made, so the transcript and the
-    # model cannot be shown two different questions.
+    # A guarded approval is the operator's alone, refused before anything below changes.
+    if parked.agent is None and any(d.override_args is not None for d in body.decisions):
+        # A restored park has no deps yet and the guard needs their home, so a token's
+        # request may recompose before the 403 (idempotent). Failure is reported below.
+        with contextlib.suppress(RecomposeError):
+            _ = await recompose(registry, run, parked)
+    guarded = await guarded_approvals(body.decisions, parked, deps.app_state(request).settings)
+    if guarded:
+        deps.require_operator(request)
+
+    # Rendered from the parked arguments, not client prose: the client names the options
+    # chosen and their text is read off the model's actual call, so transcript and model
+    # can't see different questions.
     answers: dict[str, str] = {}
-    # The same reply as structure, for the card the client draws beside the transcript.
-    # Built from the same two inputs the prose is — the parked call's questions and the
-    # replies just validated against them — because a client that had to read the answer
-    # back out of the prose would be parsing a format it does not own.
+    # The same replies as structure for the client's card, built from the same inputs.
     announced: list[QuestionAnswered] = []
     for answer in body.answers:
         replies = [(r.selections, r.text) for r in answer.replies]
@@ -332,15 +324,14 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
                 ],
             )
         )
-    # Emitted only once every answer has rendered: a body whose second answer is refused
-    # settles nothing, so a frame for its first would announce an answer the run never got.
+    # Emitted only after every answer renders: a refused second answer settles nothing, so
+    # an earlier frame would announce an answer the run never got.
     for frame in announced:
         _ = run.emit(frame)
 
     grants = deps.approval_grants(request)
-    # Re-validate the grant-driven pre-approvals against the *current* grants: a grant
-    # the operator revoked — or that lapsed by TTL — while the run was parked must not
-    # still auto-run its call.
+    # Re-validate grant-driven pre-approvals against current grants: a grant revoked or
+    # lapsed while parked must not still auto-run its call.
     grant_approved = {
         call_id for call_id, o in parked.settled.items() if isinstance(o, GrantApproved)
     }
@@ -351,69 +342,53 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     )
     decisions: dict[str, ToolApproved | ToolDenied] = {}
     for call_id, outcome in parked.settled.items():
-        # The same `isinstance` the set above is built from, rather than a lookup in it:
-        # the re-check below needs the grant's *width* off the decision, which only the
-        # narrowed type carries.
+        # isinstance rather than the set above: the re-check needs the grant's width, which
+        # only the narrowed type carries.
         if not isinstance(outcome, GrantApproved):
-            # Settled on grounds a grant has nothing to do with, and so nothing to
-            # re-validate against. Three of them reach here: a refusal the permission
-            # level made when the turn parked (the operator was never asked, and a grant
-            # recorded since covers a tool the level does not permit at all); a call
-            # Auto's review cleared on its own grounds; and an **approval the level gave
-            # outright** at the top level, where nothing is asked and the grants are never
-            # consulted — a Yolo turn reaches this path when it parks on a *question*
-            # rather than an approval (``agent/turn.py``). None of the three leaves a
-            # grant behind, so all three would be denied by a grant check that took that
-            # silence for a revocation. A review that cleared a call *because* of a grant
-            # is marked as the grant's (``agent/gating.py``) and so is not in this branch:
-            # what cleared it is revocable, and is re-checked.
+            # Settled on grounds no grant touches, so nothing to re-validate: a refusal by
+            # the permission level (a later grant covers a tool the level forbids anyway);
+            # a call Auto's review cleared on its own grounds; and an approval the top level
+            # gave outright (a Yolo turn parked on a question, ``agent/turn.py``). None
+            # leaves a grant behind, so a grant check would misread that as revocation. A
+            # review that cleared a call because of a grant is marked as the grant's
+            # (``agent/gating.py``) and is re-checked.
             decisions[call_id] = outcome
         elif (call := call_by_id.get(call_id)) is not None and _still_covered(
             call, outcome, active
         ):
             decisions[call_id] = ToolApproved()
         else:
-            # The grant was revoked or expired while parked; either way it no longer
-            # covers the call, so don't assert a cause the transcript can't stand behind.
+            # Revoked or expired while parked; the message names neither cause.
             decisions[call_id] = ToolDenied(
                 message="This tool's conversation auto-approval is no longer in effect."
             )
 
-    # New "allow for this conversation" grants the operator chose this batch, as
-    # (tool, command scope, decisive) rows. At the narrow width the scope is derived
-    # **here, from the call as it will actually run** rather than sent by the client: what
-    # the operator is saying yes to is
-    # the act about to be taken, and a scope the client could name is a scope it could
-    # widen. That is the call's own arguments, or the ones the operator replaced them with
-    # — an override *is* the act they approved, and scoping the standing yes to the command
-    # they edited away would leave a grant behind for something nobody is going to run. A
-    # command-running tool contributes one grant per stage of its command line, and none at
-    # all when the command could not be read (`services/approval_grants.py`); the ids of
-    # those ride back on the response, since the operator asked for something they did not
-    # get. The wider width derives nothing — it names the tool, which the parked call
-    # already says — so it cannot fail that way and never appears in `unscoped`.
+    # New "allow for this conversation" grants chosen this batch, as (tool, command scope,
+    # decisive) rows. At the narrow width the scope is derived here from the call as it will
+    # run (the operator's override if any, since that is the act approved), never sent by the
+    # client, which could otherwise widen it. A command tool yields one grant per stage of
+    # its command line, none if unreadable (`services/approval_grants.py`); those ids go
+    # back in `unscoped`. The wider width names the tool, so it derives nothing and never
+    # appears there.
     to_grant: list[tuple[str, tuple[str, ...], bool]] = []
     unscoped: list[str] = []
     for decision in body.decisions:
         if decision.approved:
             decisions[decision.tool_call_id] = ToolApproved(override_args=decision.override_args)
             granted_call = call_by_id[decision.tool_call_id]
-            # A once-only tool's call is approved; its *scope* is not honoured — and it is
-            # not reported as unscoped either, since nothing about the call is what stopped
-            # it from being granted. Silently rather than as a 400: the client offering the
-            # checkbox is not wrong to have offered it, and the operator's decision on this
-            # call still stands.
+            # A guarded or ungrantable call is approved but its scope is silently not honoured
+            # (not a 400, not `unscoped`): the client was right to offer the checkbox.
             if (
                 decision.scope != "once"
                 and parked.conversation_id is not None
-                and granted_call.tool_name not in ONCE_ONLY_TOOLS
+                and decision.tool_call_id not in guarded
+                and grantable(
+                    granted_call.tool_name,
+                    parked.requests.metadata.get(decision.tool_call_id),
+                )
             ):
                 if decision.scope == "conversation_tool":
-                    # The wider pick names the tool, so there is nothing to derive and
-                    # nothing that can fail to derive: a command this walk cannot read is
-                    # still grantable at this width, because the operator is not saying
-                    # anything about the command. It is never reported as unscoped for the
-                    # same reason — they got exactly what they asked for.
+                    # Nothing to derive: even an unreadable command is grantable at this width.
                     scopes: list[tuple[str, ...]] | None = [()]
                 else:
                     effective = (
@@ -433,11 +408,8 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             decisions[decision.tool_call_id] = ToolDenied(
                 message=refusal_message(decision.intent, decision.message)
             )
-            # A refused plan is the one refusal that leaves a record behind: the document
-            # is still on screen, and it must not go on saying it is waiting for an answer
-            # that has arrived. The status is all that moves — the plan itself stays, since
-            # a revision is written against it and a rejection is worth still being able to
-            # read.
+            # The plan stays on screen and must stop saying it awaits an answer; only its
+            # status moves, since a revision is written against it.
             if call_by_id[decision.tool_call_id].tool_name == PLAN_SUBMIT_TOOL and (
                 conversation := parked.conversation_id
             ):
@@ -448,49 +420,52 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
                     run=run,
                 )
 
-    # The approval is decided now, one way or another (approved, denied, or already
-    # grant-covered) — resolve the park's notification here rather than waiting for the
-    # run to reach terminal. Idempotent: a run with no pending approval_needed (or one
-    # already resolved) is simply a no-op.
+    # Decided now, so resolve the park's notification rather than waiting for terminal.
+    # Idempotent.
     _ = await deps.notifications(request).resolve_for_run(deps.OPERATOR_ID, run_id)
 
+    # A park restored after a restart holds no agent yet; its kind's composer rebuilds it.
+    # When what it ran on is gone, no pending call runs and the run ends blocked.
+    try:
+        _ = await recompose(registry, run, parked)
+    except RecomposeError as exc:
+        reason = (
+            f"This run could not be resumed after the restart ({exc}), "
+            + "so its pending calls were denied."
+        )
+        _ = await registry.block_parked(run_id, reason)
+        raise HTTPException(status_code=409, detail=reason) from exc
+
+    # The park's deps hold the agent's own withheld tools; nothing else here re-derives them.
+    restored_disabled: frozenset[str] = (
+        parked.compaction.deps.disabled_tools if parked.compaction is not None else frozenset()
+    )
     orchestrator = build_resume_orchestrator(
         parked,
         decisions,
         answers=answers,
-        # The same app-wide agent-facing bag the original turn ran with — a resumed
-        # turn re-runs the approved tool call, and mail-send/vault-read/external are
-        # the approval-gated ones, so this resume path is the *only* way they ever run.
+        # The bag the original turn ran with; resume is the only path approval-gated tools run on.
         capabilities=deps.capabilities(request),
         store=deps.store(request),
-        # A resumed turn respects the operator's disabled set and the current offline
-        # state — a tool switched off (or a link dropped) while it was parked stays hidden
-        # on resume. This is the only path an approval-gated tool ever actually runs on,
-        # so a gate missing here would be a gate that never applies to the calls that
-        # matter most.
-        # The level and the workspace kind reach the gate through `RunDeps`
-        # (`build_resume_orchestrator`), not through this set — see `routes/deps.py`.
+        # The operator's disabled set and current offline state apply on resume, so a tool
+        # switched off while parked stays hidden; a gate missing here would miss exactly the
+        # approval-gated calls. The level and workspace kind reach the gate through `RunDeps`
+        # (`build_resume_orchestrator`), see `routes/deps.py`.
         disabled_tools=await deps.disabled_tools(
             request,
-            # ...and the run's own kind, so a resumed unattended turn is offered the same
-            # stack it parked with rather than gaining the attended-only tools back on
-            # the one path that continues it.
+            # The run's kind, so a resumed unattended turn doesn't regain attended-only tools.
             kind=run.kind,
-        ),
+        )
+        | restored_disabled,
     )
-    # Record grants *before* resuming: resume only schedules the turn (it doesn't await
-    # it), and the resumed turn's inline grant check must see them, or a tool re-called
-    # within that same turn would re-prompt despite the operator's "allow for this
-    # conversation". If the resume can't be accepted, roll the new grants back so a dead
-    # run leaves no standing auto-approval behind.
+    # Recorded before resuming, which only schedules the turn: its inline grant check must
+    # see them or a tool re-called in that turn would re-prompt. If the resume is refused,
+    # the new grants are rolled back so a dead run leaves no standing auto-approval.
     #
-    # **Only the ones that are new**, which is why the scopes already there are read first.
-    # The rollback used to assume a pending call meant no grant covered it — true where a
-    # level asks outright, and false at the level that reviews: there a command-scoped
-    # grant does not settle a call, so a thread can hold a live standing yes and still park
-    # on the very act it names. Approving that refreshes the row rather than creating one,
-    # and a blanket rollback would then delete a grant the operator had before they ever
-    # opened this card, because a run they were not told about failed to resume.
+    # Only new ones are rolled back, hence reading existing scopes first: at the reviewing
+    # level a command-scoped grant doesn't settle a call, so a thread can hold a live grant
+    # and still park on the act it names. Approving refreshes that row, and a blanket
+    # rollback would delete a grant held before this card opened.
     conv_id = parked.conversation_id
     already: set[tuple[str, tuple[str, ...]]] = set()
     if to_grant and conv_id is not None:
@@ -499,10 +474,8 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         }
         for tool_name, scope, decisive in to_grant:
             _ = await grants.grant(deps.OPERATOR_ID, conv_id, tool_name, scope, decisive)
-    # A resumed turn runs under the *operator's* bounds, not the registry defaults. Both
-    # are settings now, and a continuation that quietly ran unbounded (or under a config
-    # default the operator had overridden) would make the setting a half-truth — approval
-    # resume is the only path an approval-gated tool ever actually runs on.
+    # Resume runs under the operator's bounds, not registry defaults, or the setting would be
+    # a half-truth on the only path approval-gated tools run on.
     settings_store = deps.settings_store(request)
     if (
         await registry.resume(

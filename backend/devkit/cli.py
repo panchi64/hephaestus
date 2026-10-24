@@ -158,14 +158,14 @@ def _cmd_up(args: _Args) -> int:
         supervisor.stop_all()
         print(f"error: {failure}", file=sys.stderr)
         return 1
-    except Exception as failure:  # noqa: BLE001 — see below
+    except Exception as failure:
         # Everything, not just LaunchError: `bring_up` also seeds, and seeding raises
         # ordinary HTTP and JSON errors. One escaping here would leave the services this
         # run started alive and unrecorded — running, and beyond the reach of `stop`.
         supervisor.stop_all()
         print(f"error: bringing the instance up failed: {failure!r}", file=sys.stderr)
         print(f"       logs: {instance.logs_dir}", file=sys.stderr)
-        return 1
+        raise SystemExit(1) from failure
 
     _ = supervisor.record(instance.root)
     payload = status_payload(instance)

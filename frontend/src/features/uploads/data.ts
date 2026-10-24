@@ -10,7 +10,7 @@ import {
 } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import type { ComposerAttachment, ComposerAttachmentsApi } from "~/ui";
-import { api, downloadContent } from "~/lib/api";
+import { api } from "~/lib/api";
 import type { Upload, UploadStatus } from "./model";
 
 /* ── Backend DTOs → seam types ────────────────────────────────────────────── */
@@ -83,8 +83,8 @@ async function fetchUploads(): Promise<Upload[]> {
   return rows.map(toUpload);
 }
 
-// One shared list resource for every consumer (the uploads page, the sent-message
-// attachment chips, …) so they don't each spin a duplicate `/uploads` fetch.
+// One shared list resource for every consumer (the composer's chips, the sent-message
+// attachments) so they don't each spin a duplicate `/uploads` fetch.
 // Created under a detached root (like the chat stream) so it outlives any single
 // component and stays live across navigation; keyed on `listTick`.
 let uploadsResource: Resource<Upload[]> | undefined;
@@ -104,33 +104,10 @@ export function refreshUploads(): void {
   setListTick((n) => n + 1);
 }
 
-/* ── Detail (the seam) — the selected upload's full extracted text ─────────── */
-
-const [detailTick, setDetailTick] = createSignal(0);
-
-async function fetchUploadDetail(id: string): Promise<Upload> {
-  return toUploadDetail(await api.get<UploadOut>(`/uploads/${id}`));
-}
-
-export function useUploadDetail(
-  id: () => string | null,
-): Resource<Upload | undefined> {
-  const [data] = createResource(
-    () => [id(), detailTick()] as const,
-    ([uploadId]) =>
-      uploadId ? fetchUploadDetail(uploadId) : Promise.resolve(undefined),
-  );
-  return data;
-}
-
-export function refreshUploadDetail(): void {
-  setDetailTick((n) => n + 1);
-}
-
 /* ── Mutations ────────────────────────────────────────────────────────────── */
 
 /** Upload one file. Returns the created (or recognized-duplicate) upload. */
-export async function uploadFile(file: File): Promise<Upload> {
+async function uploadFile(file: File): Promise<Upload> {
   const form = new FormData();
   form.append("file", file, file.name);
   const dto = await api.postForm<UploadOut>("/uploads", form);
@@ -138,48 +115,22 @@ export async function uploadFile(file: File): Promise<Upload> {
   return toUploadDetail(dto);
 }
 
-export async function deleteUpload(id: string): Promise<void> {
-  await api.del(`/uploads/${id}`);
-  refreshUploads();
-}
-
-export async function retryUpload(id: string): Promise<void> {
+async function retryUpload(id: string): Promise<void> {
   await api.post(`/uploads/${id}/retry`);
   refreshUploads();
-  refreshUploadDetail();
-}
-
-export async function correctUploadText(
-  id: string,
-  text: string,
-): Promise<void> {
-  await api.patch(`/uploads/${id}`, { text });
-  refreshUploads();
-  refreshUploadDetail();
 }
 
 /** Include or exclude a file's text from the knowledge base / retrieval corpus. */
-export async function setUploadKbExcluded(
-  id: string,
-  value: boolean,
-): Promise<void> {
+async function setUploadKbExcluded(id: string, value: boolean): Promise<void> {
   await api.patch(`/uploads/${id}`, { kbExcluded: value });
   refreshUploads();
-  refreshUploadDetail();
-}
-
-/** Trigger a browser download of the original file bytes. */
-export async function downloadUpload(id: string, name: string): Promise<void> {
-  await downloadContent(`/uploads/${id}/content`, name);
 }
 
 /* ── Composer attachments controller ──────────────────────────────────────────
    The shared Composer (`~/ui`) owns the attachment chips but can't reach this
    seam, so it takes this controller from the feature layer. Files upload the
-   instant they're picked/dropped via the same `/uploads` pipeline as the uploads
-   page; the chat message only references the resulting upload ids. The chip
-   reflects extraction progress, mirroring the uploads page's poll-while-in-flight
-   behavior on a per-attachment basis. */
+   instant they're picked or dropped; the chat message only references the
+   resulting upload ids, and each chip polls its extraction progress. */
 
 /** Map an upload's lifecycle to the chip's coarser status. */
 function toAttachmentStatus(
@@ -220,7 +171,7 @@ export function createComposerAttachments(): ComposerAttachmentsApi {
 
   // Track extraction off the shared uploads *list* — its summaries already carry
   // `status` with no extracted-text decrypt, so a chip's progress costs the same
-  // one cheap list read the uploads page already polls, never a per-file detail
+  // one cheap list read every consumer shares, never a per-file detail
   // GET that would decrypt the whole document just to read a status enum.
   const uploads = useUploads();
   const inFlight = () => items.some((a) => a.status === "extracting");

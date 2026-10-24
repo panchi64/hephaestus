@@ -47,7 +47,7 @@ describe("how waiting items read", () => {
       "Waiting for you",
     );
     expect(idleReason({ ...base, agentsPaused: true }, report)).toBe(
-      "Agents paused",
+      "Sub-agents paused",
     );
     // Paused agents stop what an agent sent, never what the operator typed.
     expect(idleReason({ ...base, agentsPaused: true }, mine)).toBeNull();

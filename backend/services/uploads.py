@@ -300,6 +300,21 @@ class UploadStore:
         await in_session(self._engine, work)
         self._adapter.remove_upload(owner_id, upload_id)
 
+    async def delete_all(self, owner_id: str) -> list[str]:
+        """Hard-delete every one of the owner's uploads and drop their corpus chunks.
+        Returns the deleted ids."""
+
+        def work(session: Session) -> list[str]:
+            rows = session.exec(select(Upload).where(Upload.owner_id == owner_id)).all()
+            for row in rows:
+                session.delete(row)
+            return [row.id for row in rows]
+
+        ids = await in_session(self._engine, work)
+        for upload_id in ids:
+            self._adapter.remove_upload(owner_id, upload_id)
+        return ids
+
     # --- read path --------------------------------------------------------
 
     async def list_uploads(self, owner_id: str) -> list[UploadSummaryView]:
@@ -404,9 +419,8 @@ class UploadStore:
         return await in_session(self._engine, work)
 
     async def image_ids(self, owner_id: str, ids: list[str]) -> list[str]:
-        """Of ``ids``, those that name this owner's image files (``image/*``). A cheap
-        clear-column filter that decrypts nothing — the delete-choice flow uses it to keep
-        the keep/purge prompt to images, and to purge only images."""
+        """Of ``ids``, those that name this owner's image files (``image/*``). A clear-column
+        filter that decrypts nothing; deletes use it so they purge only images."""
         wanted = list(dict.fromkeys(ids))  # de-dupe, preserve order
         if not wanted:
             return []

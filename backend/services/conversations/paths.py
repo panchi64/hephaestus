@@ -21,17 +21,15 @@ def is_user_prompt(message: ModelMessage) -> bool:
 
 
 def opens_turn(node: Node) -> bool:
-    """Whether this node *could* open an operator turn: it carries a user prompt and is
-    not a compaction checkpoint. A checkpoint is a ``ModelRequest`` with a user part —
-    that is how the model reads a summary — so every walk that counts turns or extends
-    one to its tail has to tell the two apart by the flag, never by the shape."""
+    """Whether this node could open an operator turn: a user prompt that is not a
+    compaction checkpoint. A checkpoint is also a ``ModelRequest`` with a user part, so the
+    two differ only by the flag."""
     return is_user_prompt(node.message) and not node.compacted
 
 
 def awaiting_answer(path: list[Node]) -> bool:
-    """Whether the path ends on an operator prompt nothing has answered yet — a turn that
-    has begun, or one that stopped before its first token. A compaction checkpoint is a
-    request too, and ends a path after every fold, so the flag is what tells them apart."""
+    """Whether the path ends on an operator prompt nothing has answered yet. A checkpoint
+    also ends a path after every fold, so the flag tells them apart."""
     return bool(path) and opens_turn(path[-1])
 
 
@@ -40,20 +38,25 @@ def _is_turn_start(path: list[Node], index: int) -> bool:
     the conversation's root, directly follows an assistant response, or directly follows a
     compaction checkpoint.
 
-    Not every user-prompt request opens a turn. A message the operator sends *while a run
-    is executing* is persisted as its own request sitting directly behind the tool-return
-    request it was injected into (the engine's injected-request split), so counting bare
-    user prompts would read a mid-run aside as a whole exchange.
+    A message sent while a run executes is persisted as its own request right behind the
+    tool-return request it was injected into (the engine's injected-request split), so bare
+    user prompts would count a mid-run aside as a whole exchange.
 
     A checkpoint counts as a predecessor because the first turn after a fold is a real
-    turn: reading only "follows a response" would skip it, and a later fold that ends in
-    that turn would anchor its divider on the turn before the checkpoint."""
+    turn; otherwise a later fold ending in it would anchor its divider on the turn before
+    the checkpoint."""
     if not opens_turn(path[index]):
         return False
     if index == 0:
         return True
     previous = path[index - 1]
     return isinstance(previous.message, ModelResponse) or previous.compacted
+
+
+def turn_start_index(path: list[Node], index: int) -> int | None:
+    """The path index of the operator turn that ``path[index]`` belongs to, or None when
+    nothing at or before it opens one."""
+    return max((j for j in range(index + 1) if _is_turn_start(path, j)), default=None)
 
 
 def checkpoint_split(path: list[Node]) -> tuple[int, int]:
@@ -74,11 +77,10 @@ def replay_nodes(path: list[Node], stop: int | None = None) -> list[Node]:
     front**, then every node after the one it covers. ``stop`` truncates at a path index,
     which is how a fresh compaction collects exactly what it is about to fold.
 
-    Hoisting is what lets the checkpoint be a plain leaf node in the tree. Splicing it in
-    at the boundary instead would mean re-parenting a live node, which would pull the
-    turns below it out of their own version sets. Hoisting also preserves the regenerate
-    shape: with the leaf reseated onto a user request, the replay still *ends* on that
-    request even though the checkpoint was appended after it."""
+    Hoisting lets the checkpoint be a plain leaf node; splicing it at the boundary would
+    re-parent a live node and pull later turns out of their version sets. It also keeps the
+    regenerate shape: with the leaf reseated onto a user request, the replay still ends on
+    it though the checkpoint was appended after."""
     end = len(path) if stop is None else stop
     checkpoint, through = checkpoint_split(path)
     if checkpoint < 0:
@@ -91,11 +93,9 @@ def replay_boundary(path: list[Node]) -> int:
     """How many nodes at the head of :func:`replay_nodes` predate the newest checkpoint —
     the stored counterpart of ``Run.fold_boundary``.
 
-    The checkpoint itself and every verbatim node recorded before it are counted: they were
-    sized against the history the fold folded away, so a response among them reported a
-    prompt that no longer exists. Only what was recorded *after* the checkpoint — the first
-    request that actually saw the folded thread — may be believed. ``0`` for a thread that
-    never folded."""
+    The checkpoint and every verbatim node recorded before it are counted: they were sized
+    against history the fold removed, so a response among them reported a prompt that no
+    longer exists. Only what follows the checkpoint may be believed. ``0`` if never folded."""
     checkpoint, through = checkpoint_split(path)
     if checkpoint < 0:
         return 0
@@ -118,11 +118,9 @@ def view_nodes(path: list[Node]) -> list[Node]:
     """The nodes the **operator** sees, in transcript order: each compaction checkpoint
     moved back to sit immediately after the node its summary covers.
 
-    The opposite reordering to :func:`replay_nodes`, and deliberately so. The model wants
-    the summary first, as a preamble; the operator wants it where it happened, so the
-    divider reads "everything above this line is what got folded" rather than trailing the
-    recent turns it did *not* fold. A checkpoint whose covered node has left the path stays
-    where it is rather than disappearing."""
+    The opposite of :func:`replay_nodes`: the model wants the summary first, the operator
+    wants the divider where the fold happened. A checkpoint whose covered node has left the
+    path stays where it is."""
     followers: dict[str, list[Node]] = {}
     for node in path:
         if node.compacted and node.compacted_through:
@@ -140,14 +138,11 @@ def view_nodes(path: list[Node]) -> list[Node]:
 
 
 def turn_anchor_id(path: list[Node], node_id: str) -> str | None:
-    """The id of the **rendered turn** ``node_id`` belongs to — a turn's branch node, the
-    same one ``project_tree`` keys a view by: the user request for an operator turn, the
-    first response for an assistant one.
+    """The id of the rendered turn ``node_id`` belongs to: the branch node ``project_tree``
+    keys a view by (the user request, or an assistant turn's first response).
 
-    A tree node is not a rendered message: an assistant turn spans several nodes and shows
-    as one bubble. A live client is told where to draw the divider in terms it can actually
-    address, so the position it draws matches the one a reload computes rather than
-    approximating it."""
+    An assistant turn spans several nodes but shows as one bubble, so a live client is
+    given an id it can address and the divider lands where a reload puts it."""
     index = next((i for i, node in enumerate(path) if node.id == node_id), None)
     if index is None:
         return None

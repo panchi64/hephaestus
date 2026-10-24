@@ -29,6 +29,7 @@ from models.conversation import Conversation
 from services.agents.definition import (
     DEFAULT_AGENT,
     DEFAULT_CLASS,
+    UNASSIGNABLE_CLASSES,
     WORKSPACE_POLICIES,
     AgentDefinition,
     ToolAccess,
@@ -68,6 +69,7 @@ EDITABLE: frozenset[str] = frozenset(
         "wall_clock_timeout_s",
         "can_delegate",
         "max_depth",
+        "max_requests",
     }
 )
 
@@ -86,6 +88,7 @@ class _Columns(TypedDict):
     wall_clock_timeout_s: float | None
     can_delegate: bool
     max_depth: int | None
+    max_requests: int | None
 
 
 _NAMES = TypeAdapter(list[str])
@@ -254,6 +257,7 @@ class AgentStore:
             "wall_clock_timeout_s": agent.wall_clock_timeout_s,
             "can_delegate": agent.can_delegate,
             "max_depth": agent.max_depth,
+            "max_requests": agent.max_requests,
         }
 
     def _definition(self, row: Agent) -> AgentDefinition:
@@ -275,6 +279,7 @@ class AgentStore:
             wall_clock_timeout_s=row.wall_clock_timeout_s,
             can_delegate=row.can_delegate,
             max_depth=row.max_depth,
+            max_requests=row.max_requests,
             source="agent" if row.source == "agent" else "user",
             published=row.published,
         )
@@ -298,7 +303,12 @@ def _apply(agent: AgentDefinition, values: Mapping[str, object]) -> AgentDefinit
         key = class_key(str(changes["agent_class"] or ""))
         if key is None:
             raise AgentValidationError("agent_class", "not an agent class")
+        if key in UNASSIGNABLE_CLASSES:
+            raise AgentValidationError("agent_class", "not a class an agent you write can take")
         changes["agent_class"] = key
+    cap = changes.get("max_requests")
+    if cap is not None and (not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0):
+        raise AgentValidationError("max_requests", "must be a positive integer")
     return replace(agent, **changes)
 
 
@@ -330,6 +340,8 @@ def _validated(agent: AgentDefinition) -> AgentDefinition:
         raise AgentValidationError("wall_clock_timeout_s", "must be positive")
     if agent.max_depth is not None and agent.max_depth < 0:
         raise AgentValidationError("max_depth", "must not be negative")
+    if agent.max_requests is not None and agent.max_requests <= 0:
+        raise AgentValidationError("max_requests", "must be positive")
     return replace(
         agent,
         name=name,

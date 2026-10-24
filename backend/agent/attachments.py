@@ -163,13 +163,13 @@ def _stage(
             content=content,
             prefix=workspace.stage_prefix,
         )
-    except Exception as exc:  # noqa: BLE001 — staging is best-effort; see below
+    except Exception:
         # Deliberately not just `SandboxError`. Staging writes the host-side workspace
         # directory, so a full disk, a permission problem, or a failed restore of a sealed
         # workspace surfaces as an `OSError` (or worse) rather than a domain error — and a
         # chat turn must degrade to inline text there, exactly as it does for an unavailable
         # sandbox, not die before the model is ever called.
-        logger.info("attachments: could not stage %s (%s)", upload_id, exc)
+        logger.info("attachments: could not stage %s", upload_id, exc_info=True)
         return None
     return workspace.display(relpath)
 

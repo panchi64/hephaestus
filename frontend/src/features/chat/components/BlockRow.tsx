@@ -131,7 +131,11 @@ export function BlockRow(
   return (
     <Switch>
       <Match when={g().kind === "text"}>
-        <div class={fullWidthTop(props.top)}>
+        {/* `data-live-answer` is what the transcript holds still while it streams. */}
+        <div
+          class={fullWidthTop(props.top)}
+          data-live-answer={props.active && props.streaming ? "" : undefined}
+        >
           <AnswerText
             text={(g().blocks[0] as TextBlock).text}
             active={props.active}

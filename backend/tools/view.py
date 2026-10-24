@@ -109,7 +109,7 @@ async def _show_file(ctx: RunContext[RunDeps], file: str, title: str | None) -> 
             preview_artifact_id=artifact.id,
             preview_kind=artifact.kind,
         )
-    except Exception:  # noqa: BLE001 — a history failure must never break the turn
+    except Exception:  # a history failure must never break the turn
         logger.warning("view version capture failed", exc_info=True)
         return f"Showed '{title or artifact.filename}', but couldn't record a comparable version."
     return format_show_result(snapshot, artifact.kind)
@@ -164,7 +164,7 @@ async def _show_live(
             _ = await _capture_version(
                 ctx, session, title=title, preview_artifact_id=None, preview_kind=None
             )
-        except Exception:  # noqa: BLE001 — history is best-effort, never break the turn
+        except Exception:  # history is best-effort, never break the turn
             logger.warning("live-view version capture failed", exc_info=True)
     return f"Live view running at {url} (serving '{' '.join(handle.command)}')."
 

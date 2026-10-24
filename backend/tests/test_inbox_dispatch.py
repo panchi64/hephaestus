@@ -331,7 +331,7 @@ async def test_reports_no_turn_can_carry_wait_for_the_operator_and_go_with_their
         _ = await started.wait()
         await settle(app)
         # Only the dispatcher's own resolution fails: the operator's turn still runs.
-        monkeypatch.setattr("harness.manifests._inbox_dispatch.resolve_turn_models", no_models)
+        monkeypatch.setattr("routes.chat.thread_composer.resolve_turn_models", no_models)
         dispatcher = app_state(app).inbox_dispatcher
         assert dispatcher is not None
 
@@ -340,7 +340,7 @@ async def test_reports_no_turn_can_carry_wait_for_the_operator_and_go_with_their
         await settle(app)
 
         assert dispatcher.stalled(conversation_id)
-        assert notices.count("Agents paused for you") == 1
+        assert notices.count("Sub-agents paused for you") == 1
         inbox = app_state(app).runs.inbox(conversation_id, OPERATOR_ID)
         assert len(inbox.messages) == 2
 

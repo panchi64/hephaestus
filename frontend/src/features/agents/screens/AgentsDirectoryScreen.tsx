@@ -8,9 +8,12 @@ import {
   exportAgent,
   importAgent,
   setAgentPublished,
+  useAgentClasses,
   useAgents,
 } from "../data";
 import {
+  agentDisplayName,
+  agentHierarchy,
   compareAgentsBySource,
   agentSourceTag,
   isAwaitingPublish,
@@ -26,6 +29,15 @@ export function AgentsDirectoryScreen(props: {
 }): JSX.Element {
   const agentsResource = useAgents();
   const agents = (): Agent[] => settled(agentsResource) ?? [];
+  const classesResource = useAgentClasses();
+  // Until the class table arrives (or if it can't), the list stays flat rather than
+  // filing every agent under an unknown class.
+  const grouping = () => {
+    const table = settled(classesResource)?.classes;
+    return table
+      ? (visible: Agent[]) => agentHierarchy(visible, table)
+      : undefined;
+  };
   const loadError = (): string | null =>
     agentsResource.error
       ? agentErrorMessage(agentsResource.error, "Could not load agents.")
@@ -116,9 +128,17 @@ export function AgentsDirectoryScreen(props: {
       items={agents()}
       loadError={loadError()}
       sorts={{
-        name: { label: "Name", compare: compareByName },
+        name: {
+          label: "Name",
+          compare: (a, b) =>
+            compareByName(
+              { name: agentDisplayName(a.name) },
+              { name: agentDisplayName(b.name) },
+            ),
+        },
         source: { label: "Source", compare: compareAgentsBySource },
       }}
+      groups={grouping()}
       initialSort="name"
       initialDir="asc"
       bandExtra={[
@@ -136,6 +156,7 @@ export function AgentsDirectoryScreen(props: {
       onNew={() => setNewOpen(true)}
       onOpen={(agent) => props.onOpen(agent.id)}
       emptyCreateHint="Create an agent or import an agent file."
+      rowLabel={(agent) => agentDisplayName(agent.name)}
       rowRight={(agent) => (
         <>
           <Show when={agentSourceTag(agent.source)}>

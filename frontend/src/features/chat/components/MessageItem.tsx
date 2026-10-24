@@ -50,7 +50,7 @@ export interface MessageItemProps {
   /** Re-answer this assistant turn with the current model selection. */
   onRegenerate?: () => void;
   /** Re-ask an edited user turn as a new version. */
-  onEditMessage?: (id: string, text: string) => void;
+  onEditMessage?: (id: string, text: string) => void | Promise<boolean>;
   /** Delete this turn and everything after it. */
   onDelete?: () => void;
   /** Rewind the thread to (and including) this turn. */
@@ -63,59 +63,38 @@ export interface MessageItemProps {
   onTogglePin?: () => void;
   /** Open a View item (a version or the live head) in the side viewport, by key. */
   onOpenInView?: (key: string) => void;
-  /** Re-attach to this turn's run after its transport detached (reconnect
-   *  budget exhausted) — the run may still be alive server-side. */
+  /** Re-attach to this turn's run after its transport detached; the run may still be alive server-side. */
   onReattach?: () => void;
-  /** Resume a turn a bound stopped by sending a fresh "Continue." turn on the
-   *  same conversation. Shown next to the persistent "Stopped:" marker. */
+  /** Resume a bound-stopped turn by sending a fresh "Continue." turn; shown beside the "Stopped:" marker. */
   onContinue?: () => void;
-  /** Fold the thread and then resume it — offered beside Continue on the one stop
-   *  Continue cannot clear, a request the provider refused as too large. */
+  /** Fold the thread, then resume; offered for the one stop Continue cannot clear (request refused as too large). */
   onCompactAndRetry?: () => void;
-  /** A fold is already running on this thread. The room owns the flag — a turn cannot
-   *  know it — and it has to reach the button, because a second press is not a harmless
-   *  no-op: the fold declines (the thread is claimed) and the continue fires anyway,
-   *  re-sending the same oversized request that stopped the turn in the first place. */
+  /** A fold is already running on this thread. It must reach the button: a second press
+   *  makes the fold decline (thread claimed) while the continue fires anyway, re-sending
+   *  the oversized request. Owned by the room; a turn cannot know it. */
   compacting?: boolean;
-  /** The conversation's consolidated View list — read-only here, so inline
-   *  transcript chips (`TurnBlocks`) can show the same version/time/NEW
-   *  metadata `ViewTimelineRail` shows for the same item. */
+  /** The consolidated View list, so inline chips (`TurnBlocks`) show the same metadata as `ViewTimelineRail`. */
   viewItems?: () => ViewItem[];
-  /** The key of the newest View item the operator has seen — items after it in
-   *  `viewItems()` render their inline chip tagged NEW. */
+  /** Key of the newest View item seen; items after it render their inline chip tagged NEW. */
   seenKey?: () => string | null;
-  /** This turn sits above the newest compaction divider: still in the operator's
-   *  transcript, no longer in what the model replays. Rendered as a dim pass over
-   *  the whole turn — the divider says it in words, this says it at a glance.
-   *  Derived by the transcript (presentation only); a turn can't know it alone. */
+  /** This turn sits above the newest compaction divider: still shown, no longer replayed
+   *  to the model. Derived by the transcript. */
   dimmed?: boolean;
   /** For a sub-agent report or message: the callsign of the agent that sent it. */
   subagentCallsign?: string;
 }
 
-/** A single chat turn. User turns fill the row with a distinct `surface`
- *  background and right-aligned content; assistant turns sit on the base
- *  background with reasoning, tool calls, then a markdown-formatted answer and a
- *  streaming caret while in flight. A compaction entry is neither — it is a
- *  full-width divider marking where the thread's earlier turns were folded into a
- *  summary, with no actions and no bubble. */
+/** A single chat turn. A compaction entry is a full-width divider with no actions or bubble. */
 export function MessageItem(props: MessageItemProps): JSX.Element {
   return (
-    // Two nodes, deliberately: `heph-message-in` runs with `animation-fill-mode:
-    // both`, and an animated opacity outranks a utility class in the cascade —
-    // on one element the entry animation would silently cancel `dimmed`. The
-    // outer node owns the dim state, the inner one owns the movement.
-    // `data-message-id` is how the transcript finds a turn to scroll to. A DOM lookup
-    // rather than a ref because the turns are rendered through a `For`, and the one
-    // thing that wants to address a specific turn does so rarely and from outside it.
+    // Two nodes: an animated opacity (`heph-message-in`, fill-mode both) outranks the
+    // `dimmed` utility, so the outer node owns the dim and the inner one the movement.
+    // `data-message-id` is how the transcript finds a turn to scroll to.
     <div
       data-message-id={props.message.id}
       class={cx(props.dimmed && "opacity-50")}
     >
-      {/* Fires once per mounted turn, so a message glides up as it arrives and a
-          streaming turn never re-animates mid-delta (its root element is not
-          recreated). Opening a thread mounts its turns together, so the
-          transcript settles in as one movement, not a staggered cascade. */}
+      {/* Fires once per mounted turn, so a streaming turn never re-animates mid-delta. */}
       <div class="heph-message-in">
         <Switch
           fallback={
@@ -187,12 +166,8 @@ function VersionCycler(props: {
   };
   return (
     <Show when={count() > 1}>
-      {/* `heph-fade-in` rather than a `Reveal` wrapper: this sits in a row of
-          inline controls, and a block wrapper would change how it lays out. The
-          fade matters because version metadata arrives a round-trip *after* the
-          answer settles — the cycler would otherwise pop into a header the
-          operator has already started reading. On a turn that mounts with
-          siblings it just runs alongside the turn's own entry. */}
+      {/* `heph-fade-in`, not a `Reveal` wrapper, which would change inline layout. Version
+          metadata arrives a round-trip after the answer settles and would otherwise pop in. */}
       <span class="heph-fade-in flex items-center gap-1">
         <Button
           variant="ghost"
@@ -231,24 +206,15 @@ function PinMarker(props: { message: ChatMessage }): JSX.Element {
   );
 }
 
-/** The persistent "Stopped:" marker for a turn a bound stopped (a time/cancel
- *  bound, a usage/context/loop limit), with a "Continue." button that resumes it by
- *  sending a fresh "Continue." turn. Shown on whichever message carries the turn's
- *  `blocked_reason` — the assistant's answer when one was produced, or the operator's
- *  own message when the bound tripped before any response landed.
+/** The persistent "Stopped:" marker with a Continue button, shown on whichever message
+ *  carries the turn's `blocked_reason` (the answer, or the operator's own message if the
+ *  bound tripped before any response).
  *
- *  **One stop has a remedy of its own, and it is the one Continue cannot fix.** A turn
- *  the provider refused as too large will be refused again the moment it is resumed, so
- *  Continue alone would offer the operator a button that reliably does nothing. Compact
- *  and retry folds the thread first and then continues — the same pair the chassis
- *  attempts by itself, offered by hand for the case where it could not (compaction off
- *  for the thread, no background model, a fold that freed nothing).
- *
- *  Keyed on the exact detail string the backend exports, which is why the constant is
- *  mirrored rather than matched loosely: the same string arrives live on `run.ended` and
- *  is read back from `blocked_reason` on a cold load, so the control is in the same
- *  place before and after a reload. Anything else keys nothing and reads as a plain
- *  bound. */
+ *  A turn refused as too large would be refused again on Continue, so that stop also
+ *  offers Compact and retry (fold, then continue) for when the chassis's own attempt
+ *  could not run (compaction off, no background model, a fold that freed nothing).
+ *  Keyed on the backend's exact detail string, which arrives live on `run.ended` and
+ *  on cold load from `blocked_reason`; any other detail reads as a plain bound. */
 function BlockedFooter(props: {
   detail: string | undefined;
   onContinue?: () => void;
@@ -263,10 +229,8 @@ function BlockedFooter(props: {
         Stopped: {props.detail ?? "a run limit was reached"}
       </Text>
       <Show when={overflowed() && props.onCompactAndRetry}>
-        {/* The one control here that has to say it is working. The fold inside it holds
-            a summarizer call, and the pair is not idempotent: a second press finds the
-            thread already claimed, so the fold returns at once and the continue fires
-            immediately — re-sending the request that was refused as too large. */}
+        {/* Must show pending: a second press finds the thread claimed, the fold returns at
+            once and the continue re-sends the oversized request. */}
         <Button
           variant="ghost"
           size="sm"
@@ -291,43 +255,25 @@ function BlockedFooter(props: {
   );
 }
 
-/** Longer than this and the turn collapses behind a SHOW MORE. Twelve lines is
- *  roughly a screenful of composer: enough that a normal question is never clipped,
- *  low enough that a pasted log or spec doesn't cost the whole scrollback. */
+/** Longer turns collapse behind a SHOW MORE. */
 const USER_TURN_CLAMP_LINES = 12;
 
-/** A user turn's text: placed right, read left.
- *
- *  The bubble stays right-aligned — that is what marks it as the operator's — but the
- *  text inside is `text-left`, because right-aligned prose with any internal structure
- *  (a list, a pasted snippet, anything with leading indentation) reads as ragged and
- *  wrong. Alignment of the block and alignment of the words are separate decisions and
- *  only the first one carries meaning here.
- *
- *  A long turn clamps to a fixed height with a fade and a SHOW MORE. Presentation-only
- *  state, deliberately not persisted: it is a way of skimming *this* scrollback right
- *  now, not a preference about the message. */
+/** A user turn's text: the bubble is right-aligned, the words `text-left` (right-aligned
+ *  lists and snippets read as ragged). A long turn clamps with a fade and a SHOW MORE;
+ *  that state is deliberately not persisted. */
 function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
   const [expanded, setExpanded] = createSignal(false);
   const [clampable, setClampable] = createSignal(false);
   let ref: HTMLDivElement | undefined;
 
-  // Measured, not counted: a wrapped long line takes more rows than its newlines
-  // suggest, so counting "\n" would leave a wall of text unclamped.
-  //
-  // **And measured again whenever the content resizes**, which a one-shot `onMount`
-  // could not do once this turn became rendered markdown. `Markdown` fills the node
-  // through `innerHTML` from its own effect, so at mount there is nothing inside to
-  // measure: every long turn read as 0 tall, `clampable` stayed false, and the clamp
-  // — along with SHOW MORE — silently never appeared. An observer also covers the
-  // cases a second `onMount` would still miss: a late-loading font reflowing the
-  // block, and the operator editing the turn in place.
+  // Measured, not counted (wrapped lines take more rows than newlines), and re-measured on
+  // resize: `Markdown` fills the node via `innerHTML` from its own effect, so nothing is
+  // there to measure at mount. Also covers late font reflow and in-place edits.
   onMount(() => {
     if (!ref) return;
     const measure = () => {
-      // Only meaningful while clamped — expanded, `clientHeight` grows to the full
-      // content and the comparison would clear the flag that is drawing the control
-      // the operator just used.
+      // Skipped while expanded: `clientHeight` grows to the content and would clear the
+      // flag drawing the control just used.
       if (!expanded()) setClampable(ref!.scrollHeight > ref!.clientHeight + 1);
     };
     measure();
@@ -337,8 +283,6 @@ function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
   });
 
   return (
-    // The block around this (in `UserTurn`) is what shrinks to fit and pins right;
-    // this only lays out the body and its Show more toggle inside it.
     <div class="flex flex-col items-end gap-1 px-3.5 py-2.5">
       <div
         ref={ref}
@@ -350,27 +294,11 @@ function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
             : `calc(${USER_TURN_CLAMP_LINES} * 1.5em)`,
         }}
       >
-        {/* Rendered, not printed. The operator's turn sits inches from a rendered
-            answer, so a prompt carrying a list, a fence or a `>` quote showed its
-            own source beside prose that had been set — the asymmetry read as the
-            product taking one speaker less seriously than the other.
-
-            This is also the *stricter* reading of §4, not a relaxation of it: the
-            reading scale is `.heph-prose` only, and `variant="reading"` was the
-            system's one sanctioned use of `--prose-*` outside it. Real prose
-            retires that exception at identical size.
-
-            No `streamStable` — that path exists for the answer stream's settled-
-            block caching (§10.11), and the operator's turn arrives whole.
-
-            Colour comes from `.heph-prose` rather than a `bright` override: both
-            speakers then render identically, which is the point, and the sunken
-            ground under the bubble is already what marks the turn as theirs (§5.1
-            names it for exactly this). */}
+        {/* Rendered markdown so both speakers read alike; the reading scale is `.heph-prose` only.
+            No `streamStable`: that is for the answer stream's block caching and this turn arrives whole. */}
         <Markdown class="text-left break-words text-bright!">
           {props.text}
         </Markdown>
-        {/* Only while clamped, and only when there is genuinely more below. */}
         <Show when={clampable() && !expanded()}>
           <ScrollFade variant="clamp" edge="bottom" ground="raised" />
         </Show>
@@ -385,8 +313,7 @@ function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
           {expanded() ? "Show less" : "Show more"}
         </Button>
       </Show>
-      {/* Text the operator did not write — attachment text, a routine's previous run —
-          rides the same request but is its own row, not part of their words. */}
+      {/* Text the operator did not write (attachment text, a routine's previous run) gets its own row. */}
       <For each={props.parts}>
         {(part) => (
           <div class="w-full text-left">
@@ -400,7 +327,7 @@ function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
 
 function UserTurn(props: {
   message: ChatMessage;
-  onEditMessage?: (id: string, text: string) => void;
+  onEditMessage?: MessageItemProps["onEditMessage"];
   onDelete?: () => void;
   onFork?: () => void;
   onSwitchVersion?: (id: string, index: number) => void;
@@ -419,19 +346,20 @@ function UserTurn(props: {
   const cancel = (): void => {
     setEditing(false);
   };
-  const save = (): void => {
+  const save = async (): Promise<void> => {
     const text = draft().trim();
-    if (text) props.onEditMessage?.(m().id, text);
-    setEditing(false);
+    if (!text) {
+      setEditing(false);
+      return;
+    }
+    // Stays open with the draft when the edit was not submitted.
+    if ((await props.onEditMessage?.(m().id, text)) !== false)
+      setEditing(false);
   };
 
   return (
-    // The turn is a square block pinned to the right that shrinks to its content
-    // (78% cap), `raised` on the page, ruled by one 1px `line-strong` border on all
-    // four sides — the console's ordinary cell.
-    // No speaker label: the stamp and the actions reveal on hover beside it
-    // (absolutely placed, so nothing reflows) and stay shown on touch, like every
-    // other turn control.
+    // No speaker label: the stamp and actions reveal on hover beside the block (absolutely
+    // placed, so nothing reflows) and stay shown on touch.
     <div class="group flex flex-col items-end gap-1 px-4 py-3">
       <div
         class={cx(
@@ -440,10 +368,7 @@ function UserTurn(props: {
         )}
         title={longTimestamp(m().createdAt)}
       >
-        {/* The stamp sits outside the block, in the margin to its left and level with
-            the first line: inside a shrink-to-fit block there is no room for it, and
-            laid over the block it ran across the outline. The full date also rides in
-            the block's title for anyone who never hovers. */}
+        {/* In the margin left of the block: a shrink-to-fit block has no room, and over it the stamp crosses the outline. */}
         <time
           class={cx(
             "pointer-events-none absolute top-2.5 right-full mr-2 font-mono text-[10px] leading-none whitespace-nowrap text-dim",
@@ -454,8 +379,7 @@ function UserTurn(props: {
         >
           {longTimestamp(m().createdAt)}
         </time>
-        {/* The actions sit outside the block too, in the same margin but level with
-            its foot, so the stamp (top) and they never meet. */}
+        {/* Same margin, level with the foot, so the stamp and actions never meet. */}
         <Show when={!editing()}>
           <div class="absolute right-full bottom-0 mr-2">
             <MessageActions
@@ -467,9 +391,7 @@ function UserTurn(props: {
             />
           </div>
         </Show>
-        {/* The block names no speaker: its place on the right and its edge already
-            say whose it is, and a tag row reserved for a label left an empty band
-            over every message. The row exists only when it has state to show. */}
+        {/* The row exists only when it has state to show; no empty band over every message. */}
         <Show when={m().pinned || (m().versionCount ?? 1) > 1}>
           <div class="relative flex items-center justify-end gap-2 px-2.5 pt-[7px]">
             <PinMarker message={m()} />
@@ -502,7 +424,7 @@ function UserTurn(props: {
                 variant="primary"
                 size="sm"
                 disabled={!draft().trim()}
-                onClick={save}
+                onClick={() => void save()}
               >
                 Save
               </Button>
@@ -518,9 +440,7 @@ function UserTurn(props: {
           <Show when={m().fileRefs?.length}>
             <MessageFileRefs paths={m().fileRefs!} />
           </Show>
-          {/* A bound that tripped before any response landed stamps the stop on
-                this message (the turn's own prompt) — show the marker + Continue
-                here, where the operator's own words sit. */}
+          {/* A bound that tripped before any response stamps the stop on the prompt itself. */}
           <Show when={m().blocked}>
             <BlockedFooter
               detail={m().blockedDetail}
@@ -537,11 +457,8 @@ function UserTurn(props: {
 
 const SOURCES_PREVIEW_COUNT = 3;
 
-/** The web sources a turn's `web_search`/`web_fetch` calls surfaced, as a compact
- *  row of chips beneath the answer — each opens its source in a new tab. Chips
- *  show base domains rather than full titles to stay compact, and collapse behind
- *  a toggle past SOURCES_PREVIEW_COUNT so a research-heavy turn doesn't dominate
- *  the transcript. */
+/** Chips for the sources a turn's `web_search`/`web_fetch` calls surfaced, collapsed
+ *  behind a toggle past SOURCES_PREVIEW_COUNT. */
 function SourcesRow(props: { citations: Citation[] }): JSX.Element {
   const [expanded, setExpanded] = createSignal(false);
   const hidden = () =>
@@ -559,9 +476,7 @@ function SourcesRow(props: { citations: Citation[] }): JSX.Element {
       <For each={shown()}>
         {(c, i) => (
           <Chip
-            // A corpus passage has a locator, not an address — there is no tab to
-            // open it in, and a chip that opened `about:blank` would read as a
-            // broken link rather than as a source on the operator's own disk.
+            // A corpus passage has a locator, not an address; a chip opening `about:blank` reads as a broken link.
             onClick={
               c.url
                 ? () => window.open(c.url!, "_blank", "noopener,noreferrer")
@@ -604,9 +519,7 @@ function AssistantTurn(props: {
   seenKey?: MessageItemProps["seenKey"];
 }): JSX.Element {
   const m = () => props.message;
-  // Tri-state: undefined = each layer keeps its own default; true/false = force
-  // every layer open/closed at once. Toggling sets the opposite of its last
-  // explicit state (first press expands).
+  // undefined = each layer keeps its own default; true/false forces every layer open/closed.
   const [forceOpen, setForceOpen] = createSignal<boolean | undefined>(
     undefined,
   );
@@ -614,19 +527,12 @@ function AssistantTurn(props: {
   const toggleAll = () => setForceOpen((v) => !v);
 
   return (
-    // `py-3` is the gap between turns — no list gap sits between them, so this
-    // padding and the operator fill's edge are the whole of it. `mb-1` keeps the
-    // timestamp with the answer it stamps: its 24px row (the actions' height)
-    // already centres a 10px stamp in 7px of air either side.
+    // `py-3` is the whole gap between turns; no list gap sits between them.
     <div class="group px-4 py-3">
       <div class="mb-1 flex items-center gap-2">
-        {/* WHEN, on hover or focus — the row is a fixed 24px (the actions'
-            height) whether or not the stamp is showing, so revealing it moves
-            nothing; on touch the shared reveal keeps it shown. Written out
-            rather than `5D AGO`, because a transcript is scrolled back through
-            and a relative stamp turns into arithmetic for every turn above the
-            one under the cursor. `micro` mono: a timestamp is emitted, not
-            written (§2). The full date rides in the title as well. */}
+        {/* Revealed on hover or focus; the row is a fixed 24px (the actions' height) so
+            revealing moves nothing. Absolute rather than relative (`5D AGO`) because a
+            scrolled-back transcript makes relative stamps arithmetic. */}
         <span
           class={cx(TURN_REVEAL_CLASS, "group-focus-within:opacity-100")}
           title={longTimestamp(m().createdAt)}
@@ -661,14 +567,12 @@ function AssistantTurn(props: {
       </div>
 
       <Stack gap={TURN_GAP}>
-        {/* What's happening now. What it took, once settled, is the work log's
-            own header — see `WorkLogHeader`. */}
+        {/* Live state only; once settled, the work log's header (`WorkLogHeader`) says what it took. */}
         <TurnProgressRail
           blocks={m().blocks}
           streaming={m().streaming}
           queued={m().queued}
         />
-        {/* The turn's ordered, interleaved blocks — the source of truth. */}
         <TurnBlocks
           blocks={m().blocks}
           streaming={m().streaming}

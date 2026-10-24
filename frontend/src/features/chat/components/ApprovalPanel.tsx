@@ -20,80 +20,56 @@ import { registerKeymap } from "~/lib/keymap";
 import { formatArgs } from "../data";
 import type { Approval, ApprovalDecision } from "../model";
 import { PLAN_SUBMIT_TOOL } from "../stream/approvals";
-import {
-  ConversationGrantToggle,
-  createGrantToggle,
-} from "./ConversationGrantToggle";
+import { CautionsAndGrant } from "./ApprovalCautions";
+import { createGrantToggle } from "./ConversationGrantToggle";
 
-/** How tall the opened call may grow before it scrolls inside itself. `formatArgs` does
- *  not truncate, and a call carrying a file's whole contents would otherwise push the
- *  buttons off the bottom of the dock — the same cap, for the same reason, that
- *  `ToolCallCard` puts on its own argument block. */
+/** Caps the opened call's height; `formatArgs` doesn't truncate, so a whole file's contents
+ *  would push the buttons off the dock. Same cap as `ToolCallCard`'s argument block. */
 const ARGS_MAX_HEIGHT = "max-h-40";
 
 /**
- * **The operator's decision point for sensitive actions the agent paused on.**
+ * The operator's decision point for sensitive actions the agent paused on.
  *
- * It reports decisions upward rather than submitting them, because it is no longer the
- * whole of what a park can be waiting for: the same park may also hold questions, and the
+ * Reports decisions upward rather than submitting: a park may also hold questions and the
  * run resumes on one body covering all of it. `ParkDock` owns the submit; this owns the
  * approve/deny state and the grant opt-in.
  *
- * Each approval also offers an opt-in "allow for the rest of this conversation" grant
- * (off by default): when checked and approved, the backend records a grant so the same
- * act auto-approves for the rest of the conversation instead of re-prompting. The grant's
- * scope is the backend's to derive from the parked call — for a tool that runs a command
- * it is that command, not the tool — and this only asks for one.
+ * Each approval offers an opt-in (off by default) "allow for the rest of this
+ * conversation" grant; the backend derives its scope from the parked call.
  *
- * ── What the card shows, and what it keeps back ──
- * A name, the tool's own plain-language explanation, and **the call itself behind a
- * toggle**. The raw rendering used to be the headline, which for a submitted plan meant
- * the entire document on one line above the buttons — a wall of text nobody reads, in the
- * place the operator most needs to be reading. It is still one click away, because a
- * shell command the operator cannot see is a decision they cannot actually make; it is
- * simply no longer the first thing on the card.
+ * The call itself sits behind a toggle: a plan's whole document must not be the
+ * headline, yet a command the operator cannot see is a decision they cannot make.
  *
- * ── The plan, and why it is a branch rather than a component ──
- * A submitted plan is an approval like any other — same park, same resume, same single
- * body — that happens to be read as a document and answered with three words instead of
- * two. Everything that differs is presentation: what sits behind the toggle, whether a
- * standing grant is even a coherent thing to offer, and whether "revise" is on the table.
- * All three are read off the call's own tool name, so no caller has to remember to say so
- * and no caller can disagree with another about it.
+ * A submitted plan is a branch, not a component: same park and resume, differing only in
+ * presentation (toggle content, no standing grant, "revise" on offer), all read off the
+ * call's tool name.
  */
 export function ApprovalPanel(props: {
   approvals: Approval[];
   /** Collected upward on every change; complete only once every call is decided.
-   *
-   *  A `revise` decision arrives here with **no message**: the note is composed in the
-   *  dock's own composer and attached on send, because a textarea inside a card is a
-   *  second input a few pixels from the one the operator already types in. */
+   *  A `revise` decision arrives with no message: the note is composed in the dock's
+   *  composer and attached on send. */
   onChange: (decisions: ApprovalDecision[], allDecided: boolean) => void;
-  /** Put the Plan panel on screen. Offered beside a submitted plan, which is the one
-   *  approval whose subject is too long to live on the card. Omit it where there is no
-   *  panel to open — a compare pane has no viewport — and the button is not shown. */
+  /** Opens the Plan panel, offered beside a submitted plan. Omit where there is no
+   *  panel (a compare pane has no viewport) and the button is hidden. */
   onReadPlan?: () => void;
-  /** The frame around the panel already names the one call it holds (the dock's band
-   *  reads `Approval needed · <tool>`), so the card does not repeat it. */
+  /** The frame already names the one call it holds (the dock band reads
+   *  `Approval needed · <tool>`), so the card does not repeat it. */
   named?: boolean;
-  /** Set when this panel holds the whole of what a submit would send, and it holds one
-   *  call: a verdict then settles it on the spot, with the grant tick as it stood, and
-   *  there is no submit button to press after. Not called for a request for changes —
-   *  that answer still needs its note. */
+  /** Set when this panel holds everything a submit would send and exactly one call: a
+   *  verdict settles it on the spot, with the grant tick as it stood. Not called for a
+   *  request for changes, which still needs its note. */
   onSettle?: (decisions: ApprovalDecision[]) => void | Promise<void>;
-  /** Bind Y / N to Approve / Deny while the lone call is unanswered. Left off where a
-   *  second panel may be on screen (a sub-agent's), since one key cannot answer two. */
+  /** Bind Y / N to Approve / Deny while the lone call is unanswered. Off where a second
+   *  panel may be on screen (a sub-agent's); one key cannot answer two. */
   keys?: boolean;
 }): JSX.Element {
   const [answers, setAnswers] = createSignal<Record<string, Answer>>({});
   const grant = createGrantToggle();
 
-  /** A submitted plan: revisable, ungrantable, and read as a document rather than as a
-   *  rendering of its own arguments. */
   const isPlan = (approval: Approval) => approval.name === PLAN_SUBMIT_TOOL;
 
-  // The command an approval would run, when it runs one. The grant it can opt into is
-  // scoped to that act rather than to the tool, so it keys the opt-in and names it.
+  // The grant is scoped to the command, not the tool, so it keys the opt-in.
   const commandOf = (approval: Approval): string | undefined =>
     typeof approval.args.command === "string"
       ? approval.args.command
@@ -127,16 +103,14 @@ export function ApprovalPanel(props: {
     emit();
     if (props.onSettle && settlesImmediately(answer)) {
       settled = true;
-      // Released when the submission ends, so a delivery that failed can be answered
-      // again rather than leaving dead buttons.
+      // Released when the submission ends so a failed delivery can be answered again.
       void Promise.resolve(props.onSettle(decisionsOf(next))).finally(() => {
         settled = false;
       });
     }
   };
 
-  // The lone call's keys. Unmodified, so the keymap already ignores them while a field
-  // has focus — the note being written for a revision is safe.
+  // Unmodified keys, which the keymap ignores while a field has focus.
   registerKeymap(() => {
     const only = props.approvals[0];
     if (!props.keys || !props.onSettle || props.approvals.length !== 1 || !only)
@@ -153,8 +127,7 @@ export function ApprovalPanel(props: {
     ];
   });
 
-  /** The plan's own headline, for the card. Its title is the one line of a submitted
-   *  plan that belongs on a decision card; the body is the Plan panel's to render. */
+  /** The title is the one line of a plan that belongs on the card; the Plan panel renders the body. */
   const planTitle = (approval: Approval): string =>
     typeof approval.args.title === "string" ? approval.args.title : "Untitled";
   const planSteps = (approval: Approval): number =>
@@ -174,7 +147,7 @@ export function ApprovalPanel(props: {
               : { tone: "alert", label: "Denied" };
           };
           return (
-            // The approval pads its own body (design §10.18): the frame imposes none.
+            // The approval pads its own body; the frame imposes none.
             <Stack gap={3} class="px-3 py-3">
               <Show
                 when={
@@ -193,10 +166,7 @@ export function ApprovalPanel(props: {
                       {approval.name}
                     </Text>
                   </Show>
-                  {/* The one thing a reviewer can say that changes how this decision should
-                    be read. It used to refuse such a call outright, which kept the
-                    operator out of the decision they most need to be in; now the call
-                    arrives here, and the finding has to arrive with it. */}
+                  {/* The reviewer's finding travels with the call; the operator decides, it isn't refused outright. */}
                   <Show when={approval.risk === "too_destructive"}>
                     <StatusFlag status="alert">Cannot be undone</StatusFlag>
                   </Show>
@@ -212,19 +182,14 @@ export function ApprovalPanel(props: {
                 </Row>
               </Show>
 
-              {/* A plan's subject is a document, so the card names it and points at the
-                  panel that holds it. Everything else says what it is about to do in the
-                  tool's own words. */}
+              {/* A plan is a document: the card names it and points at its panel. */}
               <Show
                 when={isPlan(approval)}
                 fallback={
-                  /* The tool's own words where it has any — and the backend's one-line
-                     rendering where it has none, which is most of them: only a handful
-                     of tools take an `explanation` argument at all, so without the
-                     fallback a `shell_run_command` card would name the tool and say
-                     nothing whatever about what it is going to run. That is safe to show
-                     here now that `summarize_call` elides at the source; a plan, the one
-                     summary that was unreadable, never reaches this branch. */
+                  /* The backend's one-line summary stands in where the tool has no
+                     `explanation` argument (most tools), or a `shell_run_command` card would
+                     say nothing about what it runs. Safe because `summarize_call` elides at
+                     the source, and a plan never reaches this branch. */
                   <Show when={approval.explanation || approval.summary}>
                     {(line) => (
                       <Text variant="body" tone="bright">
@@ -262,13 +227,8 @@ export function ApprovalPanel(props: {
                 </Text>
               </Show>
 
-              {/* The call itself — kept, and kept back. See the note at the top: the
-                  operator can always see exactly what would run, but they are not made to
-                  read it before they can reach the buttons.
-                  `formatArgs`, not `approval.summary`: the summary is the backend's
-                  one-line rendering and is elided to fit a notification, where the args
-                  are the call as it was actually made. A toggle labelled "Show call" that
-                  showed an abridged one would be the worst of both. */}
+              {/* `formatArgs`, not `approval.summary`: the summary is elided to fit a
+                  notification, and "Show call" must show the call as made. */}
               <Show when={Object.keys(approval.args).length > 0}>
                 <Disclosure label="Show call">
                   <div
@@ -289,26 +249,21 @@ export function ApprovalPanel(props: {
                 </Disclosure>
               </Show>
 
-              {/* A plan is submitted once and answered once; there is no recurring act
-                  for a standing grant to stand for. Above the verdict, so it is set
-                  before the click that captures it. */}
-              <Show when={!isPlan(approval)}>
-                <ConversationGrantToggle
-                  command={commandOf(approval)}
-                  toolName={approval.name}
-                  width={grant.widthOf(keyOf(approval))}
-                  onChange={(v) => {
-                    grant.set(keyOf(approval), v);
-                    emit();
-                  }}
-                />
-              </Show>
+              {/* A plan is answered once; there is no recurring act for a grant to cover. */}
+              <CautionsAndGrant
+                cautions={approval}
+                grantable={!isPlan(approval)}
+                command={commandOf(approval)}
+                toolName={approval.name}
+                width={grant.widthOf(keyOf(approval))}
+                onChange={(v) => {
+                  grant.set(keyOf(approval), v);
+                  emit();
+                }}
+              />
 
-              {/* The filled cell is the verdict given — Approve until one is. Luminance
-                  says which answer is standing, the flag above says it in words.
-                  "Request changes" only where trying again is meaningful: a refused
-                  command is refused; a plan is a draft, and the answer to one is
-                  usually neither yes nor no but "not like that". */}
+              {/* The filled cell is the verdict given (Approve until one is). "Request
+                  changes" is offered only for a plan, a draft; a refused command is refused. */}
               <ActionButtons
                 buttons={[
                   {

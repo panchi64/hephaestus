@@ -54,10 +54,10 @@ Pydantic AI runs the agent loop; the code around it makes each run durable, resu
 frontend/   SolidStart · TypeScript · Tailwind v4
 backend/    Pydantic AI + FastAPI (Python 3.14, uv)
   agent/ runs/ tools/ services/ harness/ skills/ vm/
-docs/       architecture, decision register, design system
+docs/       architecture, design system
 ```
 
-Design: [`docs/architecture/`](docs/architecture/README.md). Every trade-off and the alternatives rejected: [`decisions.md`](docs/architecture/decisions.md).
+Design: [`docs/architecture/`](docs/architecture/README.md).
 
 ## Running it
 
@@ -83,7 +83,7 @@ Agent workspaces are disposable; anything that leaves them (your host, your real
 
 ## Contributing
 
-Help is welcome. The architecture docs and the decision register are the source of truth; a decision with real trade-offs belongs in `decisions.md` with the angles that were rejected. Requirement ids in docstrings (`XC-*`, `AE-*`) are historical; where one disagrees with the code, the code is right.
+Help is welcome. The architecture docs are the source of truth; the rationale for a trade-off, including the alternatives rejected, goes in the commit message. Requirement ids in docstrings (`XC-*`, `AE-*`) are historical; where one disagrees with the code, the code is right.
 
 ## Lineage and license
 

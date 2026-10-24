@@ -73,7 +73,7 @@
   --type-micro-size: 10px; /* mono — ambient telemetry, fine print */
   --type-micro-lh: 14px;
   /* mono UPPERCASE, widely tracked — an engraved panel legend. `plate` NAMES a
-     region (a console group's header, an annunciator cell); `meta` below REPORTS
+     region (a console group's header, a ledger's legend); `meta` below REPORTS
      a state. Same voice, one level down: the legend on the panel versus the
      value the panel is showing. */
   --type-plate-size: 10px;
@@ -183,10 +183,6 @@
      model's turn carries no fill at all. It stays well under `--line` so the
      bubble is still quieter than the rules around it. */
   --surface-sunken: #0f0f0f;
-  /* An UNLIT caution & warning cell. Deliberately almost indistinguishable from
-     `--surface`: the operator reads the panel by looking for the lit one, so a
-     dark cell's whole job is to not be looked at. */
-  --annunciator-dark: #0d0d0d;
   /* The dot field's dots (§11.1): ΔL* ≈ 9 off the ground, below `--line` so the
      field stays quieter than any rule drawn on top of it. */
   --dot-field: #1a1a1a;
@@ -266,9 +262,6 @@
      says it must not become. Still ~2/3 of the separation from the page, so the
      two voices stay tellable apart. */
   --surface-sunken: #f4f3f0;
-  /* Paper steps the unlit cell *down* for the same reason `--surface-sunken`
-     does: there is nowhere above white to go. */
-  --annunciator-dark: #f7f7f5;
   /* Shallower than Ink's ΔL* ≈ 9: dark marks on a light ground read far more
      readily than light marks on black. */
   --dot-field: #ebebeb;

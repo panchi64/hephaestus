@@ -42,7 +42,7 @@ describe("a command that executed answers with a record", () => {
         stderr: "",
         timed_out: false,
         duration_ms: 42,
-        reach: "workspace",
+        reach: "offline",
         fenced: true,
       }),
     ).toEqual({
@@ -53,7 +53,7 @@ describe("a command that executed answers with a record", () => {
       timedOut: false,
       error: undefined,
       elapsedMs: 42,
-      reach: "workspace",
+      reach: "offline",
       fenced: true,
       unfencedReason: undefined,
       fenceNote: undefined,
@@ -68,7 +68,7 @@ describe("a command that executed answers with a record", () => {
       stderr: "boom\n",
       timed_out: false,
       duration_ms: 7,
-      reach: "workspace",
+      reach: "offline",
       fenced: true,
       error: "The command exited with status 2.",
     });
@@ -85,7 +85,7 @@ describe("a command that executed answers with a record", () => {
       stderr: "",
       timed_out: true,
       duration_ms: 300_000,
-      reach: "workspace",
+      reach: "offline",
       fenced: true,
       error: "The command was still running after 300.0s and was terminated.",
     });
@@ -104,7 +104,7 @@ describe("a command that executed answers with a record", () => {
       stderr: "",
       timed_out: false,
       duration_ms: 3,
-      reach: "workspace",
+      reach: "offline",
       fenced: false,
       unfenced_reason: "This host has no sandbox primitive.",
     });
@@ -120,7 +120,7 @@ describe("a command that executed answers with a record", () => {
       stderr: "touch: /etc/hosts: Operation not permitted\n",
       timed_out: false,
       duration_ms: 5,
-      reach: "workspace",
+      reach: "offline",
       fenced: true,
       fence_note: "The fence denied a write outside the worktree.",
     });
@@ -137,7 +137,7 @@ describe("a command that executed answers with a record", () => {
       stderr: "",
       timed_out: false,
       duration_ms: 1,
-      reach: "workspace",
+      reach: "offline",
       fenced: true,
     });
     // Empty strings, never a "(no output)" sentinel the card would have to recognise.

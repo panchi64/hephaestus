@@ -42,7 +42,6 @@ export {
   deleteConversation,
   fetchAutoCompactOverride,
   fetchGrants,
-  fetchOrphanImageAttachments,
   fetchPlan,
   forkConversation,
   regenerateTitle,
@@ -86,6 +85,7 @@ export {
 } from "./changes";
 
 export {
+  fetchOwnCallsign,
   fetchSubagents,
   isLive,
   openSubagentThread,

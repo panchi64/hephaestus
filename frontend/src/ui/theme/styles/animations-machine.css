@@ -49,38 +49,6 @@
   animation: heph-pulse 1s steps(1, end) infinite;
 }
 
-/* The caution & warning matrix (§10.15). The column count is the COMPONENT's, passed
-   in as `--ann-cols-*` per breakpoint, because the only way to avoid a ragged last row
-   is to choose the columns from how many cells there are — a fixed count leaves seven
-   capabilities sitting 5 + 2, with three dead positions the eye reads as an unfinished
-   row. The tiers are capped rather than free: past the cap a cell gets narrower than
-   its own legend, and a matrix of truncated names is worse than one blank position.
-
-   A media query cannot do this arithmetic and Tailwind cannot emit a class per count,
-   so the breakpoints live here and the integers arrive as custom properties. */
-.heph-annunciator {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-@media (min-width: 40rem) {
-  .heph-annunciator {
-    grid-template-columns: repeat(var(--ann-cols-sm, 3), minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 64rem) {
-  .heph-annunciator {
-    grid-template-columns: repeat(var(--ann-cols-lg, 5), minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 80rem) {
-  .heph-annunciator {
-    grid-template-columns: repeat(var(--ann-cols-xl, 5), minmax(0, 1fr));
-  }
-}
-
 /* Marquee — a FUNCTIONAL reveal of clipped content (e.g. a long status message
    in a dense row), not decoration. It ping-pongs the overflow distance set in
    --mq-shift, pausing at each end. Only applied when the content actually

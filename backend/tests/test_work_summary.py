@@ -201,7 +201,7 @@ class TestTheOutputCap:
         )
 
     def test_an_over_long_summary_is_cut_at_a_word_boundary(self):
-        raw = "word " * 200
+        raw = "word " * MAX_SUMMARY_LEN
         cleaned = clean_summary(raw)
         assert cleaned is not None
         assert len(cleaned) <= MAX_SUMMARY_LEN

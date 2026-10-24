@@ -139,6 +139,7 @@ def build_state(request: ReviewRequest) -> JsonValue:
         "could_not_be_read": list(capability.unbounded),
         "runs_in_sandbox": capability.sandboxed,
         "names_network_address": capability.network,
+        "installs_or_clones": capability.fetches,
         "declared_reach": capability.reach,
     }
     return {

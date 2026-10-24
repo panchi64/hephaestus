@@ -14,11 +14,18 @@ from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFil
 from pydantic import BaseModel
 
 from core.exceptions import AgentValidationError, NotFoundError
+from prompts.voice import CLASSES
 from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
 from services.agents import BUILTIN, AgentDefinition, ToolAccess, project_agents
-from services.agents.definition import AgentSource, WorkspacePolicy
+from services.agents.definition import (
+    DEFAULT_CLASS,
+    ROOT_CLASS,
+    UNASSIGNABLE_CLASSES,
+    AgentSource,
+    WorkspacePolicy,
+)
 from services.agents.files import render_agent_file
 from services.permissions import PermissionLevel
 
@@ -46,13 +53,38 @@ class AgentOut(BaseModel):
     wall_clock_timeout_s: float | None
     can_delegate: bool
     max_depth: int | None
+    max_requests: int | None
     #: Whether other agents may delegate to it.
     delegable: bool
+    #: Whether it is on the launch roster now: delegable, published and not shadowed.
+    launchable: bool
+    #: Tools without which delegating to it is refused.
+    required: list[str]
     source: AgentSource
     published: bool
     #: Whether its name resolves to this definition rather than to one that shadows it.
     active: bool
     editable: bool
+
+
+class AgentClassOut(BaseModel):
+    key: str
+    display: str
+    role: str
+    #: Callsign stems; empty for a class whose agents are never addressed by one.
+    callsigns: list[str]
+    #: Whether an agent the operator writes may take it; the built-ins may hold the rest.
+    assignable: bool
+    #: The class of the agent the operator talks to, at the root of every tree.
+    root: bool
+
+
+class AgentClasses(BaseModel):
+    classes: list[AgentClassOut]
+    #: The installation's delegation depth limit, for an agent that sets none.
+    max_depth: int
+    #: The class a new agent gets when it names none.
+    default_class: str
 
 
 class AgentWrite(BaseModel):
@@ -69,6 +101,7 @@ class AgentWrite(BaseModel):
     wall_clock_timeout_s: float | None = None
     can_delegate: bool | None = None
     max_depth: int | None = None
+    max_requests: int | None = None
 
 
 @router.get("", response_model=list[AgentOut])
@@ -85,6 +118,26 @@ async def list_agents(request: Request, project_id: str | None = None) -> list[A
         _out(agent, active=effective.get(agent.name) == agent)
         for agent in (*BUILTIN, *declared, *contributed, *stored)
     ]
+
+
+@router.get("/classes", response_model=AgentClasses)
+async def list_agent_classes(request: Request) -> AgentClasses:
+    """Every agent class in hierarchy order, Talos first."""
+    return AgentClasses(
+        classes=[
+            AgentClassOut(
+                key=spec.key,
+                display=spec.display,
+                role=spec.role,
+                callsigns=list(spec.callsigns),
+                assignable=spec.key not in UNASSIGNABLE_CLASSES,
+                root=spec.key == ROOT_CLASS,
+            )
+            for spec in CLASSES.values()
+        ],
+        max_depth=deps.settings(request).agent_max_depth,
+        default_class=DEFAULT_CLASS,
+    )
 
 
 @router.get("/{agent_id}", response_model=AgentOut)
@@ -246,7 +299,10 @@ def _out(agent: AgentDefinition, *, active: bool) -> AgentOut:
         wall_clock_timeout_s=agent.wall_clock_timeout_s,
         can_delegate=agent.can_delegate,
         max_depth=agent.max_depth,
+        max_requests=agent.max_requests,
         delegable=agent.delegable,
+        launchable=agent.delegable and agent.published and active,
+        required=sorted(agent.required),
         source=agent.source,
         published=agent.published,
         active=active,

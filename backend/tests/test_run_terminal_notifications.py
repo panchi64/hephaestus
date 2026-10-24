@@ -48,6 +48,7 @@ async def test_run_failed_always_notifies():
         notifs = await _run_notifications(app, run.id)
         assert len(notifs) == 1
         assert notifs[0].kind == "run_failed"
+        assert notifs[0].title == 'Talos hit an error in "this conversation"'
         assert notifs[0].conversation_id == conv_id
         assert notifs[0].body == "boom"
 
@@ -67,6 +68,25 @@ async def test_run_completed_notifies_when_nobody_is_watching():
         notifs = await _run_notifications(app, run.id)
         assert len(notifs) == 1
         assert notifs[0].kind == "run_completed"
+        assert notifs[0].title == 'Talos finished "this conversation"'
+
+
+async def test_a_thread_run_as_another_agent_is_notified_under_its_name():
+    async with client_app() as (_client, app):
+        conversations = app_state(app).conversations
+        conv_id = await conversations.create_conversation(OPERATOR_ID)
+        await conversations.set_agent_name(conv_id, "scout")
+
+        async def orch(run: Run) -> None:
+            _ = run.emit(AnswerDelta(text="hi"))
+
+        run = app_state(app).runs.submit(
+            kind="chat", owner_id=OPERATOR_ID, orchestrator=orch, conversation_id=conv_id
+        )
+        await run.wait()
+
+        notifs = await _run_notifications(app, run.id)
+        assert [n.title for n in notifs] == ['scout finished "this conversation"']
 
 
 async def test_run_completed_is_suppressed_with_a_live_subscriber():

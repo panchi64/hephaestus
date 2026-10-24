@@ -1,13 +1,19 @@
 import { createEffect, createSignal, Show, type JSX } from "solid-js";
-import { Button, Modal, Stack, Text } from "~/ui";
+import { Button, Modal, Select, Stack, Text } from "~/ui";
 import { IdentityFields } from "~/features/library";
-import { agentErrorField, agentErrorMessage, createAgent } from "../data";
+import { settled } from "~/lib/resource";
+import {
+  agentErrorField,
+  agentErrorMessage,
+  createAgent,
+  useAgentClasses,
+} from "../data";
 import { AGENT_DESCRIPTION_MAX, AGENT_NAME_PATTERN } from "../model";
 
-type Errors = Partial<Record<"name" | "description", string>>;
+type Errors = Partial<Record<"name" | "description" | "agent_class", string>>;
 
-/** Create an agent from the two fields that identify it. Everything else is
- *  set in the editor; a new agent starts as a draft. */
+/** Create an agent from the fields that identify it: name, description and class.
+ *  Everything else is set in the editor; a new agent starts as a draft. */
 export function NewAgentDialog(props: {
   open: boolean;
   onClose: () => void;
@@ -15,20 +21,42 @@ export function NewAgentDialog(props: {
 }): JSX.Element {
   const [name, setName] = createSignal("");
   const [description, setDescription] = createSignal("");
+  // Unset means the backend's default class, which is also what the picker shows.
+  const [agentClass, setAgentClass] = createSignal<string | undefined>();
   const [errors, setErrors] = createSignal<Errors>({});
   const [formError, setFormError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const classes = useAgentClasses();
+  const classOptions = () =>
+    (settled(classes)?.classes ?? [])
+      .filter((c) => c.assignable)
+      .map((c) => ({
+        value: c.key,
+        label: c.display,
+        description: c.role,
+      }));
+  const shownClass = () => agentClass() ?? settled(classes)?.defaultClass;
 
   createEffect(() => {
     if (!props.open) return;
     setName("");
     setDescription("");
+    setAgentClass(undefined);
     setErrors({});
     setFormError("");
   });
 
+  // No Create before the catalog lands: the class would go out unseen.
   const canSubmit = () =>
-    name().trim() !== "" && description().trim() !== "" && !busy();
+    name().trim() !== "" &&
+    description().trim() !== "" &&
+    classOptions().length > 0 &&
+    !busy();
+  const classHint = (): string =>
+    errors().agent_class ??
+    (classes.error
+      ? agentErrorMessage(classes.error, "Could not load the agent classes.")
+      : "Fixes its role, how it reports, and the sound of its callsign.");
 
   async function submit(): Promise<void> {
     if (!canSubmit()) return;
@@ -39,12 +67,17 @@ export function NewAgentDialog(props: {
       const agent = await createAgent({
         name: name().trim(),
         description: description().trim(),
+        agent_class: shownClass(),
       });
       props.onCreated(agent.id);
     } catch (err) {
       const message = agentErrorMessage(err, "Could not create the agent.");
       const field = agentErrorField(err);
-      if (field === "name" || field === "description") {
+      if (
+        field === "name" ||
+        field === "description" ||
+        field === "agent_class"
+      ) {
         setErrors({ [field]: message });
       } else {
         setFormError(message);
@@ -93,6 +126,15 @@ export function NewAgentDialog(props: {
           errors={errors()}
           disabled={busy()}
           autofocus
+        />
+        <Select
+          label="Class"
+          options={classOptions()}
+          value={shownClass()}
+          onChange={setAgentClass}
+          invalid={Boolean(errors().agent_class || classes.error)}
+          hint={classHint()}
+          disabled={busy()}
         />
         <Show when={formError()}>
           <Text variant="micro" tone="alert">

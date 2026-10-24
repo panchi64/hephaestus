@@ -398,7 +398,8 @@ export interface WorkLogEntry {
 
 export type LayoutItem =
   | { type: "group"; group: BlockGroup }
-  | { type: "worklog"; entries: WorkLogEntry[] };
+  /** `ordinal` is the log's position among the turn's work logs. */
+  | { type: "worklog"; entries: WorkLogEntry[]; ordinal: number };
 
 /**
  * A stable identity for a layout item, across every recompute of the plan.
@@ -410,14 +411,26 @@ export type LayoutItem =
  * moment the operator starts reading. Keying on this instead means a row is
  * created once and only genuinely new or regrouped rows move.
  *
- * The first block's id anchors both kinds: a group keeps its id as it grows, and
- * a work-log run is named by where it starts, so a run absorbing another group
- * stays the same item rather than becoming a different one.
+ * A group is named by its first block's id, which it keeps as it grows. A work log
+ * is named by its position among the turn's logs, not by its first block: the
+ * reseat after a run drops the live-only context rows a log usually starts with,
+ * and the log has to survive that without remounting.
  */
 export function layoutItemKey(item: LayoutItem): string {
-  return item.type === "worklog"
-    ? `w:${item.entries[0]?.group.id ?? ""}`
-    : `g:${item.group.id}`;
+  return item.type === "worklog" ? `w:${item.ordinal}` : `g:${item.group.id}`;
+}
+
+/**
+ * Which log the operator opened or closed, by its first row that a reload keeps.
+ * Distinct from the layout key: a log made only of live-only context drops out at the
+ * reseat, every later log's position shifts down one, and open state keyed by position
+ * would land on the wrong log.
+ */
+export function workLogStateKey(
+  item: Extract<LayoutItem, { type: "worklog" }>,
+): string {
+  const kept = item.entries.find((e) => e.group.kind !== "context");
+  return kept ? `g:${kept.group.id}` : layoutItemKey(item);
 }
 
 export function planTurnLayout(
@@ -428,9 +441,10 @@ export function planTurnLayout(
   const activeIndex = opts.streaming ? groups.length - 1 : -1;
   const items: LayoutItem[] = [];
   let run: WorkLogEntry[] = [];
+  let logs = 0;
   const flush = (): void => {
     if (run.length >= WORK_LOG_MIN_RUN) {
-      items.push({ type: "worklog", entries: run });
+      items.push({ type: "worklog", entries: run, ordinal: logs++ });
     } else {
       for (const entry of run)
         items.push({ type: "group", group: entry.group });

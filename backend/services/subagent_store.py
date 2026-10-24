@@ -1,13 +1,10 @@
 """Reading and writing the sub-agent register.
 
-One store over ``models/subagent.py``, and the only place rows of it are shaped. Four
-readers depend on it agreeing with itself — the cap counts live sub-agents here, the wake
-finds the parent here, the panel draws from here, and the parent's own ``subagent_read``
-answers from here — so none of them keeps a count or a link of its own.
+The only place ``models/subagent.py`` rows are shaped. The cap, the wake, the panel and
+``subagent_read`` all read it, so none keeps a count or link of its own.
 
-Everything the agent wrote is sealed on the way in and opened on the way out, the same as
-a conversation's title: a task and a report are the agent's words about the operator's
-work, and a database file lifted off disk should give up neither.
+Tasks and reports are sealed on the way in and opened on the way out, like a conversation's
+title: they are the agent's words about the operator's work.
 """
 
 from __future__ import annotations
@@ -20,21 +17,19 @@ from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.vault import Vault
+from models.parked_turn import ParkedTurnRecord
 from models.subagent import SubagentRecord
 from services.subagents.launcher import SubagentView
 
 logger = logging.getLogger(__name__)
 
-#: The statuses a sub-agent is still *expected* to report from. Both count against the
-#: operator's cap: a sub-agent parked on an approval has not reported, and the thing it is
-#: waiting for is a person rather than a slot, so releasing its budget would let the model
-#: pile up work behind a decision nobody has made yet.
+#: Statuses a sub-agent is still expected to report from. Both count against the cap: a
+#: sub-agent parked on an approval waits on a person, and releasing its budget would let the
+#: model pile up work behind an undecided approval.
 #:
-#: Only ``running`` is ever *written* — a row is opened at a launch and closed at an
-#: ending, and the parked state in between is read off the live Run by
-#: :meth:`SubagentStore.view`'s caller rather than persisted, because the Run is the thing
-#: that actually knows. ``blocked`` is in the set anyway so that the one vocabulary answers
-#: for both, and a future writer of it cannot silently stop counting.
+#: Only ``running`` is written; the parked state is read off the live Run by
+#: :meth:`SubagentStore.view`'s caller. ``blocked`` is in the set so a future writer of it
+#: keeps counting. ``stopped`` (ended at a time or turn limit) is terminal and holds no slot.
 LIVE_STATUSES: frozenset[str] = frozenset({"running", "blocked"})
 
 
@@ -62,14 +57,14 @@ class SubagentStore:
         delegation_id: str | None,
         project_id: str | None = None,
         base_ref: str | None = None,
+        ledger_prompt_message_id: str | None = None,
         agent_class: str = "",
         callsign: str = "",
     ) -> None:
         """Open a row for a sub-agent that has just been submitted.
 
-        Written *after* the child's turn is composed, so a launch that failed on the way
-        there leaves no row for a sub-agent that never ran — the panel would show a card
-        that was never anything, and the cap would count a slot nothing holds.
+        Written after the child's turn is composed, so a failed launch leaves no phantom
+        card and no slot counted against the cap.
         """
         row = SubagentRecord(
             id=subagent_id,
@@ -90,6 +85,7 @@ class SubagentStore:
             delegation_id=delegation_id,
             project_id=project_id,
             base_ref=base_ref,
+            ledger_prompt_message_id=ledger_prompt_message_id,
         )
 
         def work(session: Session) -> None:
@@ -107,9 +103,8 @@ class SubagentStore:
         context_used: int | None = None,
         context_window: int | None = None,
     ) -> None:
-        """Close a row out. Idempotent on a row already settled, because the two paths that
-        can reach one — the run's terminal hook and an operator's cancel — can both fire for
-        the same sub-agent and neither is worth losing the other's record over."""
+        """Close a row out. Idempotent: the run's terminal hook and an operator's cancel can
+        both fire for one sub-agent."""
         summary_enc = None if summary is None else self._vault.encrypt_str(summary)
         error_enc = None if error is None else self._vault.encrypt_str(error)
 
@@ -179,17 +174,26 @@ class SubagentStore:
         await in_session(self._db, work)
 
     async def by_run(self, run_id: str) -> SubagentRecord | None:
-        """The sub-agent a Run belongs to, or None for an ordinary run.
-
-        How the terminal hook recognises one of ours without the substrate having to carry
-        a flag for it: every run reaches that hook, and this answers "was that a sub-agent"
-        from the register rather than from anything stamped on the Run.
-        """
+        """The sub-agent a Run belongs to, or None for an ordinary run; lets the terminal
+        hook recognise one without a flag on the Run."""
 
         def work(session: Session) -> SubagentRecord | None:
             return session.exec(
                 select(SubagentRecord).where(SubagentRecord.run_id == run_id)
             ).first()
+
+        return await in_session(self._db, work)
+
+    async def children(self, conversation_id: str, owner_id: str) -> list[SubagentRecord]:
+        """The agents a thread spawned itself, newest first."""
+
+        def work(session: Session) -> list[SubagentRecord]:
+            rows = session.exec(
+                select(SubagentRecord)
+                .where(SubagentRecord.owner_id == owner_id)
+                .where(SubagentRecord.parent_conversation_id == conversation_id)
+            ).all()
+            return sorted(rows, key=lambda row: row.started_at, reverse=True)
 
         return await in_session(self._db, work)
 
@@ -257,17 +261,21 @@ class SubagentStore:
     async def reconcile_stranded(self) -> int:
         """Close out every row left live by a process that died, at startup.
 
-        A sub-agent's run lives in the process, so a row still ``running`` after a restart
-        describes work that stopped when the process did. Left alone it would sit on
-        ``running`` forever — counting against the cap, showing a spinner in the panel, and
-        promising the parent a report that is never coming. Calling it ``cancelled`` is both
-        true and the honest thing to show the operator.
+        A row still ``running`` after a restart describes work that stopped with the process,
+        and would count against the cap and promise a report forever; it becomes
+        ``cancelled``. A row whose run is stored as parked stays live, since it resumes when
+        the operator answers.
         """
 
         def work(session: Session) -> int:
-            rows = session.exec(
-                select(SubagentRecord).where(col(SubagentRecord.status).in_(LIVE_STATUSES))
-            ).all()
+            parked = set(session.exec(select(ParkedTurnRecord.run_id)).all())
+            rows = [
+                row
+                for row in session.exec(
+                    select(SubagentRecord).where(col(SubagentRecord.status).in_(LIVE_STATUSES))
+                ).all()
+                if row.run_id not in parked
+            ]
             for row in rows:
                 row.status = "cancelled"
                 row.ended_at = row.ended_at or datetime.now(UTC)
@@ -289,18 +297,15 @@ class SubagentStore:
     ) -> SubagentView:
         """A row as its readers see it, unsealed.
 
-        ``status`` and the two context figures may be overridden by a caller holding the
-        *live* Run, whose in-flight numbers are newer than anything written here — the
-        stored ones exist for a sub-agent that finished before anyone looked.
+        A caller holding the live Run may override ``status`` and the context figures, whose
+        in-flight numbers are newer than the stored ones.
         """
         return SubagentView(
             subagent_id=row.id,
             conversation_id=row.child_conversation_id,
             run_id=row.run_id,
             name=row.spec_name,
-            # `or row.spec_name` for a row written before the column existed and missed the
-            # migration's backfill — a card with no name to address it by is worse than one
-            # named after its spec, which is what every such row was called anyway.
+            # A row that predates the column and missed its backfill is named after its spec.
             handle=row.handle or row.spec_name,
             callsign=row.callsign,
             agent_class=row.agent_class,

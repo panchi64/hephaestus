@@ -19,79 +19,58 @@ from models._fields import utcnow
 from models.app_setting import AppSetting
 from runs import DEFAULT_CONTEXT_THRESHOLDS, ContextThresholds
 
-# Conversation auto-compaction (agent/summarize.py) — the product's one pressure-driven
-# context reduction: whether to fold a thread's older turns into a summary its own model
-# writes once its footprint reaches `threshold` of the model's context window, expressed as a
-# fraction (0.80 = 80%).
+# Conversation auto-compaction (agent/summarize.py): whether to fold a thread's older turns
+# into a summary once its footprint reaches `threshold`, a fraction (0.80 = 80%) of the
+# model's context window.
 AUTO_COMPACT_ENABLED_KEY = "chat.auto_compact_enabled"
 AUTO_COMPACT_THRESHOLD_KEY = "chat.auto_compact_threshold"
 
-# The per-conversation work summary (services/work_summaries.py): how many minutes a thread
-# must have been quiet before the background sweep writes an account of what the agent did
-# in it. An operator setting rather than config-only because how long a pause has to be
-# before it counts as *leaving* a thread is a property of how somebody works, and the band
-# is either there when they come back or it is useless.
+# Minutes a thread must be quiet before the background sweep writes its work summary
+# (services/work_summaries.py); an operator setting because what counts as leaving a thread
+# depends on how somebody works.
 WORK_SUMMARY_IDLE_MINUTES_KEY = "chat.work_summary_idle_minutes"
 
-# The ceiling on that idle window. A sanity bound, not a safety one: a window measured in
-# days would mean the band never appears on a thread worked on in a normal week, which is
-# indistinguishable from the feature being off — and switching it off is not what a number
-# is for. A day is comfortably past any real "I stepped away" pause.
+# Ceiling on that window: a sanity bound, since days-long windows are indistinguishable
+# from the feature being off.
 WORK_SUMMARY_IDLE_MINUTES_MAX = 1440
 
-# The context gauge's severity boundaries (runs/events/ `ContextThresholds`): the two
-# fullness fractions at which the ring under the composer turns amber and then red.
-# Presentation, but not only presentation — the same `level` is what any overflow warning
-# keys off — so it is stored and validated here rather than as a client-side constant.
+# The context gauge's two fullness fractions (amber, then red; `ContextThresholds`). Stored
+# and validated here because overflow warnings key off the same `level`.
 CONTEXT_WARN_THRESHOLD_KEY = "chat.context_warn_threshold"
 CONTEXT_ALERT_THRESHOLD_KEY = "chat.context_alert_threshold"
 
-# The run substrate's inactivity watchdog (runs/registry.py): the operator's runtime
-# override of `run_inactivity_timeout_s` — how long a run may go without emitting an
-# event before it is stopped. Long generations (a big file write, a slow first token)
-# need more than the 120s default, so this is what the operator tunes to keep a turn
-# alive. Seconds; the config default (or None = disabled) applies when unset.
+# Operator override of `run_inactivity_timeout_s` (runs/registry.py): seconds a run may go
+# without emitting an event before it is stopped. Config default (or None = disabled)
+# applies when unset.
 INACTIVITY_TIMEOUT_KEY = "chat.inactivity_timeout_s"
 
-# The run substrate's wall-clock bound (runs/registry.py): the operator's runtime override
-# of `run_wall_clock_timeout_s` — how long a run may take in total, however busy it is.
-# Off by default (see the config note): the useful case is a run that keeps emitting and
-# so never trips the inactivity watchdog, which nothing else stops. Unlike every other
-# key here, "unset" and "off" are different states — an empty stored value means the
-# operator turned it off, which must not fall back to the config default.
+# Operator override of `run_wall_clock_timeout_s` (runs/registry.py): total seconds a run
+# may take, however busy; it stops a run that keeps emitting and never trips the inactivity
+# watchdog. Unlike other keys, unset and off differ: an empty stored value means off and
+# must not fall back to the config default.
 WALL_CLOCK_TIMEOUT_KEY = "chat.wall_clock_timeout_s"
 _DISABLED = ""
 
-# How long a turn waits for a model's first streamed token (`first_token_timeout_s`): a
-# local model reading a long cold prompt is silent for minutes, and how many depends on the
-# operator's hardware.
+# How long a turn waits for a model's first streamed token (`first_token_timeout_s`); a
+# local model reading a long cold prompt can be silent for minutes.
 FIRST_TOKEN_TIMEOUT_KEY = "chat.first_token_timeout_s"
 
-# How many sub-agents may be running for the operator at once (services/subagents/). Unset
-# means no cap, which is the default and the honest one: the model launches these to *save*
-# the operator time, and a number chosen in advance without knowing what the work splits
-# into would mostly be wrong. The setting exists for the operator who has watched it launch
-# six at a time and decided that is not what they want their evening spent on. Like the wall
-# clock, "unset" and "off" are the same state here rather than different ones — there is no
-# way to say "no sub-agents at all" with a number, because that is what switching the tool
-# off in the catalog is for.
+# Sub-agents running in one delegation tree at once (services/subagents/); unset means
+# `DEFAULT_MAX_CONCURRENT` (8). Unset and off are the same state: disabling sub-agents is
+# the catalog's tool switch, not a zero here.
 SUBAGENT_LIMIT_KEY = "chat.subagent_max_concurrent"
 
-# Offline mode (services/offline.py) persists the operator's two switches here as
-# "true"/"false" strings: the manual force-offline toggle and the auto-detect master
-# switch. Policy, not a secret — stored in the clear like every other app preference.
+# Offline mode (services/offline.py): the manual force-offline toggle and the auto-detect
+# master switch, as "true"/"false" strings.
 OFFLINE_MANUAL_KEY = "offline.manual"
 OFFLINE_AUTO_KEY = "offline.auto"
 
-# The operator's disabled-tool set (services/tool_policy.py, AE-3.3), stored as a JSON
-# list of namespaced tool names. Policy, not content — in the clear like the rest.
+# The operator's disabled-tool set (services/tool_policy.py), a JSON list of namespaced
+# tool names.
 DISABLED_TOOLS_KEY = "tools.disabled"
 
-# The project the operator is currently working in (services/projects), as a project id.
-# Unset or empty means no project is active — which is not the same as "nothing is
-# visible": unfiled rows are visible in every scope, so an unset key simply means the
-# operator sees exactly what they saw before projects existed. A selection, not a
-# session: it survives a reload and a vault lock, which is what a *workspace* implies.
+# The active project id (services/projects). Unset or empty means none is active, and
+# unfiled rows are visible in every scope. A selection that survives a reload and a lock.
 ACTIVE_PROJECT_KEY = "projects.active"
 
 
@@ -111,12 +90,8 @@ class SettingsStore:
         return await in_session(self._db, work)
 
     async def get_many(self, owner_id: str, keys: tuple[str, ...]) -> dict[str, str]:
-        """Read several (owner, key) preferences in one query — for a getter that needs a group
-        of related keys (e.g. auto-compaction's pair) without paying a round-trip per key.
-        Absent keys are simply omitted from the result; the caller applies its own defaults.
-
-        Only the keys asked for are read, so a key this codebase no longer knows about is
-        inert: a retired setting's row can be left in place rather than migrated away."""
+        """Read several (owner, key) preferences in one query. Absent keys are omitted; the
+        caller applies its defaults. A retired setting's row is inert and can stay."""
 
         def work(session: Session) -> dict[str, str]:
             rows = session.exec(
@@ -148,54 +123,41 @@ class SettingsStore:
 
 
 async def get_subagent_limit(store: SettingsStore, owner_id: str) -> int | None:
-    """How many sub-agents may run at once, or ``None`` for no cap.
-
-    ``None`` is the default and is not a fallback from a missing config value — there is no
-    config default to fall back to, because "however many the work splits into" is the
-    intended behaviour rather than an unset one. A stored 0, negative or non-numeric value
-    is corruption rather than intent and reads as no cap, which is the same direction every
-    other getter here falls: back to how the product behaves out of the box, rather than to
-    a restriction the operator never asked for.
+    """The operator's cap on sub-agents at once, or ``None`` when unset (the launcher's
+    default of 8). A stored 0, negative or non-numeric value is corruption and reads as
+    unset.
     """
     value = _positive_int_or(await store.get(owner_id, SUBAGENT_LIMIT_KEY), 0)
     return value or None
 
 
 async def set_subagent_limit(store: SettingsStore, owner_id: str, value: int | None) -> int | None:
-    """Persist the cap, or ``None`` to remove it. Returns the stored value. The ``ge=1``
-    body field at the route rejects a nonsensical number; ``None`` is a deliberate choice
-    and the route distinguishes it from an omission before calling this."""
+    """Persist the cap, or ``None`` to remove it; the route rejects a number below 1 and
+    distinguishes ``None`` from an omission."""
     await store.set(owner_id, SUBAGENT_LIMIT_KEY, _DISABLED if value is None else str(value))
     return value
 
 
 async def get_inactivity_timeout(store: SettingsStore, owner_id: str) -> float | None:
-    """The operator's inactivity timeout in seconds — the runtime override if set (and
-    valid), else the config default. The default may itself be ``None`` (watchdog
-    disabled), which is a meaningful value to return, not a corruption. A stored 0,
-    negative, or non-numeric value falls back to the default rather than disabling the
-    watchdog by accident."""
+    """The inactivity timeout in seconds: the valid override, else the config default
+    (which may be ``None``, watchdog disabled). A stored 0, negative or non-numeric value
+    falls back rather than disabling the watchdog."""
     raw = await store.get(owner_id, INACTIVITY_TIMEOUT_KEY)
     return _positive_float_or(raw, get_settings().run_inactivity_timeout_s)
 
 
 async def set_inactivity_timeout(store: SettingsStore, owner_id: str, value: float) -> float:
-    """Persist the operator's inactivity timeout in seconds. Returns the stored value.
-    The ``gt=0`` body field at the route rejects a nonsensical one; a stray non-positive
-    value stored here would simply be ignored by the getter."""
+    """Persist the inactivity timeout in seconds; the route rejects non-positive values."""
     await store.set(owner_id, INACTIVITY_TIMEOUT_KEY, str(value))
     return value
 
 
 async def get_wall_clock_timeout(store: SettingsStore, owner_id: str) -> float | None:
-    """The operator's wall-clock bound in seconds — the runtime override if set (and
-    valid), else the config default (itself ``None``, i.e. no bound, unless the deploy
-    sets one).
+    """The wall-clock bound in seconds: the valid override, else the config default
+    (``None``, no bound, unless the deploy sets one).
 
-    The empty stored value is the one case that must *not* fall back: it is how the
-    operator says "no bound", which is indistinguishable from the default only while the
-    default happens to be ``None`` too. A 0, negative, or non-numeric value is corruption
-    rather than intent, so it falls back like everywhere else in this module."""
+    The empty stored value must not fall back: it is the operator's "no bound". A 0,
+    negative or non-numeric value is corruption and falls back."""
     raw = await store.get(owner_id, WALL_CLOCK_TIMEOUT_KEY)
     if raw == _DISABLED:
         return None
@@ -205,10 +167,8 @@ async def get_wall_clock_timeout(store: SettingsStore, owner_id: str) -> float |
 async def set_wall_clock_timeout(
     store: SettingsStore, owner_id: str, value: float | None
 ) -> float | None:
-    """Persist the operator's wall-clock bound in seconds, or ``None`` to remove it.
-    Returns the stored value. The ``gt=0`` body field at the route rejects a nonsensical
-    number; ``None`` is a deliberate choice, not an omission, and the route distinguishes
-    the two before calling this."""
+    """Persist the wall-clock bound in seconds, or ``None`` to remove it; the route rejects
+    non-positive numbers and distinguishes ``None`` from an omission."""
     await store.set(owner_id, WALL_CLOCK_TIMEOUT_KEY, _DISABLED if value is None else str(value))
     return value
 
@@ -226,8 +186,7 @@ async def set_first_token_timeout(store: SettingsStore, owner_id: str, value: fl
 
 
 class TurnTuning:
-    """The operator's bounds on how a turn waits, as the engine applies them; the one
-    slice of the settings store a run reads."""
+    """The operator's bounds on how a turn waits; the slice of the settings store a run reads."""
 
     def __init__(self, store: SettingsStore) -> None:
         self._store: SettingsStore = store
@@ -241,8 +200,7 @@ class TurnTuning:
 
 
 def _int_or(raw: str | None, default: int) -> int:
-    """A non-negative int from a stored string, else the default (a corrupted value can't
-    silently flip the setting to something nonsensical)."""
+    """A non-negative int from a stored string, else the default."""
     if raw is None:
         return default
     try:
@@ -253,38 +211,30 @@ def _int_or(raw: str | None, default: int) -> int:
 
 
 def _positive_int_or(raw: str | None, default: int) -> int:
-    """:func:`_int_or` for a setting where 0 is meaningless rather than merely minimal —
-    the floor is 1, so a stored 0 falls back to the default like any other bad value."""
+    """:func:`_int_or` with a floor of 1, for a setting where 0 is meaningless."""
     value = _int_or(raw, default)
     return value if value >= 1 else default
 
 
 def _bounded_int_or(raw: str | None, default: int, *, maximum: int, minimum: int = 0) -> int:
-    """:func:`_int_or` for a setting that is capped as well as floored — a stored value
-    outside the range is corruption or a client that skipped the route's bound, and falls
-    back rather than being silently clamped to a number the operator never chose.
-
-    ``minimum`` defaults to 0, which is :func:`_int_or`'s own floor, so a caller only names
-    it for a setting where 0 is meaningless rather than merely minimal."""
+    """:func:`_int_or` with a cap: a value outside the range falls back rather than being
+    clamped to a number the operator never chose."""
     value = _int_or(raw, default)
     return value if minimum <= value <= maximum else default
 
 
 @dataclass(frozen=True)
 class AutoCompactSettings:
-    """The operator's effective conversation auto-compaction preferences. ``threshold`` is
-    a fraction of the model's context window, not a percentage — the UI presents it as one,
-    but the wire and the store carry the same 0–1 quantity the context meter already uses."""
+    """The effective auto-compaction preferences. ``threshold`` is a 0-1 fraction of the
+    context window, the same quantity the context meter uses; the UI shows a percentage."""
 
     enabled: bool
     threshold: float
 
 
 def _float_or(raw: str | None, default: float) -> float:
-    """A float in ``(0, 1]`` from a stored string, else the default — :func:`_int_or` for
-    the one setting that is a fraction. Both bounds matter: 0 (or a negative) would fire
-    compaction on an empty thread, and above 1 it could never fire at all, so a corrupted
-    value falls back rather than silently disabling or thrashing the feature."""
+    """A float in ``(0, 1]`` from a stored string, else the default. Zero would compact an
+    empty thread and above 1 compaction could never fire."""
     if raw is None:
         return default
     try:
@@ -295,10 +245,8 @@ def _float_or(raw: str | None, default: float) -> float:
 
 
 def _positive_float_or(raw: str | None, default: float | None) -> float | None:
-    """A positive float (seconds) from a stored string, else the default — the
-    :func:`_float_or` counterpart for a setting whose value is unbounded above and whose
-    default may legitimately be ``None`` (the watchdog disabled). A stored 0, negative, or
-    non-numeric value falls back to the default rather than silently disabling a bound."""
+    """A positive float (seconds) from a stored string, else the default, which may be
+    ``None`` (bound disabled). A stored 0, negative or non-numeric value falls back."""
     if raw is None:
         return default
     try:
@@ -309,9 +257,8 @@ def _positive_float_or(raw: str | None, default: float | None) -> float | None:
 
 
 def _bool_or(raw: str | None, default: bool) -> bool:
-    """``True``/``False`` from a stored ``"true"``/``"false"`` string, else the default — so a
-    corrupted/legacy value falls back to the default instead of silently reading as ``False``
-    (the failure mode of a bare ``raw == "true"``), mirroring :func:`_int_or`."""
+    """A bool from a stored ``"true"``/``"false"`` string, else the default, so a corrupt
+    value does not read as ``False`` (as a bare ``raw == "true"`` would)."""
     if raw == "true":
         return True
     if raw == "false":
@@ -320,15 +267,13 @@ def _bool_or(raw: str | None, default: bool) -> bool:
 
 
 def resolve_compaction_enabled(override: bool | None, global_enabled: bool) -> bool:
-    """A conversation's effective compaction on/off: its stored override when set, else the
-    operator's global default. The one place this precedence lives, so the per-thread toggle's
-    displayed state and the turn's actual behavior can't drift apart."""
+    """A conversation's effective compaction on/off: its override, else the global default.
+    The one home of this precedence, so the toggle and the turn agree."""
     return global_enabled if override is None else override
 
 
 async def get_auto_compact(store: SettingsStore, owner_id: str) -> AutoCompactSettings:
-    """The operator's effective conversation auto-compaction settings — runtime overrides
-    where set (and valid), else the config defaults. One batched read for the group."""
+    """The effective auto-compaction settings: valid overrides, else config defaults."""
     cfg = get_settings()
     values = await store.get_many(owner_id, (AUTO_COMPACT_ENABLED_KEY, AUTO_COMPACT_THRESHOLD_KEY))
     return AutoCompactSettings(
@@ -347,14 +292,11 @@ async def set_auto_compact(
 
 
 async def get_work_summary_idle_minutes(store: SettingsStore, owner_id: str) -> int:
-    """How long a thread must be quiet before the sweep writes its work summary — the
-    stored value where set (and valid), else the config default.
+    """How long a thread must be quiet before the sweep writes its work summary: the valid
+    stored value, else the config default.
 
-    A single key rather than a group, so it is read on its own rather than batched: the
-    sweeper asks for exactly this on every pass, and the compaction group next door is
-    read by a different caller for a different reason. ``minimum=1`` because a zero-minute
-    window is not a faster setting but a broken one — every thread would be a candidate the
-    instant its turn finished, and the sweep would summarize conversations mid-conversation.
+    ``minimum=1`` because a zero window would make every thread a candidate the instant its
+    turn finished, summarizing conversations mid-conversation.
     """
     raw = await store.get(owner_id, WORK_SUMMARY_IDLE_MINUTES_KEY)
     return _bounded_int_or(
@@ -372,15 +314,12 @@ async def set_work_summary_idle_minutes(store: SettingsStore, owner_id: str, min
 
 
 async def get_context_thresholds(store: SettingsStore, owner_id: str) -> ContextThresholds:
-    """The operator's context-gauge severity boundaries — the stored pair where set (and
-    valid), else the defaults. One batched read, like auto-compaction's pair.
+    """The context-gauge severity boundaries: the stored pair if valid, else the defaults.
 
-    The fallback is all-or-nothing rather than per-field, because the two are only
-    meaningful together: a stored ``warn`` of 0.95 read alongside a defaulted ``alert``
-    of 0.9 is an inverted pair that no operator ever chose. So a value that is out of
-    range, unparseable, or (with its partner) out of order sends *both* back to the
-    defaults — a gauge with the wrong boundaries is worse than one with the stock pair,
-    since the operator has no way to tell it is miscalibrated by looking at it."""
+    The fallback is all-or-nothing, since a stored ``warn`` of 0.95 beside a defaulted
+    ``alert`` of 0.9 is an inverted pair no operator chose. An out-of-range, unparseable or
+    out-of-order value sends both back to the defaults; a silently miscalibrated gauge is
+    worse than the stock one."""
     values = await store.get_many(
         owner_id, (CONTEXT_WARN_THRESHOLD_KEY, CONTEXT_ALERT_THRESHOLD_KEY)
     )
@@ -390,14 +329,14 @@ async def get_context_thresholds(store: SettingsStore, owner_id: str) -> Context
             alert=_fraction(values.get(CONTEXT_ALERT_THRESHOLD_KEY)),
         )
     except TypeError, ValueError:
-        # `ValueError` covers pydantic's ValidationError (its base) — the ordering
-        # invariant — as well as an unparseable string; `TypeError` covers an absent key.
+        # `ValueError` covers pydantic's ValidationError (the ordering invariant) and an
+        # unparseable string; `TypeError` covers an absent key.
         return DEFAULT_CONTEXT_THRESHOLDS
 
 
 def _fraction(raw: str | None) -> float:
-    """A stored fraction as a float, raising on anything unusable so the caller can fall
-    back to the whole default pair rather than to a half-defaulted one."""
+    """A stored fraction as a float, raising on anything unusable so the caller falls back
+    to the whole default pair."""
     if raw is None:
         raise TypeError("unset")
     return float(raw)
@@ -408,9 +347,8 @@ async def set_context_thresholds(
 ) -> ContextThresholds:
     """Persist the operator's context-gauge boundaries. Returns the stored pair.
 
-    Takes a constructed ``ContextThresholds``, so the ordering invariant has already been
-    checked by the one place that owns it — this can't write a pair the getter would then
-    reject and silently replace with the defaults."""
+    Takes a constructed ``ContextThresholds``, whose ordering invariant is already checked,
+    so this cannot write a pair the getter would reject."""
     await store.set(owner_id, CONTEXT_WARN_THRESHOLD_KEY, str(thresholds.warn))
     await store.set(owner_id, CONTEXT_ALERT_THRESHOLD_KEY, str(thresholds.alert))
     return thresholds

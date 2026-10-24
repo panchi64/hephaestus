@@ -1,14 +1,6 @@
 import { onCleanup, onMount, Show, type JSX } from "solid-js";
-import {
-  LoadingText,
-  Panel,
-  Row,
-  Stack,
-  StatusFlag,
-  Text,
-  Toggle,
-  toast,
-} from "~/ui";
+import { LoadingText, Panel, Stack, StatusFlag, Toggle, toast } from "~/ui";
+import { SettingRow } from "./SettingRow";
 import {
   refreshOfflineState,
   setOfflineAutoDetect,
@@ -47,33 +39,21 @@ export function OfflineSection(): JSX.Element {
       <Show when={offline()} fallback={<LoadingText />}>
         {(state) => (
           <Stack gap={3}>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Status
-                </Text>
-                <Text variant="micro" tone="dim">
-                  When connectivity is lost the web search + fetch services are
-                  suspended to save resources and the agent's web tools are
-                  hidden. They return automatically when you're back online.
-                </Text>
-              </Stack>
+            <SettingRow
+              label="Status"
+              description="When connectivity is lost the web search + fetch services are suspended to save resources and the agent's web tools are hidden. They return automatically when you're back online."
+            >
               <StatusFlag
                 status={state().effectiveOffline ? "warn" : "nominal"}
               >
                 {offlineLabel(state())}
               </StatusFlag>
-            </Row>
-            <Row align="center" justify="between" class="pt-3">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Offline now
-                </Text>
-                <Text variant="micro" tone="dim">
-                  Force offline immediately — stops the web services regardless
-                  of connectivity.
-                </Text>
-              </Stack>
+            </SettingRow>
+            <SettingRow
+              label="Offline now"
+              description="Force offline immediately — stops the web services regardless of connectivity."
+              class="pt-3"
+            >
               <Toggle
                 checked={state().manualOffline}
                 onChange={() =>
@@ -83,17 +63,11 @@ export function OfflineSection(): JSX.Element {
                   )
                 }
               />
-            </Row>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Auto-detect
-                </Text>
-                <Text variant="micro" tone="dim">
-                  Go offline on its own when the internet connection drops, and
-                  come back when it returns.
-                </Text>
-              </Stack>
+            </SettingRow>
+            <SettingRow
+              label="Auto-detect"
+              description="Go offline on its own when the internet connection drops, and come back when it returns."
+            >
               <Toggle
                 checked={state().autoDetect}
                 onChange={() =>
@@ -103,7 +77,7 @@ export function OfflineSection(): JSX.Element {
                   )
                 }
               />
-            </Row>
+            </SettingRow>
           </Stack>
         )}
       </Show>

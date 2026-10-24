@@ -290,6 +290,15 @@ class NotificationService:
         removed."""
         return self._delete(owner_id, lambda view: view.read_at is not None)
 
+    async def delete_all(self, owner_id: str) -> int:
+        """Delete every one of the owner's notifications. Returns how many were removed."""
+        return self._delete(owner_id, lambda _view: True)
+
+    async def delete_for_conversations(self, owner_id: str, conversation_ids: set[str]) -> int:
+        """Delete the owner's notifications about these conversations, which are gone and
+        can no longer be opened. Returns how many were removed."""
+        return self._delete(owner_id, lambda view: view.conversation_id in conversation_ids)
+
     async def resolve_for_run(self, owner_id: str, run_id: str) -> list[NotificationView]:
         """Resolve every one of the run's not-yet-resolved notifications (in practice
         at most its one `approval_needed`) — the approval was decided by some path, or

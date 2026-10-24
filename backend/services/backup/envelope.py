@@ -110,7 +110,7 @@ def open_envelope(secret: str, envelope: object) -> bytes:
     key = crypto.derive_kek(secret, salt)
     try:
         return crypto.aead_decrypt(key, sealed, _aad(_header(fields)))
-    except Exception as exc:  # noqa: BLE001 — AEAD failure is one answer: it didn't open
+    except Exception as exc:  # AEAD failure is one answer: it didn't open
         raise BackupSecretError(
             "the backup could not be decrypted — wrong secret, or the file was altered"
         ) from exc

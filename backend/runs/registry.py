@@ -1,28 +1,30 @@
-"""Pillar I — the RunRegistry: launch, track, bound, and cancel Runs.
+"""The RunRegistry: launch, track, bound, and cancel Runs.
 
-In-process: Runs are asyncio tasks tracked in a dict, gated by a **per-lane**
-concurrency semaphore (bursts queue at the gate — the ``queued`` state, which
-also prevents overlapping overload). Which lane a run waits in follows from its
-``kind`` — see ``runs/lanes.py`` for why the operator's own turn does not share a
-pool with unattended work. The registry owns the lifecycle mechanics —
-queued→running, the terminal-state mapping, the wall-clock + inactivity bounds,
-and cancellation — so every orchestrator inherits them for free.
+Runs are in-process asyncio tasks gated by a per-lane concurrency semaphore (bursts wait
+in ``queued``); the lane follows from the run's ``kind`` (``runs/lanes.py``). The registry
+owns queued→running, the terminal-state mapping, the wall-clock and inactivity bounds, and
+cancellation, so every orchestrator inherits them.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from enum import Enum
+from functools import partial
+from typing import Literal
 from uuid import uuid4
+
+from core.tasks import STOP_TIMEOUT_S
 
 from .endpoint_gate import Endpoint, EndpointGate
 from .events import EventBody, LimitNotice, RunEnded, RunError, RunQueued, RunStarted, now_utc
-from .inbox import NO_JOURNAL, ConversationInbox, InboxJournal
+from .inbox import NO_JOURNAL, ConversationInbox, InboxDispatch, InboxJournal
 from .lanes import LaneGate, LaneLimits
-from .run import Orchestrator, Run, RunStatus
+from .parked import NO_PARKED_JOURNAL, ParkedJournal
+from .run import Orchestrator, Run, RunStatus, StopCause
 from .stream import RunStream
 
 logger = logging.getLogger(__name__)
@@ -43,7 +45,7 @@ def _ended(run: Run) -> RunEnded:
         case RunStatus.done:
             return RunEnded(outcome="done", detail=run.detail)
         case RunStatus.blocked:
-            return RunEnded(outcome="blocked", detail=run.detail)
+            return RunEnded(outcome="blocked", detail=run.detail, code=run.end_code)
         case RunStatus.cancelled:
             return RunEnded(outcome="cancelled", detail=run.detail)
         case _:
@@ -51,18 +53,14 @@ def _ended(run: Run) -> RunEnded:
 
 
 class ConversationBusyError(Exception):
-    """Raised by ``claim`` or ``submit`` to refuse an operation because a live run — or
-    another in-flight claim — already holds ``conversation_id``. The atomic backstop
-    behind the route-level 409 guards in ``routes/chat.py``/``routes/conversations.py``
+    """Raised by ``claim`` or ``submit`` when a live run or another in-flight claim already
+    holds ``conversation_id``; the atomic backstop behind the routes' 409 guards
     (``deps.claim_conversation``).
 
-    ``submit``'s own check-and-register runs with no ``await`` in between, so it's
-    atomic against a second bare run-creation attempt on its own — but a route whose
-    *own* mutation or submit is preceded by a real ``await`` (a model resolve, an
-    orphan-attachment lookup) needs more than that: two near-simultaneous requests can
-    both observe "no live run" before either does its own mutating work. ``claim``
-    closes that gap — it must be taken before the route's first such ``await`` and
-    held (released in a ``finally``) through the route's own submit/mutation.
+    ``submit`` is atomic on its own (no ``await`` between check and register), but a route
+    with a real ``await`` before its own mutation or submit (a model resolve, an orphan
+    lookup) can have two requests both see "no live run". ``claim`` closes that: take it
+    before the first such ``await`` and release it in a ``finally``.
     """
 
     def __init__(self, conversation_id: str) -> None:
@@ -70,26 +68,24 @@ class ConversationBusyError(Exception):
         self.conversation_id: str = conversation_id
 
 
+type TimeoutKind = Literal["wall_clock", "inactivity"]
+
+
 class RunTimeout(Exception):
     """A Run exceeded a bound. ``kind`` is ``wall_clock`` or ``inactivity``.
 
-    The message is built here from the bound's actual configured duration rather
-    than left as the raw enum name — it reaches the operator verbatim, both as the
-    toast (``LimitNotice.message``) and the persistent ``blocked`` marker
-    (``blockedDetail``), so it must read as a plain sentence, never internal jargon.
+    The message reaches the operator verbatim (toast and ``blockedDetail`` marker), so it is
+    built from the configured duration as a plain sentence.
     """
 
-    def __init__(self, kind: str, bound_s: float | None = None) -> None:
+    def __init__(self, kind: TimeoutKind, bound_s: float | None = None) -> None:
         super().__init__(_timeout_message(kind, bound_s))
-        self.kind: str = kind
+        self.kind: TimeoutKind = kind
 
 
 def _fmt_minutes(minutes: float) -> str:
-    """The minutes count as a plain string — a whole number when the bound is an
-    exact multiple of a minute, else one decimal place. Plain ``round()`` is
-    round-half-to-even (``round(2.5) == 2``), which would silently understate (or
-    overstate) a fractional operator-configured bound like 150s/2.5 minutes; this
-    reports the actual configured duration instead of any rounded approximation."""
+    """Minutes as a whole number when exact, else one decimal. Not ``round()``, whose
+    half-to-even (``round(2.5) == 2``) would misstate a bound like 150s."""
     if minutes.is_integer():
         return str(int(minutes))
     return f"{minutes:.1f}"
@@ -122,7 +118,7 @@ def _timeout_message(kind: str, bound_s: float | None) -> str:
         if not bound_s:
             return "no activity for too long"
         return f"no activity for {count_duration(bound_s)}"
-    return f"{kind} timeout exceeded"  # defensive fallback for an unrecognized kind
+    return f"{kind} timeout exceeded"
 
 
 def _queued(run: Run, position: int) -> None:
@@ -147,26 +143,35 @@ class RunRegistry:
         self._wall_clock: float | None = wall_clock_timeout_s
         self._inactivity: float | None = inactivity_timeout_s
         self._max_retained: int = max_retained
-        # (owner_id, conversation_id) pairs a route currently holds via `claim` —
-        # in-flight requests that haven't (yet, or ever will) register a Run but must
-        # still block a second request from mutating/submitting on the same
-        # conversation. See `claim`/`release`.
+        # (owner_id, conversation_id) pairs held via `claim`: in-flight requests that may
+        # never register a Run but must still block a second mutation on the conversation.
         self._claims: set[tuple[str, str]] = set()
-        # Optional hook fired exactly once per run at its terminal transition (done,
-        # blocked, error, or cancelled), *before* the stream closes — the substrate
-        # stays decoupled from what a caller does with it (app.py composes the
-        # attention-surface emit policy over this; nothing in `runs/` imports
-        # `services/`). Synchronous and best-effort: see `_fire_terminal`.
+        # Fired once per run at its terminal transition, before the stream closes, so
+        # `runs/` needn't import `services/` (app.py composes the emit policy). Synchronous
+        # and best-effort: see `_fire_terminal`.
         self._on_terminal: Callable[[Run], None] | None = on_terminal
         # One inbox per (owner, conversation), outliving every run on it.
         self._inboxes: dict[tuple[str, str], ConversationInbox] = {}
         self._journal: InboxJournal = NO_JOURNAL
+        self._parked_journal: ParkedJournal = NO_PARKED_JOURNAL
+        # Runs whose park is on the journal, so ending one that never parked costs no write.
+        self._journalled: set[str] = set()
+        # Opaque to the substrate: the orchestrator layer files and reads these by run kind.
+        self._recomposers: dict[str, object] = {}
+        self._restore_checks: dict[str, Callable[[Run], Awaitable[str | None]]] = {}
         self._closing: bool = False
+        self._parks_restored: asyncio.Event = asyncio.Event()
+
+    @property
+    def parks_restored(self) -> asyncio.Event:
+        """Set once the stored parks are back (or the attempt ended), so a holder of a parked
+        run's record can tell a live run from an orphan."""
+        return self._parks_restored
 
     @property
     def closing(self) -> bool:
-        """Set once shutdown begins: no turn may start from a queued message, so the inboxes
-        and their journal stay as they were for the next boot."""
+        """Set once shutdown begins: no turn starts from a queued message, so inboxes and
+        journal stay as they were for the next boot."""
         return self._closing
 
     @property
@@ -179,6 +184,84 @@ class RunRegistry:
         self._journal = journal
         for inbox in self._inboxes.values():
             inbox.journal = journal
+
+    # --- parked runs ----------------------------------------------------------
+    def attach_parked_journal(self, journal: ParkedJournal) -> None:
+        """Write every run that parks through ``journal`` from now on."""
+        self._parked_journal = journal
+
+    def set_recomposer(self, kind: str, hook: object) -> None:
+        """File what rebuilds a parked run of ``kind`` after a restart."""
+        self._recomposers[kind] = hook
+
+    def recomposer(self, kind: str) -> object | None:
+        return self._recomposers.get(kind)
+
+    def restore_parked(self, run: Run, announcements: Sequence[EventBody]) -> None:
+        """Track a run rebuilt from a stored park, in ``awaiting_input``, and replay what it
+        was waiting on into its stream. The row is already stored, so it is not rewritten.
+
+        The caller has checked that the conversation has no live run, with no await between
+        that check and this call; nothing here re-checks."""
+        if run.conversation_id is not None:
+            run.inbox = self.inbox(run.conversation_id, run.owner_id)
+        self.register(run)
+        self._journalled.add(run.id)
+        run.on_parked_emit = partial(self._parked_journal.advance, run.id)
+        for body in announcements:
+            _ = run.emit(body)
+
+    def end_unrestorable(self, run: Run, detail: str) -> None:
+        """Record a run from a stored park that cannot be resumed as ended ``blocked``, so
+        everything that waits on a run's end hears of it. Its row is dropped."""
+        self.register(run)
+        self._journalled.add(run.id)
+        self._block_parked(run, detail)
+
+    def set_restore_check(self, kind: str, check: Callable[[Run], Awaitable[str | None]]) -> None:
+        """File what vets a restored park of ``kind``: it returns why the park can no longer
+        be resumed, or ``None``."""
+        self._restore_checks[kind] = check
+
+    async def restore_problem(self, run: Run) -> str | None:
+        check = self._restore_checks.get(run.kind)
+        return None if check is None else await check(run)
+
+    async def block_parked(self, run_id: str, detail: str) -> bool:
+        """End a parked run ``blocked``: its turn is kept as a stopped one, nothing it
+        awaited runs, and the terminal hooks fire as they do for any ending."""
+        run = self._runs.get(run_id)
+        if run is None or run.status is not RunStatus.awaiting_input:
+            return False
+        self._block_parked(run, detail)
+        return True
+
+    def _block_parked(self, run: Run, detail: str) -> None:
+        run.block(detail)
+        self._flush_park_cancel(run)
+        self._forget_park(run.id)
+        _ = run.emit(RunEnded(outcome="blocked", detail=detail))
+        run.ended_at = now_utc()
+        self._fire_terminal(run)
+        run.stream.close()
+        if run.task is not None and not run.task.done():
+            _ = run.task.cancel()
+
+    def _journal_park(self, run: Run) -> bool:
+        try:
+            stored = self._parked_journal.record(run)
+        except Exception:
+            logger.exception("runs: could not store the park of run %s", run.id)
+            stored = False
+        if stored:
+            self._journalled.add(run.id)
+            run.on_parked_emit = partial(self._parked_journal.advance, run.id)
+        return stored
+
+    def _forget_park(self, run_id: str) -> None:
+        if run_id in self._journalled:
+            self._journalled.discard(run_id)
+            self._parked_journal.forget(run_id)
 
     def inbox(self, conversation_id: str, owner_id: str) -> ConversationInbox:
         """The inbox of ``conversation_id``. Its events go to the live run on the thread."""
@@ -197,9 +280,8 @@ class RunRegistry:
         return found
 
     def _prune_inboxes(self) -> None:
-        """Drop idle inboxes once there are many. One whose thread is live or claimed stays:
-        a run or a request may hold it (a turn being started from it among them), and a
-        second inbox for the thread would split its queue."""
+        """Drop idle inboxes once there are many. A live or claimed thread's stays, since a
+        second inbox would split its queue."""
         if len(self._inboxes) < _INBOXES_KEPT:
             return
         for key, inbox in list(self._inboxes.items()):
@@ -230,13 +312,10 @@ class RunRegistry:
         return runs
 
     def active_run_for(self, conversation_id: str, owner_id: str) -> Run | None:
-        """The most-recent non-terminal run driving ``conversation_id``, if any.
+        """The most recent non-terminal run driving ``conversation_id``, if any.
 
-        How a reattaching client (page reload) maps a conversation back to its
-        in-flight run: an in-flight chat turn's answer isn't persisted until it
-        finishes (its prompt is, as it begins), so the conversation read alone
-        can't show a streaming answer — this points
-        the client at the run whose events it can replay and resume.
+        How a reloading client finds the run to replay: a streaming answer isn't persisted
+        until it finishes (its prompt is).
         """
         candidates = [
             r
@@ -255,20 +334,16 @@ class RunRegistry:
 
     # --- claim (pre-submit / pre-mutation mutual exclusion) --------------------
     def claim(self, conversation_id: str, owner_id: str) -> None:
-        """Atomically check-and-claim ``conversation_id`` for a request that is about
-        to reposition the active leaf (regenerate/edit/rewind/switch-version/a purging
-        delete) or submit a run, with further ``await``s of its own still ahead of it.
+        """Check-and-claim ``conversation_id`` for a request about to reposition the active
+        leaf (regenerate/edit/rewind/switch-version/purging delete) or submit a run, with
+        its own ``await``s still ahead.
 
-        Synchronous — no ``await`` between the check and the claim — so under
-        single-threaded asyncio two near-simultaneous callers can't both observe "no
-        live run, no existing claim" and both proceed: only the first to reach this
-        call wins. Raises :class:`ConversationBusyError` when a live (non-terminal) run
-        already drives this conversation, or another in-flight request already holds
-        the claim.
+        Synchronous, so two near-simultaneous callers can't both pass; the first wins.
+        Raises :class:`ConversationBusyError` if a live run drives the conversation or
+        another request holds the claim.
 
-        The caller **must** release the claim via `release`, in a ``finally`` covering
-        every exit path (a failed model resolve, a 404 message id, a successful
-        submit) — an unreleased claim wrongly strands the conversation "busy" forever.
+        The caller must `release` in a ``finally`` covering every exit path, or the
+        conversation stays "busy" forever.
         """
         key = (owner_id, conversation_id)
         if key in self._claims or self.active_run_for(conversation_id, owner_id) is not None:
@@ -276,9 +351,17 @@ class RunRegistry:
         self._claims.add(key)
 
     def release(self, conversation_id: str, owner_id: str) -> None:
-        """Release a claim taken by `claim`. Idempotent — safe even if `claim` raised
-        (or was never called) for this pair."""
+        """Release a claim taken by `claim`; idempotent, even if `claim` raised."""
         self._claims.discard((owner_id, conversation_id))
+
+    def release_and_kick(
+        self, conversation_id: str, owner_id: str, dispatcher: InboxDispatch | None
+    ) -> None:
+        """Release a claim; one that started no run leaves whatever queued behind it to the
+        inbox dispatcher."""
+        self.release(conversation_id, owner_id)
+        if dispatcher is not None and self.active_run_for(conversation_id, owner_id) is None:
+            dispatcher.kick(owner_id, conversation_id)
 
     # --- launch ---------------------------------------------------------------
     def register(self, run: Run) -> None:
@@ -297,10 +380,8 @@ class RunRegistry:
         wall_clock_timeout_s: float | None | Unset = UNSET,
         inactivity_timeout_s: float | None | Unset = UNSET,
     ) -> Run:
-        # Atomic check-and-claim: reads ``self._runs`` and registers the new run with no
-        # ``await`` in between, so this closes the race a caller's own pre-submit guard
-        # can't — two requests that both saw no active run can still both reach here, and
-        # only the one that actually runs first wins the slot.
+        # No ``await`` between this check and registering, closing the race a caller's own
+        # pre-submit guard can't: two requests that saw no active run can both reach here.
         if conversation_id is not None and (
             self.active_run_for(conversation_id, owner_id) is not None
         ):
@@ -328,46 +409,36 @@ class RunRegistry:
     async def cancel(self, run_id: str) -> bool:
         """Request cancellation.
 
-        Two mechanisms exist, both armed here: ``run.cancel_requested`` is a
-        cooperative flag the orchestrator's own loop checks at its next step
-        boundary (see ``agent/turn.py``'s ``chat-05`` wiring); ``task.cancel()``
-        below is the immediate hard backstop that fires regardless.
+        Armed twice: ``run.cancel_requested`` is a flag the orchestrator checks at its
+        next step boundary (``agent/turn.py``), and ``task.cancel()`` is the immediate
+        backstop.
 
-        Idempotent against a repeated cancel on the same run before the first
-        cancellation actually lands: a running (not yet terminal, not parked) run
-        stays ``running`` until its ``CancelledError`` is delivered on a later
-        event-loop tick, so a second call in that window must not re-flush or
-        re-persist — ``run.cancel_requested`` already being set is the signal
-        that a cancel is already in flight for this run.
+        Idempotent: a running run stays ``running`` until its ``CancelledError`` lands on a
+        later loop tick, and ``cancel_requested`` already being set means a cancel is in
+        flight, so a repeat must not re-flush or re-persist.
         """
         run = self._runs.get(run_id)
         if run is None or run.is_terminal:
             return False
         if run.status is RunStatus.awaiting_input:
-            # Parked: the task already ended, so there is nothing to interrupt — but
-            # unlike a running turn, a parked turn's own persistence is otherwise only
-            # ever recorded on resume, so flush it here first (see `_flush_park_cancel`)
-            # before finalizing and closing the stream, or the operator's own prompt
-            # (and any tool calls already completed before the deferred one) is
-            # silently dropped.
+            # Parked: no task to interrupt, but its persistence is otherwise recorded only
+            # on resume, so flush first (`_flush_park_cancel`) or the prompt and completed
+            # tool calls are dropped.
             run.cancel_requested = True
             run.status = RunStatus.cancelled
             self._flush_park_cancel(run)
+            self._forget_park(run.id)
             _ = run.emit(RunEnded(outcome="cancelled"))
             run.ended_at = now_utc()
             self._fire_terminal(run)
             run.stream.close()
-            # "The task already ended" holds for a settled park, but not for the window
-            # between `park()` and the orchestrator's own return — it still has work to
-            # unwind (settling the concurrent namer). Interrupt it, or it resumes into a
-            # run this call has already finalized.
+            # Between `park()` and the orchestrator's return the task still unwinds (settling
+            # the namer); interrupt it or it resumes into an already-finalized run.
             if run.task is not None and not run.task.done():
                 _ = run.task.cancel()
             return True
         if run.cancel_requested:
-            # Already flushed and hard-cancelled by an earlier call; the task
-            # simply hasn't unwound to a terminal status yet. Report success
-            # without repeating the (non-idempotent) flush/persist side effect.
+            # Already flushed and cancelled; don't repeat the non-idempotent flush.
             return True
         run.cancel_requested = True
         self._flush_cancel(run)
@@ -376,26 +447,60 @@ class RunRegistry:
         return True
 
     async def shutdown(self, timeout_s: float = 5.0) -> None:
-        """Cancel every live run and wait up to ``timeout_s`` for them to unwind.
+        """Cancel every live unparked run and wait up to ``timeout_s`` for them to unwind.
 
-        The app registers this **last** in its lifecycle, so it stops **first**: an
-        orchestrator writes through stores (the conversation write-behind drainer above
-        all) that shutdown is otherwise free to tear down under it, and a submit onto a
-        stopped drainer is discarded with no error and no ``on_drop``. Cancelling here
-        runs each turn's own pre-cancel flush while the stores are still live, so a turn
-        in flight at shutdown is persisted rather than silently lost.
+        Registered last in the app lifecycle so it stops first: orchestrators write through
+        stores (above all the write-behind drainer), and a submit onto a stopped drainer is
+        discarded silently. Cancelling here runs each turn's pre-cancel flush while the
+        stores are live.
+
+        A run parked on the operator is left as is (no flush, no ``run.ended``) and its park
+        is stored at the stream position it ends on, for the next process. One still
+        unwinding into its park is waited for so the park is journalled before the stores
+        stop. A park that can't be stored is cancelled like a running turn.
         """
         self._closing = True
-        live = [run for run in self._runs.values() if not run.is_terminal]
+        live = [run for run in self._runs.values() if not run.is_terminal and not run.is_parked]
         for run in live:
             _ = await self.cancel(run.id)
-        pending = [run.task for run in live if run.task is not None and not run.task.done()]
+        unwinding = [
+            run.task
+            for run in self._runs.values()
+            if run.is_parked and run.task is not None and not run.task.done()
+        ]
+        pending = [
+            *(run.task for run in live if run.task is not None and not run.task.done()),
+            *unwinding,
+        ]
         if pending:
-            # Bounded: a turn's own pre-cancel flush is worth waiting for, a tool that
-            # swallows the cancel is not worth a shutdown that never ends.
             _, stuck = await asyncio.wait(pending, timeout=timeout_s)
             if stuck:
                 logger.warning("runs: %d run(s) still unwinding after %.1fs", len(stuck), timeout_s)
+        # A park is kept only if its row is queued, at the stream position it ends on;
+        # any other parked run is cancelled, which persists its turn.
+        for run in list(self._runs.values()):
+            if run.status is RunStatus.awaiting_input and not self._journal_park(run):
+                self._forget_park(run.id)
+                _ = await self.cancel(run.id)
+        # Afterwork writes through the same stores, so it stops while they are still live.
+        afterwork = [task for run in self._runs.values() for task in run.afterwork]
+        for task in afterwork:
+            _ = task.cancel()
+        if afterwork:
+            _ = await asyncio.wait(afterwork, timeout=STOP_TIMEOUT_S)
+
+    async def settle_afterwork(
+        self, conversation_id: str, owner_id: str, timeout_s: float | None = None
+    ) -> None:
+        """Wait, at most ``timeout_s``, for work this conversation's runs left running."""
+        afterwork = [
+            task
+            for run in self._runs.values()
+            if run.owner_id == owner_id and run.conversation_id == conversation_id
+            for task in run.afterwork
+        ]
+        if afterwork:
+            _ = await asyncio.wait(afterwork, timeout=timeout_s)
 
     async def resume(
         self,
@@ -405,22 +510,19 @@ class RunRegistry:
         wall_clock_timeout_s: float | None | Unset = UNSET,
         inactivity_timeout_s: float | None | Unset = UNSET,
     ) -> Run | None:
-        """Continue a parked run with a fresh orchestrator (approval resume).
-
-        Runs on the same Run/stream — no new ``run.started``, no replayed
-        history — and inherits fresh bounds for the continuation turn.
-        """
+        """Continue a parked run with a fresh orchestrator on the same Run and stream (no new
+        ``run.started``), under fresh bounds."""
         run = self._runs.get(run_id)
         if run is None or run.status is not RunStatus.awaiting_input:
             return None
-        # Let the parked attempt's task fully exit before we touch status —
-        # otherwise it could wake, see status flipped, and wrongly finalize.
+        # The parked task must exit before status changes, or it could wake and wrongly finalize.
         if run.task is not None:
             with suppress(asyncio.CancelledError):
                 await run.task
         if run.status is not RunStatus.awaiting_input:
             return None  # cancelled (or already resumed) while we waited
         run.status = RunStatus.queued
+        self._forget_park(run.id)
         wall = self._wall_clock if wall_clock_timeout_s is UNSET else wall_clock_timeout_s
         idle = self._inactivity if inactivity_timeout_s is UNSET else inactivity_timeout_s
         run.task = asyncio.create_task(
@@ -440,9 +542,8 @@ class RunRegistry:
         resuming: bool = False,
     ) -> None:
         try:
-            # Bursts wait here while ``queued`` — bounded concurrency, in this run's own
-            # lane, so a saturated lane never holds up work in another one; then in line
-            # for the run's model endpoint (`runs/endpoint_gate.py`).
+            # Waits ``queued`` in the run's own lane, so a saturated lane never holds up
+            # another, then for its model endpoint (`runs/endpoint_gate.py`).
             async with (
                 self._lanes.slot(run.kind),
                 self._endpoints.lease(
@@ -456,46 +557,45 @@ class RunRegistry:
                     _ = run.emit(RunStarted(run_id=run.id, kind=run.kind))
                 await self._supervise(run, orchestrator, wall_clock, inactivity)
                 if run.is_parked:
-                    # Parked for approval: leave the stream open and the
-                    # slot free; the run is resumed or cancelled out of band.
+                    # Stream stays open and the slot frees; resume or cancel comes out of band.
+                    _ = self._journal_park(run)
                     return
                 if not run.is_terminal:
                     run.status = RunStatus.done
                 self._emit_metrics(run)
                 self._emit(run, _ended(run))
         except RunTimeout as timeout:
-            # Terminate the same way a usage-limit stop does (LimitNotice + a
-            # blocked RunEnded), not RunError — a timeout is an expected bound, not
-            # a failure, and the frontend already renders limit.notice as a toast
-            # and a blocked outcome as a persistent inline marker.
+            # Ends like a usage-limit stop (LimitNotice + blocked RunEnded), not RunError:
+            # a timeout is an expected bound, rendered as a toast and a persistent marker.
             self._emit(run, LimitNotice(limit="time", message=str(timeout)))
             parked = run.status is RunStatus.awaiting_input
             run.block(str(timeout))
+            run.end_code = timeout.kind
+            if timeout.kind == "wall_clock":
+                run.stop_cause = StopCause.time_limit
             if parked:
-                # The bound tripped in the window after the orchestrator parked but
-                # before its task finished unwinding. A parked turn's persistence is
-                # otherwise deferred to the resume that will now never happen, and
-                # `on_timeout` was already disarmed at the park — so without this the
-                # whole turn (the operator's own prompt included) is silently dropped.
+                # Tripped after the park but before the task unwound: persistence was
+                # deferred to a resume that won't happen and `on_timeout` is already
+                # disarmed, so the whole turn would be dropped.
                 self._flush_park_cancel(run)
             self._emit_metrics(run)
             self._emit(run, _ended(run))
         except asyncio.CancelledError:
-            # The Run's own top-level handler turns cancellation into a recorded
-            # terminal state rather than propagating it — intentional.
+            # Recorded as a terminal state rather than propagated, on purpose.
             run.status = RunStatus.cancelled
             self._emit_metrics(run)
             self._emit(run, RunEnded(outcome="cancelled"))
         except Exception as exc:  # orchestrator failures are terminal, not fatal
+            logger.warning("run %s failed", run.id, exc_info=True)
             run.status = RunStatus.error
             run.error = str(exc)
             self._emit_metrics(run)
             self._emit(run, RunError(message=str(exc), kind=type(exc).__name__))
         finally:
-            # Only finalize on a terminal outcome — a parked run keeps its
-            # stream open for the eventual resume. A closed stream means a
-            # concurrent `cancel` already finalized this run (see `_emit`); its
-            # outcome and its terminal hook are recorded, so don't fire either twice.
+            # A parked run keeps its stream open. A closed stream means a concurrent
+            # `cancel` already finalized it (see `_emit`), so don't fire twice.
+            if run.is_terminal:
+                self._forget_park(run.id)
             if run.is_terminal and not run.stream.closed:
                 run.ended_at = run.ended_at or now_utc()
                 self._fire_terminal(run)
@@ -503,28 +603,21 @@ class RunRegistry:
 
     @classmethod
     def _emit_metrics(cls, run: Run) -> None:
-        """The metrics frame that precedes a closing frame — when the run has any.
+        """The metrics frame preceding a closing frame, when the run measured anything.
 
-        On every terminal path a run that measured something reports it: a stopped or
-        failed turn still spent the tokens it spent, and a usage view that silently omits
-        exactly the runs that went wrong is worse than no view. A run that measured
-        *nothing* (cancelled before its first response, a fold that declined, a failure
-        before the model) emits no frame at all. An empty one is not "no data": the client
-        reads a metrics frame as the authoritative state of the thread, so it blanked the
-        meter and zeroed the stats of a thread that had neither changed nor been measured."""
+        Every terminal path reports what was spent, including stopped or failed turns. A run
+        that measured nothing emits no frame: the client reads a frame as the thread's
+        authoritative state, so an empty one would blank the meter and zero the stats."""
         if run.metrics is not None:
             cls._emit(run, run.metrics)
 
     @staticmethod
     def _emit(run: Run, body: EventBody) -> None:
-        """Emit a lifecycle frame unless the stream is already closed.
+        """Emit a lifecycle frame unless the stream is closed.
 
-        A parked run stays externally visible while its task is still unwinding (the
-        orchestrator has more to do after ``park`` — settling the concurrent namer, for
-        one), so `cancel`'s parked branch can close the stream out from under this
-        coroutine. Emitting onto it would raise, flip the recorded ``cancelled`` outcome
-        to ``error``, and fire the terminal hook a second time. The cancel already
-        recorded the outcome; there is nothing left for these frames to say.
+        A parked run is visible while its task unwinds, so `cancel`'s parked branch can close
+        the stream under this coroutine; emitting then would raise, flip ``cancelled`` to
+        ``error`` and fire the terminal hook twice.
         """
         if not run.stream.closed:
             _ = run.emit(body)
@@ -537,8 +630,7 @@ class RunRegistry:
         inactivity: float | None,
     ) -> None:
         """Run the orchestrator under wall-clock + inactivity bounds."""
-        # Tell the run which bound it is being held to, so `Run.keepalive` can beat inside
-        # it rather than against a fixed interval that a shortened timeout would outrun.
+        # So `Run.keepalive` beats inside the bound instead of a fixed interval.
         run.inactivity_timeout_s = inactivity
         if not wall_clock and not inactivity:
             await orchestrator(run)
@@ -579,17 +671,12 @@ class RunRegistry:
 
     @staticmethod
     def _flush_timeout(run: Run, message: str) -> None:
-        """Give the orchestrator one last chance to persist its partial state before
-        the bound trips and ``_supervise``'s ``finally`` force-cancels its task —
-        without this, a wall-clock/inactivity stop reports a 'blocked' outcome that
-        looks persistent but silently drops the turn (and the operator's own prompt)
-        on the next reload, because cancellation interrupts the task before its own
-        normal finalize path runs. Called while the task is still suspended (not
-        running), so reading its state here is race-free under single-threaded
-        asyncio. Best-effort: a hook that raises must not stop the bound from firing.
-        ``message`` is the same operator-legible sentence (``str(RunTimeout)``, built
-        from the bound's configured duration) used for the toast/persisted marker, so
-        there is exactly one place that turns a bound's ``kind`` into words."""
+        """Let the orchestrator persist its partial state before ``_supervise``'s ``finally``
+        force-cancels its task; otherwise a bound reports 'blocked' yet drops the turn and
+        the prompt on reload, since cancellation pre-empts its finalize. The task is
+        suspended, so reading its state is race-free. Best-effort: a raising hook must not
+        stop the bound. ``message`` is ``str(RunTimeout)``, the single place a bound's
+        ``kind`` becomes words."""
         if run.on_timeout is None:
             return
         with suppress(Exception):
@@ -597,46 +684,34 @@ class RunRegistry:
 
     @staticmethod
     def _flush_park_cancel(run: Run) -> None:
-        """Give a parked (awaiting-approval) run the same pre-cancel flush opportunity
-        `_flush_cancel` gives a still-running turn. A parked turn's task has already
-        exited, so there is nothing to interrupt — but its persistence is otherwise
-        deferred until the eventual resume (see `agent.finalize.finalize`'s parked
-        branch), so without this hook, cancelling it instead of resuming it silently
-        drops the whole parked turn (the operator's own prompt included) on the next
-        reload. Called after `run.status` has already been set to the terminal
-        `cancelled` value, so the orchestrator's own finalize path persists rather than
-        re-wiring resume context for a run that is no longer going to resume.
-        Best-effort: a hook that raises must not stop the cancel from proceeding."""
+        """The pre-cancel flush for a parked run. Its persistence is otherwise deferred to a
+        resume (`agent.finalize.finalize`'s parked branch), so cancelling would drop the
+        turn and prompt. Called after `run.status` is already `cancelled`, so finalize
+        persists instead of wiring resume context. Best-effort: a raising hook must not
+        stop the cancel."""
         if run.on_park_cancel is None:
             return
-        with suppress(Exception):
+        try:
             run.on_park_cancel()
+        except Exception:
+            logger.warning("runs: the parked turn of run %s was not written", run.id, exc_info=True)
 
     @staticmethod
     def _flush_cancel(run: Run) -> None:
-        """Give the orchestrator the same pre-cancel flush opportunity ``_flush_timeout``
-        gives the wall-clock/inactivity bounds — before ``task.cancel()`` force-unwinds it,
-        so a manual Stop doesn't drop the turn (and the operator's own prompt) on the next
-        reload the way an un-flushed timeout would (see ``_flush_timeout``). Called from
-        this coroutine — not the run's own task — while that task is provably suspended:
-        under single-threaded asyncio nothing else runs while this does, so reading the
-        task's state here is race-free. Deliberately does not touch ``run.status``/outcome:
-        ``_execute``'s own ``except asyncio.CancelledError`` handler sets the terminal
-        ``cancelled`` status once the cancellation actually lands, so this hook must only
-        persist, never finalize the run's terminal state. Best-effort: a hook that raises
-        must not stop the cancel from proceeding."""
+        """The pre-cancel flush (as ``_flush_timeout``) before ``task.cancel()``, so a manual
+        Stop doesn't drop the turn. Called from this coroutine while the run's task is
+        suspended, so reading its state is race-free. It must only persist, never touch
+        ``run.status``: ``_execute``'s ``CancelledError`` handler sets ``cancelled`` once the
+        cancellation lands. Best-effort: a raising hook must not stop the cancel."""
         if run.on_cancel is None:
             return
         with suppress(Exception):
             run.on_cancel()
 
     def _fire_terminal(self, run: Run) -> None:
-        """Invoke the injected ``on_terminal`` hook exactly once, synchronously, right
-        before the stream closes — so it can still read an accurate
-        ``run.stream.subscriber_count`` (see that property's docstring for why after
-        ``close()`` would race the subscribers' own cleanup). Swallows (and logs) any
-        exception: a notification failure must never affect a run's own recorded
-        outcome, which has already been decided by the time this fires."""
+        """Invoke ``on_terminal`` once, synchronously, before the stream closes so it reads an
+        accurate ``run.stream.subscriber_count`` (see that property). Exceptions are logged
+        and swallowed: they must not affect the already-decided outcome."""
         if self._on_terminal is None:
             return
         try:
@@ -645,8 +720,9 @@ class RunRegistry:
             logger.exception("runs: on_terminal hook failed for run %s", run.id)
 
     def _evict_old(self) -> None:
-        """Bound memory: drop the oldest terminal runs past the retention cap."""
-        terminal = [r for r in self._runs.values() if r.is_terminal]
+        """Bound memory: drop the oldest terminal runs past the retention cap. A run with
+        afterwork still going is kept, since it holds the only reference to that work."""
+        terminal = [r for r in self._runs.values() if r.is_terminal and not r.afterwork]
         overflow = len(terminal) - self._max_retained
         if overflow <= 0:
             return

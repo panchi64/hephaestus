@@ -79,7 +79,7 @@ of work instead of a dozen fragments of it."""
 # told the passing combination either (`prompts/utility.py`).
 AUTO_LEVEL = """\
 This thread is at the Auto level: a review decides in the operator's place, and only what \
-it will not settle stops for them. Work that stays inside this workspace and reaches no \
+it will not settle stops for them. Work that stays inside your home and reaches no \
 network is settled without asking anyone, so prefer the approach that stays there. Where \
 a tool asks how far a command needs to reach, answer it honestly — that declaration is \
 what the sandbox around the command is built from, and one that needs more than it \
@@ -110,6 +110,6 @@ rather than leaving them to discover it.
 
 The sandbox has not gone anywhere. Where a tool asks how far a command needs to reach, \
 that answer is now the only thing deciding what the command is held to, so give it \
-honestly and no wider than the work needs: take `workspace` wherever the work stays in \
-this workspace, and ask for more only where it genuinely does not. Over-declaring buys \
+honestly and no wider than the work needs: take `offline` wherever the work needs no \
+network, and ask for more only where it genuinely does. Over-declaring buys \
 you nothing here and removes the last bound on a command that goes wrong."""

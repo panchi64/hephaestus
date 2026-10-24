@@ -1,10 +1,8 @@
 """Database engine and the sync-in-threadpool access pattern.
 
-Persistence runs on **plain SQLite** for now. The connection is built in one
-place (:func:`make_engine`) so at-rest encryption can swap in here later — once
-auth exists to derive a key from — without touching any caller. SQLite's driver
-is synchronous, so every unit of DB work runs in a thread to keep the event loop
-free, and genuinely parallelizes (SQLite releases the GIL during I/O).
+The connection is built in one place (:func:`make_engine`). SQLite's driver is
+synchronous, so every unit of DB work runs in a thread to keep the event loop free
+(SQLite releases the GIL during I/O).
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -29,7 +28,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine.interfaces import DBAPIConnection
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -37,52 +36,44 @@ from core.exceptions import NotFoundError, SchemaMigrationError
 
 logger = logging.getLogger(__name__)
 
-# In-memory engines share a single connection (StaticPool), which is *not* safe for
-# the concurrent, multi-threaded access `in_session` produces (each call runs on its
-# own threadpool thread). A per-engine lock serializes their sessions so two threads
-# never drive the one connection at once. File-backed engines hand each thread its
-# own connection and carry no lock, so they run fully unserialized.
+# In-memory engines share one connection (StaticPool), unsafe under the concurrent
+# threadpool access `in_session` produces, so a per-engine lock serializes their sessions.
+# File-backed engines give each thread its own connection and carry no lock.
 _CONN_LOCKS: WeakKeyDictionary[Engine, threading.Lock] = WeakKeyDictionary()
 
-# alembic.ini lives at the backend root (core/db.py is backend/core/db.py); its
-# script_location is `%(here)s/migrations`, so resolution is cwd-independent.
+# alembic.ini sits at the backend root; its script_location is `%(here)s/migrations`, so
+# resolution is cwd-independent.
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
-# How long a connection waits for SQLite's single write lock before erroring with
-# "database is locked". File-backed engines hand every threadpool thread its own
-# connection, so the write-behind drainers (conversations, notifications, corpus,
-# the scheduler) routinely collide on that one lock — 5s comfortably outlasts any
-# of their short bookkeeping transactions.
+# How long a connection waits for SQLite's single write lock before "database is locked".
+# The write-behind drainers (conversations, notifications, corpus, scheduler) routinely
+# collide on it; 5s outlasts their short transactions.
 BUSY_TIMEOUT_MS = 5000
 
-# How many times a write that *still* lost the lock after that budget is tried again, and
-# how long it waits between tries (growing linearly).
+# Retries for a write that still lost the lock after that budget, with linearly growing delay.
 #
-# The busy handler is a per-connection wait and it is not the whole answer: it holds the
-# calling **thread**, so a long contended stretch is a threadpool thread parked for five
-# seconds, and when it does expire the caller gets a hard error for what is a transient
-# condition. Two agent turns running at once — which is the ordinary case now that the
-# agent launches sub-agents, and was the rare one before — plus the write-behind drainers
-# can hold the single writer lock past that budget.
+# The busy handler parks a threadpool thread for the full wait and then hard-errors on what
+# is transient. Concurrent agent turns (ordinary now that agents launch sub-agents) plus the
+# drainers can hold the writer lock past it. Retried here rather than per store because this
+# module owns how work reaches SQLite. Only lock failures retry: any other `OperationalError`
+# (missing column, broken file) is a real fault.
 #
-# Here rather than in each store, for the reason the busy handler is here: this module owns
-# how a unit of work reaches SQLite, and a retry written at one call site is a retry the
-# next writer does not get. Only a *lock* failure is retried — every other
-# `OperationalError` (a missing column, a broken file) is a real fault that retrying turns
-# into a slow real fault.
-#
-# The work callable is re-run from the top, so it must be idempotent. Every caller's
-# already is: they are `session.get` + mutate, or an `add` of a row built outside.
+# The work callable is re-run from the top, so it must be idempotent; every caller's is
+# (`session.get` plus mutate, or an `add` of a row built outside).
 LOCK_RETRIES = 3
 _LOCK_RETRY_DELAY_S = 0.25
+
+
+_BLOCKING_ATTEMPTS = 3
+_BLOCKING_BUSY_MS = 250
+_BLOCKING_RETRY_DELAY_S = 0.05
 
 
 def _is_locked(exc: OperationalError) -> bool:
     """Whether this is SQLite's writer-lock contention rather than a real fault.
 
-    Matched on the message because that is what SQLite gives us — `sqlite3` raises the
-    same `OperationalError` class for a locked database and for a syntax error, and the
-    dialect does not translate either into anything more specific.
+    Matched on the message: `sqlite3` raises the same `OperationalError` for a locked
+    database and a syntax error.
     """
     message = str(exc.orig if exc.orig is not None else exc).lower()
     return "database is locked" in message or "database table is locked" in message
@@ -95,8 +86,6 @@ def make_engine(url: str) -> Engine:
         kwargs["poolclass"] = StaticPool
     engine = create_engine(url, **kwargs)
 
-    # A single-connection (in-memory) engine must serialize its threadpool sessions;
-    # see `_CONN_LOCKS`. File-backed engines pool a connection per thread and skip it.
     if ":memory:" in url:
         _CONN_LOCKS[engine] = threading.Lock()
 
@@ -104,54 +93,42 @@ def make_engine(url: str) -> Engine:
     def _configure_connection(
         dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
     ) -> None:
-        # pysqlite ships a legacy transaction model: it runs DDL in autocommit and opens
-        # a transaction only before the first DML. That makes schema migrations
-        # non-atomic — a migration that fails partway leaves its already-committed
-        # leading statement (e.g. a batch rebuild's `_alembic_tmp_*` staging table)
-        # stranded, with nothing to roll it back, wedging the next startup. Setting the
-        # DBAPI isolation level to None hands transaction control to SQLAlchemy, which
-        # then issues an explicit BEGIN (see the "begin" handler) so DDL is fully
-        # transactional and a failed migration rolls back whole, residue and all.
+        # pysqlite runs DDL in autocommit and opens a transaction only before the first DML,
+        # so a migration failing partway strands its committed leading statement (e.g. a
+        # batch rebuild's `_alembic_tmp_*` table) and wedges the next startup. Isolation
+        # level None hands transaction control to SQLAlchemy, whose explicit BEGIN (the
+        # "begin" handler) makes DDL transactional so a failed migration rolls back whole.
         dbapi_connection.isolation_level = None
 
-        # SQLite leaves foreign keys *off* per connection unless asked — without this
-        # the declared FKs (e.g. Message → Conversation) enforce nothing, so a stray
-        # conversation_id would silently orphan rows. Turn it on for every connection.
+        # Foreign keys are off per connection by default; without this the declared FKs
+        # enforce nothing and a stray conversation_id silently orphans rows.
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
 
-        # SQLite admits one writer at a time, and without a busy handler a connection
-        # that finds the write lock held errors *immediately* instead of waiting — so
-        # two concurrent threadpool sessions (say, a write-behind drainer flushing
-        # while the scheduler finalizes a task run) turn a microseconds-long overlap
-        # into a hard `database is locked`. A busy_timeout makes the loser wait the
-        # lock out and only error once the budget is truly exhausted. Per-connection,
-        # like foreign_keys, so it rides along on every pooled connect.
+        # Without a busy handler a connection finding the write lock held errors
+        # immediately, turning a microseconds-long overlap between threadpool sessions into
+        # a hard `database is locked`. Per-connection like foreign_keys.
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         cursor.close()
 
     @event.listens_for(engine, "begin")
     def _emit_begin(connection: Connection) -> None:
-        # With pysqlite handed over to autocommit above, SQLAlchemy must emit the BEGIN
-        # itself; without this no transaction is ever opened and every statement commits.
+        # With isolation_level None above, SQLAlchemy must emit BEGIN or statements autocommit.
         _ = connection.exec_driver_sql("BEGIN")
 
     return engine
 
 
 def init_db(engine: Engine) -> None:
-    """Bring the schema to head via Alembic — applied automatically on startup,
-    no manual step (XC-DATA-2).
+    """Bring the schema to head via Alembic on startup.
 
-    Migrations run against the **live engine** (handed to ``migrations/env.py`` on
-    the Alembic config), not a fresh one built from a URL — essential for the
-    in-memory test DBs, whose schema lives only on a single shared connection.
+    Migrations run against the live engine (handed to ``migrations/env.py`` on the config),
+    not one built from a URL, since an in-memory test DB's schema lives only on its one connection.
 
-    Guarded against the two ways a dev DB drifts from its migrations: a stamp at a
-    deleted/regenerated revision (the upgrade can't trace from it) and a table whose
-    physical shape predates a reworked migration while the stamp still claims head
-    (the ``no such column`` class). Either fails the boot with a one-line diagnostic
-    — DB path and *stamped vs head* revision — instead of a deep migration traceback.
+    Guards the two ways a dev DB drifts: a stamp at a deleted or regenerated revision, and a
+    table predating a reworked migration while the stamp claims head (``no such column``).
+    Either fails the boot with a one-line diagnostic (DB path, stamped vs head revision)
+    instead of a deep traceback.
     """
     config = Config(str(ALEMBIC_INI))
     config.attributes["connection"] = engine
@@ -166,19 +143,16 @@ def init_db(engine: Engine) -> None:
 
 
 def _stamped_revisions(engine: Engine) -> tuple[str, ...]:
-    """The revision(s) recorded in the DB's ``alembic_version`` table (empty for a
-    fresh DB). Read directly off the connection, so an *orphaned* stamp comes back
-    verbatim rather than failing to resolve against the scripts."""
+    """The revision(s) in ``alembic_version`` (empty for a fresh DB), read off the connection
+    so an orphaned stamp comes back verbatim."""
     with engine.connect() as connection:
         return MigrationContext.configure(connection).get_current_heads()
 
 
 def _schema_drift(engine: Engine) -> list[str]:
-    """Tables/columns the models declare that the live DB lacks. A clean DB matches
-    its autogenerated migrations exactly, so any drift means the recorded revision
-    and the physical schema disagree — caught here at boot instead of later in a
-    service. Conservative on purpose: only missing tables and columns, never type or
-    extra-column differences (which can read benignly across SQLite round-trips)."""
+    """Tables and columns the models declare that the live DB lacks, meaning the recorded
+    revision and physical schema disagree. Only missing ones, never type or extra-column
+    differences, which can read benignly across SQLite round-trips."""
     inspector = inspect(engine)
     existing = set(inspector.get_table_names())
     problems: list[str] = []
@@ -200,13 +174,12 @@ def _raise_schema_error(
     cause: Exception | None = None,
     drift: list[str] | None = None,
 ) -> NoReturn:
-    """Log an actionable diagnostic — DB path, stamped vs head revision, the failing
-    cause or the drift — then raise. Surfaces the one fact the operator needs (the DB
-    and the scripts disagree, and on which revision) in place of the raw traceback."""
+    """Log a diagnostic (DB path, stamped vs head revision, cause or drift), then raise,
+    in place of the raw traceback."""
     head = ScriptDirectory.from_config(config).get_current_head()
     try:
         stamped = ", ".join(_stamped_revisions(engine)) or "(none — fresh database)"
-    except Exception:  # pragma: no cover - the bookkeeping table itself is unreadable
+    except SQLAlchemyError:  # pragma: no cover - the bookkeeping table itself is unreadable
         stamped = "(unreadable)"
 
     lines = [
@@ -232,12 +205,9 @@ def _raise_schema_error(
 
 
 async def in_session[T](engine: Engine, work: Callable[[Session], T]) -> T:
-    """Run a unit of DB work in a threadpool and commit it. For a single-connection
-    in-memory engine the session is taken under that engine's lock, so overlapping
-    threadpool calls never drive the one shared connection at the same time.
-
-    A write that loses SQLite's single writer lock for longer than ``busy_timeout`` is
-    retried rather than raised — see :data:`LOCK_RETRIES`.
+    """Run a unit of DB work in a threadpool and commit it, under the engine's lock for an
+    in-memory engine. A write losing the writer lock past ``busy_timeout`` is retried
+    (:data:`LOCK_RETRIES`).
     """
     lock = _CONN_LOCKS.get(engine)
 
@@ -276,14 +246,11 @@ class _Owned(Protocol):
 async def get_owned[M: _Owned](
     engine: Engine, model_cls: type[M], row_id: str, owner_id: str, *, what: str
 ) -> M:
-    """The row ``row_id`` names, provided ``owner_id`` owns it. Raises ``NotFoundError``
-    otherwise, naming ``what`` (``"endpoint"``, ``"memory"``, …) in the message.
+    """The row ``row_id`` names, provided ``owner_id`` owns it; else ``NotFoundError`` naming
+    ``what`` (``"endpoint"``, ``"memory"``, …).
 
-    Every owner-scoped store had its own copy of this three-line read. It is the boundary
-    check on nearly every single-row lookup in the app, and it is worth having exactly one
-    of: notably, "you don't own it" and "it doesn't exist" must answer identically —
-    distinguishing them tells a caller that an id it guessed is real, which is the leak
-    the ownership check exists to prevent.
+    "Not yours" and "doesn't exist" answer identically: distinguishing them would confirm a
+    guessed id is real.
     """
 
     def work(session: Session) -> M | None:
@@ -299,14 +266,10 @@ async def get_owned[M: _Owned](
 def upsert(engine: Engine, model_cls: type[SQLModel]) -> SQLiteInsert | PostgresInsert:
     """An INSERT construct carrying ``on_conflict_do_update``, for this engine's dialect.
 
-    Atomic get-or-create needs the conflict resolution pushed into the database — a
-    select-then-insert races two concurrent callers into a duplicate-key IntegrityError.
-    The clause that does it is dialect-specific, and ``db_url`` is configurable, so
-    importing ``dialects.sqlite.insert`` directly silently hard-binds a store to SQLite
-    and fails at runtime on any other backend.
-
-    SQLite and PostgreSQL spell it the same way. Anything else raises here, naming the
-    dialect, rather than failing further in with a syntax error from the driver.
+    Atomic get-or-create needs the conflict handled in the database (select-then-insert
+    races into an IntegrityError). The clause is dialect-specific and ``db_url`` is
+    configurable, so importing the SQLite insert directly would bind a store to SQLite.
+    SQLite and PostgreSQL share the syntax; any other dialect raises here, named.
     """
     name = engine.dialect.name
     if name == "sqlite":
@@ -321,20 +284,43 @@ def upsert(engine: Engine, model_cls: type[SQLModel]) -> SQLiteInsert | Postgres
 
 @contextmanager
 def read_session(engine: Engine) -> Generator[Session]:
-    """A session for a caller that is **not** on the event loop, taken under the same
-    per-engine lock :func:`in_session` uses.
+    """A read-only session for a caller off the event loop, under the per-engine lock
+    :func:`in_session` uses; nothing is committed on exit.
 
-    Opening a bare ``Session(engine)`` beside a running service is safe on a file-backed
-    engine (a connection per thread) and unsafe on an in-memory one (a single shared
-    connection): the second BEGIN on a connection that already has a transaction open
-    fails with "cannot start a transaction within a transaction". This is the same rule
-    as `in_session`, for callers that can't await it — chiefly a test asserting against
-    the database while the service under test is still driving it.
-
-    Nothing is committed on exit; this is for reading.
+    A bare ``Session(engine)`` beside a running service is unsafe on an in-memory engine:
+    a second BEGIN on the shared connection fails with "cannot start a transaction within a
+    transaction". Chiefly for tests asserting while the service under test still drives the DB.
     """
     lock = _CONN_LOCKS.get(engine)
     with ExitStack() as stack:
         if lock is not None:
             _ = stack.enter_context(lock)
         yield stack.enter_context(Session(engine, expire_on_commit=False))
+
+
+def read_blocking[T](engine: Engine, work: Callable[[Session], T]) -> T:
+    """Run a read on the calling thread for a synchronous path that can't await. It blocks
+    the loop, so it waits on a locked database about a second at most
+    (:data:`_BLOCKING_ATTEMPTS` tries of :data:`_BLOCKING_BUSY_MS`) before raising."""
+
+    def capped(session: Session) -> T:
+        connection = session.connection()
+        sqlite = connection.dialect.name == "sqlite"
+        previous = connection.exec_driver_sql("PRAGMA busy_timeout").scalar() if sqlite else None
+        if sqlite:
+            _ = connection.exec_driver_sql(f"PRAGMA busy_timeout={_BLOCKING_BUSY_MS}")
+        try:
+            return work(session)
+        finally:
+            if sqlite:
+                _ = connection.exec_driver_sql(f"PRAGMA busy_timeout={previous}")
+
+    for attempt in range(_BLOCKING_ATTEMPTS):
+        try:
+            with read_session(engine) as session:
+                return capped(session)
+        except OperationalError as exc:
+            if attempt == _BLOCKING_ATTEMPTS - 1 or not _is_locked(exc):
+                raise
+            time.sleep(_BLOCKING_RETRY_DELAY_S * (attempt + 1))
+    raise AssertionError("unreachable")  # pragma: no cover

@@ -25,6 +25,7 @@ from pydantic_ai import (
     DeferredToolRequests,
     FunctionToolset,
     ModelMessage,
+    RunContext,
     ToolApproved,
     ToolDenied,
 )
@@ -56,7 +57,7 @@ from core.db import init_db, make_engine
 from models._fields import utcnow
 from prompts.compaction import COMPACT_PREAMBLE
 from routes.deps import app_state
-from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
+from runs import Orchestrator, ReviewStarted, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import ApprovalGrantStore, GrantInfo
 from services.conversations import ConversationBinding
 from services.endpoint_spec import EndpointSpec
@@ -64,6 +65,7 @@ from services.home.backend import Mount
 from services.home.paths import HOME, SCRATCH, Place
 from services.home.table import RunHome
 from services.permissions import (
+    PERMISSION_LADDER,
     ActionKind,
     Authorization,
     Decision,
@@ -1039,6 +1041,106 @@ class TestTheOpeningRequestIsAlwaysRead:
         assert isinstance(budget, ReviewBudget)
         assert budget.limit == get_settings().review_max_per_turn
 
+    @staticmethod
+    async def _drive_a_turn_that_moves_to_plan(
+        monkeypatch: pytest.MonkeyPatch, *, leave_for_operator: bool
+    ) -> tuple[TurnResult, dict[str, object]]:
+        """An Auto-opened turn whose tool moves it to Plan, as `plan_enter` does, then
+        defers a gated call. Returns the turn and the arguments the gate was ruled with."""
+        from core.config import get_settings
+
+        seen: dict[str, object] = {}
+
+        async def capturing(
+            _run: Run, approvals: Sequence[ToolCallPart], **kwargs: object
+        ) -> tuple[dict[str, ToolApproved | ToolDenied], list[ToolCallPart]]:
+            seen.update(kwargs)
+            if leave_for_operator:
+                return {}, list(approvals)
+            return {call.tool_call_id: ToolApproved() for call in approvals}, []
+
+        monkeypatch.setattr(agent_turn, "settle_deferred", capturing)
+        toolset = _gated_categories()["danger"]
+
+        @toolset.tool
+        def move_level(ctx: RunContext[RunDeps]) -> str:
+            ctx.deps.permission = "plan"
+            return "moved"
+
+        run = Run(id="r5", kind="chat", owner_id=OWNER, stream=RunStream())
+        agent = Agent(
+            TestModel(custom_output_text="done"),
+            output_type=[str, DeferredToolRequests],
+            toolsets=[toolset],
+            deps_type=RunDeps,
+        )
+        turn = await drive_turn(
+            run,
+            agent,
+            settings=get_settings(),
+            prompt="delete the thing",
+            announced=set(),
+            binding=ConversationBinding(permission="auto"),
+            turn_start=TurnStart(0),
+        )
+        if leave_for_operator:
+            assert isinstance(run.parked_payload, ParkedTurn)
+            seen["parked_binding"] = run.parked_payload.binding
+        return turn, seen
+
+    async def test_the_gate_rules_at_the_level_the_turn_has_moved_to(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # `plan_enter` and an approved plan move the level mid-turn; the gate rules at the
+        # moved level, or a plan submitted after `plan_enter` at Auto goes to the reviewer.
+        turn, seen = await self._drive_a_turn_that_moves_to_plan(
+            monkeypatch, leave_for_operator=False
+        )
+        assert seen["permission"] == "plan"
+        # And a verifier correction continues from there (`verify_and_correct`).
+        assert turn.binding is not None
+        assert turn.binding.permission == "plan"
+
+    async def test_a_turn_parks_at_the_level_it_has_moved_to(self, monkeypatch: pytest.MonkeyPatch):
+        # The resume is built from the parked binding, so a plan sent back for changes must
+        # resume in plan mode rather than at the level the turn opened with.
+        _, seen = await self._drive_a_turn_that_moves_to_plan(monkeypatch, leave_for_operator=True)
+        parked = seen["parked_binding"]
+        assert isinstance(parked, ConversationBinding)
+        assert parked.permission == "plan"
+
+    async def test_a_correction_continues_at_the_level_the_turn_ended_at(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        seen: dict[str, object] = {}
+
+        async def capturing(_run: Run, _agent: object, **kwargs: object) -> TurnResult:
+            seen.update(kwargs)
+            return TurnResult(answer="corrected", messages=[])
+
+        async def reject(_prompt: str, _answer: str) -> Verdict:
+            return Verdict(ok=False, reason="incomplete")
+
+        def room(*_args: object, **_kwargs: object) -> bool:
+            return False
+
+        monkeypatch.setattr(agent_verify, "drive_turn", capturing)
+        monkeypatch.setattr(agent_verify, "no_room_for", room)
+        run = Run(id="r6", kind="chat", owner_id=OWNER, stream=RunStream())
+        moved = ConversationBinding(permission="plan")
+        _ = await agent_verify.verify_and_correct(
+            run,
+            Agent(TestModel()),
+            "prompt",
+            TurnResult(answer="an answer", messages=[], binding=moved),
+            set(),
+            reject,
+            settings=Settings(),
+            binding=ConversationBinding(permission="auto"),
+            turn_start=TurnStart(0),
+        )
+        assert seen["binding"] is moved
+
     async def test_a_correction_reviews_against_the_same_opening_request(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -1226,6 +1328,21 @@ class TestTheEngineRunsIt:
         )
         assert next(b for b in _bodies(run) if b.type == "review.started").detail is None
 
+    async def test_the_opening_event_says_an_offline_install_runs_with_the_network(self):
+        run = Run(id="r-install", kind="chat", owner_id="operator", stream=RunStream())
+        _ = await gating.review_call(
+            run,
+            tool_call_id="t1",
+            tool="shell_run_command",
+            args={"command": "npm install"},
+            root=WORKSPACE,
+            transcript=(),
+            reviewer=reviewer_of(verdict("low", "explicitly_yes")),
+            fenced=True,
+        )
+        started = next(b for b in _bodies(run) if isinstance(b, ReviewStarted))
+        assert started.reach == "offline" and started.network is True
+
     async def test_no_other_level_reviews_at_all(self, monkeypatch: pytest.MonkeyPatch):
         # Edit asks the operator; the review never runs, so no review event is emitted
         # and nothing was decided on their behalf.
@@ -1353,6 +1470,28 @@ class TestTheSettledPile:
         settled, manual = await _settle("auto", [_call("mail_send", "c1")])
         assert settled == {}
         assert [call.tool_call_id for call in manual] == ["c1"]
+
+    @pytest.mark.parametrize("level", PERMISSION_LADDER)
+    async def test_a_plan_approval_always_reaches_the_operator(
+        self, level: PermissionLevel, monkeypatch: pytest.MonkeyPatch
+    ):
+        # A reviewer that would clear anything and the widest grant there is; neither may
+        # answer it.
+        seen: list[ReviewRequest] = []
+
+        async def reviewer(request: ReviewRequest) -> ScoredVerdict | ReviewUnavailable:
+            seen.append(request)
+            return ScoredVerdict(verdict("low"), {})
+
+        monkeypatch.setattr(gating, "resolve_reviewer", _resolver(reviewer))
+        grants = _grant_store()
+        _ = await grants.grant(OWNER, CONV, "plan_submit", decisive=True)
+        settled, manual = await _settle(
+            level, [_call("plan_submit", "c1")], caps=ServiceContainer.of(grants)
+        )
+        assert settled == {}
+        assert [call.tool_call_id for call in manual] == ["c1"]
+        assert seen == []
 
     async def test_a_grant_at_auto_is_reviewed_rather_than_waved_through(
         self, monkeypatch: pytest.MonkeyPatch

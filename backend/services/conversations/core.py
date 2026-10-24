@@ -9,10 +9,11 @@ from collections import Counter, OrderedDict
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, delete
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, col, select
 
-from core.db import in_session
-from core.vault import Vault
+from core.db import in_session, read_blocking
+from core.vault import Vault, VaultLocked
 from core.worker import WriteBehindWorker
 from models.approval_grant import ApprovalGrant
 from models.approved_call import ApprovedCall
@@ -27,15 +28,45 @@ from .records import ConversationBinding, ConversationSummaryView
 from .rows import HydratedRow, PersistJob, defer_fk
 from .tree import Node, Tree
 
-# How many conversation trees stay decrypted in memory. Sized for one operator: the
-# working set is the handful of threads actually being read or written, and a miss
-# costs one rehydrate from the database, not an error.
+# How many conversation trees stay decrypted in memory; a miss costs one rehydrate.
 _DEFAULT_MAX_CACHED_CONVERSATIONS = 64
 
-# How many owner memo rows are kept per cached tree. An owner row is two short strings
-# against a whole decrypted conversation, so the memo can outlive the trees it was
-# populated alongside by a wide margin and still cost nothing worth counting.
+# Owner memo rows kept per cached tree; a row is two short strings, so the memo can far
+# outlive the trees.
 _OWNER_MEMO_MULTIPLE = 8
+
+
+class ConversationUnavailableError(RuntimeError):
+    """A thread's stored rows could not be read, so nothing can be recorded into it."""
+
+    def __init__(self, conversation_id: str) -> None:
+        super().__init__(f"conversation {conversation_id} could not be loaded")
+        self.conversation_id: str = conversation_id
+
+
+def _load_rows(session: Session, conversation_id: str) -> tuple[list[HydratedRow], str | None]:
+    rows = session.exec(
+        select(Message).where(Message.conversation_id == conversation_id).order_by(col(Message.seq))
+    ).all()
+    conversation = session.get(Conversation, conversation_id)
+    active = conversation.active_leaf_id if conversation is not None else None
+    return [
+        HydratedRow(
+            id=r.id,
+            parent_id=r.parent_id,
+            seq=r.seq,
+            pinned=r.pinned,
+            blob=r.blob,
+            attachment_ids=r.attachment_ids,
+            blocked_reason=r.blocked_reason,
+            compacted=r.compacted,
+            compacted_through=r.compacted_through,
+            llm_ms=r.llm_ms,
+            ttft_ms=r.ttft_ms,
+            tool_ms=r.tool_ms,
+        )
+        for r in rows
+    ], active
 
 
 class StoreCore:
@@ -59,29 +90,22 @@ class StoreCore:
     ) -> None:
         self._engine: Engine = engine
         self._vault: Vault = vault
-        # Embeds each persisted turn's text for cross-chat semantic search. Optional
-        # (and best-effort): with no embedder, or when it degrades, messages persist
-        # without a vector and recall over them falls back to keyword (EMB-2).
+        # Embeds each persisted turn for cross-chat semantic search. Best-effort: without
+        # one, messages persist without a vector and recall falls back to keyword.
         self._embedder: Embedder | None = embedder
-        # Least-recently-used first. Every entry holds a fully *decrypted* tree —
-        # including any inline image bytes a turn carried — so an unbounded dict grows
-        # to the size of every conversation the process has ever touched and never
-        # gives it back. It is a pure cache (`tree` rehydrates on a miss), so evicting
-        # costs one reload and nothing else.
+        # Least-recently-used first. Each entry is a fully decrypted tree, inline image
+        # bytes included, so the cache is bounded; eviction costs one rehydrate.
         self._cache: OrderedDict[str, Tree] = OrderedDict()
         self._max_cached: int = max_cached_conversations
         # Conversations with durable work still queued. `record()` extends the cached
-        # tree in place and hands the drainer a *slice*, so evicting between the two
-        # would leave `setdefault` rebuilding an empty tree and the turn appending to
-        # nothing. Never evict one of these; the count drains to zero as the writes land.
+        # tree in place and hands the drainer a slice, so evicting in between would make
+        # the next `record` rehydrate rows that lack the slice. Never evicted; the count
+        # drains as writes land.
         self._pending: Counter[str] = Counter()
-        # conversation id → owner. Immutable per conversation, so it is memoized rather
-        # than re-read on the write-behind path once per persisted turn. Bounded like the
-        # tree cache and for the same reason — a memo that only ever grows is a leak with
-        # a nicer name, and this one is written from the drainer, which touches every
-        # conversation the process ever persists a turn for. Entries are two short strings,
-        # so its cap is a multiple of the tree cap rather than the same number: the point
-        # is a ceiling, and evicting a row that a later turn re-reads costs one query.
+        # Conversations a parked run will be written into when it ends.
+        self._pinned: set[str] = set()
+        # conversation id -> owner. Immutable, so memoized off the write-behind path, and
+        # bounded because the drainer touches every conversation ever persisted.
         self._owners: OrderedDict[str, str] = OrderedDict()
         self._max_memoized_owners: int = max_cached_conversations * _OWNER_MEMO_MULTIPLE
         self._locks: dict[str, asyncio.Lock] = {}
@@ -151,13 +175,20 @@ class StoreCore:
         self._trim_cache()
         return tree
 
+    def pin(self, conversation_id: str) -> None:
+        """Keep the conversation's tree cached until :meth:`unpin`."""
+        self._pinned.add(conversation_id)
+
+    def unpin(self, conversation_id: str) -> None:
+        self._pinned.discard(conversation_id)
+        self._trim_cache()
+
     def cache_get(self, conversation_id: str) -> Tree | None:
         """The cached tree, counting the read as a use so it isn't evicted next.
 
-        Only genuine reads go through here. The listing summary and the compaction
-        leaf check peek with a plain ``self._cache.get`` on purpose: the listing walks
-        *every* conversation, so promoting each would flatten the ordering into
-        meaninglessness and could evict the thread actually being used.
+        The listing summary and the compaction leaf check peek with ``self._cache.get``
+        instead: the listing walks every conversation, and promoting each would flatten the
+        ordering and could evict the thread in use.
         """
         tree = self._cache.get(conversation_id)
         if tree is not None:
@@ -167,22 +198,20 @@ class StoreCore:
     def _trim_cache(self) -> None:
         """Drop least-recently-used trees until the cache is back within its cap.
 
-        Entries with queued durable work are skipped, never dropped: `record()` mutates
-        the cached tree and queues only the new slice, so evicting one mid-turn would
-        leave the next `record` appending to a freshly-built empty tree. If every entry
-        is pending — far more in flight than the cap — the cache simply runs over rather
-        than corrupting a tree; the overflow drains on its own as the writes land.
+        Entries with queued durable work or a parked run are skipped: evicting one mid-turn
+        would make the next `record` rehydrate rows lacking the new slice, and a parked
+        run's finish should not need a blocking reload. If every entry is held the cache
+        runs over the cap until the writes land and the parks end.
         """
         if len(self._cache) <= self._max_cached:
             return
         for conversation_id in list(self._cache):
             if len(self._cache) <= self._max_cached:
                 break
-            if self._pending[conversation_id]:
+            if self._pending[conversation_id] or conversation_id in self._pinned:
                 continue
-            # A held lock means a rehydrate is in flight for this id. Dropping the lock
-            # under it would let a second rehydrate run concurrently and clobber the
-            # tree the first one is about to install.
+            # A held lock means a rehydrate is in flight; dropping it would let a second
+            # one clobber the tree the first is about to install.
             lock = self._locks.get(conversation_id)
             if lock is not None and lock.locked():
                 continue
@@ -246,71 +275,67 @@ class StoreCore:
         if cached is not None:
             return cached
 
-        # Serialize rehydration per conversation and re-check inside the lock, so a
-        # concurrent record()/history() can't be clobbered by a stale DB snapshot.
+        # Per-conversation lock with a re-check, so a stale DB snapshot cannot clobber a
+        # concurrent record()/history().
         async with self._locks.setdefault(conversation_id, asyncio.Lock()):
             cached = self.cache_get(conversation_id)
             if cached is not None:
                 return cached
 
-            def work(session: Session) -> tuple[list[HydratedRow], str | None]:
-                rows = session.exec(
-                    select(Message)
-                    .where(Message.conversation_id == conversation_id)
-                    .order_by(col(Message.seq))
-                ).all()
-                conversation = session.get(Conversation, conversation_id)
-                active = conversation.active_leaf_id if conversation is not None else None
-                return [
-                    HydratedRow(
-                        id=r.id,
-                        parent_id=r.parent_id,
-                        seq=r.seq,
-                        pinned=r.pinned,
-                        blob=r.blob,
-                        attachment_ids=r.attachment_ids,
-                        blocked_reason=r.blocked_reason,
-                        compacted=r.compacted,
-                        compacted_through=r.compacted_through,
-                        llm_ms=r.llm_ms,
-                        ttft_ms=r.ttft_ms,
-                        tool_ms=r.tool_ms,
-                    )
-                    for r in rows
-                ], active
+            loaded = await in_session(
+                self._engine, lambda session: _load_rows(session, conversation_id)
+            )
+            # A write recorded while the read was in flight owns the cache entry.
+            cached = self._cache.get(conversation_id)
+            if cached is not None:
+                return cached
+            return self._cache_put(conversation_id, self._build_tree(*loaded))
 
-            rows, active = await in_session(self._engine, work)
-            tree = Tree()
-            for row in rows:  # pre-sorted by seq
-                message = MESSAGE.validate_json(self._vault.decrypt_str(row.blob))
-                tree.add(
-                    Node(
-                        id=row.id,
-                        parent_id=row.parent_id,
-                        seq=row.seq,
-                        message=message,
-                        pinned=row.pinned,
-                        attachment_ids=row.attachment_ids,
-                        blocked_reason=row.blocked_reason,
-                        compacted=row.compacted,
-                        compacted_through=row.compacted_through,
-                        llm_ms=row.llm_ms,
-                        ttft_ms=row.ttft_ms,
-                        tool_ms=row.tool_ms,
-                    )
+    def hydrate_blocking(self, conversation_id: str) -> Tree:
+        """The conversation's tree read from the database on the calling thread and cached,
+        for ``record()``, which cannot await. A thread with rows is never recorded into an
+        empty tree, since its new nodes would reuse the sequence numbers of the stored ones.
+
+        Raises :class:`ConversationUnavailableError` when the rows cannot be read or opened
+        (a locked vault, a database that stays busy)."""
+        try:
+            loaded = read_blocking(
+                self._engine, lambda session: _load_rows(session, conversation_id)
+            )
+            return self._cache_put(conversation_id, self._build_tree(*loaded))
+        except (VaultLocked, OperationalError) as exc:
+            raise ConversationUnavailableError(conversation_id) from exc
+
+    def _build_tree(self, rows: list[HydratedRow], active: str | None) -> Tree:
+        tree = Tree()
+        for row in rows:  # pre-sorted by seq
+            message = MESSAGE.validate_json(self._vault.decrypt_str(row.blob))
+            tree.add(
+                Node(
+                    id=row.id,
+                    parent_id=row.parent_id,
+                    seq=row.seq,
+                    message=message,
+                    pinned=row.pinned,
+                    attachment_ids=row.attachment_ids,
+                    blocked_reason=row.blocked_reason,
+                    compacted=row.compacted,
+                    compacted_through=row.compacted_through,
+                    llm_ms=row.llm_ms,
+                    ttft_ms=row.ttft_ms,
+                    tool_ms=row.tool_ms,
                 )
-            tree.active_leaf_id = active if active in tree.nodes else tree.fallback_leaf()
-            return self._cache_put(conversation_id, tree)
+            )
+        tree.active_leaf_id = active if active in tree.nodes else tree.fallback_leaf()
+        return tree
 
     def _seal_title(self, title: str | None) -> str | None:
-        """A title on its way to the DB. ``None`` stays ``None`` — an untitled thread has
-        no ciphertext, which is not the same as one whose title is the empty string."""
+        """A title on its way to the DB. ``None`` stays ``None``, distinct from an empty title."""
         return None if title is None else self._vault.encrypt_str(title)
 
     def _open_title(self, conversation: Conversation) -> str | None:
-        """A title on its way out — sealed, or the legacy cleartext of a row the startup
-        backfill hasn't reached yet, so a half-migrated DB never renders a garbled or
-        missing thread name."""
+        """A title on its way out: sealed, or the legacy cleartext of a row the startup
+        backfill has not reached."""
         return open_sealed(self._vault, conversation.title_enc, conversation.title)
 
     async def delete_conversation(self, conversation_id: str) -> None:
@@ -341,9 +366,8 @@ class StoreCore:
         _ = self._owners.pop(conversation_id, None)
 
     async def owner_of(self, conversation_id: str) -> str | None:
-        """The conversation's owner, memoized. A conversation never changes hands, and
-        this sits on the write-behind path — one extra round trip per persisted turn,
-        purely to re-read an immutable column."""
+        """The conversation's owner, memoized: it never changes and this is on the
+        write-behind path."""
         cached = self._owners.get(conversation_id)
         if cached is not None:
             self._owners.move_to_end(conversation_id)
@@ -359,19 +383,15 @@ class StoreCore:
         return owner_id
 
     def _remember_owner(self, conversation_id: str, owner_id: str) -> None:
-        """Memoize an owner as the most-recently-used row, dropping the oldest past the
-        cap. Pure cache: `owner_of` re-reads the column on a miss."""
+        """Memoize an owner as the most-recently-used row, dropping the oldest past the cap."""
         self._owners[conversation_id] = owner_id
         self._owners.move_to_end(conversation_id)
         while len(self._owners) > self._max_memoized_owners:
             _ = self._owners.popitem(last=False)
 
     def _submit(self, job: PersistJob) -> None:
-        """Queue durable work and pin its conversation in the cache until it lands.
-
-        The pin is what makes eviction safe: between this call and the write, the
-        cached tree is the only place the turn's structure exists.
-        """
+        """Queue durable work and pin its conversation in the cache until it lands; until
+        then the cached tree is the only place the turn's structure exists."""
         self._pending[job.conversation_id] += 1
         self._worker.submit(job)
 

@@ -85,7 +85,7 @@ export function waitingLabel(item: InboxItem): string {
 export function idleReason(state: InboxState, item: InboxItem): string | null {
   if (item.held) return "Held";
   if (state.waiting) return "Waiting for you";
-  if (state.agentsPaused && !isOperatorItem(item)) return "Agents paused";
+  if (state.agentsPaused && !isOperatorItem(item)) return "Sub-agents paused";
   return null;
 }
 

@@ -13,6 +13,7 @@ from services.permissions.capability import (
     capability_of,
     declared_reach,
     measured_against_root,
+    renamed_reach,
 )
 from services.permissions.decide import (
     Decision,
@@ -30,6 +31,7 @@ from services.permissions.levels import (
     COORDINATION_TOOLS,
     DEFAULT_PERMISSION,
     LEVEL_EXEMPT_TOOLS,
+    OPERATOR_ONLY_TOOLS,
     PERMISSION_LADDER,
     PERMISSION_LEVELS,
     PERMISSIONS,
@@ -69,6 +71,7 @@ __all__ = [
     "PERMISSION_LEVELS",
     "COORDINATION_TOOLS",
     "LEVEL_EXEMPT_TOOLS",
+    "OPERATOR_ONLY_TOOLS",
     "PLANNING_TOOLS",
     "REACHES",
     "STRICTEST_PERMISSION",
@@ -107,6 +110,7 @@ __all__ = [
     "measured_against_root",
     "permission_level",
     "permission_spec",
+    "renamed_reach",
     "review",
     "review_transcript",
     "stricter_permission",

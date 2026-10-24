@@ -56,6 +56,7 @@ const iconTone: Record<HostCommandPhase, string> = {
  */
 export function CommandsSurface(props: {
   commands: () => HostCommand[];
+  speaker: string;
 }): JSX.Element {
   return (
     <SurfaceBody gap={1}>
@@ -65,7 +66,7 @@ export function CommandsSurface(props: {
           <EmptyState
             icon="terminal"
             message="No commands yet"
-            hint="What the agent runs in this thread lands here."
+            hint={`What ${props.speaker} runs in this thread lands here.`}
           />
         }
       >

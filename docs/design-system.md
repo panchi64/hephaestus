@@ -114,7 +114,7 @@ Instrument runs at **one step less dense** than Terminal-HUD. Where the old syst
 
 The exception is **tabular data** — tables, instrument bands, log output, list rows. Density is a virtue there because scanning many rows is the task. Keep those at `space-1`/`space-2` vertical.
 
-**Console groups (§10.14) and the annunciator grid (§10.15) join that exception**, for the same reason and not for a new one: their contents are ruled rows and fixed cells read by scanning, so the rule that governs a table governs them. What the exception does *not* license is a console group wrapped around prose, a form, or a stack of cards — those are read one at a time, and the frame would just be a box drawn around ordinary content at the wrong density.
+**Console groups (§10.14) and ledgers like the launchpad's activity list join that exception**, for the same reason and not for a new one: their contents are ruled rows read by scanning, so the rule that governs a table governs them. What the exception does *not* license is a console group wrapped around prose, a form, or a stack of cards — those are read one at a time, and the frame would just be a box drawn around ordinary content at the wrong density.
 
 ### Margins & gutters
 
@@ -156,7 +156,7 @@ looked at*, so they differ in scale.
 | Token | Size/LH | Family | Weight | Case | Use |
 |---|---|---|---|---|---|
 | `micro` | 10 / 14 | Mono | 400 | as-is | Ambient telemetry, fine print, precision coordinates |
-| `plate` | 10 / 14 | Mono | 500 | UPPER, +0.16em | **Engraved panel label.** Names a region: a console group's header, an annunciator cell |
+| `plate` | 10 / 14 | Mono | 500 | UPPER, +0.16em | **Engraved panel label.** Names a region: a console group's header, a ledger's legend |
 | `meta` | 11 / 16 | Mono | 500 | UPPER, +0.08em | Machine labels & state: `RUN-0341`, `LIVE`, `QUEUED` |
 | `label` | 12 / 16 | Sans | 500 | Sentence | Field labels, column headers, section eyebrows |
 | `code` | 12 / 16 | Mono | 400 | as-is | Code, diffs, patches inside chrome |
@@ -552,7 +552,7 @@ A `bare` panel also keeps its **state** shadow (`active`/`alert`) while dropping
 
 **`bare` drops the surface entirely** — no fill, no shadow, no ring, no card padding. The panel becomes its label and its content, sitting directly on the page.
 
-This is for regions that should read as *behind* the interface rather than as objects on it: the home page's recent-threads and in-flight lists, the system strip. They are things the operator glances past on the way to the composer, and giving each one a card turned the launchpad into a wall of boxes competing with the single surface that matters. Structure still comes from the label and the spacing — it just stops being a container.
+This is for regions that should read as *behind* the interface rather than as objects on it: the launchpad's activity ledger and its system footer. They are things the operator glances past on the way to the composer, and giving each one a card turned the launchpad into a wall of boxes competing with the single surface that matters. Structure still comes from the label and the spacing — it just stops being a container.
 
 The rule generalizes: **a card is a claim on attention.** Anything ambient — telemetry, recent items, background activity — should be bare, so the operator can look past it to what is live.
 
@@ -619,13 +619,13 @@ While the model reasons, its trace is **not a message**. It is the computer work
 - **Mono, `micro` size, barely tinted** — `accent` mixed at ~25% into `text-dim`, held at ~30% opacity. It reads as machine texture, not as content, and never competes with the answer.
 - **A flat wall, not an effect.** The subtlety lives entirely in the *color*: one uniform value across the whole block. **No gradient and no mask.** A faded edge would make it a decorated panel; this is meant to be a surface — a dense wall of machine text sitting behind the response.
 - **Clipped into the background** of the response area, behind the content, `pointer-events: none`.
-- **The stage travels; it does not appear.** The wall's height is a token (`--reasoning-h`), and the region opens and closes over that distance in `--motion-stage` rather than popping in and out at it — a region this large arriving instantly is a jump the reader absorbs twice per turn. Both directions are one token each, so retiming or resizing the state change is a token edit; nothing holds a matching copy, and the component waits on `animationend` rather than a duration of its own.
+- **The stage opens by travelling.** The wall's height is a token (`--reasoning-h`), and the region opens over that distance in `--motion-stage` rather than popping in at the foot of the turn, where nothing below it is being read.
 - **Cascading and bottom-anchored**, so new tokens push older lines up and out of frame. The wall stays filled to its top edge with older reasoning, and the newest line sits at the bottom where the eye already is.
 - **Fixed-height stage**, so the transcript does not reflow line-by-line while the trace streams.
 - **Machine register (§8)** — tokens land hard as they arrive. No easing, no fade-in per token.
 - **Nothing sits in the foreground.** No label, no throbber. Text arriving *is* the signal that the model is working — the most direct one available — and the `info` edge beside it already says so. Both a "THINKING" label and a spinner on top were restating what the wall and the rail were already communicating, which is the clutter this system exists to remove.
 
-**The handoff.** When the turn resolves, the wall **fades to the background over ~320ms** in the human register — that is the interface clearing the stage, not a control responding — and the **collapsed reasoning accordion fades in where it stood**, above the response. Two fades in the same place, so it reads as one movement rather than as a block being swapped out. The accordion holds the full trace, still mono and dim: available, out of the way.
+**The handoff.** When the reasoning ends, the wall **gives way in one frame** and the **collapsed reasoning accordion fades in where it stood**, above the response. The wall does not travel closed: the answer starts beneath it, and a stage shrinking over `--motion-stage` slid that text up while the operator read it. The accordion holds the full trace, still mono and dim: available, out of the way.
 
 The live layer is `aria-hidden` (it is texture, and a token-by-token live region would be unusable); a polite live region announces that the model is reasoning, and the settled accordion carries the real content.
 
@@ -705,27 +705,17 @@ One implementation note that is easy to get wrong: the entry animation runs with
 
 A frame, a header band, and flush ruled rows. The header carries a `plate` label at the left and an optional readout at the right; the rows inside sit square, `space-1`/`space-2` vertical, hairline-separated, edge to edge with no padding of their own.
 
-This is the one shell that is allowed to be a box (§7), and the reason it exists rather than being drawn per screen is that three surfaces want the identical skeleton — the launchpad's sequencer, the annunciator grid's frame, and the chat status strip. A shape repeated three times in three files drifts three ways.
+This is the one shell that is allowed to be a box (§7), and the reason it exists rather than being drawn per screen is that several chat surfaces want the identical skeleton: the thread recap, a compaction section, the inbox dock. A shape repeated in several files drifts several ways.
 
 **What goes in one:** ruled rows and fixed cells — things read by scanning a column. **What does not:** prose, forms, or a stack of cards. A `Panel` (§10.2) is still the default container, and it stays the default; a console group is what you reach for when the content is genuinely a readout and the frame is telling the operator where that readout begins and ends.
 
-### 10.15 Annunciator grid — caution & warning
+### 10.15 Caution & warning
 
-The capability strip as a console panel: one cell per capability, laid out as a square ruled grid with 1px `line` gaps, inside a console group.
+Capability health is read by looking for what is wrong, so **only what is wrong is drawn.** The launchpad's footer (`SystemFooter`) carries a count in words, `5 OF 7 NOMINAL`, and under it one entry per degraded capability: a state square, the name in `micro` mono uppercase, the reason on hover, and the remediation on click. A healthy installation shows the count and nothing else, so the region is grayscale at rest (§5).
 
-**A cell is two lines: the legend, and why it is lit.** An unlit cell carries its `plate` legend at a tone barely above the surface it sits on, and an empty second line. A lit cell fills, and its reason occupies that second line — scrolling (`Marquee`) rather than truncating where it overflows the column, because the reason is the one thing in the cell the operator has to finish reading. The second line is reserved either way, so a capability degrading changes a cell's contents and never its size.
+**Caution is amber; alert is red, and alerts come first.** The name keeps the accent (§10.5's exception for `warn` and `alert`), and the square repeats it, so the severity is never hue on a word alone (§12): the count says how many, the order says which is worse.
 
-The reason used to be set in a list *beneath* the grid. That restated every legend in order to say the thing the cell it named had room for, and grew the panel by a line per fault.
-
-**Caution is a tint; alert is a solid fill.** With the reason occupying the second line there is no status *word* left, so §12 has real work to do here: the two severities are told apart by fill weight — a luminance difference that survives any colour vision — rather than by hue. It is also what the hardware does, where a master alarm is not merely a different colour from a caution. Lit and unlit stay separable on a third, independent channel: an unlit cell's second line is empty.
-
-**The column count comes from the cell count**, capped per breakpoint (4 / 6 / 8), filling the rows as evenly as possible. A fixed count left seven capabilities sitting 5 + 2, and the three dead positions read as a row that failed to finish. It cannot always reach zero — nine cells at a cap of eight is 5 + 4 whatever is chosen — so it minimizes the gap rather than promising none. Letting the last row's cells *stretch* would promise none, and is rejected: the columns would stop aligning between rows, which is the ruled structure §7 keeps the borders for.
-
-This replaces a flat band where every cell was equally loud, and it is a better instrument for the same reason the real panel was: **the operator reads the panel by looking for the lit one.** A band of eight equally-bright cells has to be read left to right every time; a matrix with one amber cell in it has already answered the question from across the room. It is §1.1 — volume is hierarchy — applied to a region that was violating it.
-
-Never hue alone (§12): the fill weight separates the two severities, an empty second line separates unlit from lit, and the console group's header carries the count in words.
-
-The failure mode is real and worth naming: with few enough capabilities, a grid of dark cells can read as a wall of empty boxes rather than as a calm panel. If it does, render only the lit cells plus a single count of the rest.
+A ruled matrix of one cell per capability (the annunciator grid) carried this before and is retired. A grid of mostly dark cells read as a wall of empty boxes. A grid of mostly lit cells lost the lit/unlit contrast that made it readable. Either way it outweighed the composer on the one screen whose point is the composer (§1.1).
 
 ### 10.16 Mission clock
 
@@ -815,7 +805,7 @@ A licensed moment is a single expressive device — the `DotField` is currently 
 
 - an **empty state**, which by definition has nothing in it;
 - the **auth screens**, which hold one form and no work;
-- the **launchpad**, whose one object is a composer and whose panels are readouts;
+- the **launchpad**, whose one object is a composer and whose ledger and footer are readouts;
 - a **lightbox**, which has already darkened everything else.
 
 **What it is.** 1px square dots on the 4px grid at a 24px pitch (`--space-6`), anchored to the viewport so the grid holds still while the rail is dragged. One neutral token, `--dot-field`: `#1a1a1a` on Ink's black, `#ebebeb` on Paper's white — Paper sits a step shallower because dark marks on a light ground read more readily. A radial mask centred on the focal object (the launchpad's composer, the 404's plate) holds the dots at full strength just around it and takes them to nothing by the page edges. Static, no accent, no glow, no marks. You see it if you look for it.
@@ -885,7 +875,6 @@ A licensed moment is a single expressive device — the `DotField` is currently 
   /* ---- INK (dark, default) ---- */
   --bg: #000000;         --surface: #0a0a0a;      --surface-raised: #161616;
   --surface-sunken: #0f0f0f;
-  --annunciator-dark: #0d0d0d;   /* an unlit caution & warning cell */
   --line: #212121;       --line-strong: #333333;
   --text-dim: #6e6e6e;   --text: #a8a8a8;         --text-bright: #ffffff;
   --text-reading: #d2d2d2;       /* prose only — 13.9:1 */
@@ -902,7 +891,6 @@ A licensed moment is a single expressive device — the `DotField` is currently 
 [data-theme="paper"] {
   --bg: #ffffff;         --surface: #ffffff;      --surface-raised: #f5f5f4;
   --surface-sunken: #f4f3f0;
-  --annunciator-dark: #f7f7f5;
   --line: #e4e4e1;       --line-strong: #cfcfcb;
   --text-dim: #8a8a85;   --text: #3d3d3a;         --text-bright: #000000;
   --text-reading: #343431;       /* prose only — 12.5:1 */

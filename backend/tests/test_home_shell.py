@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+
+import pytest
 
 from core.config import Settings
 from core.vault import Vault
@@ -10,7 +13,7 @@ from services.home.backend import Mount
 from services.home.paths import HOME, SCRATCH, Place
 from services.sandbox import SandboxSessionManager
 from services.sandbox.home_shell import HomeShell
-from services.vm.platform import HomeBind
+from services.vm.platform import WORKSPACE_PROXY, HomeBind, JobState
 from services.vm.project import ProjectCopies
 
 from .conftest import egress_policy
@@ -97,6 +100,31 @@ async def test_a_fresh_sessions_first_network_command_gets_the_proxy(tmp_path: P
     assert isinstance(env, dict) and "HTTPS_PROXY" in env
 
 
+async def test_an_offline_command_gets_the_proxy_without_credentials(tmp_path: Path) -> None:
+    # The gateway then refuses it with a 407 the model is told how to read, rather than
+    # the request failing on name resolution as though the VM had no network.
+    vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    _ = await _shell().run(session, copies, "pip install x", mounts=mounts)
+    env = vm.background[next(iter(vm.background))]["env"]
+    assert isinstance(env, dict)
+    assert env["HTTPS_PROXY"] == f"http://{WORKSPACE_PROXY}"
+
+
+async def test_a_background_status_says_whether_the_command_had_the_network(
+    tmp_path: Path,
+) -> None:
+    _vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    shell = _shell()
+    offline = await shell.start(session, copies, "npm test", mounts=mounts)
+    online = await shell.start(session, copies, "npm ci", mounts=mounts, network=True)
+    offline_status = await shell.check(copies, offline)
+    online_status = await shell.check(copies, online)
+    assert offline_status is not None and offline_status.network is False
+    assert online_status is not None and online_status.network is True
+
+
 async def test_the_working_directorys_project_is_bound_without_being_named(
     tmp_path: Path,
 ) -> None:
@@ -119,6 +147,61 @@ async def test_a_finished_background_command_is_retired_once(tmp_path: Path) -> 
     assert second == first
     assert not shell.busy
     assert all(not copy.jobs for copy in (copies.acquire(m.root) for m in mounts))
+
+
+async def test_a_check_reads_the_end_of_the_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    shell = _shell(f"{HOME}/projects/api")
+    command_id = await shell.start(session, copies, "npm test", mounts=mounts)
+    tails: list[bool] = []
+    real_job = vm.job
+
+    async def watched(
+        name: str, *, out_offset: int = 0, err_offset: int = 0, tail: bool = False
+    ) -> JobState:
+        tails.append(tail)
+        return await real_job(name, out_offset=out_offset, err_offset=err_offset, tail=tail)
+
+    monkeypatch.setattr(vm, "job", watched)
+    _ = await shell.check(copies, command_id)
+    assert tails == [True]
+
+
+async def test_two_readers_of_a_finishing_job_both_get_its_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The guest gives a finished job's output to the first read only; a second read
+    # that overlapped it would retire the job again with nothing.
+    vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    shell = _shell(f"{HOME}/projects/api")
+    command_id = await shell.start(session, copies, "npm test", mounts=mounts)
+    vm.log = "the output"
+    real_job = vm.job
+    reads = 0
+
+    async def once(
+        name: str, *, out_offset: int = 0, err_offset: int = 0, tail: bool = False
+    ) -> JobState:
+        nonlocal reads
+        reads += 1
+        await asyncio.sleep(0.05)
+        if reads > 1:
+            return JobState(
+                running=False, exit_code=None, stdout="", stderr="", out_end=0, err_end=0
+            )
+        return await real_job(name, out_offset=out_offset, err_offset=err_offset, tail=tail)
+
+    monkeypatch.setattr(vm, "job", once)
+    first, second = await asyncio.gather(
+        shell.check(copies, command_id), shell.check(copies, command_id)
+    )
+    assert first is not None and first.stderr == "the output"
+    assert second == first
+    assert reads == 1
 
 
 def test_a_command_reaches_at_most_a_handful_of_projects(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ const dto: AgentOut = {
   id: "builtin:default",
   name: "default",
   description: "The default agent",
+  agent_class: "talos",
   instructions: "",
   endpoint_id: null,
   model: null,
@@ -22,6 +23,8 @@ const dto: AgentOut = {
   can_delegate: true,
   max_depth: 2,
   delegable: false,
+  launchable: false,
+  required: ["web_search"],
   source: "builtin",
   published: true,
   active: true,
@@ -32,12 +35,15 @@ describe("toAgent", () => {
   it("renames the snake_case wire fields and keeps nulls as nulls", () => {
     const agent = toAgent(dto);
     expect(agent.denyTools).toEqual(["bash"]);
+    expect(agent.agentClass).toBe("talos");
     expect(agent.permissionCeiling).toBe("edit");
     expect(agent.wallClockTimeoutS).toBeNull();
     expect(agent.tools).toBeNull();
     expect(agent.canDelegate).toBe(true);
     expect(agent.maxDepth).toBe(2);
     expect(agent.editable).toBe(false);
+    expect(agent.agentClass).toBe("talos");
+    expect(agent.required).toEqual(["web_search"]);
   });
 });
 

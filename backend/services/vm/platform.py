@@ -214,6 +214,21 @@ class PlatformVM:
         """Why the last bring-up failed, for the operator."""
         return self._failure
 
+    async def responds(self) -> bool:
+        """Whether the VM is up and answers a command. False when it is not up."""
+        if not self.available:
+            return False
+        try:
+            return await self._driver.alive()
+        except VMError:
+            return False
+
+    def mark_unavailable(self, reason: str) -> None:
+        """Report the VM as down without touching it, so what needs it stops being sent
+        there. :meth:`reset` brings it back."""
+        self._ready.clear()
+        self._failure = reason
+
     async def start(self) -> None:
         """Begin bringing the VM up in the background."""
         if not self._enabled:
@@ -494,8 +509,12 @@ class PlatformVM:
             ["python3", self._confine, "stop", "--root", self.layout.root, "--name", name]
         )
 
-    async def job(self, name: str, *, out_offset: int = 0, err_offset: int = 0) -> JobState:
-        """A job's state, and what it printed after the given offsets."""
+    async def job(
+        self, name: str, *, out_offset: int = 0, err_offset: int = 0, tail: bool = False
+    ) -> JobState:
+        """A job's state, and what it printed after the given offsets. When that is more
+        than one read carries, ``tail`` keeps the end of it rather than the start. The
+        guest removes a finished job's files once a read has returned all of them."""
         result = await self._call(
             [
                 "python3",
@@ -509,6 +528,7 @@ class PlatformVM:
                 str(out_offset),
                 "--err-offset",
                 str(err_offset),
+                *(["--tail"] if tail else []),
             ],
             timeout_s=_ADMIN_TIMEOUT_S,
         )

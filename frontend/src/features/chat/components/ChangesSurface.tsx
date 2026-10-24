@@ -13,6 +13,7 @@ export function ChangesSurface(props: {
   changes: () => ThreadChanges | null | undefined;
   branch: () => BranchState | null | undefined;
   onChanged: () => void;
+  speaker: string;
   fontStep?: number;
   softWrap?: boolean;
 }): JSX.Element {
@@ -37,6 +38,7 @@ export function ChangesSurface(props: {
           <DiffSurface
             branch={props.branch}
             onChanged={props.onChanged}
+            speaker={props.speaker}
             fontStep={props.fontStep}
             softWrap={props.softWrap}
           />

@@ -17,10 +17,15 @@ class ApprovalRequired(Body):
     name: str
     args: dict[str, object] = Field(default_factory=dict)
     summary: str
-    # Plain-language description of what the action does and its effect, so the
-    # operator can judge it without reading the raw arguments — set when the tool
-    # supplies one (the host-execution path requires it). Additive to v1; no bump.
+    # Plain-language effect so the operator needn't read raw arguments; set when the tool
+    # supplies one (host execution requires it). Additive to v1.
     explanation: str | None = None
+    # Why this call always asks: set for a guarded, once-only call, so a client offers no
+    # standing approval. Additive to v1.
+    guard: str | None = None
+    # Why a host command is about to run with no fence in force (disabled by the operator
+    # or unbuildable). Additive to v1.
+    unconfined: str | None = None
 
 
 class QuestionOption(Body):
@@ -39,16 +44,14 @@ class QuestionSpec(Body):
 
 
 class QuestionAsked(Body):
-    """The turn is parked on the operator answering, not on them permitting.
+    """The turn is parked on the operator answering, not permitting.
 
-    Its own event rather than an `approval.required` with a different shape, because the
-    two ask for different things and are answered with different things. An approval is a
-    yes or a no about an action already decided on; a question has no default, no safe
-    side, and comes back carrying a *value* that becomes the tool's result. Folding one
-    into the other would have made `approved` meaningless for half its uses.
+    Its own event, not an `approval.required` variant: an approval is a yes or no about a
+    decided action, while a question has no default or safe side and returns a value that
+    becomes the tool's result. Merging them would make `approved` meaningless for half its uses.
 
-    One event per call, carrying every question in it: the model asks for what it needs in
-    one go, and the operator answers it in one go. Additive to v1; no bump."""
+    One event per call carrying every question, as the model asks and the operator answers
+    in one go. Additive to v1."""
 
     type: Literal["question.asked"] = "question.asked"
     tool_call_id: str
@@ -56,16 +59,13 @@ class QuestionAsked(Body):
 
 
 class AnsweredQuestionOut(Body):
-    """One question and what the operator said to it, as structure rather than as prose.
+    """One question and the operator's answer, as structure rather than prose.
 
-    The tool's *result* is a rendered paragraph, because that is what the model reads. A
-    client asked to draw a card from it would have to parse that paragraph back apart —
-    and a renderer that parses prose is a renderer that breaks the day the wording is
-    improved. So the same answer rides here already taken apart, built from the parked
-    call's own arguments and the operator's replies.
+    The tool's result is a rendered paragraph for the model; a client parsing it would break
+    when the wording improves, so the answer rides here taken apart, built from the parked
+    call's arguments and the replies.
 
-    ``selections`` is empty when they wrote instead of choosing, and ``text`` is null when
-    they only chose; both are filled when they did both."""
+    ``selections`` is empty when they only wrote, ``text`` null when they only chose."""
 
     question: str
     selections: list[str] = Field(default_factory=list)
@@ -75,15 +75,12 @@ class AnsweredQuestionOut(Body):
 class QuestionAnswered(Body):
     """The operator answered a parked ``ask_user`` call.
 
-    The counterpart to :class:`QuestionAsked`, and it exists for the same reason that one
-    does: the question arrives as structure, so the answer has to as well, or the card the
-    client drew from the question has nothing but the tool result's prose to complete
-    itself with. Emitted per answered call, never per question.
+    The counterpart to :class:`QuestionAsked`: the question arrives as structure, so the
+    answer must too, or the client's card has only the result's prose. Emitted per answered
+    call, never per question.
 
-    What it carries is derived from the **parked call's arguments** plus the replies the
-    server validated against them — never from labels the client sent — so the answer in
-    the transcript cannot say something the question never offered. Additive to v1; no
-    bump."""
+    Derived from the parked call's arguments plus the validated replies, never client-sent
+    labels, so the transcript can't say something the question never offered. Additive to v1."""
 
     type: Literal["question.answered"] = "question.answered"
     tool_call_id: str
@@ -93,46 +90,40 @@ class QuestionAnswered(Body):
 class ReviewStarted(Body):
     """An action at the Auto level is being ruled on in the operator's place.
 
-    Auto's proposition is that the operator's approvals are given for them. The only thing
-    that makes that acceptable is that they can see it happening and read afterwards what
-    was decided and why — so the review announces itself before it runs, rather than a
-    tool call simply appearing to have been made.
+    Auto gives the operator's approvals for them, acceptable only if they can see it happen
+    and read what was decided and why, so the review announces itself before running.
 
-    ``summary`` is the action's extracted worst case, in the same words the reviewer is
-    judging and the operator can read. ``detail`` is the act's own content where the tool
-    has some worth reading — a delegated task, a program, the reason given for opening a
-    credential — and null where there is none, which is most tools. ``reach`` is how far a
-    shell command *declared* it needs to go — the worktree, the network, or the host — and
-    is null for every kind of act that declares nothing, which is a different fact from
-    declaring the widest reach. Additive to v1; no bump."""
+    ``summary`` is the action's extracted worst case, in the words the reviewer judges.
+    ``detail`` is the act's own content where worth reading (a delegated task, a program,
+    the reason for opening a credential), else null. ``reach`` is how far a shell command
+    declared it needs to go (worktree, network, host); null for acts declaring nothing, which
+    differs from declaring the widest reach. ``network`` is whether a VM command runs with
+    egress (an ``offline`` declaration can differ), null where nothing runs in the VM.
+    Additive to v1."""
 
     type: Literal["review.started"] = "review.started"
     tool_call_id: str
     name: str
     summary: str
     detail: str | None = None
-    reach: Literal["workspace", "network", "host"] | None = None
+    reach: Literal["offline", "network", "host"] | None = None
+    network: bool | None = None
 
 
 class ReviewCompleted(Body):
     """How the review ruled, on the three axes it ruled on.
 
-    ``decision`` is the outcome the run then took — ``allow`` ran the call without a
-    prompt, ``ask`` parked it for the operator anyway. ``block``, which refused the call
-    outright, is no longer produced: an act the reviewer judged unrecoverable parks like
-    anything else it will not clear, since that is the one act the operator most needs put
-    in front of them. The word stays in the vocabulary because it is already written into
-    the stored events of threads reviewed before that changed. It
-    carries deliberately more than the outcome: ``stage`` says whether the structural judge
-    or a model settled it, ``tier`` says on which ground when the judge did, ``fenced``
-    whether an OS fence was there to hold the command to what it declared, and the three
-    axes say what the model saw. An operator reading only "allowed" learns nothing they can
-    act on; one reading "cleared structurally, fenced to the worktree" can tell an
-    over-permissive rule from a well-judged call.
+    ``decision`` is the outcome the run took: ``allow`` ran the call without a prompt,
+    ``ask`` parked it. ``block`` is no longer produced (an act judged unrecoverable parks,
+    being the one the operator most needs to see) but stays in the vocabulary because stored
+    events of earlier threads carry it. It carries more than the outcome: ``stage`` says
+    whether the structural judge or a model settled it, ``tier`` on which ground when the
+    judge did, ``fenced`` whether an OS fence held the command to what it declared, and the
+    axes what the model saw. "Allowed" alone isn't actionable; "cleared structurally, fenced
+    to the worktree" tells an over-permissive rule from a well-judged call.
 
-    The axes are null when the model stage never ran — the judge cleared it, or nothing
-    was available to review with — and ``tier`` is null in the mirror case, whenever the
-    model settled it. Additive to v1; no bump."""
+    The axes are null when the model stage never ran (the judge cleared it, or no reviewer
+    was available), and ``tier`` is null whenever the model settled it. Additive to v1."""
 
     type: Literal["review.completed"] = "review.completed"
     tool_call_id: str

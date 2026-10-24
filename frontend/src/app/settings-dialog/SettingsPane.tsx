@@ -3,6 +3,7 @@ import {
   AgentToolsPanel,
   AppearanceSection,
   ChatSection,
+  ClearDataSection,
   ModelsScreen,
   OfflineSection,
   PlatformVmSection,
@@ -56,6 +57,7 @@ export const SECTION_RENDERERS: Record<string, () => JSX.Element> = {
   "service-keys": () => <ApiTokensScreen />,
   "access-tokens": () => <AccessTokensScreen />,
   backup: () => <BackupScreen />,
+  data: () => <ClearDataSection />,
   health: () => <HealthScreen />,
 };
 

@@ -512,7 +512,7 @@ class MailService:
                         self.queue_sync(row.owner_id, row.id)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 — the loop must outlive one bad pass
+            except Exception:  # the loop must outlive one bad pass
                 logger.warning("mail: scheduled sync pass failed", exc_info=True)
 
     async def _run_sync(self, job: SyncJob) -> None:

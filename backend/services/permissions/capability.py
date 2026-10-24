@@ -51,6 +51,7 @@ from enum import StrEnum
 from typing import Literal, cast
 
 from services.permissions.fence import Fence, HomeFence, escapes
+from services.permissions.fetches import fetches
 from services.permissions.projections import describe
 from services.permissions.shell_ast import ShellCommand, shell_reach, strip_comments
 from services.tool_sensitivity import EXTERNAL_PREFIX, Sensitivity, classified, sensitivity_of
@@ -59,21 +60,32 @@ from services.tool_sensitivity import EXTERNAL_PREFIX, Sensitivity, classified, 
 #: enforced by the tool that runs it (``tools/shell.py``). It is a *declaration*, not a
 #: measurement: the grammar walk checks it against what the command actually names, and a
 #: fence built to match it is what makes a contradiction fail rather than merely be noted.
-type Reach = Literal["workspace", "network", "host"]
+type Reach = Literal["offline", "network", "host"]
 
 #: The declared values, as a set to validate an argument against.
-REACHES: frozenset[str] = frozenset({"workspace", "network", "host"})
+REACHES: frozenset[str] = frozenset({"offline", "network", "host"})
 
 #: What a call that names no reach at all is taken to have declared. It is the executing
 #: tools' own schema default, so an omitted argument is not a missing declaration — it is
 #: the declaration the tool will act on, and the judge has to model what will run.
-DEFAULT_REACH: Reach = "workspace"
+DEFAULT_REACH: Reach = "offline"
+
+#: Old spellings of a reach that a thread's history may still carry, and what they mean.
+_RENAMED_REACHES: dict[str, Reach] = {"workspace": "offline"}
+
+
+def renamed_reach(value: object) -> object:
+    """``value`` with an old spelling of a reach replaced by its current one."""
+    if isinstance(value, str):
+        return _RENAMED_REACHES.get(value, value)
+    return value
+
 
 #: The tools whose schema actually carries a ``reach`` argument (``tools/shell.py``). Only
 #: for these does an absent argument mean :data:`DEFAULT_REACH`; for every other shell-shaped
 #: tool it means the call declared nothing, which is a different fact and has to read as one
 #: — the reviewer's prompt and the operator's review row both say what was declared, and a
-#: tool with no such argument reporting "workspace" is the chassis putting words in the
+#: tool with no such argument reporting "offline" is the chassis putting words in the
 #: model's mouth.
 _REACH_ARG_TOOLS = frozenset({"shell_run_command", "shell_start_command"})
 
@@ -137,6 +149,9 @@ class Capability:
     #: network redirect). It is a statement of what was *seen*, not of what the act can
     #: reach; a sandboxed program is never read, so it is False for one.
     network: bool = False
+    #: Whether a command it runs installs packages or clones a repository
+    #: (``fetches.py``), which needs the network though it writes no address.
+    fetches: bool = False
     #: Paths that leave the workspace, or that we cannot place inside it.
     escapes: tuple[str, ...] = ()
     #: How far the call *said* it needs to reach. None for every kind of act that declares
@@ -157,6 +172,14 @@ class Capability:
         """Whether everything in this action was understood. False ⇒ the fields above
         describe *part* of it, and no caller may treat them as the whole."""
         return not self.unbounded
+
+    @property
+    def runs_with_network(self) -> bool:
+        """Whether a VM command gets the conversation's egress: it declared ``network``, or
+        declared ``offline`` and names an address or installs or clones anyway."""
+        if self.reach == "network":
+            return True
+        return self.reach == "offline" and (self.network or self.fetches)
 
     @property
     def programs(self) -> tuple[str, ...]:
@@ -248,7 +271,7 @@ def declared_reach(tool: str, args: Mapping[str, object]) -> Reach | None:
         return "host"
     if "reach" not in args:
         return DEFAULT_REACH if tool in _REACH_ARG_TOOLS else None
-    value = args["reach"]
+    value = renamed_reach(args["reach"])
     return cast("Reach", value) if value in REACHES else "host"
 
 
@@ -283,12 +306,14 @@ def shell_capability(
     root = None if on_the_host else root
     walk = shell_reach(command, root=root)
     unplaced = () if root is not None else (_UNPLACED_ON_THE_HOST if on_the_host else _UNPLACED,)
+    fetching = fetches(walk.commands)
     # A command with no network that sees only the thread's scratch is held by the VM as
     # a sandboxed program is, so it is bounded without its syntax being read.
     in_scratch = (
         isinstance(root, HomeFence)
-        and reach == "workspace"
+        and reach == "offline"
         and not walk.network
+        and not fetching
         and root.scratch_only(command)
     )
     return Capability(
@@ -300,6 +325,7 @@ def shell_capability(
         writes=walk.writes,
         env_writes=walk.env_writes,
         network=walk.network,
+        fetches=fetching,
         escapes=walk.escapes,
         reach=reach,
         sandboxed=in_scratch,

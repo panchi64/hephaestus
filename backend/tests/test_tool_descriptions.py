@@ -1,12 +1,8 @@
 """What a tool's description says, measured on the catalog a real run is handed.
 
-Two of the three authors of that text are outside this repo — Pydantic AI, which wraps
-any docstring with a ``Returns:`` section in XML, and ``pydantic_ai_harness``, whose
-toolsets cross-reference each other by the un-namespaced names their own functions carry.
-``tools/describe.py`` is the pass that fixes both, and the assertions worth having are
-the ones taken over the **assembled** catalog rather than over hand-written samples: a
-harness upgrade that reintroduces a leak, or a new category whose docstrings point at
-names nothing is registered under, is exactly the regression this file exists to catch.
+Pydantic AI wraps ``Returns:`` docstrings in XML and ``pydantic_ai_harness`` cross-references
+tools by un-namespaced names; ``tools/describe.py`` fixes both. The catalog-level tests
+assert over the assembled catalog so a harness upgrade that reintroduces a leak is caught.
 """
 
 from __future__ import annotations
@@ -22,6 +18,7 @@ from pydantic_ai.usage import RunUsage
 
 from prompts.agent import INSTRUCTIONS
 from runs import Run, RunStream
+from services.permissions.guards import COMMAND_TOOLS
 from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 from tools.describe import (
@@ -50,11 +47,9 @@ _BACKTICKED = re.compile(r"(?P<ticks>`+)(?P<body>[^`\n]+?)(?P=ticks)")
 
 
 async def _offered() -> dict[str, ToolDefinition]:
-    """Every tool definition a run is actually handed, through the composed stack the
-    engine gives the Agent — not a re-derivation, so what is asserted below is what the
-    model reads."""
+    """Every tool definition a run is handed, through the stack the engine gives the Agent."""
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    # As a spawned thread, the one kind of run that is offered `subagent_report` as well.
+    # A spawned thread is the one kind of run offered `subagent_report`.
     deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=frozenset(), reports_to_parent=True)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
     tools = await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx)
@@ -83,9 +78,6 @@ def _raw_tools(toolset: object) -> dict[str, Tool[RunDeps]]:
     return cast(dict[str, Tool[RunDeps]], tools)
 
 
-# --- the assembled catalog ----------------------------------------------------------
-
-
 async def test_no_offered_description_carries_the_librarys_docstring_xml():
     for name, tool_def in (await _offered()).items():
         assert "<summary>" not in (tool_def.description or ""), name
@@ -101,9 +93,7 @@ async def test_the_browser_does_not_offer_its_per_call_timeout():
 
 
 async def test_no_description_points_at_a_name_that_is_not_offered():
-    # A bare name is resolved within the referring tool's own category, which is the only
-    # place it is unambiguous — so that is the claim tested. A cross-category reference
-    # has to be written out in full by whoever wrote the docstring.
+    # A bare name resolves only within its own category; cross-category references must be full.
     offered = await _offered()
     names = category_names(full_tool_categories())
     for name, tool_def in offered.items():
@@ -130,7 +120,6 @@ async def test_the_plan_schema_offers_only_what_the_store_accepts():
     assert "depends_on" not in item
     statuses = arr(_at(write_plan, "$defs", "TaskStatus", "enum"))
     assert "blocked" not in statuses
-    # The statuses the store does accept are all still there.
     assert set(statuses) == {
         "pending",
         "in_progress",
@@ -140,20 +129,14 @@ async def test_the_plan_schema_offers_only_what_the_store_accepts():
 
 
 async def test_the_explanation_rule_is_stated_once_in_the_standing_brief():
-    """The brief already tells the model on every turn what an explanation argument is
-    for. A tool description repeating it buys the same sentence a second time in the
-    cached prefix; what belongs in the description is the half that is this tool's — who
-    receives it, what the command does, what the credential is for."""
+    """The standing brief explains explanation arguments; descriptions must not repeat it."""
     assert "explanation or reason argument" in INSTRUCTIONS
     for name, tool_def in (await _offered()).items():
         assert "operator reads when deciding" not in (tool_def.description or ""), name
 
 
 async def test_every_tool_is_offered_somewhere_to_say_why():
-    """The work log shows a call's arguments, which say what is about to happen and never
-    why. The narration is that missing half — and the collapsed log leads with the run's
-    latest one — so the claim worth pinning is over the whole assembled catalog, reads
-    included: a read-heavy turn would otherwise show no reason for most of its length."""
+    """Every tool, reads included, offers the narration argument the work log leads with."""
     offered = await _offered()
     assert offered, "the catalog is empty; this test is no longer measuring anything"
     for name in offered:
@@ -161,40 +144,31 @@ async def test_every_tool_is_offered_somewhere_to_say_why():
         properties = obj(schema["properties"])
         assert NARRATION_ARG in properties, f"{name} cannot say why"
         assert obj(properties[NARRATION_ARG])["description"] == NARRATION_TEXT, name
-        # Optional by construction: a model that leaves it out gets a call that runs with
-        # no narration, not a retry prompt about a property nothing declares.
+        # Optional, so omitting it never triggers a retry prompt.
         assert NARRATION_ARG not in arr(schema.get("required", [])), name
 
 
 async def test_every_tool_named_as_leaking_is_one_the_catalog_offers():
-    """The strip is keyed by name, so a task-list tool the allowlist stops registering
-    leaves a dead entry behind — and a dead entry is a test asserting over a tool no model
-    will ever see, which reads as coverage and is not. It is keyed by the name *we* give
-    the tool, not the harness's, so the rename in ``tools/tasks.py`` has to have reached
-    here too."""
+    """The strip is keyed by our tool names, so an entry for an unregistered tool is dead."""
     offered = await _offered()
     assert SUBTASKS_LEAKED <= set(offered)
 
 
 async def test_the_plan_schema_says_each_thing_once():
-    """Every byte here ships on every request while the plan tools are loaded, and the
-    def sits directly above the property it would be repeating."""
+    """The plan item's description must not repeat what the property below it says."""
     item = obj(_at(_schema((await _offered())["tasks_write"]), "$defs", "PlanItem"))
     assert "auto" not in s(item["description"]).lower()
     assert "Auto-generated" in s(_at(item, "properties", "id", "description"))
 
 
 async def test_the_operator_reads_the_description_the_model_reads():
-    # The settings screen exists so the operator can decide whether to allow a tool. A
-    # description that differs from the model's is a different decision.
     offered = await _offered()
     for info in tool_catalog(full_tool_categories()):
         assert info.description == _flatten(offered[info.name].description or ""), info.name
 
 
 async def test_describing_preserves_everything_that_carries_policy():
-    # The stage runs after the approval gate, so an `unapproved` kind rewritten there has
-    # to survive it — a copy-editing pass that ungated a tool would be a security bug.
+    # The stage runs after the approval gate, so it must not rewrite policy metadata.
     offered = await _offered()
     raw = {
         f"{category}_{tool_name}": tool
@@ -204,7 +178,7 @@ async def test_describing_preserves_everything_that_carries_policy():
     for name, tool_def in offered.items():
         assert tool_def.metadata == raw[name].metadata, name
         assert tool_def.defer_loading == raw[name].defer_loading, name
-        assert tool_def.sequential == raw[name].sequential, name
+        assert tool_def.sequential == (raw[name].sequential or name in COMMAND_TOOLS), name
         assert tool_def.strict == raw[name].strict, name
 
 
@@ -228,8 +202,6 @@ async def test_the_raw_toolsets_are_left_as_the_library_built_them():
     }
     assert before == after
 
-
-# --- the pure functions -------------------------------------------------------------
 
 #: A harness docstring as Pydantic AI hands it over: a summary, then the returns block.
 _XML_DOCSTRING = (
@@ -255,8 +227,7 @@ def test_strip_docstring_xml_keeps_the_summary_and_drops_the_returns_block():
 
 
 def test_strip_docstring_xml_keeps_a_typed_returns_only_docstring():
-    # `main_desc` is the returns block alone when the docstring had no summary; dropping
-    # it would leave the tool described by nothing at all.
+    # Without a summary the returns block is the only description, so it must survive.
     assert (
         strip_docstring_xml(
             "<returns>\n<type>str</type>\n<description>Matching lines.</description>\n</returns>"
@@ -287,7 +258,6 @@ def test_drop_properties_takes_the_requirement_with_the_property():
     dropped = drop_properties(schema, {"timeout_ms"})
     assert dropped["properties"] == {"url": {"type": "string"}}
     assert dropped["required"] == ["url"]
-    # The caller's schema is untouched — it belongs to a toolset other code reads.
     assert "timeout_ms" in obj(schema["properties"])
 
 
@@ -308,13 +278,10 @@ def test_add_property_offers_the_property_without_requiring_it():
     added = add_property(schema, NARRATION_ARG, NARRATION_PROPERTY)
     assert obj(obj(added["properties"])[NARRATION_ARG])["description"] == NARRATION_TEXT
     assert added["required"] == ["path"]
-    # The caller's schema is untouched — it belongs to a toolset other code reads.
     assert NARRATION_ARG not in obj(schema["properties"])
 
 
 def test_add_property_gives_a_no_argument_tool_somewhere_to_put_it():
-    # The shape Pydantic AI hands over for a tool that takes nothing, and the case where a
-    # narration is worth most: the call's arguments say nothing at all by themselves.
     added = add_property({"type": "object"}, NARRATION_ARG, NARRATION_PROPERTY)
     assert added["properties"] == {NARRATION_ARG: dict(NARRATION_PROPERTY)}
 
@@ -329,7 +296,6 @@ def test_prefix_references_rewrites_backticked_and_compound_names():
         prefix_references("pass one back to `click` or `press_key('Enter')`", NAMES, "browse")
         == "pass one back to `browse_click` or `browse_press_key('Enter')`"
     )
-    # Unbackticked, but compound: a snake_case identifier cannot be a word of English.
     assert (
         prefix_references("Prefer this over read_file.", NAMES, "files")
         == "Prefer this over files_read_file."
@@ -337,11 +303,9 @@ def test_prefix_references_rewrites_backticked_and_compound_names():
 
 
 def test_prefix_references_leaves_a_word_that_is_not_this_categorys_tool():
-    # `list` and `select` are a tab action here and a registered tool elsewhere; resolving
-    # bare names across categories would rewrite them into a tool that does something else.
+    # `list` and `select` are a tab action here but a different tool in other categories.
     text = "a flow needs `select` first, so a `list` that does not show one is worth repeating"
     assert prefix_references(text, NAMES, "browse") == text
-    # A single bare word is left alone even in its own category unless it is backticked.
     assert prefix_references("Open a new tabs page", NAMES, "browse") == "Open a new tabs page"
 
 
@@ -383,7 +347,6 @@ def test_strip_schema_leaks_only_touches_the_tools_it_names():
         "description": "Lifecycle status of a task.",
     }
     assert strip_schema_leaks("browse_click", schema) == schema
-    # The caller's schema is copied, never edited.
     assert obj(obj(schema["$defs"])["TaskStatus"])["enum"] == ["pending", "blocked"]
 
 

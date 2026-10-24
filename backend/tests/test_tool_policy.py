@@ -1,10 +1,8 @@
-"""`AE-3.3` — the operator disabling individual tools, end to end.
+"""The operator disabling individual tools, end to end.
 
-The enabled gate itself is covered by ``test_tools.py`` (hand a run a disabled set, watch
-the tool vanish). What is tested here is the half that makes the requirement real: the
-operator's persisted set, the catalog they choose from, and — the part that has silently
-regressed before — that the set actually reaches **every** path a turn is composed on,
-composing with offline mode's automatic web suspension rather than replacing it.
+The gate itself is in ``test_tools.py``. This covers the persisted set, the catalog, and
+that the set reaches every path a turn is composed on, composing with offline mode's web
+suspension rather than replacing it.
 """
 
 from __future__ import annotations
@@ -49,6 +47,7 @@ from tools.catalog import tool_catalog
 from ._helpers import (
     client_app,
     full_tool_categories,
+    parked_turn,
     patch_model_resolution,
     register_stub_provider,
     stub_resolution,
@@ -80,36 +79,24 @@ def _availability(app: FastAPI) -> tuple[CategoryAvailability, ...]:
 
 
 async def agent_visible(disabled: frozenset[str]) -> set[str]:
-    """Every tool name the composed stack the engine hands the Agent can resolve — not a
-    re-derivation of the naming rule, so this is the ground truth the catalog is measured
-    against.
+    """Every tool name the composed stack can resolve, deferred ones included.
 
-    The *corpus*, deferral included: a dormant category's tools are in here, since they
-    are offered to the run and merely withheld from a request until the model asks for
-    them. Which of them a given request actually carries, and the library-owned
-    ``search_tools`` that reveals the rest, are ``test_tool_search.py``'s subject."""
+    Which a request actually carries is ``test_tool_search.py``'s subject."""
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    # As a spawned thread, the one kind of run that is offered `subagent_report` as well.
+    # A spawned thread is also offered `subagent_report`.
     deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled, reports_to_parent=True)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
     return set(await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx))
 
 
-# --- the catalog is the agent's own, not a hand-maintained list ----------------------
-
-
 async def test_catalog_matches_the_names_the_agent_is_offered():
-    # Pins the namespacing convention (`category_tool`) against what Pydantic AI's
-    # prefixing actually produces: if the library ever changed it, every toggle in the
-    # settings screen would quietly stop matching, and this fails instead.
+    # Pins the `category_tool` namespacing against Pydantic AI's actual prefixing, so a
+    # library change cannot silently detach the settings toggles.
     offered = await agent_visible(frozenset())
     assert {t.name for t in tool_catalog(full_tool_categories())} == offered
 
 
-# The full catalog, frozen. The registry is now assembled from the manifests'
-# `toolsets` exports, so a manifest that silently drops (or double-claims) a category
-# shrinks the agent's world without any other test noticing — this literal set is the
-# tripwire. A deliberate tool addition/removal updates this list in the same change.
+# The full catalog, frozen: catches a manifest that drops or double-claims a category.
 _PINNED_CATALOG = {
     "agents_discard",
     "agents_list",
@@ -213,14 +200,12 @@ async def test_assembled_catalog_is_pinned():
 
 
 async def test_booted_app_assembles_the_same_catalog():
-    # The discovery-based helper above and the real app must assemble identically —
-    # otherwise the pin guards a mapping no run actually uses.
+    # The discovery-based helper and the real app must assemble identically, or the pin
+    # guards a mapping no run uses.
     async with client_app() as (_, app):
         assert {t.name for t in tool_catalog(_registered(app))} == _PINNED_CATALOG
-        # The conditionally-gated vocabulary: each manifest's own, plus the core
-        # categories' (`tools.CORE_GATED_TOOLS` — they have no manifest to declare
-        # theirs). A name missing here is a tool that parks the run but can never be
-        # granted for the conversation, so the operator is asked again on every call.
+        # Each manifest's gated names plus `tools.CORE_GATED_TOOLS`; a name missing here
+        # parks the run but can never be granted for the conversation.
         assert _gated(app) == {
             "platform_search",
             "plan_submit",
@@ -236,20 +221,13 @@ async def test_booted_app_assembles_the_same_catalog():
             "memory_forget",
             "memory_consolidate",
         }
-        # ...and every one of them is a real, registered tool, so the operator's scope
-        # list can actually offer it.
         assert _gated(app) <= _PINNED_CATALOG
 
 
 async def test_catalog_carries_category_and_description():
     now = next(t for t in tool_catalog(full_tool_categories()) if t.name == "builtin_now")
     assert now.category == "builtin"
-    # The clock is the operator's own, stamped with its offset — not a UTC reading the
-    # model would have to shift by an amount nobody told it.
     assert "offset from UTC" in now.description
-
-
-# --- the operator's set actually hides the tool --------------------------------------
 
 
 async def test_operator_disabled_tool_is_absent_from_the_catalog_the_agent_sees():
@@ -258,7 +236,7 @@ async def test_operator_disabled_tool_is_absent_from_the_catalog_the_agent_sees(
     disabled = await get_disabled_tools(store, OWNER)
     visible = await agent_visible(disabled)
     assert "builtin_now" not in visible
-    assert "attachments_provision" in visible  # only the named tool goes
+    assert "attachments_provision" in visible
 
 
 async def test_flip_round_trips_and_persists():
@@ -276,9 +254,6 @@ async def test_a_corrupt_stored_value_reads_as_nothing_disabled():
     assert await get_disabled_tools(store, OWNER) == frozenset()
     await store.set(OWNER, DISABLED_TOOLS_KEY, json.dumps({"memory_recall": True}))
     assert await get_disabled_tools(store, OWNER) == frozenset()
-
-
-# --- the two sources compose ---------------------------------------------------------
 
 
 @final
@@ -316,28 +291,23 @@ async def test_offline_alone_still_applies_with_no_operator_choices():
 
 
 async def test_a_model_that_cannot_see_is_not_offered_an_image_tool():
-    # `browse_screenshot` answers with image content: a text-only model spends the call
-    # and learns nothing, so it is withheld — and offered again the moment it can see.
     store = make_store()
     offline = stub_offline(frozenset())
     blind = await effective_disabled_tools(store, offline, OWNER, vision=False)
     sighted = await effective_disabled_tools(store, offline, OWNER, vision=True)
     assert "browse_screenshot" in blind
     assert "browse_screenshot" not in sighted
-    # Only that one — the other seventeen browse tools return text and are unaffected.
     assert blind - sighted == {"browse_screenshot"}
 
 
 def test_the_vision_gate_names_tools_that_actually_exist():
-    # The set is written out in `services/` (which sits below `tools/`), so a harness
-    # rename would otherwise leave it silently covering nothing.
+    # The set lives in `services/`, below `tools/`, so a rename would leave it covering nothing.
     assert VISION_ONLY_TOOLS <= _PINNED_CATALOG
 
 
 async def test_the_dormant_groups_name_categories_the_catalog_really_has():
-    # Same reason as the two gates above, one level up: a dormant declaration names a
-    # *category*, so a rename leaves the boot check satisfied by a group that no longer
-    # holds the tools the index is advertising.
+    # A dormant declaration names a category, so a rename would pass the boot check with a
+    # group that no longer holds the advertised tools.
     async with client_app() as (_, app):
         dormant = app_state(app).dormant_categories
         for entry in dormant:
@@ -345,24 +315,19 @@ async def test_the_dormant_groups_name_categories_the_catalog_really_has():
 
 
 def test_the_lane_gate_names_tools_that_actually_exist():
-    # Same reason, and it bites harder here: a name that stopped matching would offer a
-    # scheduled task a tool that suspends the turn on an operator who is not there — and
-    # a parked turn lives in the process, so the run waits until it restarts.
+    # A stale name would offer a scheduled task a tool that parks the turn with no operator
+    # present, and a parked turn waits until the process restarts.
     assert ATTENDED_ONLY_TOOLS <= _PINNED_CATALOG
     assert lane_disabled_tools("task") <= _PINNED_CATALOG
 
 
 async def _unconfigured(app: FastAPI) -> frozenset[str]:
-    """What a fresh test app withholds because nothing is set up behind it — no mailbox,
-    no calendar, no secrets vault. The availability axis withholds those categories exactly
-    as the operator's own switch does, so a test about two named tools subtracts them the
-    way it subtracts the vision set rather than restating fourteen names."""
+    """What a fresh test app withholds for lack of a mailbox, calendar or vault."""
     return await unavailable_tools(_availability(app), app_state(app).capabilities, OWNER)
 
 
 def _force_offline(monkeypatch: pytest.MonkeyPatch, app: FastAPI, *names: str) -> None:
-    """Pin the live offline service's automatic set without swapping the service out —
-    the lifespan still owns its shutdown."""
+    """Pin the live offline service's automatic set; the lifespan still owns its shutdown."""
     monkeypatch.setattr(
         app_state(app).offline,
         "web_tools_disabled",
@@ -370,7 +335,7 @@ def _force_offline(monkeypatch: pytest.MonkeyPatch, app: FastAPI, *names: str) -
     )
 
 
-def _spy_disabled_tools[**P, R](
+def spy_disabled_tools[**P, R](
     real: Callable[P, R], captured: dict[str, frozenset[str]]
 ) -> Callable[P, R]:
     """``real``, recording the ``disabled_tools`` keyword each call is composed with."""
@@ -380,9 +345,6 @@ def _spy_disabled_tools[**P, R](
         return real(*args, **kwargs)
 
     return spy
-
-
-# --- the route -----------------------------------------------------------------------
 
 
 async def test_route_lists_the_catalog_with_enabled_state():
@@ -413,16 +375,12 @@ async def test_chat_turn_composes_with_the_operator_set(monkeypatch: pytest.Monk
         _force_offline(monkeypatch, app, "web_search")
 
         captured: dict[str, frozenset[str]] = {}
-        monkeypatch.setattr(
-            chat_routes, "compose_turn", _spy_disabled_tools(compose_turn, captured)
-        )
+        monkeypatch.setattr(chat_routes, "compose_turn", spy_disabled_tools(compose_turn, captured))
         patch_model_resolution(monkeypatch)
         _ = await client.post("/chat", json={"prompt": "hi"})
         unconfigured = await _unconfigured(app)
 
-    # The stub model the test app resolves declares no vision, so the image-returning
-    # tools are withheld too; subtract the automatic sources to leave the two this test
-    # is actually about (one the operator turned off, one offline mode suspended).
+    # The stub model declares no vision; subtract the automatic sources.
     automatic = vision_disabled_tools(False) | unconfigured
     assert captured["disabled"] - automatic == {
         "builtin_now",
@@ -433,16 +391,14 @@ async def test_chat_turn_composes_with_the_operator_set(monkeypatch: pytest.Monk
 async def test_unattended_task_turn_composes_with_the_operator_set_and_the_model(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The other composition path. An unattended turn resolves its own model — so it knows
-    the same vision fact the interactive path does, and taking the permissive default
-    instead would hand a text-only model a tool whose whole output it cannot read."""
+    """An unattended turn resolves its own model, so it must apply the vision gate too."""
     patch_model_resolution(monkeypatch, output_text="done")
     async with client_app() as (client, _app):
         _ = await client.put("/tools/builtin_now", json={"enabled": False})
 
         captured: dict[str, frozenset[str]] = {}
         monkeypatch.setattr(
-            tasks_manifest, "compose_turn", _spy_disabled_tools(compose_turn, captured)
+            tasks_manifest, "compose_turn", spy_disabled_tools(compose_turn, captured)
         )
         created = await create_task(client)
         fired = await client.post(f"/tasks/{created['id']}/run_now")
@@ -450,17 +406,12 @@ async def test_unattended_task_turn_composes_with_the_operator_set_and_the_model
             client, s(created["id"]), s(json_body(fired)["taskRunId"])
         )
 
-    # The stub model declares no vision, exactly as in the interactive test above.
     assert VISION_ONLY_TOOLS <= captured["disabled"]
     assert "builtin_now" in captured["disabled"]
 
 
-# --- the approval-resume path, specifically ------------------------------------------
-
-
 def _install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A TestModel plus one approval-required tool, so a turn parks — the only state from
-    which the resume path runs. Mirrors ``test_approval_routes``' own fixture; pair with
+    """A TestModel plus one approval-required tool, so a turn parks. Pair with
     ``swap_tool_catalog(app, _danger_categories())`` after boot."""
 
     async def fake_resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object):
@@ -471,13 +422,10 @@ def _install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _danger_categories():
-    """The approval fixture's catalog plus one ungated tool, so the resume test can flip
-    a tool off *while parked* and watch the current policy reach the resumed deps."""
+    """The approval fixture's catalog plus one ungated tool to switch off while parked."""
     categories = _approval_danger_categories()
 
-    # Declares `read`: this catalog is composed here rather than shipped, so without a
-    # declaration the level would gate `danger_safe_thing` too and the turn would park on
-    # two approvals instead of the one this test approves.
+    # Declares `read`; undeclared, the level would gate this tool too and park on two approvals.
     @categories["danger"].tool_plain(metadata={"sensitivity": "read"})
     def safe_thing() -> str:
         return "safe"
@@ -497,17 +445,17 @@ async def _await_parked(app: FastAPI, run_id: str) -> Run:
 async def test_resume_applies_the_operator_set_and_the_offline_set(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The approval-resume path is where a sensitive tool actually executes, and it has
-    dropped run state before — so assert directly that both sources reach the resumed
-    turn's deps, including a tool the operator switched off *while it was parked*."""
+    """Both sources reach the resumed turn's deps, including a tool switched off while parked."""
     _install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, _danger_categories())
         run_id = s(json_body(await client.post("/chat", json={"prompt": "delete it"}))["run_id"])
         run = await _await_parked(app, run_id)
+        compaction = parked_turn(run).compaction
+        assert compaction is not None
+        turn_start_withheld = compaction.deps.disabled_tools
 
-        # Switched off after the turn parked: the resume must pick up the current policy,
-        # not whatever was in force when the run started.
+        # Switched off after the park: resume must use the current policy, not the one at run start.
         _ = await client.put("/tools/danger_safe_thing", json={"enabled": False})
         _force_offline(monkeypatch, app, "web_search")
 
@@ -515,7 +463,7 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(
         monkeypatch.setattr(
             runs_routes,
             "build_resume_orchestrator",
-            _spy_disabled_tools(build_resume_orchestrator, captured),
+            spy_disabled_tools(build_resume_orchestrator, captured),
         )
 
         call_id = parked_call_id(run)
@@ -526,7 +474,6 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(
         assert resp.status_code == 202
         unconfigured = await _unconfigured(app)
 
-    assert captured["disabled"] - unconfigured == {
-        "danger_safe_thing",
-        "web_search",
-    }
+    assert captured["disabled"] - unconfigured == {"danger_safe_thing", "web_search"} | (
+        turn_start_withheld - unconfigured
+    )

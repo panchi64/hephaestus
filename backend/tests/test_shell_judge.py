@@ -40,7 +40,7 @@ def judged(
     command: str,
     *,
     root: Path | None = ROOT,
-    reach: Reach = "workspace",
+    reach: Reach = "offline",
     fenced: bool = True,
 ) -> Judgement:
     return judge(
@@ -50,13 +50,13 @@ def judged(
 
 
 def cleared(
-    command: str, *, root: Path | None = ROOT, reach: Reach = "workspace", fenced: bool = True
+    command: str, *, root: Path | None = ROOT, reach: Reach = "offline", fenced: bool = True
 ) -> bool:
     return judged(command, root=root, reach=reach, fenced=fenced).approved
 
 
 def reason(
-    command: str, *, root: Path | None = ROOT, reach: Reach = "workspace", fenced: bool = True
+    command: str, *, root: Path | None = ROOT, reach: Reach = "offline", fenced: bool = True
 ) -> str:
     return judged(command, root=root, reach=reach, fenced=fenced).reason
 
@@ -261,7 +261,7 @@ class TestAWordThatIsAWholeCommandLine:
         assert capability.bounded  # every word was read; one of them left the worktree
         assert escape in capability.escapes
         assert not cleared(command)
-        assert reason(command).startswith('declared reach "workspace" but names')
+        assert reason(command).startswith('declared reach "offline" but names')
 
     @pytest.mark.parametrize(
         "command",
@@ -637,6 +637,14 @@ class TestTheStructuralStage:
             assert judgement.reason == "reaches the network; the reviewer decides"
             assert judgement.tier is None
 
+    def test_an_offline_install_or_clone_is_the_reviewers(self):
+        # The shell runs it with the network whatever it declared, so the judge reads it as
+        # a networked command rather than clearing it as contained work.
+        for command in ("pip install requests", "npm ci", "git clone repo"):
+            judgement = judged(command)
+            assert not judgement.approved, command
+            assert judgement.reason == 'declared reach "offline" but installs or clones'
+
     def test_without_a_fence_nothing_structural_clears(self):
         # The declaration buys nothing on a host that cannot hold a process to it, so the
         # model reviewer rules instead — with the same structural facts in front of it.
@@ -669,19 +677,23 @@ class TestTheStructuralStage:
         assert asked.approved and asked.tier == "sandbox"
 
     def test_an_absent_argument_is_the_schema_default_the_tool_will_run_under(self):
-        # The executing tools default `reach` to `workspace`, so an omitted argument is not
+        # The executing tools default `reach` to `offline`, so an omitted argument is not
         # a missing declaration — reading it as anything else would escalate every call
         # that left it off while the command ran fenced to the worktree anyway.
-        assert declared_reach("shell_run_command", {"command": "ls"}) == "workspace"
+        assert declared_reach("shell_run_command", {"command": "ls"}) == "offline"
 
-    @pytest.mark.parametrize("value", ["everywhere", "", None, 3, "Workspace"])
+    @pytest.mark.parametrize("value", ["everywhere", "", None, 3, "Offline"])
     def test_a_value_this_module_does_not_recognise_is_the_widest_one(self, value: object):
         assert declared_reach("shell_run_command", {"command": "ls", "reach": value}) == "host"
 
+    def test_the_reach_renamed_from_workspace_reads_as_offline(self):
+        assert declared_reach("shell_run_command", {"command": "ls", "reach": "workspace"}) == (
+            "offline"
+        )
+
     def test_a_host_command_declares_the_host_whatever_its_arguments_say(self):
         assert (
-            declared_reach("code_run_host_command", {"command": "ls", "reach": "workspace"})
-            == "host"
+            declared_reach("code_run_host_command", {"command": "ls", "reach": "offline"}) == "host"
         )
 
     def test_a_tool_with_no_such_argument_declares_nothing_rather_than_the_default(self):
@@ -691,7 +703,7 @@ class TestTheStructuralStage:
         # on the operator's review row as if it had.
         assert declared_reach("code_execute", {"code": "print(1)"}) is None
         assert capability_of("code_execute", {"code": "print(1)"}).reach is None
-        assert capability_of("shell_run_command", {"command": "ls"}).reach == "workspace"
+        assert capability_of("shell_run_command", {"command": "ls"}).reach == "offline"
 
     def test_a_sandbox_program_declares_nothing_and_is_cleared_by_its_container(self):
         # `code_execute` has no `reach` argument, so it declares nothing — `declared_reach`
