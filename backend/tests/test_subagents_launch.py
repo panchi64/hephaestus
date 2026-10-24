@@ -455,8 +455,9 @@ class TestTheCap:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             parent = f"p-{uuid4().hex}"
-            # The startup pass closes run-less live rows, so run it before recording these.
-            _ = await records_of(app).reconcile_stranded()
+            # The startup pass closes run-less live rows, so let it finish before recording these.
+            startup = [t for t in asyncio.all_tasks() if t.get_name() == "subagent-reconcile"]
+            _ = await asyncio.gather(*startup)
             for _ in range(8):
                 _ = await _record_child(records_of(app), parent, f"c-{uuid4().hex}")
 
