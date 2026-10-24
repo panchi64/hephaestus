@@ -1,9 +1,10 @@
 """Filesystem tools over the agent's home.
 
 ``pydantic_ai_harness.FileSystem`` supplies the eight tools, with their binary detection,
-hash-checked edits and ``ModelRetry`` errors. We supply the workspace each call acts on:
-the run's home (``tools/home.py``), whose backend (``services/home/backend.py``) is the
-containment boundary. Paths are read from the home, so a result's path can be passed back
+hash-checked edits and ``ModelRetry`` errors. They act on ``ctx.workspace``, whose file
+half is the run's home on the host (``tools/home_workspace.py``); its backend
+(``services/home/backend.py``) is the containment boundary, and no VM is needed. Paths
+are read from the home, so a result's path can be passed back
 as written; a path naming no folder of the home lands in the thread's own place, its
 project or else its scratch.
 
@@ -17,10 +18,11 @@ files (``tools/briefing.py``).
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import override
+from typing import cast, override
 
-from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
+from pydantic_ai import AbstractToolset, RunContext, Tool, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness import FileSystem
@@ -36,10 +38,11 @@ from services.projects.worktree import WorktreeBusyError
 
 from .briefing import with_brief
 from .deps import RunDeps
+from .describe import registered_tools
+from .harness_events import attributable
 from .home import change_log, lease, may_lease, resolve_run_home
-from .rebound import ReboundToolset
 from .run_home import home_of
-from .spill import is_untrusted_spill
+from .spill import UNTRUSTED_SUFFIX, is_untrusted_spill
 from .workspace import unavailable
 
 #: The most characters one ``read_file`` page returns, so a page of a long file, or of a
@@ -78,18 +81,15 @@ def _delegate_read_only(place: str) -> str:
     )
 
 
-class _HomeFiles(ReboundToolset):
-    @override
-    async def resolve(
-        self, name: str, ctx: RunContext[RunDeps]
-    ) -> tuple[AbstractToolset[RunDeps], RunContext[RunDeps]] | str:
-        try:
-            home = await resolve_run_home(ctx.deps)
-        except WorktreeBusyError as exc:
-            return str(exc)
-        if home is None:
-            return unavailable(ctx.deps)
-        return self._template, replace(ctx, workspace=Workspace(home.backend))
+@dataclass
+class _HomeFiles(WrapperToolset[RunDeps]):
+    """The harness file tools on ``ctx.workspace``, whose file half is the run's home on
+    the host (``tools/home_workspace.py``)."""
+
+    @property
+    def tools(self) -> Mapping[str, Tool[RunDeps]]:
+        """The static registry ``tools/catalog.py`` enumerates for the settings surface."""
+        return registered_tools(self.wrapped)
 
     @override
     async def call_tool(
@@ -99,7 +99,12 @@ class _HomeFiles(ReboundToolset):
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
     ) -> object:
-        home = await home_of(ctx.deps)
+        try:
+            home = await resolve_run_home(ctx.deps)
+        except WorktreeBusyError as exc:
+            return str(exc)
+        if home is None:
+            return unavailable(ctx.deps)
         tool_args = _in_home_terms(name, tool_args, home)
         path = tool_args.get("path")
         if name in WRITE_TOOLS and isinstance(path, str):
@@ -107,15 +112,23 @@ class _HomeFiles(ReboundToolset):
             if refusal is not None:
                 return refusal
             if leased:
-                home = await home_of(ctx.deps)
-        located = home.locate(path) if home is not None and isinstance(path, str) else None
+                # The lease is on the run's memo, which the workspace reads its home from.
+                home = await resolve_run_home(ctx.deps) or home
+        located = home.locate(path) if isinstance(path, str) else None
         log = change_log(ctx.deps) if name in _FILE_WRITES and located is not None else None
         if log is not None and located is not None:
             await log.before(located[0], [located[1]])
-        result = await super().call_tool(name, tool_args, ctx, tool)
+        # Only the host half: given a workspace that runs commands, the harness searches
+        # with `rg` through it, which would boot the VM for a file search.
+        inward = replace(attributable(ctx, f"files_{name}"), workspace=Workspace(home.backend))
+        result = cast(object, await super().call_tool(name, tool_args, inward, tool))
         if log is not None and located is not None:
             await log.after(located[0], [located[1]])
-        if home is None or located is None:
+        if name == "search_files" and UNTRUSTED_SUFFIX in str(result):
+            # A match inside a saved untrusted output carries its text, so the whole result
+            # reaches the model fenced, as a read of that file would.
+            return wrap_untrusted(str(result), source="saved tool output")
+        if located is None:
             return result
         mount, rel = located
         if name == "read_file" and _is_fenced(mount, rel):
@@ -216,12 +229,10 @@ def _spelled(text: str, *, cwd: str) -> str:
 
 
 async def _clear_write(
-    ctx: RunContext[RunDeps], home: RunHome | None, path: str
+    ctx: RunContext[RunDeps], home: RunHome, path: str
 ) -> tuple[str | None, bool]:
     """Ask before a write into a place the thread may only read; lease it once approved.
     Returns the refusal, if any, and whether a lease was taken."""
-    if home is None:
-        return None, False
     place = home.place_of(path)
     if place is None or home.writable(place):
         return None, False
@@ -241,4 +252,4 @@ def files_toolset() -> AbstractToolset[RunDeps]:
         max_read_chars=READ_PAGE_CHARS,
     ).get_toolset()
     assert toolset is not None
-    return _HomeFiles("files", toolset)
+    return _HomeFiles(toolset)

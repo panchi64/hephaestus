@@ -1,9 +1,9 @@
 """Exposes a service bound to the guest's loopback on a port the host can forward to.
 
-Chromium only serves its debugging port on loopback. The host's forwards reach the
-guest's network address, so this listens there and relays to the loopback port.
+Chromium only serves its debugging port on loopback. A published port reaches the guest's
+network address, so this listens there and relays to the loopback port.
 
-Standard library only; it is copied into the guest at boot.
+Standard library only; ``build_image.sh`` installs it at ``/opt/hephaestus/portfwd.py``.
 """
 
 from __future__ import annotations

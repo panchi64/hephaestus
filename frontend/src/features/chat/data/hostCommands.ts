@@ -1,7 +1,7 @@
 /**
  * A command the agent ran, read off whatever its tool returned.
  *
- * Both command tools (the sandboxed host command and the worktree shell) return a
+ * Both command tools (the fenced host command and the VM shell) return a
  * structured record when they execute and a plain sentence when a guard refused them.
  * Everything here keys off that, not a tool name. The same functions serve the cold load
  * and the live SSE fold, so a result renders identically either way.
@@ -15,7 +15,7 @@ import type {
 import { NARRATION_ARG } from "../toolSummary";
 import type { HostResult, ToolCallDTO } from "./wire";
 
-/** Why this command was run, in the agent's words. `code_run_host_command` declares an
+/** Why this command was run, in the agent's words. `shell_run_on_host` declares an
  *  `explanation` (the approval copy the operator decided on); the worktree shell relies on
  *  the `narration` every tool is offered (`tools/narration.py`). The explanation wins where
  *  both exist. */
@@ -46,7 +46,7 @@ export function hostPhaseFromResult(r: HostResult): HostCommandPhase {
   return r.ok === false || r.error != null ? "error" : "ok";
 }
 
-/** The declared reach and the fence's verdict, or `undefined` for results that carry
+/** Where the command ran and the fence's verdict, or `undefined` for results that carry
  *  neither. Keyed on `reach`/`fenced` rather than a tool name: the backend attaches them
  *  to every executing command tool. */
 export function commandBoundary(
@@ -91,10 +91,22 @@ export function toTerminalOutcome(
     : null;
 }
 
+/** The conversation's VM shell returns its output as a plain string, so for that tool a
+ *  string is a result rather than a refusal. */
+export function plainShellOutcome(
+  name: string,
+  result: unknown,
+): Partial<HostCommand> | null {
+  return name === "shell_run_command" && typeof result === "string"
+    ? { phase: "ok", stdout: result }
+    : null;
+}
+
 /** Map a persisted terminal tool call to the terminal model; the phase comes from the
  *  recorded status. */
 export function toHostCommand(dto: ToolCallDTO): HostCommand {
-  const outcome = toTerminalOutcome(dto.result);
+  const outcome =
+    toTerminalOutcome(dto.result) ?? plainShellOutcome(dto.name, dto.result);
   // A plain-string result means the command never ran; the string is the refusal the
   // model was handed.
   const denial =

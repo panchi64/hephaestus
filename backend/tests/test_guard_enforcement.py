@@ -57,10 +57,18 @@ CONV = "conv-1"
 DANGEROUS = "rm -rf ~"
 
 
-def _call(command: str, call_id: str = "c1", *, reach: str = "offline") -> ToolCallPart:
+def _call(command: str, call_id: str = "c1") -> ToolCallPart:
     return ToolCallPart(
         tool_name="shell_run_command",
-        args={"command": command, "reach": reach},
+        args={"command": command},
+        tool_call_id=call_id,
+    )
+
+
+def _host_call(command: str, call_id: str = "h1") -> ToolCallPart:
+    return ToolCallPart(
+        tool_name="shell_run_on_host",
+        args={"command": command, "explanation": "x"},
         tool_call_id=call_id,
     )
 
@@ -69,8 +77,8 @@ def _shell_category(ran: list[str]) -> dict[str, FunctionToolset[RunDeps]]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool
-    async def run_command(ctx: RunContext[RunDeps], command: str, reach: str = "offline") -> str:
-        _ = ctx, reach
+    async def run_command(ctx: RunContext[RunDeps], command: str) -> str:
+        _ = ctx
         ran.append(command)
         return "ran"
 
@@ -221,9 +229,9 @@ class TestTheDeferredPath:
         self, monkeypatch: pytest.MonkeyPatch
     ):
         set_fence(monkeypatch, "unavailable", "no bwrap")
-        _, manual = await _settle("yolo", [_call("make install", reach="host")])
-        assert [c.tool_call_id for c in manual] == ["c1"]
-        _, manual = await _settle("yolo", [_call("make install", reach="offline")])
+        _, manual = await _settle("yolo", [_host_call("make install")])
+        assert [c.tool_call_id for c in manual] == ["h1"]
+        _, manual = await _settle("yolo", [_call("make install")])
         assert manual == []
 
 
@@ -249,7 +257,7 @@ class TestTheCard:
 
     def test_the_models_own_explanation_is_kept(self):
         host = ToolCallPart(
-            tool_name="code_run_host_command",
+            tool_name="shell_run_on_host",
             args={"command": "rm -rf ~", "explanation": "tidy up"},
             tool_call_id="h1",
         )
@@ -281,12 +289,12 @@ class TestTheCard:
         reason = "why the fence is down"
         set_fence(monkeypatch, state, reason)
         host = ToolCallPart(
-            tool_name="code_run_host_command",
+            tool_name="shell_run_on_host",
             args={"command": "ls", "explanation": "look"},
             tool_call_id="h1",
         )
         events, _, _ = announcements(
-            DeferredToolRequests(approvals=[host, _call("make", "h2", reach="host")]), {}
+            DeferredToolRequests(approvals=[host, _host_call("make", "h2")]), {}
         )
         warned = [e.unconfined for e in events if isinstance(e, ApprovalRequired)]
         assert len(warned) == 2

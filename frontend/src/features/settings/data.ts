@@ -376,7 +376,7 @@ export async function refreshVmState(): Promise<void> {
   }
 }
 
-/** Rebuild the platform VM and reflect the state the POST returns. */
+/** Restart the services VM, delete every conversation's VM, and reflect the state the POST returns. */
 export async function resetVm(): Promise<void> {
   setVmState(toVmState(await api.post<VmStateDTO>("/vm/reset")));
 }

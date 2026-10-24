@@ -39,6 +39,7 @@ from tools.describe import (
 
 from ._helpers import full_tool_categories
 from ._json import arr, obj, parse_json, s
+from .command_workspace import command_workspace
 
 OWNER = "operator"
 
@@ -51,7 +52,7 @@ async def _offered() -> dict[str, ToolDefinition]:
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
     # A spawned thread is the one kind of run offered `subagent_report`.
     deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=frozenset(), reports_to_parent=True)
-    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+    ctx = RunContext(deps=deps, workspace=command_workspace(), model=TestModel(), usage=RunUsage())
     tools = await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx)
     return {name: tool.tool_def for name, tool in tools.items()}
 
@@ -192,7 +193,7 @@ async def test_the_raw_toolsets_are_left_as_the_library_built_them():
     }
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
     deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=frozenset())
-    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+    ctx = RunContext(deps=deps, workspace=command_workspace(), model=TestModel(), usage=RunUsage())
     _ = await build_agent_toolsets(categories)[0].get_tools(ctx)
     _ = tool_catalog(categories)
     after = {

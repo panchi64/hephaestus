@@ -13,7 +13,7 @@ nonce the content cannot predict, so a message cannot forge its own closing mark
 **Sending is sensitive.** ``mail_send`` and ``mail_reply`` are ``requires_approval=True``
 (`AE-3.1`): they leave the machine, they cannot be undone, and they speak in the operator's
 name. Each carries a plain-language ``explanation`` the operator judges the call on, exactly
-like ``code_run_host_command``. Whether any of these actually pauses is the thread's
+like ``shell_run_on_host``. Whether any of these actually pauses is the thread's
 permission level to decide, so no description here claims it.
 """
 

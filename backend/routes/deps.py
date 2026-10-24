@@ -40,6 +40,7 @@ from services.corpus.uploads import UploadsAdapter
 from services.credential_store import CredentialStore
 from services.egress import EgressPolicy
 from services.external_tools import ExternalTools
+from services.home.scratch import ScratchDirs
 from services.integrations import IntegrationService
 from services.mail import MailService
 from services.mcp import McpRegistry
@@ -53,7 +54,6 @@ from services.projects.tree import worktree_root
 from services.registry import ModelRegistry
 from services.reindex import EmbeddingReindexer
 from services.routines import RoutineStore, ScheduleNaturalLanguage
-from services.sandbox import SandboxSessionManager
 from services.scheduler import SchedulerService
 from services.search import SearchService
 from services.searxng import ManagedSearxng
@@ -65,7 +65,7 @@ from services.subagent_store import SubagentStore
 from services.task_list import ConversationTasks
 from services.tool_policy import CategoryAvailability, effective_disabled_tools
 from services.uploads import UploadStore
-from services.vm import PlatformVM
+from services.vm import ConversationMachines, Previews, ServicesMachine
 from services.webfetch import BrowserFetcher, ManagedBrowser
 from services.work_summaries import WorkSummaryService
 from services.workspace_history import WorkspaceHistoryStore
@@ -133,7 +133,9 @@ class AppState(State):
         self.offline: OfflineModeService
         self.artifacts: ArtifactStore
         self.workspace_history: WorkspaceHistoryStore
-        self.sandbox: SandboxSessionManager | None
+        self.machines: ConversationMachines | None
+        self.previews: Previews | None
+        self.scratch: ScratchDirs
         self.browser_sessions: BrowserSessionManager | None
         self.projects: ProjectStore
         self.worktrees: WorktreeManager
@@ -159,7 +161,7 @@ class AppState(State):
         self.web_client: httpx.AsyncClient
         self.feature_manifests: tuple[FeatureManifest, ...]
         self.network_tools: frozenset[str]
-        self.vm: PlatformVM | None
+        self.vm: ServicesMachine | None
         self.subagent_records: SubagentStore | None
         self.conversation_teardown: ConversationTeardown
         self.discovery_client: httpx.AsyncClient
@@ -186,8 +188,8 @@ def app_state(source: Source) -> AppState:
     return state
 
 
-def vm(request: Request) -> PlatformVM | None:
-    """The platform VM, or None when this deployment never built one."""
+def vm(request: Request) -> ServicesMachine | None:
+    """The services machine, or None when this deployment never built one."""
     return app_state(request).vm
 
 
@@ -485,13 +487,18 @@ def workspace_history(request: Request) -> WorkspaceHistoryStore:
     return app_state(request).workspace_history
 
 
-def sandbox_sessions(request_or_ws: Request | WebSocket) -> SandboxSessionManager | None:
-    """The per-conversation sandbox manager, or None when code execution is disabled.
+def machines(request: Request) -> ConversationMachines | None:
+    """The per-conversation machines, or None when commands are disabled."""
+    return app_state(request).machines
+
+
+def previews(request_or_ws: Request | WebSocket) -> Previews | None:
+    """The live previews, or None when commands are disabled.
 
     Takes a ``WebSocket`` too: the preview proxy calls it from request and socket handlers,
     which share no base class carrying ``app``.
     """
-    return app_state(request_or_ws).sandbox
+    return app_state(request_or_ws).previews
 
 
 def browser_sessions(request: Request) -> BrowserSessionManager | None:

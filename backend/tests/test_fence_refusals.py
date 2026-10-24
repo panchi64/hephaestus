@@ -16,48 +16,44 @@ from runs import Run, RunStream
 from services.sandbox import HostConfinement, SandboxResult
 from services.sandbox.refusals import denied_host, host_refusal, is_egress_denied, vm_refusal
 from tools import RunDeps
-from tools import code as code_module
-from tools.code import code_toolset
+from tools import shell as shell_module
 
 from ._json import s
 
 HOME = Path("/Users/tester")
 
-EGRESS_403 = "HTTP/1.1 403 Forbidden\nhephaestus-egress: denied evil.example.com\n"
 PIP_TUNNEL = (
     "ProxyError('Cannot connect to proxy.', OSError('Tunnel connection failed: 403 Forbidden')): "
     "HTTPSConnectionPool(host='files.example.org', port=443)"
 )
 CURL_TUNNEL = "curl: (56) CONNECT tunnel failed, response 403\ncurl: https://api.example.net/v1"
 DNS_FAILURE = "curl: (6) Could not resolve host: registry.example.io"
-OFFLINE = "Temporary failure in name resolution"
+NO_HOST = "Temporary failure in name resolution"
 
 
 class TestVMRefusals:
-    def test_a_gateway_refusal_names_the_host_it_refused(self):
-        refusal = vm_refusal(network=True, ok=False, stdout=EGRESS_403, stderr="")
+    def test_a_name_the_vm_could_not_resolve_is_the_host_it_refused(self):
+        refusal = vm_refusal(ok=False, stdout="", stderr=DNS_FAILURE)
         assert refusal is not None
-        assert refusal.denied_host == "evil.example.com"
+        assert refusal.denied_host == "registry.example.io"
         assert "code_request_egress" in refusal.note
 
     def test_a_refused_https_tunnel_names_the_host_the_client_was_reaching(self):
-        pip = vm_refusal(network=True, ok=False, stdout="", stderr=PIP_TUNNEL)
-        curl = vm_refusal(network=True, ok=False, stdout="", stderr=CURL_TUNNEL)
+        pip = vm_refusal(ok=False, stdout="", stderr=PIP_TUNNEL)
+        curl = vm_refusal(ok=False, stdout="", stderr=CURL_TUNNEL)
         assert pip is not None and pip.denied_host == "files.example.org"
         assert curl is not None and curl.denied_host == "api.example.net"
 
-    def test_an_offline_dns_failure_is_told_to_redeclare_and_names_no_host(self):
-        refusal = vm_refusal(network=False, ok=False, stdout="", stderr=OFFLINE)
+    def test_a_failure_that_names_no_host_still_points_at_the_egress_request(self):
+        refusal = vm_refusal(ok=False, stdout="", stderr=NO_HOST)
         assert refusal is not None
-        assert refusal.denied_host is None and "reach `network`" in refusal.note
+        assert refusal.denied_host is None and "code_request_egress" in refusal.note
 
-    def test_a_networked_dns_failure_is_not_a_refusal(self):
-        assert vm_refusal(network=True, ok=False, stdout="", stderr=DNS_FAILURE) is None
+    def test_a_command_that_succeeded_gets_no_note_for_text_it_printed(self):
+        assert vm_refusal(ok=True, stdout="", stderr=DNS_FAILURE) is None
 
     def test_a_read_only_project_is_reported(self):
-        refusal = vm_refusal(
-            network=False, ok=False, stdout="", stderr="touch: Read-only file system"
-        )
+        refusal = vm_refusal(ok=False, stdout="", stderr="touch: Read-only file system")
         assert refusal is not None and "read-only" in refusal.note
 
     @pytest.mark.parametrize(
@@ -68,13 +64,12 @@ class TestVMRefusals:
         ],
     )
     def test_an_ordinary_failure_is_not_a_refusal(self, stderr: str):
-        assert vm_refusal(network=False, ok=False, stdout="", stderr=stderr) is None
-        assert vm_refusal(network=True, ok=False, stdout="", stderr=stderr) is None
+        assert vm_refusal(ok=False, stdout="", stderr=stderr) is None
         assert not is_egress_denied(stderr)
 
-    def test_the_denied_host_needs_the_gateways_own_words(self):
+    def test_the_denied_host_needs_a_resolution_failure_to_name_it(self):
         assert denied_host("curl: (7) Failed to connect to example.com port 443") is None
-        assert denied_host(EGRESS_403) == "evil.example.com"
+        assert denied_host(DNS_FAILURE) == "registry.example.io"
 
 
 class TestHostRefusals:
@@ -150,19 +145,12 @@ async def _host_payload(
     async def ran(_command: str, **_kwargs: object) -> SandboxResult:
         return result
 
-    monkeypatch.setattr("tools.code.run_on_host", ran)
-    monkeypatch.setattr("tools.code.resolve_confinement", resolved)
-    monkeypatch.setattr(code_module, "host_scratch_dir", lambda: Path("/tmp"))
+    monkeypatch.setattr(shell_module, "run_on_host", ran)
+    monkeypatch.setattr(shell_module, "resolve_confinement", resolved)
+    monkeypatch.setattr(shell_module, "host_scratch_dir", lambda: Path("/tmp"))
     ctx = RunContext(deps=_deps(), model=TestModel(), usage=RunUsage())
-    toolset = code_toolset()
-    tools = await toolset.get_tools(ctx)
     return TypeAdapter(dict[str, JsonValue]).validate_python(
-        await toolset.call_tool(
-            "run_host_command",
-            {"command": "x", "explanation": "x"},
-            ctx,
-            tools["run_host_command"],
-        )
+        await shell_module.run_on_host_tool(ctx, "x", "x")
     )
 
 

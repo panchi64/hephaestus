@@ -17,6 +17,10 @@ def _fence(cwd: str = "/home/agent/scratch") -> HomeFence:
     )
 
 
+def _scratch_only(cwd: str = "/home/agent/scratch") -> HomeFence:
+    return HomeFence(places=frozenset({SCRATCH, API, WEB}), writable=frozenset({SCRATCH}), cwd=cwd)
+
+
 def _escapes(command: str, cwd: str = "/home/agent/scratch") -> tuple[str, ...]:
     return shell_capability("shell_run_command", command, root=_fence(cwd)).escapes
 
@@ -40,10 +44,8 @@ def test_a_commands_own_tmpfs_and_streams_are_inside() -> None:
 def test_an_offline_command_in_scratch_is_bounded_by_the_vm() -> None:
     # Measured: subshells in a build task's test run parked for the operator, where the
     # same work through the old sandbox tool was cleared on its container.
-    def judged(command: str, *, cwd: str = "/home/agent/scratch", reach: str = "offline"):
-        capability = capability_of(
-            "shell_run_command", {"command": command, "reach": reach}, root=_fence(cwd)
-        )
+    def judged(command: str, *, cwd: str = "/home/agent/scratch", tool: str = "shell_run_command"):
+        capability = capability_of(tool, {"command": command}, root=_scratch_only(cwd))
         return judge(capability, fenced=True), judge(capability, fenced=False)
 
     on, off = judged("cd /work && (python -m pytest -q || true)")
@@ -51,11 +53,36 @@ def test_an_offline_command_in_scratch_is_bounded_by_the_vm() -> None:
     # Not once it names or stands in a project, or asks for the network.
     assert not judged("(cat ~/projects/api/x)")[0].approved
     assert not judged("(ls)", cwd="/home/agent/projects/api")[0].approved
-    assert not judged("(pip install x)", reach="network")[0].approved
-    # An install in scratch runs with the network whatever it declared, so the sandbox
-    # tier must not clear it unread.
+    assert not judged("(ls)", tool="shell_run_on_host")[0].approved
+    # An install in scratch runs with the network, so the sandbox tier must not clear it
+    # unread.
     installs = judged("pip install x")[0]
     assert not installs.approved and installs.tier is None
+
+
+def test_a_writable_project_keeps_a_scratch_command_from_the_sandbox_tier() -> None:
+    # The VM mounts every place, so an unread program in scratch can still change the
+    # writable project; only a home whose sole writable place is scratch bounds it.
+    command = {"command": "cd /work && (python -m pytest -q || true)"}
+    held = capability_of("shell_run_command", command, root=_scratch_only())
+    assert held.sandboxed
+    assert judge(held, fenced=True).tier == "sandbox"
+
+    open_project = capability_of("shell_run_command", command, root=_fence())
+    assert not open_project.sandboxed
+    assert not judge(open_project, fenced=True).approved
+
+
+def test_a_program_is_sandboxed_only_where_scratch_is_the_sole_writable_place() -> None:
+    program = {"code": "print(1)"}
+    held = capability_of("code_execute", program, root=_scratch_only())
+    assert held.sandboxed
+    assert judge(held, fenced=True).tier == "sandbox"
+    assert not judge(held, fenced=False).approved
+
+    open_project = capability_of("code_execute", program, root=_fence())
+    assert not open_project.sandboxed
+    assert not judge(open_project, fenced=True).approved
 
 
 def test_a_file_write_to_tmp_still_escapes() -> None:

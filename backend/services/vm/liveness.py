@@ -1,6 +1,6 @@
-"""Noticing that the platform VM died while it was up, and restarting it once.
+"""Noticing that the services machine died while it was up, and restarting it once.
 
-A VM that stops answering leaves every command waiting on a guest that is gone. Two missed
+A VM that stops answering leaves every service waiting on a guest that is gone. Two missed
 probes in a row count as dead, because one probe can time out on a busy guest. The first
 death is answered with a reset; a second within :data:`REPEAT_WINDOW_S` leaves the VM down
 and tells the operator, because a VM that keeps dying needs a person, not another reboot.
@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 
 from core.periodic import PeriodicTask
 
-from .platform import PlatformVM
+from .services import ServicesMachine
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +27,18 @@ type Notify = Callable[[str, str], Awaitable[object]]
 
 
 class VMLiveness:
-    """Probes a running :class:`PlatformVM` and answers its death. ``notify`` takes a title
+    """Probes a running :class:`ServicesMachine` and answers its death. ``notify`` takes a title
     and a body for the operator."""
 
     def __init__(
         self,
-        vm: PlatformVM,
+        vm: ServicesMachine,
         notify: Notify,
         *,
         interval_s: float = PROBE_INTERVAL_S,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._vm: PlatformVM = vm
+        self._vm: ServicesMachine = vm
         self._notify: Notify = notify
         self._clock: Callable[[], float] = clock
         self._misses: int = 0
@@ -78,20 +78,21 @@ class VMLiveness:
         now = self._clock()
         repeated = self._last_death is not None and now - self._last_death < REPEAT_WINDOW_S
         self._last_death = now
-        self._vm.mark_unavailable("the platform VM stopped answering")
+        self._vm.mark_unavailable("the services VM stopped answering")
         if repeated:
             self._held = True
-            logger.warning("platform VM: died again within the window; leaving it down")
+            logger.warning("services VM: died again within the window; leaving it down")
             _ = await self._notify(
-                "The platform VM keeps stopping",
-                "It stopped answering twice within ten minutes, so it was left down. "
-                + "Reset it from Settings once you have looked at why.",
+                "The services VM keeps stopping",
+                "It stopped answering twice within ten minutes, so it was left down. Web "
+                + "fetch, search and the browser are unavailable until you reset it from "
+                + "Settings.",
             )
             return
-        logger.warning("platform VM: stopped answering; restarting it")
+        logger.warning("services VM: stopped answering; restarting it")
         _ = await self._notify(
-            "The platform VM stopped",
-            "It stopped answering and is being restarted. Changes made in it since the "
-            + "last command may be lost.",
+            "The services VM stopped",
+            "It stopped answering and is being restarted. Web fetch, search and the "
+            + "browser come back once it is up.",
         )
         await self._vm.reset()

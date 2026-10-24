@@ -95,7 +95,8 @@ async def get_overview(request: Request) -> Overview:
     # (enforced at resolve), so only such endpoints count.
     usable_chat_endpoints = [e for e in endpoints if e.native_tools and e.enabled]
     embedding_configured = bool(roles.get("embedding"))
-    sandbox_present = deps.sandbox_sessions(request) is not None
+    machines = deps.machines(request)
+    platform = machines.platform if machines is not None else None
     vm = deps.vm(request)
     vm_ready = vm is not None and vm.available
     provider_enabled = any(p.enabled for p in search_providers)
@@ -180,15 +181,15 @@ async def get_overview(request: Request) -> Overview:
             remediation_label=None if decision_configured else "CONFIGURE",
         )
     )
-    # Execution sandbox — runs in the platform VM, so it is available once the VM is up;
-    # absent ⇒ disabled (no host fallback).
-    if not sandbox_present:
+    # Commands run in each conversation's VM, so they are available once the image is
+    # built; absent ⇒ disabled (no host fallback).
+    if platform is None:
         sandbox_detail = "disabled"
-    elif vm_ready:
-        sandbox_detail = "platform VM"
-    elif vm is not None and vm.failure is not None:
+    elif platform.available:
+        sandbox_detail = "a VM per conversation"
+    elif platform.failure is not None:
         sandbox_detail = "VM unavailable"
-    elif vm is not None and vm.building:
+    elif platform.image.building:
         sandbox_detail = "VM building image"
     else:
         sandbox_detail = "VM starting"
@@ -196,7 +197,7 @@ async def get_overview(request: Request) -> Overview:
         Capability(
             key="sandbox",
             label="CODE SANDBOX",
-            status="nominal" if sandbox_present and vm_ready else "warn",
+            status="nominal" if platform is not None and platform.available else "warn",
             detail=sandbox_detail,
         )
     )

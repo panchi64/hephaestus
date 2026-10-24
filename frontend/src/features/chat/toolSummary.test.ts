@@ -14,7 +14,7 @@ describe("what the call was about", () => {
     ).toBe("bun test");
     // `explanation` beats `command` here — the operator wrote the tool to say why.
     expect(
-      describeToolArgs("code_run_host_command", {
+      describeToolArgs("shell_run_on_host", {
         command: "pytest -q",
         explanation: "Run the backend suite",
       }),

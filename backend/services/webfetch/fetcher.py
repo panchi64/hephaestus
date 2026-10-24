@@ -5,7 +5,7 @@ Replaces the old static httpx+trafilatura fetch: the page is loaded in Chromium 
 JavaScript runs and client-rendered content is present, then the rendered DOM is handed
 to the extractor (:mod:`services.webfetch.extract`). The entry URL is pre-flighted
 (:func:`core.ssrf.assert_public_url`) before a context opens, and every request the browser
-then makes is gated by the VM's egress gateway (:mod:`services.vm.egress`). Output is
+then makes leaves a services VM that reaches public addresses only. Output is
 untrusted-wrapped — web content is data, never instructions.
 
 Domain errors only (so the service stays reusable by non-agent callers): ``SSRFError`` for
@@ -267,8 +267,8 @@ class BrowserFetcher:
 
     async def _render(self, url: str) -> tuple[str, str, str]:
         """Load the page in an isolated context and capture the rendered HTML, the rendered
-        innerText, and the final URL. SSRF is enforced out-of-browser by the VM's egress gateway
-        (it refuses non-public destinations on every request, including redirects); a request
+        innerText, and the final URL. SSRF is enforced out-of-browser by the services VM, which
+        reaches public addresses only on every request, including redirects; a request
         it refuses surfaces here as a load failure, which degrades to a recoverable error —
         the synchronous pre-flight in :meth:`fetch` is what yields the hard SSRF refusal."""
         try:

@@ -1,10 +1,8 @@
 """The execution-sandbox capability — value types and errors.
 
-Agent code runs in the platform VM (:mod:`services.vm`), confined to a guest copy of
-its own workspace. It cannot read or modify the host's files, processes or environment,
-and reaches the network only through the egress gateway, held to its workspace's
-allowlist. Outputs return explicitly (stdout/stderr, and the workspace's files piped back
-out); nothing escapes as a side effect.
+Agent code runs in the conversation's VM (:mod:`services.vm`), which mounts the host
+folders live. It cannot read or modify other host files, processes or environment, and
+reaches only the installation's egress allowlist plus the conversation's grants.
 
 Not everything the agent runs arrives there: the approval-gated host command executes
 on the operator's own machine under OS-level confinement (:mod:`services.sandbox.fence`),

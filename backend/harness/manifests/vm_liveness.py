@@ -1,4 +1,4 @@
-"""Watching the platform VM for a death while it is up."""
+"""Watching the services machine for a death while it is up."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from models.notification import NotificationKind
 from routes.deps import OPERATOR_ID
 from services.notifications import NotificationService
-from services.vm import PlatformVM
+from services.vm import ServicesMachine
 from services.vm.liveness import VMLiveness
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
-    vm = ctx.services.get_optional(PlatformVM)
+    vm = ctx.services.get_optional(ServicesMachine)
     if vm is None:
         return FeatureRuntime()
     notifications = ctx.services.get(NotificationService)

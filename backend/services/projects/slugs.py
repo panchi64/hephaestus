@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Collection
 
-#: What the guest accepts after `projects/` (`vm/guest/confine.py`): a leading letter or
-#: digit, then letters, digits, `.`, `_` or `-`.
+#: What a place name accepts after `projects/` (`services/home/paths.py`): a leading
+#: letter or digit, then letters, digits, `.`, `_` or `-`.
 _KEEP = re.compile(r"[^a-z0-9._-]+")
 _MAX = 40
 

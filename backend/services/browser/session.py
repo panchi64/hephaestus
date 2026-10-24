@@ -8,7 +8,7 @@ then says "now open the billing page" is talking about *that* page. So the capab
 per-run lifecycle is bypassed here and the session is keyed by conversation instead,
 reaped on idleness the way a sandbox session is.
 
-**Each conversation gets its own browser context** on the platform VM's Chromium
+**Each conversation gets its own browser context** on the services VM's Chromium
 (``VMBrowser``), so tabs and history stay per conversation. The operator watches and
 drives it through the app's live view (``view.py``); nothing arbitrates between the two
 drivers, deliberately.
@@ -21,7 +21,8 @@ conversation.
 with Playwright routing, which turns on CDP's Fetch domain; ``services/webfetch/browser``
 documents why that is unacceptable here (bot walls detect it). Passing
 ``block_private_addresses=False`` with no allowlist leaves the policy unenforced, so the
-platform proxy, which reaches public addresses only, remains the single enforcement point.
+services VM, which reaches public addresses only (``public_cidrs()``), remains the single
+enforcement point.
 The default is ``True``, so this must be explicit.
 """
 

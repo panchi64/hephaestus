@@ -55,23 +55,20 @@ from services.conversations import ConversationStore
 from services.credential_store import CredentialStore
 from services.egress import EgressPolicy
 from services.embeddings import RegistryEmbedder
+from services.home.scratch import ScratchDirs
 from services.plan_mode import PlanMode
 from services.registry import ModelRegistry
 from services.sandbox import (
-    SandboxSessionManager,
     resolve_confinement,
     shutdown_confinement,
     stop_all_groups,
 )
-from services.sandbox.thread_shells import ThreadShells
 from services.sealing import seal_legacy_column
 from services.settings_store import SettingsStore, TurnTuning
 from services.task_list import ConversationTasks
 from services.tool_policy import AvailabilityCheck, CategoryAvailability
-from services.vm import PlatformVM
-from services.vm.platform import WorkspaceLimits
-from services.vm.project import ProjectCopies
-from services.vm.smolvm import SmolvmDriver
+from services.vm import ConversationMachines, GuestImage, Platform, Previews, ServicesMachine
+from services.vm.target import machine_prefix
 from services.work_summaries import WorkSummaryService
 from services.worktree_switch import WorktreeSwitch
 from tools import (
@@ -81,7 +78,6 @@ from tools import (
     core_categories,
 )
 from tools.describe import category_names
-from tools.shell import SHELL_MAX_OUTPUT_CHARS, SHELL_TIMEOUT_S
 from tools.tasks import tasks_context
 from tools.workspace_context import workspace_context
 
@@ -239,83 +235,60 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # approvals park on.
     state.approval_grants = ApprovalGrantStore(engine, settings.approval_grant_ttl_s)
     state.approval_ledger = ApprovalLedger(engine, vault)
-    # The one egress allowlist both fences read (the VM's gateway and the OS-level
-    # confinement): the grants remember which tools may run unasked, this which domains
-    # they may reach.
-    state.egress = EgressPolicy(engine, settings.data_dir, settings.egress_allowed_domains)
+    # The grants remember which tools may run unasked, this which domains a conversation's
+    # machine may reach.
+    state.egress = EgressPolicy(engine, settings.egress_allowed_domains)
     # The sealing migration ran before unlock with no key, so healing happens here.
     _ = lifecycle.track("sealing-backfill", backfill_sealed_columns(engine, vault))
-    # The platform VM boots in the background; until it is up, what needs it reports
+    # The image builds in the background; until it is ready, what needs a machine reports
     # unavailable rather than running on the host.
     vm_dir = settings.data_dir / "vm"
-    platform_vm = PlatformVM(
-        SmolvmDriver(
-            state_dir=vm_dir,
-            cpus=settings.vm_cpus,
-            memory_mb=settings.vm_memory_mb,
-            disk_gb=settings.vm_disk_gb,
-            boot_timeout_s=settings.vm_boot_timeout_s,
-            provision_timeout_s=settings.vm_provision_timeout_s,
-            image=Path(settings.vm_image) if settings.vm_image else None,
+    platform = Platform(
+        GuestImage(
+            vm_dir / "images",
             ca_bundle=Path(settings.vm_ca_bundle) if settings.vm_ca_bundle else None,
-        ),
-        scratch=vm_dir / "transfer",
-        limits=WorkspaceLimits(
-            memory=settings.sandbox_memory,
-            cpus=settings.sandbox_cpus,
-            pids=settings.sandbox_pids_limit,
+            override=Path(settings.vm_image) if settings.vm_image else None,
         ),
         enabled=settings.vm_enabled,
-        transfer_max_bytes=settings.vm_transfer_max_bytes,
     )
-    state.vm = platform_vm
-    await lifecycle.start("platform-vm", start=platform_vm.start, stop=platform_vm.stop)
-    sandbox_manager = (
-        SandboxSessionManager(
-            platform_vm,
-            vault,
-            egress=state.egress,
-            data_dir=settings.data_dir,
+    await lifecycle.start("vm-image", start=platform.start, stop=platform.stop)
+    container.add(platform)
+    prefix = machine_prefix(settings.data_dir)
+    services_machine = ServicesMachine(
+        platform,
+        name=f"{prefix}-services",
+        cpus=settings.vm_services_cpus,
+        memory_mb=settings.vm_services_memory_mb,
+    )
+    state.vm = services_machine
+    await lifecycle.start(
+        "services-machine", start=services_machine.start, stop=services_machine.stop
+    )
+    state.scratch = ScratchDirs(
+        settings.data_dir / "sandbox" / "work", excludes=settings.sandbox_walk_excludes
+    )
+    machines = (
+        ConversationMachines(
+            platform,
+            prefix=prefix,
+            cpus=settings.sandbox_cpus,
+            memory_mb=settings.sandbox_memory_mb,
             idle_ttl_s=settings.sandbox_session_idle_ttl_s,
             reap_interval_s=settings.sandbox_session_reap_interval_s,
-            excludes=settings.sandbox_walk_excludes,
-            preview_startup_timeout_s=settings.sandbox_preview_startup_timeout_s,
-            max_sessions=settings.sandbox_max_sessions,
+            max_machines=settings.sandbox_max_sessions,
         )
         if settings.sandbox_enabled and settings.vm_enabled
         else None
     )
-    state.sandbox = sandbox_manager
-    if sandbox_manager is not None:
-        await lifecycle.start("sandbox", start=sandbox_manager.start, stop=sandbox_manager.stop)
+    state.machines = machines
+    state.previews = None
+    if machines is not None:
+        await lifecycle.start("conversation-machines", start=machines.start, stop=machines.stop)
+        state.previews = Previews(
+            machines, startup_timeout_s=settings.sandbox_preview_startup_timeout_s
+        )
     else:
-        logger.info("sandbox: code execution disabled")
-    # Project folders a project chat's shell brought into the VM, brought back out and wiped
-    # once idle.
-    project_copies = (
-        ProjectCopies(
-            platform_vm,
-            idle_ttl_s=settings.sandbox_session_idle_ttl_s,
-            reap_interval_s=settings.sandbox_session_reap_interval_s,
-        )
-        if settings.vm_enabled
-        else None
-    )
-    if project_copies is not None:
-        await lifecycle.start(
-            "project-copies", start=project_copies.start, stop=project_copies.stop
-        )
-    thread_shells = (
-        ThreadShells(
-            project_copies,
-            default_timeout=SHELL_TIMEOUT_S,
-            max_output_chars=SHELL_MAX_OUTPUT_CHARS,
-        )
-        if project_copies is not None
-        else None
-    )
-    if thread_shells is not None:
-        lifecycle.on_stop("thread-shells", thread_shells.stop)
+        logger.info("sandbox: commands disabled")
 
     # A periodic sweep, so it follows the store and registry it reads from.
     state.work_summaries = WorkSummaryService(
@@ -348,16 +321,16 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         state.approval_grants,
         state.egress,
         state.api_tokens,
-        platform_vm,
+        services_machine,
+        state.scratch,
     ):
         container.add(handle)
-    if sandbox_manager is not None:
-        container.add(sandbox_manager)
-        agent_capabilities.add(sandbox_manager)
-    if project_copies is not None:
-        agent_capabilities.add(project_copies)
-    if thread_shells is not None:
-        agent_capabilities.add(thread_shells)
+    agent_capabilities.add(state.scratch)
+    if machines is not None:
+        container.add(machines)
+        agent_capabilities.add(machines)
+    if state.previews is not None:
+        agent_capabilities.add(state.previews)
     # Core-owned agent-facing handles: the engine consults grants at the deferred split,
     # and the egress tool and fences read the policy. The rest arrive via manifests.
     agent_capabilities.add(state.approval_grants)

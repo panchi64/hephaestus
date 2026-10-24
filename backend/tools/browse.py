@@ -27,7 +27,7 @@ What is used from the harness is the toolset alone — the eighteen tools over a
 own. See `tools/rebound.py` for why the tools are *defined* by a template and *dispatched*
 through a per-conversation instance.
 
-**The browser is the operator's too.** These tools drive a Chromium in the platform VM,
+**The browser is the operator's too.** These tools drive a Chromium in the services VM,
 one browser context per conversation, which the operator watches and drives through the
 app's live view — to log in before handing the thread over, or to do a step faster than
 describing it. Nothing announces what they did; the model simply re-reads the page with
@@ -104,7 +104,7 @@ NETWORK_TOOLS = frozenset(f"browse_{name}" for name in TOOL_NAMES)
 VISION_TOOLS = frozenset({"browse_screenshot"})
 
 _UNAVAILABLE = (
-    "The browser is not available right now — the platform VM's browser is not running. "
+    "The browser is not available right now — the services VM's browser is not running. "
     "Use web_fetch or web_search to read a page instead, or try again later."
 )
 
@@ -200,7 +200,7 @@ def browse_toolset() -> AbstractToolset[RunDeps]:
 def _policy() -> EgressPolicy:
     """The one policy shape both the real sessions and the instruction text are built from.
 
-    Unenforced by design — the VM's platform proxy is the egress boundary, and
+    Unenforced by design — the services VM reaches public addresses only, and
     `services/browser/session.py` argues why Playwright routing is not usable here. It is
     spelled once because the instructions *quote* it (`Allowed domains: …`), and a
     description of a boundary that came from a different object than the boundary is the

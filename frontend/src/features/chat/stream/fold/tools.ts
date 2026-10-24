@@ -10,6 +10,7 @@ import { approvalFromEvent, explanationOf } from "../../approvalEvent";
 import {
   commandBoundary,
   commandReason,
+  plainShellOutcome,
   toTerminalOutcome,
 } from "../../data/hostCommands";
 import {
@@ -129,7 +130,8 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       if (!ev.parent_tool_call_id && isTerminalTool(ev.name)) {
         // The result keeps the streams apart, so the concatenated streamed text is
         // dropped in the same patch.
-        const outcome = toTerminalOutcome(ev.result);
+        const outcome =
+          toTerminalOutcome(ev.result) ?? plainShellOutcome(ev.name, ev.result);
         // No outcome plus a string means a guard refused the call and it never ran; the
         // cold read projects the same string the same way.
         const patch: Partial<HostCommand> | null =

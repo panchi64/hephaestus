@@ -48,7 +48,7 @@ class RunDeps:
     owner_id: str                                  # the ownership seam
     disabled_tools: frozenset[str] = frozenset()   # operator's enable/disable policy (AE-3.3)
     memory: MemoryStore | None = None              # capability handles — more land as services do
-    sandbox: Sandbox | None = None                 # None ⇒ code-exec disabled, never host fallback
+    machines: ConversationMachines | None = None   # None ⇒ commands unavailable, never host fallback
 ```
 
 The deps object is assembled once per turn by the turn loop (`agent/turn.py`) and is the *only* thing the gating stack and the tools are keyed on. New capabilities land as new fields here, never as imports inside a tool.
@@ -108,14 +108,16 @@ Two deliberate omissions:
 | `builtin` | `now` | — (starter category so the stack has something to compose) | ✅ built |
 | `memory` | `remember`, `open`, `recall`, `list`, `audit`, `update`, `consolidate`, `forget` | `services/memory` (hybrid recall, `MEM-*`) | ✅ built |
 | `platform` | `search`, `read` | `services/corpus` over every source, plus the skill, agent and plugin catalogs | ✅ built |
-| `code` | `execute`, `request_egress`, `run_host_command` | `services/sandbox` + `services/egress` (`XC-SEC-7`) | ✅ built |
-| `view` | `view_show` (file → version, or serve → live head), `view_close` | `services/artifacts` (version store) + `services/sandbox` (live head) | ✅ built |
+| `files` | the harness `FileSystem`'s eight tools, wrapped by `tools/files.py` | `services/home` — the operator's real host folders, with revert, write approval and project briefing; no VM needed | ✅ built |
+| `shell` | `run_command`, `start_command`, `check_command`, `stop_command`, `run_on_host` | the harness `Shell` in the conversation's VM (`services/vm/machines.py`); `run_on_host` is the one approval-gated host escape (`XC-SEC-7`) | ✅ built |
+| `code` | `execute`, `request_egress` | Python in the conversation's VM (`tools/code.py`) + `services/egress` (`XC-SEC-7`) | ✅ built |
+| `view` | `view_show` (file → version, or serve → live head), `view_close` | `services/artifacts` (version store) + `services/vm/previews.py` (live head) | ✅ built |
 | `web` | `search`, `fetch` | `services/search` + `services/searxng` (`SEARCH-*`) | ✅ built |
-| `browse` | the harness's eighteen Playwright tools (`navigate`, `snapshot`, `click`, `type_text`, `screenshot`, `tabs`, …) | `services/browser` — a conversation-scoped browser context on web fetch's Chromium in the platform VM, with one login profile kept on the host; the operator watches and drives it through the app's live view | ✅ built |
+| `browse` | the harness's eighteen Playwright tools (`navigate`, `snapshot`, `click`, `type_text`, `screenshot`, `tabs`, …) | `services/browser` — a conversation-scoped browser context on web fetch's Chromium in the shared services VM, with one login profile kept on the host; the operator watches and drives it through the app's live view | ✅ built |
 | `document` | `create`, `edit` | `services/documents` (versioned library, `DOC-1`/`DOC-2`) | ✅ built |
-| `attachments` | `provision` | `services/uploads` + `services/sandbox` (stage a file into `/work`) | ✅ built |
+| `attachments` | `provision` | `services/uploads` (stage a file into the thread's scratch) | ✅ built |
 | `skills` | `open`, `create`, `edit` | `services/skills` (Agent Skills bundles, `SKILL-1..3`) | ✅ built |
-| `plugins` | `write`, `read`, `test`, and each published plugin's tools as `plugins_<plugin>_<tool>` | `services/plugins`: drafts the operator publishes, run in the platform VM | ✅ built |
+| `plugins` | `write`, `read`, `test`, and each published plugin's tools as `plugins_<plugin>_<tool>` | `services/plugins`: drafts the operator publishes, each tool call run in a fresh VM | ✅ built |
 | `routines` | `write`, `list`, `delete`, `run_now` | `services/routines`: drafts the operator approves, each run on time in a new thread by its agent | ✅ built |
 | `mail`, … | — | land with their `services/` capability | ⬜ pending |
 | MCP servers, integrations | — | external (`MCP-*`, `INTEG-*`) | ⬜ pending (gating designed — §4.4) |
@@ -156,11 +158,11 @@ As built: the `Agent` is constructed in `agent/factory.py` with `output_type` `[
 
 ### 4.2 Code execution is a blast radius, not merely a gate
 
-Approval is **consent, not containment**: a misjudged click, a destructive command dressed up as benign, or injection that *manufactures* a plausible approval request all land on the real host if approval is the only line. So code execution gets a structural boundary *underneath* the gate. The boundary is not the walls around a running command — those only made ordinary work (`pip install`, a build cache, a scratch file outside `/work`) feel like an attack on the system. It is the small set of **exits** a workspace has, everything inside being disposable by construction. This is why `code` is **three tools** (`tools/code.py`), of which exactly two are exits:
+Approval is **consent, not containment**: a misjudged click, a destructive command dressed up as benign, or injection that *manufactures* a plausible approval request all land on the real host if approval is the only line. So code execution gets a structural boundary *underneath* the gate. The boundary is not the walls around a running command — those only made ordinary work (`pip install`, a build cache, a scratch file outside `/work`) feel like an attack on the system. It is the small set of **exits** a workspace has, everything inside being disposable by construction. Commands run in a VM that mounts the thread's folders; the exits are two approval-gated tools. `code_execute` and the shell's `run_command` / `start_command` are compute and ask nothing of their own; `code_request_egress` (`tools/code.py`) and `shell_run_on_host` (`tools/shell.py`) are the exits:
 
-| | `execute` | `request_egress` | `run_host_command` |
+| | `code_execute` | `code_request_egress` | `shell_run_on_host` |
 |---|---|---|---|
-| Runs on | the conversation's **sandbox** in the platform VM (`services/sandbox`, `services/vm`) | — (widens the workspace's allowlist) | the **real host** |
+| Runs on | the conversation's **VM** (`services/vm/machines.py`), in its scratch | — (widens the conversation's allowlist) | the **real host**, inside the host fence, starting in the thread's project folder or else a host scratch directory |
 | Approval | **none** — compute is not an exit | **`requires_approval=True`**, **per call, never a standing grant** | **`requires_approval=True`** (deferred) |
 | Extra contract | — | `domains` + a `reason` in the model's own words; the domain is remembered for the workspace once approved, the *act of widening* never is | a plain-language **`explanation`** arg, shown to the operator, describing what it does and its effect on the host (`AE-3.4`) |
 | If capability absent | returns "code execution is unavailable" — the model adapts | reports no allowlist is configured | n/a |
@@ -169,19 +171,27 @@ Approval is **consent, not containment**: a misjudged click, a destructive comma
 
 The inversion is the point: **routine code-exec has no approval friction at all**, and the approval prompts are the genuine exits — changing the operator's host, and reaching somewhere nobody approved.
 
-**The isolation invariant** (`services/sandbox/base.py`):
+**The isolation invariant:**
 
 | Invariant | Status | How |
 |---|---|---|
-| Real files enter as **copies** | unchanged | the workspace is a host-side dir piped into the VM per run as `/work` (nothing is mounted); a coding thread gets a worktree on a throwaway branch instead. The operator's own tree is written only by a merge they press |
-| No host filesystem / process / environment reach | unchanged | each command runs under bubblewrap as uid 1100 inside the platform VM, only `spec.env` passed; the data dir, vault, uploads and `$HOME` never enter the VM |
-| Walls inside the box | **relaxed** | the box is not root, so a read-only root bought nothing the unprivileged user did not; caps are the `sandbox_memory` / `sandbox_cpus` / `sandbox_pids_limit` settings. Compute and installing packages must not feel restricted |
-| Network | **reshaped** | not "off by default" and no per-call `network=True` switch. A sandbox command has no network except through the VM's **allowlisting egress gateway** on the host (`services/vm/egress.py`). One list feeds both fences, not one per fence: the gateway reads `egress_allowed_domains` plus whatever `code_request_egress` widened for *that* workspace (`services/egress.py`) |
-| Execution outside the VM | **fenced** | the approved host command runs under seatbelt/bubblewrap confinement (`fence.py`) reading that **same** `egress_allowed_domains` — credential paths and the data dir unreadable. It degrades to `fenced:false` with an `unfenced_reason` where confinement cannot initialise, since the operator approved *this* command; a refusal by the fence comes back as `fence_note`. Shell commands do not run here: they run in the platform VM, in the agent's home (`services/sandbox/home_shell.py`); only one declared `host` runs on the operator's machine, after approval, inside the same host fence unless it is disabled or unavailable |
+| Files are the operator's real folders | **reshaped** | the file tools act on the host folders of the agent's home, with no VM. The VM mounts those same folders live at the same paths: the thread's scratch writable, each project writable or read-only per the home's mount table, a coding thread's worktree writable. A file a tool writes is the file the next command sees. Nothing outside the home is mounted: the data dir, vault, uploads and `$HOME` never enter the VM |
+| Writes are guarded at the tool, not the box | **reshaped** | a write into a read-only project asks first, and an approval leases the project to the thread. Revert covers file-tool writes only; a command's changes to a writable mount are not recorded |
+| Walls inside the box | **relaxed** | commands run as root in a machine of their own, so a read-only root bought nothing. Caps are the `sandbox_cpus` and `sandbox_memory_mb` settings. Compute and installing packages must not feel restricted |
+| Network | **reshaped** | not "off by default" and no per-call `network=True` switch. smol enforces the machine's `allow_hosts`, built from `egress_allowed_domains` plus whatever `code_request_egress` granted *that* conversation (`services/egress.py`); offline mode means no network at all. A changed allowlist or mount table restarts the machine, which ends its background jobs |
+| Execution outside the VM | **fenced** | `shell_run_on_host` always asks, and runs under seatbelt/bubblewrap confinement (`fence.py`) reading the installation-wide `egress_allowed_domains` — credential paths and the data dir unreadable. It degrades to `fenced:false` with an `unfenced_reason` where confinement cannot initialise, since the operator approved *this* command; a refusal by the fence comes back as `fence_note`. Its changes are not revertable. Nothing else the agent runs touches the host |
 | A sub-agent's workspace | **shared, or a worktree of its own on request** | it works in the launching thread's files by default, with the parent's write access. `worktree` gives it its own branch and worktree of the parent's project, sharing the parent's scratch; its work waits there until the parent reviews it and calls `agents_merge` (a git merge into the parent's worktree, or file changes on the checkout that can be put back) or `agents_discard`. A definition declaring `isolated` always gets one |
-| Fails closed, never to host | unchanged | with the platform VM disabled (`vm_enabled`) no `SandboxSessionManager` is registered in the capability bag, and `code_execute` reports the capability unavailable (`XC-DEG-*`) |
+| Fails closed, never to host | unchanged | with the VM disabled (`vm_enabled`) or its image unbuilt, no machine is created: `shell_*` commands, `code_execute`, the browser and search report the capability unavailable (`XC-DEG-*`). The file tools keep working |
 
-Code runs in one shared platform microVM (`services/vm`, smolvm/QEMU), which also hosts SearXNG and web fetch's headless Chromium. Outputs return explicitly (stdout/stderr + copied-out files); nothing escapes as a side effect. The operator's own terminal (`SHELL-*`) is unchanged and **agent-unreachable** — the agent's paths to the host are the explained-approval tool and, in a code thread, the fenced shell.
+**The machines** (`services/vm`, smolvm). Each conversation has its own machine (`ConversationMachines`), booted from the guest image on its first command, deleted when idle past `sandbox_session_idle_ttl_s`, and the least recently used one reaped when `sandbox_max_sessions` is reached. A reap leaves the mounted folders untouched. The shell is the harness `Shell` over that machine: `cd` carries over between the commands of one turn, `run_command` returns its output when it finishes rather than streaming it, and a background command's log lives in `.pydantic-ai-harness/` in its working directory.
+
+A second, shared **services machine** (`ServicesMachine`) runs headless Chromium and SearXNG. It mounts nothing from the host, and its egress is all public CIDRs, so private ranges are blocked; Chromium's CDP port is relayed by `portfwd.py` and published to the host. A page it loads can still reach the machine's own loopback services.
+
+A **preview** (`services/vm/previews.py`) is a server started in the conversation's machine, relayed by `portfwd.py` and published to a host port. A restart or reap of the machine ends it.
+
+The **guest image** is built once by `backend/vm/build_image.sh` inside an `ubuntu:24.04` builder machine (Chrome for Testing has no musl build) and packed as a single-layer OCI archive at `<data dir>/vm/images/<fingerprint>/image.tar`. The fingerprint hashes the script, `portfwd.py` and the extra CA bundle, so changing any of them builds a new image. `HEPHAESTUS_VM_IMAGE` points at an existing `image.tar` to skip the build.
+
+The operator's own terminal (`SHELL-*`) is unchanged and **agent-unreachable** — the agent's only path to the host is the explained-approval `shell_run_on_host`.
 
 ### 4.3 Pre-authorized scheduled tasks ⬜ *designed, not built*
 
@@ -215,16 +225,16 @@ a deferred call at the Auto level
   │                  a file write: the one resolved target path
   │                  an MCP call: the connector, the tool, and the argument KEYS
   → judge.py         a STRUCTURAL stage over that capability — no list of programs.
-  │                    Three facts have to agree: what the syntax names, the `reach` the
-  │                    model DECLARED on the call, and whether a fence (the platform VM)
-  │                    holds it there.  Contained +
-  │                    declared + fenced clears at that tier.  Its only power is to
+  │                    Two facts have to agree: what the syntax names, and whether a
+  │                    fence (the conversation's VM, with no network) holds it there.
+  │                    Contained + fenced clears at that tier.  Its only power is to
   │                    APPROVE; everything else escalates rather than being refused —
-  │                    a `host` declaration, a `network` declaration (always, whatever
+  │                    a host command, a command that reaches the network (always, whatever
   │                    the operator's allowed-domains list holds: the fence bounds no
   │                    reads of the project, so egress is how what a command read leaves the machine),
   │                    a path outside the worktree, an AST shape it could not read, or
-  │                    a command with no fence to hold it.
+  │                    a command with no fence to hold it — which includes any VM
+  │                    that can reach the network.
   → reviewer.py      one structured call on the `utility` model, scoring three axes:
   │                    risk           low | high | too_destructive
   │                    authorization  explicitly_no | neutral | explicitly_yes
@@ -236,8 +246,8 @@ a deferred call at the Auto level
 
 Four properties are load-bearing and each is there for a reason that is easy to lose:
 
-- **The cheap stage settles the common case.** `git status`, `ls src`, `grep -rn foo .`, `uv run pytest`, `git commit -m x` clear with no model call at all — on their *shape*, whatever binary they happen to name. That is what makes the stage affordable to keep strict: narrowing it costs latency, widening it costs the operator's trust, and only one of those is recoverable.
-- **The fence bounds writes and egress, and deliberately not reads of the project.** A cleared command runs in the VM against a copy of the project, so it can still read any of it by a route its words did not name. Containment is therefore checked in the judge before anything else, and the extraction refuses any word it cannot place as a single path — a program named by path and an environment assignment's value included.
+- **The cheap stage settles the common case only offline.** In a conversation VM with no network (offline mode, or an empty allowlist and no grants), `git status`, `ls src`, `grep -rn foo .`, `uv run pytest`, `git commit -m x` clear with no model call at all — on their *shape*, whatever binary they happen to name. Once the VM can reach any host, every command goes to the reviewer: `uv run pytest` runs code nobody read, and an allowed host takes an upload as readily as a download. Narrowing the stage costs latency, widening it costs the operator's trust, and only one of those is recoverable.
+- **The fence bounds writes and egress, and deliberately not reads of the project.** A cleared command runs in a VM that mounts the project, so it can still read any of it by a route its words did not name, and it writes straight to any mount that is writable. Containment is therefore checked in the judge before anything else, and the extraction refuses any word it cannot place as a single path — a program named by path and an environment assignment's value included. The unread-program tier (a program in scratch, or `code_execute`) additionally needs scratch to be the only writable place.
 - **The reviewer is told the rubric and never the passing score.** The combination lives in `decide.py` and is written down nowhere the model can read it. A reviewer that knows the threshold optimises for the threshold, which turns three independent observations into one negotiated verdict.
 - **Its transcript carries user and assistant messages only — never tool results.** Everything the model has read from a file, a page or an MCP server is content someone else wrote, and a reviewer that saw it could be argued into approving the very call that untrusted text asked for. Same posture `XC-SEC-5` takes everywhere else, applied to the one call whose output is a permission. What it *does* see is fenced as untrusted on top of that.
 - **Every failure parks.** No utility model bound, a reviewer timeout, an unparseable answer — all of them return the call to the operator. This is the one place in the codebase where the conservative branch has to be the default (`XC-DEG-*`): a review that cannot run is not a review that passes.
@@ -252,7 +262,7 @@ Four properties are load-bearing and each is there for a reason that is easy to 
 2. `build_agent_toolsets()` produces the gated, namespaced stack; the `Agent` is built with it (`deps_type=RunDeps`, `output_type=[str, DeferredToolRequests]`).
 3. The model runs its multi-step loop; for each call, the `_enabled_gate` and tool args are evaluated against `ctx.deps`. A non-sensitive tool executes and may emit `tool.progress`.
 4. A **sensitive** tool does *not* execute — the turn ends with `DeferredToolRequests`. The engine rules on each deferred call: the thread's permission level refuses or parks it, a standing conversation grant answers the levels that would have asked, and at the Auto level the review settles it — with the grant riding into that review as the operator's authorization rather than skipping it (§4.5). What is still unanswered parks (§4.1) and waits for `POST …/approve`.
-5. `code_execute` runs in the conversation's sandbox if the platform VM is up, else reports disabled (§4.2); `code_request_egress` and `code_run_host_command` always park for approval first — the two exits, never the compute.
+5. `code_execute` and the shell run in the conversation's VM if one can be created, else report unavailable (§4.2); `code_request_egress` and `shell_run_on_host` always park for approval first — the two exits, never the compute.
 
 The result: access control (`AE-2` categories, `AE-3` sensitivity and enable/disable, `AE-4` model-discerns) is a **dozen lines of toolset composition plus a per-tool `requires_approval` flag**, keyed on one deps object. Every harder case (host exec, scheduled tasks, external tools) reuses the same deferred-tool pause.
 
@@ -266,13 +276,13 @@ The result: access control (`AE-2` categories, `AE-3` sensitivity and enable/dis
 | `builtin`, `memory`, `code` categories | ✅ built |
 | Approval pause/resume (engine + `/runs/{id}/approve`) | ✅ built |
 | Auto-level review (shell judge + utility-model reviewer) | ✅ built (`services/permissions/`, `agent/gating.py`) |
-| Sandbox isolation + host escape hatch | ✅ built (`services/sandbox`, `tools/code.py`) |
-| Blast-radius model (egress allowlist + VM gateway, fenced shell, forked delegates) | ✅ built (`services/egress.py`, `services/vm/egress.py`, `services/sandbox/{host,fork}.py`) |
+| Home file tools + per-conversation VM commands + host escape hatch | ✅ built (`services/home`, `services/vm`, `tools/files.py`, `tools/shell.py`, `tools/code.py`) |
+| Blast-radius model (egress allowlist enforced by smol, per-conversation VMs, fenced host tool) | ✅ built (`services/egress.py`, `services/vm/machines.py`, `services/sandbox/fence.py`, `tools/shell.py`) |
 | Async sub-agents (`subagents` category, register, wake, panel) | ✅ built (`services/subagents/`, `services/subagent_store.py`, `harness/manifests/subagents.py`, `tools/subagents.py`) — replaces the `agents` category and its blocking `delegate_task`, and the `research` category with it: research is now the `researcher` spec in the roster, launched, redirected (`subagents_send`) and listed (`subagents_list`) like any other |
 | Agent definitions (`agents` category, catalog, per-thread agent, tool-access gate) | ✅ built (`services/agents/`, `harness/manifests/agents.py`, `tools/agents.py`, `routes/agents.py`) — the roster's specs became `AgentDefinition`s; the enabled gate also checks `RunDeps.tool_access` |
 | Agent trees (`agents_spawn`/`message`/`list`/`read`/`stop`, depth, tree messaging, open-as-thread) | ✅ built (`harness/manifests/_subagents.py`, `_subagent_wake.py`, `tools/delegation.py`, `routes/subagents.py`) — the `subagents` category folded into `agents`; `tools/subagents.py` is gone |
 | Version history (skills, agents, plugins: history, diff, restore) | ✅ built (`services/revisions.py`, `routes/revisions.py`) |
-| Plugins (drafts, VM runtime, declared egress, secret placeholders) | ✅ built (`services/plugins/`, `services/vm/intercept.py`, `tools/plugins.py`, `routes/plugins.py`) |
+| Plugins (drafts, VM runtime, declared egress, secret placeholders) | ✅ built (`services/plugins/`, `tools/plugins.py`, `routes/plugins.py`) |
 | Routines (agent per routine, on-time runs in their own threads, time zones, agent drafts, natural-language schedules) | ✅ built (`services/routines/`, `tools/routines.py`, `routes/tasks.py`) |
 | Privilege gate | 🔭 seam reserved — empty until a second user exists |
 | Relevance pre-filter | 🔭 seam reserved — deliberately omitted |

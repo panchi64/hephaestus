@@ -16,77 +16,35 @@ worktrees they should be, not merely to each other.
 from __future__ import annotations
 
 import asyncio
-import json
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast, final
+from typing import final
 
 import pytest
-from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import Workspace
 
 from core.container import ServiceContainer
 from runs import Run, RunStream
+from services.home.scratch import HostFiles, ScratchDirs
 from services.projects import ProjectStore, WorktreeManager
-from services.sandbox import SandboxError, SandboxSessionManager
-from services.sandbox.thread_shells import ThreadShells
-from services.vm.project import ProjectCopies
+from services.sandbox import SandboxError
 from services.workspace import (
     SANDBOX_MOUNT,
     WORKTREE_SCRATCH,
-    HostFiles,
     RunWorkspace,
     resolve_workspace,
 )
 from tools.deps import RunDeps
-from tools.shell import shell_toolset
+from tools.home_workspace import home_workspace
 from tools.workspace import run_workspace
 
-from ._json import arr, obj, parse_json
-from .shell_support import Shell, checkout_ctx, local_home, make_repo, thread_shells
-from .vm_local import can_confine
-
 OWNER = "operator"
-#: Where a project thread's shell starts: its project, in the home.
-PROJECT = "/home/agent/projects/project"
 
 
-# --- fakes: the two capabilities the resolver reaches for ----------------------------
-
-
-@final
-class _FakeSession:
-    def __init__(self, path: Path) -> None:
-        self._path: Path = path
-
-    def ensure_workspace(self) -> Path:
-        return self._path
-
-    def read_file(self, relpath: str) -> bytes:
-        return (self._path / relpath).read_bytes()
-
-    def write_file(self, relpath: str, content: bytes) -> None:
-        target = self._path / relpath
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _ = target.write_bytes(content)
-
-
-@final
-class _FakeSessions:
-    """One workspace directory per conversation key, like the real manager."""
-
-    def __init__(self, root: Path) -> None:
-        self._root: Path = root
-        self.holders: dict[str, object] = {}
-
-    async def acquire(self, key: str, *, holder: object = None) -> _FakeSession:
-        path = self._root / key
-        path.mkdir(parents=True, exist_ok=True)
-        if holder is not None:
-            self.holders[key] = holder
-        return _FakeSession(path)
+# --- fakes: the project capability the resolver reaches for --------------------------
 
 
 @final
@@ -132,7 +90,7 @@ async def _repo(root: Path) -> Path:
 
 def _caps(tmp_path: Path, roots: dict[str, Path] | None = None) -> ServiceContainer:
     caps = ServiceContainer()
-    caps.add(_FakeSessions(tmp_path / "sandbox"), as_type=SandboxSessionManager)
+    caps.add(ScratchDirs(tmp_path / "sandbox"))
     if roots is not None:
         caps.add(_FakeProjects(roots), as_type=ProjectStore)
         caps.add(WorktreeManager(tmp_path / "worktrees"), as_type=WorktreeManager)
@@ -148,28 +106,20 @@ def _ctx(
     worktree: bool = False,
 ) -> RunContext[RunDeps]:
     run = Run(id=run_id, kind="chat", owner_id=OWNER, stream=RunStream())
+    deps = RunDeps(
+        run=run,
+        owner_id=OWNER,
+        caps=caps,
+        conversation_id=conversation_id,
+        project_id=project_id,
+        worktree=worktree,
+    )
     return RunContext(
-        deps=RunDeps(
-            run=run,
-            owner_id=OWNER,
-            caps=caps,
-            conversation_id=conversation_id,
-            project_id=project_id,
-            worktree=worktree,
-        ),
+        deps=deps,
+        workspace=Workspace(home_workspace(deps)),
         model=TestModel(),
         usage=RunUsage(),
     )
-
-
-async def _raw(shell: Shell, name: str, **args: object) -> object:
-    return cast(object, await shell.call(name, **args))
-
-
-async def _call(shell: Shell, name: str, **args: object) -> dict[str, object]:
-    """A tool result that is a command's report; the guard's refusals come back as text and
-    are read through ``_raw`` instead."""
-    return cast(dict[str, object], await _raw(shell, name, **args))
 
 
 # --- sandbox: unchanged, and the /work translation is the resolver's --------------
@@ -181,7 +131,7 @@ class TestSandbox:
         workspace = await run_workspace(ctx)
         assert workspace is not None
         assert workspace.kind == "sandbox"
-        assert workspace.root == tmp_path / "sandbox" / "conv-a"
+        assert workspace.root == ScratchDirs(tmp_path / "sandbox").path("conv-a")
 
     async def test_two_conversations_get_different_roots(self, tmp_path: Path):
         caps = _caps(tmp_path)
@@ -189,8 +139,9 @@ class TestSandbox:
         b = await run_workspace(_ctx(caps, conversation_id="conv-b", run_id="r2"))
         assert a is not None and b is not None
         # Rooting, not isolation: named directories, not merely distinct objects.
-        assert a.root == tmp_path / "sandbox" / "conv-a"
-        assert b.root == tmp_path / "sandbox" / "conv-b"
+        scratch = ScratchDirs(tmp_path / "sandbox")
+        assert a.root == scratch.path("conv-a")
+        assert b.root == scratch.path("conv-b")
 
     async def test_the_model_is_told_the_mount_path_not_the_host_path(self, tmp_path: Path):
         ctx = _ctx(_caps(tmp_path), conversation_id="conv-a")
@@ -211,18 +162,6 @@ class TestSandbox:
         # A code turn's first resolution runs `git worktree add`; a turn makes many
         # file-tool calls, and it must not run once per call.
         assert first is second
-
-    async def test_the_run_claims_the_container_it_is_about_to_work_in(self, tmp_path: Path):
-        # Without the claim the only "in use" signal is the exec lock, held for one call
-        # out of the dozens a turn makes — and the live-session cap would be free to seal
-        # the workspace away in a gap between two of them, taking `node_modules`, `.venv`
-        # and `.git` with it (the seal drops those by design).
-        caps = _caps(tmp_path)
-        ctx = _ctx(caps, conversation_id="conv-a")
-        _ = await run_workspace(ctx)
-        sessions = caps.get_optional(SandboxSessionManager)
-        assert isinstance(sessions, _FakeSessions)
-        assert sessions.holders["conv-a"] is ctx.deps.run
 
 
 # --- worktree: the worktree, and the one-workspace invariant ------------------------
@@ -298,155 +237,6 @@ async def _status(cwd: Path) -> tuple[int, str]:
     return proc.returncode or 0, out.decode()
 
 
-# --- the shell ------------------------------------------------------------------------
-
-
-async def test_the_declaration_is_offered_to_the_model_with_the_offline_default(tmp_path: Path):
-    caps = _caps(tmp_path, {"proj-1": tmp_path})
-    ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", worktree=True)
-    tool = (await shell_toolset().get_tools(ctx))["run_command"]
-    schema = obj(parse_json(json.dumps(tool.tool_def.parameters_json_schema)))
-    reach = obj(obj(schema["properties"])["reach"])
-    description = str(reach.get("description", "")).lower()
-    assert "reach" not in arr(schema.get("required", []))
-    assert reach.get("default") == "offline"
-    # The description explains where each answer runs and never the permission level: one
-    # string ships at all four, so a promise about an approval outcome is wrong at three.
-    assert "vm" in description and "host" in description
-    assert "approv" not in description
-
-
-@pytest.mark.skipif(not can_confine(), reason="needs root and bubblewrap")
-class TestShellRunsInTheVm:
-    """Commands reach the VM through the home, driven for real on this machine. The
-    project is ``~/projects/project`` and the thread starts in it."""
-
-    @pytest.fixture
-    async def copies(self, tmp_path: Path) -> AsyncIterator[ProjectCopies]:
-        async with local_home(tmp_path / "vm") as (live, sessions):
-            self._sessions = sessions
-            yield live
-
-    #: The scratch sessions of the fixture's VM, set when it starts.
-    _sessions: SandboxSessionManager | None = None
-
-    async def _shell(
-        self,
-        tmp_path: Path,
-        copies: ProjectCopies,
-        *,
-        worktree: bool = False,
-        shells: ThreadShells | None = None,
-        project: str = "proj-1",
-        conversation: str = "conv-a",
-    ) -> tuple[Path, Shell]:
-        root = tmp_path / project
-        if not root.exists():
-            _ = make_repo(root)
-        sessions = self._sessions
-        assert sessions is not None, "the copies fixture starts the sessions"
-        ctx = checkout_ctx(
-            root,
-            copies=copies,
-            sessions=sessions,
-            worktree=worktree,
-            project_id=project,
-            conversation_id=conversation,
-            shells=shells,
-        )
-        return root, Shell(shell_toolset(), ctx)
-
-    @pytest.mark.parametrize("worktree", [False, True])
-    async def test_a_refused_command_is_a_retry_not_a_dead_run(
-        self, tmp_path: Path, copies: ProjectCopies, worktree: bool
-    ):
-        """What the model can act on — a refused command — comes back as `ModelRetry`, so
-        the turn continues and the agent tries something else."""
-        _root, shell = await self._shell(tmp_path, copies, worktree=worktree)
-
-        with pytest.raises(ModelRetry):
-            _ = await _call(shell, "run_command", command="rm -rf /")
-
-        # And the turn is still usable afterwards — a retry left nothing broken behind it.
-        assert "ok" in str((await _call(shell, "run_command", command="echo ok"))["stdout"])
-
-    async def test_an_offline_command_runs_in_the_vm_and_a_host_one_on_the_host(
-        self, tmp_path: Path, copies: ProjectCopies
-    ):
-        root, shell = await self._shell(tmp_path, copies)
-        inside = await _call(shell, "run_command", command="pwd")
-        assert str(inside["stdout"]).strip() == PROJECT
-        assert inside["reach"] == "workspace" and inside["fenced"] is True
-        assert "unfenced_reason" not in inside
-
-        outside = await _call(shell, "run_command", command="pwd", reach="host")
-        assert Path(str(outside["stdout"]).strip()).resolve() == root.resolve()
-        assert outside["reach"] == "host" and outside["fenced"] is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "echo $(pwd)",  # a nested command, unreadable rather than escaping
-            "sh -c pwd",  # an argument that could itself be a command line
-            "echo 'two words' && pwd",  # ...and the same shape spelled innocently
-            "echo ok > /etc/nope; pwd",  # a path the structure contradicts
-        ],
-    )
-    async def test_a_command_the_judge_could_not_read_still_runs_in_the_vm(
-        self, tmp_path: Path, copies: ProjectCopies, command: str
-    ):
-        # The judge declines these for being *unreadable*, not for reaching anywhere, and a
-        # route keyed off the judgement alone would let a command choose where it runs by
-        # being written so nothing could read it. Only a `host` declaration leaves the VM.
-        _root, shell = await self._shell(tmp_path, copies)
-        result = await _call(shell, "run_command", command=command)
-        assert result["fenced"] is True and PROJECT in str(result["stdout"])
-        assert not Path("/etc/nope").exists()
-
-    async def test_the_tracked_directory_cannot_be_moved_out_of_the_home(
-        self, tmp_path: Path, copies: ProjectCopies
-    ):
-        # What a command ends in is what the shell persists, so it adopts it only while it
-        # is still somewhere the command could see — otherwise a `cd` out would leave every
-        # later relative path judged against a directory the command is no longer in.
-        shells = thread_shells(copies)
-        _root, shell = await self._shell(tmp_path, copies, shells=shells)
-        _ = await _raw(shell, "run_command", command="mkdir -p sub && cd sub")
-        assert shells.cwd("conv-a") == f"{PROJECT}/sub"  # ...a `cd` inside the project is kept
-        _ = await _raw(shell, "run_command", command="cd /tmp")
-        assert shells.cwd("conv-a") == f"{PROJECT}/sub"  # ...and one out is not
-
-    async def test_two_threads_do_not_share_a_shell(self, tmp_path: Path, copies: ProjectCopies):
-        # Each thread keeps its own working directory, compared to where it should be,
-        # because two shells both left where they started would also "not share" state.
-        shells = thread_shells(copies)
-        _, a = await self._shell(tmp_path, copies, conversation="conv-a", shells=shells)
-        _, b = await self._shell(tmp_path, copies, conversation="conv-b", shells=shells)
-        _ = await _raw(a, "run_command", command="mkdir -p sub && cd sub")
-        assert str((await _call(b, "run_command", command="pwd"))["stdout"]).strip() == PROJECT
-        assert str((await _call(a, "run_command", command="pwd"))["stdout"]).strip() == (
-            f"{PROJECT}/sub"
-        )
-        assert (shells.cwd("conv-a"), shells.cwd("conv-b")) == (f"{PROJECT}/sub", PROJECT)
-
-    async def test_a_closed_shell_stops_what_it_left_running(
-        self, tmp_path: Path, copies: ProjectCopies
-    ):
-        shells = thread_shells(copies)
-        _root, shell = await self._shell(tmp_path, copies, shells=shells)
-        vm_job = (await _call(shell, "start_command", command="sleep 60"))["command_id"]
-        host_job = (await _call(shell, "start_command", command="sleep 60", reach="host"))[
-            "command_id"
-        ]
-        assert (await _call(shell, "check_command", command_id=vm_job))["status"] == "running"
-
-        await shells.close("conv-a")
-
-        for command_id in (vm_job, host_job):
-            gone = await _call(shell, "check_command", command_id=command_id)
-            assert gone["ok"] is False and str(command_id) in str(gone["error"])
-
-
 # --- the host-side staging adapter ---------------------------------------------------
 
 
@@ -476,7 +266,7 @@ class TestResolveWorkspace:
                 conversation_id="c",
                 workspace_key="c",
                 owner_id=OWNER,
-                sessions=None,
+                scratch=None,
                 projects=None,
                 worktrees=None,
             )

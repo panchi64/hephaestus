@@ -42,6 +42,7 @@ from tools import RunDeps, build_agent_toolsets, core_categories
 from tools.code_mode_marks import RUN_CODE
 
 from ._json import s
+from .command_workspace import command_workspace
 
 _METADATA = TypeAdapter(dict[str, JsonValue])
 _JSON = TypeAdapter(JsonValue)
@@ -93,7 +94,7 @@ async def _script_catalog(permission: PermissionLevel) -> tuple[set[str], set[st
     """``(what a script may call, what the model is offered directly)`` at this level."""
     categories = {**core_categories(), "x": _probe_category()}
     deps = RunDeps(run=_run(), owner_id="operator", permission=permission)
-    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+    ctx = RunContext(deps=deps, workspace=command_workspace(), model=TestModel(), usage=RunUsage())
     tools = await _wrapped(categories).get_tools(ctx)
     return set(_callable(tools)), set(tools) - {RUN_CODE}
 

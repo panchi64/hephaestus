@@ -1,30 +1,17 @@
-"""The one network allowlist every agent workspace is fenced by.
-
-One policy, expressed as domains, read by both fences: the VM's egress gateway and the
-OS-level confinement the code-mode shell and the host hatch run under. Two lists would
-leave a hole in whichever one was not widened.
+"""The network allowlist a conversation's machine is booted with.
 
 A workspace's allowlist is the installation-wide set (``egress_allowed_domains``) plus
-the domains the operator approved for that conversation. The per-conversation half is a
-durable record, stored in the database under the session manager's workspace key. A
-stateless run writes rows too, since this module cannot tell a run id from a conversation
-id.
-
-The fences read a file, ``allow.txt`` (one domain per line), inside a directory this module
-materialises per workspace. The gateway re-reads it when its mtime moves, so a grant takes
-effect on the next connection.
+the domains the operator approved for that conversation, stored in the database under the
+workspace's scratch key. A stateless run writes rows too, since this module cannot tell a
+run id from a conversation id. A grant restarts the conversation's machine on its next
+command (``services/vm/machines.py``).
 """
 
 from __future__ import annotations
 
-import asyncio
 import ipaddress
-import os
 import re
-import secrets
-import shutil
 from collections.abc import Iterable
-from pathlib import Path
 
 from sqlalchemy import Engine, delete
 from sqlmodel import Session, col, select
@@ -33,8 +20,6 @@ from core.db import in_session, upsert
 from core.exceptions import InvalidInputError
 from models._fields import new_id, utcnow
 from models.egress_grant import EgressGrant
-from services.sandbox.base import safe_key
-from services.vm.egress import ALLOW_FILE
 
 # Single-operator ownership seam; the column exists so a second owner is a code change,
 # not a migration.
@@ -106,11 +91,10 @@ def normalise_domain(raw: str) -> str:
 
 
 class EgressPolicy:
-    """What each workspace may reach, and the file the fences read it from."""
+    """What each workspace may reach."""
 
-    def __init__(self, db_engine: Engine, data_dir: Path, global_domains: tuple[str, ...]) -> None:
+    def __init__(self, db_engine: Engine, global_domains: tuple[str, ...]) -> None:
         self._db: Engine = db_engine
-        self._root: Path = Path(data_dir) / "sandbox" / "egress"
         # Same normalisation as approved domains, so the union holds one spelling per host.
         # A malformed configured domain raises at boot rather than being silently dropped.
         self._global: frozenset[str] = frozenset(normalise_domain(d) for d in global_domains)
@@ -164,7 +148,6 @@ class EgressPolicy:
                 )
 
         await in_session(self._db, work)
-        _ = await self.materialise(key)
         return await self.allowed_for(key)
 
     async def forget(self, conversation_id: str) -> None:
@@ -180,26 +163,3 @@ class EgressPolicy:
             )
 
         await in_session(self._db, work)
-        directory = self.allow_dir(conversation_id)
-        await asyncio.to_thread(lambda: shutil.rmtree(directory, ignore_errors=True))
-
-    def allow_dir(self, key: str) -> Path:
-        """The directory holding this workspace's allowlist file, named by the same
-        ``safe_key`` as the workspace itself."""
-        return self._root / safe_key(key)
-
-    async def materialise(self, key: str) -> Path:
-        """Write this workspace's allowlist and return the directory holding it."""
-        domains = sorted(await self.allowed_for(key))
-        directory = self.allow_dir(key)
-        await asyncio.to_thread(_write_allow_file, directory, domains)
-        return directory
-
-
-def _write_allow_file(directory: Path, domains: list[str]) -> None:
-    """``allow.txt``, replaced whole: the proxy re-reads it per request and must never see a
-    half-written file, so it is written to a temp file beside it and ``os.replace``d."""
-    directory.mkdir(parents=True, exist_ok=True)
-    tmp = directory / f".{ALLOW_FILE}.{os.getpid()}.{secrets.token_hex(4)}"
-    _ = tmp.write_text("".join(f"{domain}\n" for domain in domains), encoding="utf-8")
-    os.replace(tmp, directory / ALLOW_FILE)

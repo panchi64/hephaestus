@@ -116,44 +116,28 @@ class Settings(BaseSettings):
     # definition may lower it for the agents below it, never raise it.
     agent_max_depth: int = 3
 
-    # The platform VM: one microVM (smolvm, on QEMU) per installation, where agent
-    # commands, previews, headless Chromium and SearXNG run. It boots in the background
-    # from a clean image built from `backend/vm/provision.sh` (or `vm_image`, a prebuilt
-    # directory); nothing durable lives in it. Without it, dependent capabilities report
-    # unavailable (never a host fallback). `vm_ca_bundle` is an extra CA bundle the guest
-    # trusts, for TLS-inspecting networks. `vm_transfer_max_bytes` caps one workspace move out
-    # of the VM.
+    # The VMs (smol machines): one per conversation for its commands, and one for headless
+    # Chromium and SearXNG, booted from an image built by `backend/vm/build_image.sh` (or
+    # `vm_image`, a prebuilt archive). Without them, dependent capabilities report
+    # unavailable (never a host fallback). `vm_ca_bundle` is an extra CA bundle the image
+    # trusts, for TLS-inspecting networks.
     vm_enabled: bool = True
-    vm_cpus: int = 4
-    vm_memory_mb: int = 6144
-    vm_disk_gb: int = 32
     vm_image: str | None = None
     vm_ca_bundle: str | None = None
-    vm_boot_timeout_s: float = 300.0
-    vm_provision_timeout_s: float = 3600.0
-    vm_transfer_max_bytes: int = 4 * 1024**3
+    vm_services_cpus: int = 2
+    vm_services_memory_mb: int = 2048
 
-    # Execution sandbox: each conversation's workspace, run in the platform VM.
+    # Each conversation's machine, created on its first command. A reap deletes the
+    # machine and leaves the files it mounted. Past `sandbox_max_sessions` machines, the
+    # least-recently-used idle one is reaped.
     sandbox_enabled: bool = True
-    # Per-workspace caps so one runaway workspace can't starve the others sharing the VM.
-    # Generous enough that ordinary work (build, dataframe, test suite) never hits them, so
-    # a failure that does is pathological.
-    sandbox_memory: str = "4g"
-    sandbox_cpus: str = "2.0"
-    # Max processes/threads per execution (fork-bomb guard). Reported to the model with
-    # memory/cpus (`tools/code.py`) so a fork failure is attributed to this cap, not OOM.
-    sandbox_pids_limit: int = 1024
+    sandbox_cpus: int = 2
+    sandbox_memory_mb: int = 4096
     # Bounds one `files_read_file` call (the tool pages by offset), so one oversized file
     # can't crowd out the turn.
     sandbox_files_max_read_lines: int = 2_000
-    # Per-conversation live sandbox: a guest copy of the workspace, created on first code
-    # execution and kept for iteration. A reap wipes the guest copy and leaves the
-    # workspace files on disk. `idle_ttl` is the unused time before a kill;
-    # `reap_interval` is the sweep period.
     sandbox_session_idle_ttl_s: float = 1800.0
     sandbox_session_reap_interval_s: float = 60.0
-    # Max conversations holding a live sandbox. Without a count, threads worked in rotation
-    # all stay inside the TTL; past the cap the least-recently-used idle session is reaped.
     sandbox_max_sessions: int = 8
     # How long the backend waits for a previewed dev server to listen before reporting failure.
     sandbox_preview_startup_timeout_s: float = 20.0
@@ -182,10 +166,11 @@ class Settings(BaseSettings):
         "*.egg-info",
     )
 
-    # The single network allowlist, read by both fences: the VM's egress gateway and the
-    # OS-level confinement of the code-mode shell and approved host command. A second list
-    # would leave a hole in whichever one wasn't widened. Entries match exactly:
-    # `github.com` is not `gist.github.com`; subdomains are spelled `*.github.com`.
+    # The single network allowlist, read by both fences: each conversation VM's
+    # `allow_hosts` and the OS-level confinement of `shell_run_on_host`. A second list
+    # would leave a hole in whichever one wasn't widened. The host fence matches entries
+    # exactly (`*.github.com` for subdomains); smol's VM allowlist can only match a name
+    # with its subdomains, so in a VM `github.com` also admits `gist.github.com`.
     #
     # Seeded with package registries and source hosts: installing and cloning are what a
     # workspace is for, and the fence targets exfiltration. Anything else is asked for and
@@ -200,8 +185,10 @@ class Settings(BaseSettings):
         "codeload.github.com",
         "objects.githubusercontent.com",
         "raw.githubusercontent.com",
-        "deb.debian.org",
-        "security.debian.org",
+        # The guest image is Ubuntu: ports serves arm64, archive and security serve amd64.
+        "ports.ubuntu.com",
+        "archive.ubuntu.com",
+        "security.ubuntu.com",
         "crates.io",
         "static.crates.io",
         "index.crates.io",
@@ -217,7 +204,7 @@ class Settings(BaseSettings):
     # than failing closed: refusing an explicitly approved command over a missing platform
     # primitive would break the tool's one use.
     host_command_sandbox_enabled: bool = True
-    # Applies to `code_run_host_command` only; the host shell reads everything but the floor
+    # Applies to `shell_run_on_host` only; the host shell reads everything but the floor
     # (`services/sandbox/floor.py`), and write-denies this list.
     # Read-denied even under approval. The data directory is added at runtime (it holds the
     # vault, sealed workspaces and database).
@@ -245,17 +232,6 @@ class Settings(BaseSettings):
     # the read denials and egress allowlist (the exfiltration paths). The credential paths
     # above are also write-denied.
     host_command_allow_write: tuple[str, ...] = ("~", "/tmp", "/var/tmp")
-    # Extra writable paths (build caches) for the host shell's fence, beyond `~`, temp and
-    # the scratch directory.
-    host_shell_allow_write: tuple[str, ...] = (
-        "~/.cache",
-        "~/Library/Caches",
-        "~/.npm/_cacache",
-        "~/.bun/install/cache",
-        "~/.cargo/registry",
-        "~/.cargo/git",
-        "~/go/pkg/mod",
-    )
 
     # Meta-loop. The no-progress guard trips after this many identical tool calls in a
     # turn. The verifier (post-turn judge + one bounded corrective re-attempt) is off by default.
@@ -303,7 +279,7 @@ class Settings(BaseSettings):
     web_search_result_limit: int = 10
     web_search_timeout_s: float = 15.0
 
-    # Web fetch. Every page is rendered in a headless Chromium in the platform VM (isolating
+    # Web fetch. Every page is rendered in a headless Chromium in the services VM (isolating
     # page JS from the host), driven over CDP, and the DOM is extracted to Markdown.
     # `enabled` off degrades; `startup_timeout_s` bounds browser bring-up; `timeout_s`
     # bounds navigation/render; `max_bytes` caps the HTML/text handed to the extractor;
@@ -311,7 +287,7 @@ class Settings(BaseSettings):
     # `concurrency` bounds simultaneous contexts; `min_chars` is the length below which
     # extraction falls back to innerText. The browser presents as a normal Chrome:
     # `user_agent` empty ⇒ derived from the engine version; `locale`/`timezone` set the
-    # context. SSRF is enforced by the VM's egress gateway, outside the browser, so no
+    # context. SSRF is bounded by the services VM reaching public addresses only, so no
     # in-browser interception that bot walls detect.
     # `cookie_ttl_s` (>0 enables) caches cookies in memory so a solved bot challenge carries
     # forward, bounded by TTL and `cookie_max`; `min_interval_s` (>0 enables) is the minimum
@@ -385,7 +361,7 @@ class Settings(BaseSettings):
         """Host directory holding the browser's shared login profile between sessions."""
         return self.data_dir / "browser"
 
-    # Managed web search: the backend runs its own SearXNG in the platform VM, with the
+    # Managed web search: the backend runs its own SearXNG in the services VM, with the
     # DB-backed provider registry as an optional override. Without the VM, search degrades
     # (no host fallback). `searxng_base_url` points at an existing instance instead, so
     # nothing is managed. Past `searxng_startup_timeout_s` a silent instance is reported

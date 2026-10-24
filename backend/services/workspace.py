@@ -29,15 +29,10 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from services.home.paths import HOME
+from services.home.scratch import HostFiles, ScratchDirs
 from services.projects.repo import run_git
 from services.projects.store import ProjectStore
 from services.projects.worktree import WorktreeBusyError, WorktreeManager
-from services.sandbox import (
-    LiveWork,
-    SandboxError,
-    SandboxSessionManager,
-)
-from services.sandbox.base import contained_path
 
 logger = logging.getLogger(__name__)
 
@@ -63,46 +58,11 @@ WORKTREE_SCRATCH = ".hephaestus"
 
 class WorkspaceFiles(Protocol):
     """The two-method slice staging needs (``services/sandbox/staging.py``'s
-    ``_Stageable``). Named structurally so a sandbox session satisfies it as-is and a
-    plain host directory needs only the small adapter below."""
+    ``_Stageable``)."""
 
     def read_file(self, relpath: str) -> bytes: ...
 
     def write_file(self, relpath: str, content: bytes) -> None: ...
-
-
-class WorkspaceSession(WorkspaceFiles, Protocol):
-    """The slice of a sandbox session that resolving a workspace reads."""
-
-    def ensure_workspace(self) -> Path: ...
-
-
-class WorkspaceSessions(Protocol):
-    """The slice of the sandbox manager that resolving a workspace opens sessions through."""
-
-    async def acquire(self, key: str, *, holder: LiveWork | None = None) -> WorkspaceSession: ...
-
-
-class HostFiles:
-    """`WorkspaceFiles` over a plain directory — the worktree's side of staging.
-
-    Containment is the sandbox's own check, reused rather than re-derived: a staged
-    filename is operator content and must not be able to write outside the tree.
-    """
-
-    def __init__(self, root: Path) -> None:
-        self._root: Path = root
-
-    def read_file(self, relpath: str) -> bytes:
-        target = contained_path(self._root, relpath)
-        if not target.is_file():
-            raise SandboxError(f"no such file in the workspace: {relpath!r}")
-        return target.read_bytes()
-
-    def write_file(self, relpath: str, content: bytes) -> None:
-        target = contained_path(self._root, relpath)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _ = target.write_bytes(content)
 
 
 @dataclass(frozen=True)
@@ -138,21 +98,11 @@ class RunWorkspace:
         return str(self.root / relpath)
 
 
-async def sandbox_workspace(
-    sessions: WorkspaceSessions, workspace_key: str, *, holder: LiveWork | None = None
-) -> RunWorkspace:
-    """The conversation's sandbox workspace. Raises `SandboxError` when it can't be
-    opened (the VM is down, a locked vault, an unreadable seal) — the caller degrades.
-
-    ``holder`` is the run this workspace is for, and passing it is what keeps the
-    live-session cap from displacing a session the run is still working in between two
-    of its tool calls. The files would survive that — a reap leaves them alone — but the
-    live process and system state around them would not.
-
-    A key naming a delegation is a sub-agent in a worktree of its own, which shares the
-    scratch of the thread it delegates from."""
-    session = await sessions.acquire(scratch_key(workspace_key), holder=holder)
-    return RunWorkspace(root=session.ensure_workspace(), kind="sandbox", files=session)
+def sandbox_workspace(scratch: ScratchDirs, workspace_key: str) -> RunWorkspace:
+    """The conversation's scratch. A key naming a delegation is a sub-agent in a worktree
+    of its own, which shares the scratch of the thread it delegates from."""
+    folder = scratch.acquire(scratch_key(workspace_key))
+    return RunWorkspace(root=folder.ensure_workspace(), kind="sandbox", files=folder)
 
 
 #: What separates a workspace's owner from one delegation of it in a workspace key.
@@ -266,10 +216,9 @@ async def resolve_workspace(
     conversation_id: str | None,
     workspace_key: str,
     owner_id: str,
-    sessions: SandboxSessionManager | None,
+    scratch: ScratchDirs | None,
     projects: ProjectStore | None,
     worktrees: WorktreeManager | None,
-    holder: LiveWork | None = None,
 ) -> RunWorkspace | None:
     """This run's own place, or None when there isn't one: its worktree, else the project
     it is filed under, else its scratch.
@@ -279,8 +228,8 @@ async def resolve_workspace(
     time, before the run exists, to stage attachments. One resolution, two entry points.
 
     Returns None rather than raising, for the two shapes of "no workspace" the callers
-    already handle: a project without the pieces it needs, and a sandbox that will not
-    open. A busy worktree is *not* one of those — that is a real conflict the operator has
+    already handle: a project without the pieces it needs, and no scratch at all. A busy
+    worktree is *not* one of those — that is a real conflict the operator has
     to see, so `WorktreeBusyError` propagates.
     """
     if project_id and not worktree:
@@ -332,10 +281,6 @@ async def resolve_workspace(
             # an unavailable sandbox does; the tool layer says so in words.
             logger.warning("workspace: could not open the project worktree", exc_info=True)
             return None
-    if sessions is None:
+    if scratch is None:
         return None
-    try:
-        return await sandbox_workspace(sessions, workspace_key, holder=holder)
-    except SandboxError:
-        logger.debug("workspace: no sandbox workspace available", exc_info=True)
-        return None
+    return sandbox_workspace(scratch, workspace_key)

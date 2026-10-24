@@ -189,11 +189,11 @@ def command_categories() -> dict[str, FunctionToolset[RunDeps]]:
     conversation grant is scoped to rather than granted wholesale."""
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
-    @toolset.tool_plain(requires_approval=True, name="run_host_command")
-    def run_host_command(command: str) -> str:
+    @toolset.tool_plain(requires_approval=True, name="run_on_host")
+    def run_on_host(command: str) -> str:
         return f"ran {command}"
 
-    return {"code": toolset}
+    return {"shell": toolset}
 
 
 async def test_a_conversation_grant_on_a_command_names_the_command(
@@ -207,7 +207,7 @@ async def test_a_conversation_grant_on_a_command_names_the_command(
         run_id = await _chat(client, "run it")
         run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
-        assert approval.tool_name == "code_run_host_command"
+        assert approval.tool_name == "shell_run_on_host"
         command = s(obj(JSON.validate_python(approval.args_as_dict()))["command"])
         conv_id = run.conversation_id
 
@@ -227,7 +227,7 @@ async def test_a_conversation_grant_on_a_command_names_the_command(
 
         listed = await _grants(client, conv_id)
         assert [(obj(g)["tool_name"], obj(g)["command_prefix"]) for g in listed] == [
-            ("code_run_host_command", command.split())
+            ("shell_run_on_host", command.split())
         ]
 
         # Revoking is by the same pair, and the scope goes back **exactly as it was
@@ -235,12 +235,12 @@ async def test_a_conversation_grant_on_a_command_names_the_command(
         # The whole-tool form leaves the narrower grant standing; only the matching scope
         # drops it, which is what makes the listing and the delete one round trip.
         assert (
-            await client.delete(f"/conversations/{conv_id}/grants/code_run_host_command")
+            await client.delete(f"/conversations/{conv_id}/grants/shell_run_on_host")
         ).status_code == 204
         assert len(await _grants(client, conv_id)) == 1
         assert (
             await client.delete(
-                f"/conversations/{conv_id}/grants/code_run_host_command",
+                f"/conversations/{conv_id}/grants/shell_run_on_host",
                 params={
                     "command_prefix": [s(word) for word in arr(obj(listed[0])["command_prefix"])]
                 },
@@ -283,7 +283,7 @@ async def test_the_wider_width_grants_the_whole_tool_and_says_so(
         listed = await _grants(client, conv_id)
         assert [
             (obj(g)["tool_name"], obj(g)["command_prefix"], obj(g)["decisive"]) for g in listed
-        ] == [("code_run_host_command", [], True)]
+        ] == [("shell_run_on_host", [], True)]
 
 
 async def test_the_wider_width_is_still_refused_for_a_once_only_tool(

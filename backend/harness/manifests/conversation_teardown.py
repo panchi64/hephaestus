@@ -10,13 +10,14 @@ from services.conversations import ConversationStore
 from services.conversations.teardown import ConversationTeardown
 from services.egress import EgressPolicy
 from services.home.changes import ThreadChanges
+from services.home.scratch import ScratchDirs
 from services.notifications import NotificationService
 from services.plan_mode import PlanMode
 from services.projects import ProjectStore, WorktreeManager
-from services.sandbox import SandboxSessionManager
 from services.subagent_store import SubagentStore
 from services.task_list import ConversationTasks
 from services.uploads import UploadStore
+from services.vm import ConversationMachines
 from services.workspace_history import WorkspaceHistoryStore
 
 
@@ -36,8 +37,9 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         subagent_records=services.get_optional(SubagentStore),
         changes=services.get_optional(ThreadChanges),
         inbox_dispatcher=services.get_optional(InboxDispatcher),
-        sandbox=services.get_optional(SandboxSessionManager),
+        sandbox=services.get_optional(ScratchDirs),
         browser=services.get_optional(BrowserSessionManager),
+        machines=services.get_optional(ConversationMachines),
     )
     return FeatureRuntime(services=(teardown,), state={"conversation_teardown": teardown})
 

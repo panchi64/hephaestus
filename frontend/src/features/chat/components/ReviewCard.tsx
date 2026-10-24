@@ -57,17 +57,15 @@ function scoreLine(scores: Record<string, number>): string {
  *  domains are allowed. */
 const TIER: Record<NonNullable<Review["tier"]>, string> = {
   read: "The tool only observes, whatever it is asked for.",
-  sandbox: "It runs offline inside the platform VM.",
-  workspace: "Ran fenced to the worktree, with no network.",
+  sandbox: "It runs inside this conversation's VM.",
+  workspace: "It stays in this conversation's folders and names no address.",
 };
 
-/** How far the command said it needs to go. Shown for every reviewed command, cleared or
- *  not: it is the model's own claim, and reading it beside the verdict is how an operator
- *  notices a command that declared less than it did. */
+/** Where the command runs, shown for every reviewed command, cleared or not. */
 const REACH: Record<NonNullable<Review["reach"]>, string> = {
-  offline: "Declared reach: the VM, offline.",
-  network: "Declared reach: the VM and the allowed domains.",
-  host: "Declared reach: your whole machine.",
+  offline: "Runs in this conversation's VM.",
+  network: "Runs in this conversation's VM and reaches the allowed domains.",
+  host: "Runs on your machine, inside the host fence.",
 };
 
 const RISK: Record<NonNullable<Review["risk"]>, string> = {
@@ -206,14 +204,19 @@ export function ReviewCard(props: {
               </Text>
             )}
           </Show>
-          {/* Said out loud rather than left to be inferred from a missing tier: a host
-              with no sandbox primitive is why an ordinary contained command still had to
-              be asked about, and it is one `brew install` away from being fixed. Only for
-              an act that declared a reach — a fence is nothing to a recall either way. */}
-          <Show when={props.review.reach && props.review.fenced === false}>
+          {/* Why an ordinary contained command still went to review: only a VM with no
+              network clears one on its shape. Not said of the host tool, which is never
+              cleared that way. */}
+          <Show
+            when={
+              props.review.reach &&
+              props.review.reach !== "host" &&
+              props.review.fenced === false
+            }
+          >
             <Text variant="micro" tone="dim">
-              This machine has no sandbox to fence a command with, so it ran
-              unfenced.
+              Its VM can reach the network, or is down, so it was reviewed
+              rather than cleared on its shape.
             </Text>
           </Show>
           <Show when={props.review.risk}>

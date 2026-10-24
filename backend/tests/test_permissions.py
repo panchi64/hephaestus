@@ -69,6 +69,7 @@ from ._helpers import (
     settle,
 )
 from ._json import json_body, parse_json, s
+from .command_workspace import command_workspace
 from .test_chat_concurrency_guards import patch_hanging_model
 
 OWNER = "operator"
@@ -328,7 +329,7 @@ async def _resolved_kinds(permission: PermissionLevel) -> dict[str, str]:
         # here too so this resolves the stack a Plan run really resolves.
         disabled_tools=permission_disabled_tools(permission),
     )
-    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+    ctx = RunContext(deps=deps, workspace=command_workspace(), model=TestModel(), usage=RunUsage())
     tools = await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx)
     return {name: tool.tool_def.kind for name, tool in tools.items()}
 

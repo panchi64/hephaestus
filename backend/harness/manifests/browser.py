@@ -1,4 +1,4 @@
-"""The browser-control feature — the agent drives a real page in the platform VM.
+"""The browser-control feature — the agent drives a real page in the services VM.
 
 The browser is web fetch's Chromium (``services/browser/vm.py``), so this feature builds
 after ``web`` and owns only the per-conversation sessions attached to it, the shared login

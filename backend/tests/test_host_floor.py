@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -15,13 +14,15 @@ from core.config import Settings, get_settings
 from services.projects.repo import commit_worktree
 from services.sandbox import (
     ConfinementState,
+    SandboxResult,
     confinement_state,
     denied_read_paths,
     is_protected_write,
+    resolve_confinement,
+    run_on_host,
     shutdown_confinement,
 )
 from services.sandbox.floor import credential_read_floor, hooks_floor, source_root
-from services.sandbox.host_shell import HostShell
 
 darwin_only = pytest.mark.skipif(sys.platform != "darwin", reason="seatbelt globs are macOS-only")
 
@@ -32,14 +33,6 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path.mkdir()
     monkeypatch.setenv("HOME", str(path))
     return path
-
-
-@pytest.fixture
-def unfenced(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
-    Settings.settings_clear_cache()
-    yield
-    Settings.settings_clear_cache()
 
 
 @pytest.fixture
@@ -63,8 +56,19 @@ async def fenced(
     Settings.settings_clear_cache()
 
 
-def _shell(root: Path) -> HostShell:
-    return HostShell(root, default_timeout=30, max_output_chars=10_000)
+class _Host:
+    """The approval-gated host command, run in ``root`` inside whatever fence is resolved."""
+
+    def __init__(self, root: Path) -> None:
+        self._root: Path = root
+
+    async def run(self, command: str) -> SandboxResult:
+        confinement = await resolve_confinement(get_settings())
+        return await run_on_host(command, timeout_s=30, confinement=confinement, cwd=self._root)
+
+
+def _shell(root: Path) -> _Host:
+    return _Host(root)
 
 
 def _work(tmp_path: Path) -> Path:
@@ -212,19 +216,11 @@ async def test_the_fenced_shell_cannot_read_what_the_floor_denies(home: Path, tm
 
 
 @pytest.mark.usefixtures("fenced")
-async def test_the_shell_reads_ssh_but_not_the_floor_and_cannot_write_ssh(
-    home: Path, tmp_path: Path
-):
+async def test_the_fenced_shell_cannot_write_ssh(home: Path, tmp_path: Path):
     (home / ".ssh").mkdir()
-    _ = (home / ".ssh" / "known_hosts").write_text("host key")
-    _ = (home / ".npmrc").write_text("NPM-TOKEN-VALUE")
-    shell = _shell(_work(tmp_path))
-    ssh = await shell.run("cat ~/.ssh/known_hosts")
-    npm = await shell.run("cat ~/.npmrc")
-    write = await shell.run("echo k >> ~/.ssh/authorized_keys")
-    assert ssh.ok and "host key" in ssh.stdout
-    assert not npm.ok and "NPM-TOKEN-VALUE" not in npm.stdout
+    write = await _shell(_work(tmp_path)).run("echo k >> ~/.ssh/authorized_keys")
     assert not write.ok
+    assert not (home / ".ssh" / "authorized_keys").exists()
 
 
 def _plant_credentials(home: Path, *, inline: bool) -> None:
@@ -295,39 +291,6 @@ def test_an_unparseable_config_is_denied(home: Path):
     assert str(home / ".kube/config") in denied
 
 
-@pytest.mark.usefixtures("fenced")
-@pytest.mark.parametrize("inline", [True, False])
-async def test_the_shell_reads_what_the_credential_floor_allows(
-    home: Path, tmp_path: Path, inline: bool
-):
-    _plant_credentials(home, inline=inline)
-    shell = _shell(_work(tmp_path))
-
-    async def readable(rel: str) -> bool:
-        return (await shell.run(f"cat ~/{rel}")).ok
-
-    for rel in (".ssh/known_hosts", ".ssh/config", ".ssh/id_ed25519.pub", ".aws/config"):
-        assert await readable(rel), rel
-    for rel in (".ssh/id_ed25519", ".aws/credentials"):
-        assert not await readable(rel), rel
-    assert await readable(".config/gh/config.yml")
-    for rel in (".config/gh/hosts.yml", ".docker/config.json", ".kube/config"):
-        assert await readable(rel) is not inline, rel
-
-
-@darwin_only
-@pytest.mark.usefixtures("fenced")
-async def test_a_private_key_that_appears_later_is_denied_by_glob(home: Path, tmp_path: Path):
-    (home / ".ssh").mkdir()
-    shell = _shell(_work(tmp_path))
-    _ = (home / ".ssh" / "id_rsa").write_text("KEY")
-    _ = (home / ".ssh" / "deploy_key").write_text("KEY")
-    _ = (home / ".ssh" / "id_rsa.pub").write_text("PUB")
-    assert not (await shell.run("cat ~/.ssh/id_rsa")).ok
-    assert not (await shell.run("cat ~/.ssh/deploy_key")).ok
-    assert (await shell.run("cat ~/.ssh/id_rsa.pub")).ok
-
-
 @darwin_only
 @pytest.mark.usefixtures("fenced")
 async def test_the_keychain_daemon_stays_reachable_inside_the_fence(tmp_path: Path):
@@ -343,33 +306,24 @@ def test_the_keychain_folder_is_readable_for_the_shell_but_not_the_hatch(home: P
 
 @darwin_only
 @pytest.mark.usefixtures("fenced")
-async def test_keychain_clients_can_open_the_keychain_files_inside_the_fence(
-    home: Path, tmp_path: Path
-):
+async def test_the_keychain_folder_is_unreadable_inside_the_fence(home: Path, tmp_path: Path):
     (home / "Library/Keychains").mkdir(parents=True)
     _ = (home / "Library/Keychains/login.keychain-db").write_text("CIPHERTEXT")
     result = await _shell(_work(tmp_path)).run("cat ~/Library/Keychains/login.keychain-db")
-    assert result.ok, result.stderr
+    assert not result.ok
+    assert "CIPHERTEXT" not in result.stdout
 
 
 @pytest.mark.usefixtures("fenced")
-async def test_the_fenced_shell_can_write_elsewhere_under_home_and_keep_its_cwd(
-    home: Path, tmp_path: Path
-):
-    root = _work(tmp_path)
-    (root / "sub").mkdir()
-    shell = _shell(root)
-    result = await shell.run("mkdir -p ~/.config/tmpdir && cd sub")
+async def test_the_fenced_shell_can_write_elsewhere_under_home(home: Path, tmp_path: Path):
+    result = await _shell(_work(tmp_path)).run("mkdir -p ~/.config/tmpdir")
     assert result.ok, result.stderr
     assert (home / ".config/tmpdir").is_dir()
-    assert shell.cwd == (root / "sub").resolve()
 
 
 @pytest.mark.usefixtures("fenced")
 async def test_temp_directories_work_inside_the_fence(tmp_path: Path):
-    result = await _shell(_work(tmp_path)).run(
-        'f=$(mktemp) && echo "$f" && rm "$f" && touch /tmp/heph-floor-$$ && rm /tmp/heph-floor-$$'
-    )
+    result = await _shell(_work(tmp_path)).run('f=$(mktemp) && echo "$f" && rm "$f"')
     assert result.ok, result.stderr
     assert result.stdout.strip()
 
@@ -388,41 +342,6 @@ async def test_a_nested_repository_keeps_its_hooks_and_config_closed(home: Path,
     assert other.ok, other.stderr
     assert not (repo / ".git/hooks/pre-commit").exists()
     assert (repo / ".git/config").read_text() == "[core]\n"
-
-
-@pytest.mark.usefixtures("fenced")
-async def test_a_fenced_background_command_runs_and_is_denied_like_a_foreground_one(
-    home: Path, tmp_path: Path
-):
-    shell = _shell(_work(tmp_path))
-    ok_id = await shell.start("echo background-ran")
-    bad_id = await shell.start("echo x >> ~/.zshrc")
-    for command_id in (ok_id, bad_id):
-        for _ in range(100):
-            status = await shell.check(command_id)
-            assert status is not None
-            if status.status == "finished":
-                break
-            await asyncio.sleep(0.1)
-    ok = await shell.check(ok_id)
-    bad = await shell.check(bad_id)
-    assert ok is not None and bad is not None
-    assert "background-ran" in ok.stdout and ok.exit_code == 0
-    assert bad.exit_code != 0
-    assert not (home / ".zshrc").exists()
-    await shell.shutdown()
-
-
-@pytest.mark.usefixtures("unfenced")
-async def test_a_cd_through_a_symlink_out_of_the_root_is_not_tracked(tmp_path: Path):
-    root = _work(tmp_path)
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (root / "link").symlink_to(outside)
-    shell = _shell(root)
-    result = await shell.run("cd link")
-    assert result.ok
-    assert shell.cwd == root
 
 
 async def test_the_backend_does_not_run_a_hook_a_repository_names(tmp_path: Path):

@@ -36,9 +36,9 @@ which the fence holds.
 is the exception: it resolves through `PATH`, which the command line did not write.
 
 **Not covered.** A command that takes its paths from bytes at run time (`xargs cat < list`,
-a script the model just wrote) names nothing readable here. The fence answers that class: a
-``workspace`` command runs in the platform VM against a copy of the project with no
-network, so it reaches only what the guest copy holds and cannot send it anywhere.
+a script the model just wrote) names nothing readable here. The fence answers that class:
+a VM command runs in the conversation VM, which mounts only the host folders it was given
+and reaches only the allowlisted hosts.
 """
 
 from __future__ import annotations

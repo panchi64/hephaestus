@@ -85,20 +85,15 @@ class TestTheLevelPart:
     async def test_the_auto_fragment_claims_nothing_about_tools_a_thread_may_not_have(
         self,
     ):
-        """Auto is every fresh thread's level, and the tools that take a `reach` are the
-        shell's, which an operator may switch off. So the fragment asks the model to
-        answer the question *where a tool asks it*, rather than asserting that every
-        command carries one."""
+        """Auto is every fresh thread's level, and the shell is a tool an operator may
+        switch off. So the fragment asserts nothing about every command."""
         for project_id in (None, "proj-1"):
             assert AUTO_LEVEL in await _brief(project_id=project_id, permission="auto")
-        assert "Where a tool asks how far a command needs to reach" in AUTO_LEVEL
         assert "Every shell command" not in AUTO_LEVEL
 
-    async def test_auto_asks_for_the_declaration_and_never_states_the_bar(self):
-        """The one thing an Auto thread's model has to *do* differently is declare a
-        reach. What clears the review is deliberately absent — from here as much as from
-        the reviewer's own prompt: a model told the bar writes for the bar."""
-        assert "reach" in AUTO_LEVEL
+    async def test_auto_never_states_the_bar(self):
+        """What clears the review is deliberately absent — from here as much as from the
+        reviewer's own prompt: a model told the bar writes for the bar."""
         for tell in ("low", "high", "too_destructive", "authorization"):
             assert tell not in AUTO_LEVEL
 

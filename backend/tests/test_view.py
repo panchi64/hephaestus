@@ -12,6 +12,7 @@ without an event.
 from __future__ import annotations
 
 import json
+import tempfile
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,7 +27,9 @@ from core.db import init_db, make_engine
 from core.vault import Vault
 from runs import EventBody, Run, RunStream
 from services.artifacts import ArtifactStore
-from services.sandbox import PreviewHandle, SandboxError, SandboxSessionManager
+from services.home.scratch import ScratchDirs
+from services.vm import PreviewHandle, Previews, VMError
+from services.vm.machines import MachineSpec
 from services.workspace_history import (
     SnapshotView,
     WorkspaceHistoryStore,
@@ -37,38 +40,27 @@ from tools import RunDeps, build_agent_toolsets
 from tools.view import view_toolset
 
 
-class FakeSession:
-    """Serves canned workspace bytes; raises like the real session on a miss, and
-    hands the same bytes back as the captured workspace tree."""
-
-    def __init__(self, files: dict[str, bytes]) -> None:
-        self._files: dict[str, bytes] = files
-
-    def read_file(self, path: str) -> bytes:
-        if path not in self._files:
-            raise SandboxError(f"no such file: {path!r}")
-        return self._files[path]
-
-    def collect_text_files(self) -> dict[str, bytes]:
-        return dict(self._files)
-
-
 class FakeManager:
-    """Stands in for the sandbox session manager — files + a live-head launcher."""
+    """A real scratch folder holding canned files, and a duck-typed stand-in for
+    ``Previews`` (which needs a machine) that records the live-head launches."""
 
     def __init__(self, files: dict[str, bytes] | None = None, *, fail: bool = False) -> None:
-        self._session: FakeSession = FakeSession(files or {})
+        self.scratch: ScratchDirs = ScratchDirs(Path(tempfile.mkdtemp()))
+        folder = self.scratch.acquire("conv-1")
+        _ = folder.ensure_workspace()
+        for relpath, content in (files or {}).items():
+            folder.write_file(relpath, content)
         self.fail: bool = fail
         self.started: list[tuple[str, tuple[str, ...], int]] = []
         self.stopped: list[str] = []
 
-    async def acquire(self, _key: str, **_kwargs: object) -> FakeSession:
-        return self._session
-
-    async def start_preview(self, key: str, command: list[str], port: int) -> PreviewHandle:
+    async def start(
+        self, key: str, spec: MachineSpec, *, working_dir: str, command: list[str], port: int
+    ) -> PreviewHandle:
+        del spec, working_dir
         self.started.append((key, tuple(command), port))
         if self.fail:
-            raise SandboxError("address already in use")
+            raise VMError("address already in use")
         return PreviewHandle(
             token="tok",
             host_port=5000,
@@ -76,7 +68,7 @@ class FakeManager:
             command=tuple(command),
         )
 
-    async def stop_preview(self, key: str) -> None:
+    async def stop(self, key: str) -> None:
         self.stopped.append(key)
 
 
@@ -152,8 +144,9 @@ def _run(
     run = Run(id="r1", kind="chat", owner_id="operator", stream=RunStream())
     caps = ServiceContainer()
     if manager is not None:
-        # The fake manager registers under the class the view tools resolve.
-        caps.add(manager, as_type=SandboxSessionManager)
+        caps.add(manager.scratch)
+        # The duck-typed fake registers under the class the view tools resolve.
+        caps.add(manager, as_type=Previews)
     if store is not None:
         caps.add(store)
     if history is not None:

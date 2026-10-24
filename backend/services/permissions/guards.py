@@ -66,7 +66,7 @@ FILE_WRITE_TOOLS = frozenset({"files_write_file", "files_edit_file", "files_crea
 #: The file tools that rewrite what a file holds, which need the file read first.
 FILE_REWRITE_TOOLS = frozenset({"files_write_file", "files_edit_file"})
 SHELL_TOOLS = frozenset({"shell_run_command", "shell_start_command"})
-HOST_COMMAND_TOOL = "code_run_host_command"
+HOST_COMMAND_TOOL = "shell_run_on_host"
 #: The tools that run a command, which must not overlap: each is judged against the
 #: directory the one before it left the shell in.
 COMMAND_TOOLS = SHELL_TOOLS | {HOST_COMMAND_TOOL}
@@ -104,7 +104,7 @@ def guard(
     ``cwd`` is the shell's working directory as a home path; it defaults to the home's
     default place, and ``cwd_known`` false says an earlier call in the batch may have moved
     it. ``strict`` then treats every relative removal or move target as critical, for a
-    caller that cannot ask. ``code_run_host_command`` starts in the host's scratch
+    caller that cannot ask. ``shell_run_on_host`` starts in the host's scratch
     directory whatever ``cwd`` is. A command too deeply nested to read asks.
     """
     try:
@@ -144,7 +144,7 @@ def _guard(
         return None if reason is None else f"{reason} {_GRANT_FREE}"
     if tool not in COMMAND_TOOLS:
         return None
-    host = tool == HOST_COMMAND_TOOL or args.get("reach") == "host"
+    host = tool == HOST_COMMAND_TOOL
     command = args.get("command")
     if isinstance(command, str):
         if tool == HOST_COMMAND_TOOL:
@@ -173,9 +173,9 @@ def guard_of_approval(parked_metadata: Mapping[str, object] | None) -> str | Non
     return marked if isinstance(marked, str) else "This call always needs your approval."
 
 
-def unconfined(tool: str, args: Mapping[str, object], *, settings: Settings) -> str | None:
+def unconfined(tool: str, *, settings: Settings) -> str | None:
     """The warning a host command's card carries when its fence is not in force."""
-    if tool != HOST_COMMAND_TOOL and not (tool in SHELL_TOOLS and args.get("reach") == "host"):
+    if tool != HOST_COMMAND_TOOL:
         return None
     state = confinement_state(settings)
     if state.state == "active":

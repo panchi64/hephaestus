@@ -13,6 +13,7 @@ from pydantic import JsonValue
 from pydantic_ai.messages import ModelResponse, TextPart
 
 from services.decisions import Noul, Score
+from services.home.paths import SCRATCH
 from services.permissions import (
     Capability,
     PriorApproval,
@@ -29,6 +30,7 @@ from services.permissions.decision_questions import (
     build_state,
     readable_whole,
 )
+from services.permissions.fence import HomeFence
 
 from ._json import arr, obj, s
 
@@ -84,7 +86,7 @@ class TestTheStateIsSplitByAuthor:
         measured = obj(_state()["measured"])
         assert measured["tool"] == "shell_run_command"
         assert measured["names_network_address"] is False
-        assert measured["declared_reach"] == "offline"
+        assert "declared_reach" not in measured
         assert "/" in arr(measured["reaches_outside_workspace"])
 
     def test_an_install_is_reported_beside_the_address_fact(self):
@@ -110,12 +112,13 @@ class TestTheStateIsSplitByAuthor:
         assert json.loads(conversation) == [{"role": "assistant", "text": forged}]
 
     def test_the_sandbox_fact_is_stated_for_the_call_that_turns_on_it(self):
-        sandboxed = capability_of("code_execute", {"code": "import urllib"})
+        scratch_only = HomeFence(places=frozenset({SCRATCH}), writable=frozenset({SCRATCH}))
+        sandboxed = capability_of("code_execute", {"code": "import urllib"}, root=scratch_only)
         measured = obj(_state(sandboxed)["measured"])
         assert measured["runs_in_sandbox"] is True
         # The walk's reading, not the sandbox's egress: a program writes no address.
         assert measured["names_network_address"] is False
-        host = capability_of("code_run_host_command", {"command": "ls", "explanation": "x"})
+        host = capability_of("shell_run_on_host", {"command": "ls", "explanation": "x"})
         assert obj(_state(host)["measured"])["runs_in_sandbox"] is False
 
     def test_it_carries_nothing_the_model_could_only_guess_at(self):
@@ -217,9 +220,7 @@ class TestTheQuestions:
         assert "similar action" in requested
 
     def test_sending_outward_is_asked_for_whatever_the_walk_saw(self):
-        pushes = capability_of(
-            "shell_run_command", {"command": "git push origin main", "reach": "network"}
-        )
+        pushes = capability_of("shell_run_command", {"command": "git push origin main"})
         assert not pushes.network
         assert "names_network_address of false is no evidence" in QUESTIONS["outward"].instructions
 

@@ -3,7 +3,7 @@
 The proxy route and the live-status route both arrive holding nothing but an opaque
 token, and both need an answer that outlives the thing it refers to: a preview torn down
 by the idle reaper has to read as *stopped* rather than as *never existed*, or the
-frontend cannot tell "the sandbox went idle and killed your server" from an iframe that
+frontend cannot tell "the machine went idle and killed your server" from an iframe that
 is merely still loading.
 
 So this keeps two maps rather than one. The live index is authoritative only while the

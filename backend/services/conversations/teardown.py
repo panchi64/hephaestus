@@ -31,7 +31,7 @@ _SUBAGENT_STOP_S = 5.0
 
 
 class Purger(Protocol):
-    """A manager holding per-conversation state on disk (the sandbox, the browser)."""
+    """A manager holding per-conversation state (the VM, the scratch, the browser)."""
 
     async def purge(self, key: str) -> None: ...
 
@@ -65,6 +65,7 @@ class ConversationTeardown:
         inbox_dispatcher: InboxDispatch | None,
         sandbox: Purger | None,
         browser: Purger | None,
+        machines: Purger | None = None,
     ) -> None:
         self._store: ConversationStore = store
         self._registry: RunRegistry = registry
@@ -81,6 +82,7 @@ class ConversationTeardown:
         self._inbox_dispatcher: InboxDispatch | None = inbox_dispatcher
         self.sandbox: Purger | None = sandbox
         self.browser: Purger | None = browser
+        self.machines: Purger | None = machines
 
     async def delete(
         self,
@@ -205,9 +207,10 @@ class ConversationTeardown:
         return True
 
     async def _purge_disk_state(self, conversation_id: str) -> None:
-        """The sandbox, egress allowlist and browser profile (its saved logins). Best-effort:
-        the DB delete is the authoritative action."""
-        for name, purger in (("sandbox", self.sandbox), ("browser", self.browser)):
+        """The VM, the scratch, the egress allowlist and the browser profile (its saved
+        logins). Best-effort: the DB delete is the authoritative action."""
+        purgers = (("vm", self.machines), ("sandbox", self.sandbox), ("browser", self.browser))
+        for name, purger in purgers:
             if purger is None:
                 continue
             try:

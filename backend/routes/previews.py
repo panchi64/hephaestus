@@ -1,7 +1,7 @@
-"""Live-preview reverse proxy — the token-gated window into a sandbox server.
+"""Live-preview reverse proxy — the token-gated window into a dev server in a VM.
 
-The agent runs a dev server in its sandbox (``start_preview``); this forwards the
-operator's browser to it. The address carries an unguessable per-preview **token**
+The agent runs a dev server in its conversation's VM (``services/vm/previews.py``); this
+forwards the operator's browser to it. The address carries an unguessable per-preview **token**
 (``/previews/{token}/…``) which *is* the credential, and the token rides every
 relative subresource load automatically. So this subtree is exempt from the cookie
 gate (see ``core/auth``) — it only ever proxies to a loopback preview server,
@@ -32,7 +32,7 @@ from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
 from core.shutdown import ends_on_shutdown, wait_shutdown
 from routes import deps
-from services.sandbox import PreviewHandle
+from services.vm import PreviewHandle
 
 router = APIRouter(prefix="/previews", tags=["previews"])
 
@@ -76,8 +76,8 @@ _PREVIEW_SANDBOX = "sandbox allow-scripts allow-forms allow-popups allow-modals 
 
 
 def _preview(request_or_ws: Request | WebSocket, token: str) -> PreviewHandle | None:
-    manager = deps.sandbox_sessions(request_or_ws)
-    return manager.resolve_preview(token) if manager is not None else None
+    previews = deps.previews(request_or_ws)
+    return previews.resolve(token) if previews is not None else None
 
 
 def _rewrite_location(value: str, prefix: str) -> str:

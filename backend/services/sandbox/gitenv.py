@@ -20,8 +20,8 @@ programs, but no value switches them off: git reads them as command lines, so an
 value is a program named "" and pinning ``diff.external=`` makes every `git diff` fail
 (git 2.50). The driver names come from the repository's `.gitattributes`, and blanking the
 attributes (``GIT_ATTR_SOURCE`` at the empty tree) would also disable git-lfs and
-end-of-line normalisation. Those keys are left to the platform VM, which bounds what any
-spawned program may do. The pins cover what the VM cannot: launching a poisoned
+end-of-line normalisation. Those keys are left to the conversation VM, which bounds what any
+spawned program may do. The pins cover what the host fence cannot: launching a poisoned
 `core.fsmonitor`, and a pager blocking on a pipe.
 """
 

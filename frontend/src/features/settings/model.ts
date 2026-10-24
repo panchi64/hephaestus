@@ -123,7 +123,7 @@ export interface OfflineState {
 
 export type VmStatus = "ready" | "starting" | "unavailable";
 
-/** The platform VM that runs agent code, previews, search and web fetch. */
+/** The services VM that runs agent code, previews, search and web fetch. */
 export interface VmState {
   state: VmStatus;
   detail: string | null;

@@ -22,43 +22,42 @@ from pathlib import Path
 
 import pytest
 
+from services.home.paths import SCRATCH, Place
 from services.permissions.capability import (
     ActionKind,
-    Reach,
     capability_of,
-    declared_reach,
     measured_against_root,
     shell_capability,
 )
+from services.permissions.fence import HomeFence
 from services.permissions.judge import Judgement, judge
 from services.permissions.shell_ast import command_prefixes, strip_comments
 
 ROOT = Path("/tmp/hephaestus-judge-workspace")
+API = Place("projects", "api")
+SCRATCH_ONLY = HomeFence(places=frozenset({SCRATCH}), writable=frozenset({SCRATCH}))
 
 
 def judged(
     command: str,
     *,
     root: Path | None = ROOT,
-    reach: Reach = "offline",
     fenced: bool = True,
+    tool: str = "shell_run_command",
 ) -> Judgement:
-    return judge(
-        shell_capability("shell_run_command", command, root=root, reach=reach),
-        fenced=fenced,
-    )
+    return judge(shell_capability(tool, command, root=root), fenced=fenced)
 
 
 def cleared(
-    command: str, *, root: Path | None = ROOT, reach: Reach = "offline", fenced: bool = True
+    command: str, *, root: Path | None = ROOT, fenced: bool = True, tool: str = "shell_run_command"
 ) -> bool:
-    return judged(command, root=root, reach=reach, fenced=fenced).approved
+    return judged(command, root=root, fenced=fenced, tool=tool).approved
 
 
 def reason(
-    command: str, *, root: Path | None = ROOT, reach: Reach = "offline", fenced: bool = True
+    command: str, *, root: Path | None = ROOT, fenced: bool = True, tool: str = "shell_run_command"
 ) -> str:
-    return judged(command, root=root, reach=reach, fenced=fenced).reason
+    return judged(command, root=root, fenced=fenced, tool=tool).reason
 
 
 class TestWhatTheWalkReads:
@@ -261,7 +260,7 @@ class TestAWordThatIsAWholeCommandLine:
         assert capability.bounded  # every word was read; one of them left the worktree
         assert escape in capability.escapes
         assert not cleared(command)
-        assert reason(command).startswith('declared reach "offline" but names')
+        assert "outside the workspace" in reason(command)
 
     @pytest.mark.parametrize(
         "command",
@@ -609,56 +608,45 @@ class TestTheStructuralStage:
         assert cleared("cd src")
         assert not cleared("cd ..")
 
-    def test_a_host_declaration_is_never_cleared_here(self):
-        assert not cleared("ls", reach="host")
-        assert 'declared reach "host"' in reason("ls", reach="host")
-
-    def test_a_declaration_the_command_contradicts_escalates(self):
-        # The fence built for `workspace` would deny the egress anyway; what this refusal
-        # buys is the operator being told rather than the model being puzzled.
-        assert not cleared("curl https://example.com")
-        assert "names a network address" in reason("curl https://example.com")
-        assert not cleared("cat /etc/passwd", reach="network")
-        assert 'declared reach "network" but names /etc/passwd' in reason(
-            "cat /etc/passwd", reach="network"
-        )
+    def test_the_host_tool_is_never_cleared_here(self):
+        for fenced in (True, False):
+            judgement = judged("ls", tool="shell_run_on_host", fenced=fenced)
+            assert not judgement.approved and judgement.tier is None
 
     def test_a_networked_command_is_always_the_reviewers(self):
-        # The fence bounds writes and egress and cannot bound *reads* — the runtime has a
-        # read denylist and no read allowlist — so a command cleared for the worktree can
-        # already read whatever the operator can, and a command that reaches out is the
-        # only way any of it leaves. An allowed-domains list does not settle that: the
-        # seeded hosts take uploads as readily as they serve downloads. So the declaration
-        # escalates whatever the operator has allowed, and the list stays what an approved
-        # command is *held to* rather than what clears it.
-        for command in ("curl https://example.com", "git push origin main", "uv sync"):
-            judgement = judged(command, reach="network")
-            assert not judgement.approved, command
-            assert judgement.reason == "reaches the network; the reviewer decides"
-            assert judgement.tier is None
+        # The VM bounds writes and egress and cannot bound *reads* of the mounted project,
+        # so a command that reaches out is the only way any of it leaves. An allowed-domains
+        # list does not settle that: the seeded hosts take uploads as readily as they serve
+        # downloads. So it escalates whatever the operator has allowed.
+        judgement = judged("curl https://example.com")
+        assert not judgement.approved
+        assert judgement.reason == "names a network address; the reviewer decides"
+        assert judgement.tier is None
 
-    def test_an_offline_install_or_clone_is_the_reviewers(self):
-        # The shell runs it with the network whatever it declared, so the judge reads it as
-        # a networked command rather than clearing it as contained work.
+    def test_an_install_or_clone_is_the_reviewers(self):
+        # The VM runs it with its egress, so the judge reads it as a networked command
+        # rather than clearing it as contained work.
         for command in ("pip install requests", "npm ci", "git clone repo"):
             judgement = judged(command)
             assert not judgement.approved, command
-            assert judgement.reason == 'declared reach "offline" but installs or clones'
+            assert judgement.reason == "installs or clones; the reviewer decides"
 
     def test_without_a_fence_nothing_structural_clears(self):
-        # The declaration buys nothing on a host that cannot hold a process to it, so the
-        # model reviewer rules instead — with the same structural facts in front of it.
+        # With no VM to hold a process, the model reviewer rules instead — with the same
+        # structural facts in front of it.
         for command in ("ls -la", "uv run pytest", "git status"):
             assert not cleared(command, fenced=False)
-        assert "no fence" in reason("ls -la", fenced=False)
+        assert "can reach the network" in reason("ls -la", fenced=False)
 
-    def test_a_read_and_a_sandbox_call_clear_with_no_fence_at_all(self):
-        # The two tiers a fence has nothing to do with: one is settled by the tool's class,
-        # the other by the container the call already runs inside.
+    def test_a_read_clears_with_no_fence_but_a_sandbox_call_does_not(self):
+        # A read is settled by the tool's class. A sandboxed program is held by a VM with no
+        # network, so without that fence it is the reviewer's.
         read = judge(capability_of("corpus_retrieve", {"query": "x"}), fenced=False)
         assert read.approved and read.tier == "read"
-        sandboxed = judge(capability_of("code_execute", {"code": "print(1)"}), fenced=False)
-        assert sandboxed.approved and sandboxed.tier == "sandbox"
+        program = capability_of("code_execute", {"code": "print(1)"}, root=SCRATCH_ONLY)
+        assert program.sandboxed
+        unfenced = judge(program, fenced=False)
+        assert not unfenced.approved and unfenced.tier is None
 
     def test_a_sandbox_call_has_no_way_to_ask_for_the_network(self):
         # The container *is* the fence for this tool, and it is unconditional: there is no
@@ -666,55 +654,38 @@ class TestTheStructuralStage:
         # program. Widening what the workspace may reach is a different act with a tool of
         # its own (`code_request_egress`), which never clears here — see
         # `test_widening_the_egress_allowlist_is_never_cleared_here`.
-        offline = judge(capability_of("code_execute", {"code": "print(1)"}), fenced=True)
+        offline = judge(
+            capability_of("code_execute", {"code": "print(1)"}, root=SCRATCH_ONLY), fenced=True
+        )
         assert offline.approved
         assert offline.tier == "sandbox"
         # ...and asking for one by writing the argument the tool no longer has changes
         # nothing, since nothing reads it.
         asked = judge(
-            capability_of("code_execute", {"code": "print(1)", "network": True}), fenced=True
+            capability_of("code_execute", {"code": "print(1)", "network": True}, root=SCRATCH_ONLY),
+            fenced=True,
         )
         assert asked.approved and asked.tier == "sandbox"
 
-    def test_an_absent_argument_is_the_schema_default_the_tool_will_run_under(self):
-        # The executing tools default `reach` to `offline`, so an omitted argument is not
-        # a missing declaration — reading it as anything else would escalate every call
-        # that left it off while the command ran fenced to the worktree anyway.
-        assert declared_reach("shell_run_command", {"command": "ls"}) == "offline"
+    def test_the_host_tool_is_the_only_command_tool_off_the_vm(self):
+        assert capability_of("shell_run_on_host", {"command": "ls"}).on_host
+        assert not capability_of("shell_run_command", {"command": "ls"}).on_host
+        assert not capability_of("shell_start_command", {"command": "ls"}).on_host
 
-    @pytest.mark.parametrize("value", ["everywhere", "", None, 3, "Offline"])
-    def test_a_value_this_module_does_not_recognise_is_the_widest_one(self, value: object):
-        assert declared_reach("shell_run_command", {"command": "ls", "reach": value}) == "host"
-
-    def test_the_reach_renamed_from_workspace_reads_as_offline(self):
-        assert declared_reach("shell_run_command", {"command": "ls", "reach": "workspace"}) == (
-            "offline"
-        )
-
-    def test_a_host_command_declares_the_host_whatever_its_arguments_say(self):
-        assert (
-            declared_reach("code_run_host_command", {"command": "ls", "reach": "offline"}) == "host"
-        )
-
-    def test_a_tool_with_no_such_argument_declares_nothing_rather_than_the_default(self):
-        # `code_execute` has no `reach` argument to leave off, so reading its absence as
-        # the executing tools' schema default would be the chassis writing a declaration
-        # the model never made — and it would then be printed to the reviewer and rendered
-        # on the operator's review row as if it had.
-        assert declared_reach("code_execute", {"code": "print(1)"}) is None
-        assert capability_of("code_execute", {"code": "print(1)"}).reach is None
-        assert capability_of("shell_run_command", {"command": "ls"}).reach == "offline"
-
-    def test_a_sandbox_program_declares_nothing_and_is_cleared_by_its_container(self):
-        # `code_execute` has no `reach` argument, so it declares nothing — `declared_reach`
-        # answers `None` rather than inventing a declaration the model never made. That is
-        # not a refusal here: the call is cleared on the *container*, which bounds it
-        # whatever the program does, so the missing declaration never has to be ruled on.
-        capability = capability_of("code_execute", {"code": "print(1)"}, root=ROOT)
-        assert capability.reach is None and capability.sandboxed
+    def test_a_sandbox_program_is_cleared_by_its_container(self):
+        # The call is cleared on the *container*, which bounds it whatever the program does.
+        capability = capability_of("code_execute", {"code": "print(1)"}, root=SCRATCH_ONLY)
+        assert capability.sandboxed
         judgement = judge(capability, fenced=True)
         assert judgement.approved
         assert judgement.tier == "sandbox"
+
+    def test_a_program_is_not_sandboxed_where_a_project_is_writable(self):
+        writable = HomeFence(places=frozenset({SCRATCH, API}), writable=frozenset({SCRATCH, API}))
+        capability = capability_of("code_execute", {"code": "print(1)"}, root=writable)
+        assert not capability.sandboxed
+        assert not judge(capability, fenced=True).approved
+        assert not capability_of("code_execute", {"code": "print(1)"}, root=ROOT).sandboxed
 
 
 class TestContainment:
@@ -752,7 +723,7 @@ class TestContainment:
 
 
 class TestAHostCommandIsNotAWorkspaceCommand:
-    """`code_run_host_command` runs on the operator's machine, not in the workspace."""
+    """`shell_run_on_host` runs on the operator's machine, not in the workspace."""
 
     def test_it_is_never_cleared_by_the_deterministic_stage(self):
         # Reading it against the run's workspace root was how `cat .env` cleared as a
@@ -761,7 +732,7 @@ class TestAHostCommandIsNotAWorkspaceCommand:
         # container the host cannot see.
         for command in ("cat .env", "ls", "git status"):
             capability = capability_of(
-                "code_run_host_command", {"command": command, "explanation": "x"}, root=ROOT
+                "shell_run_on_host", {"command": command, "explanation": "x"}, root=ROOT
             )
             judgement = judge(capability, fenced=True)
             assert not judgement.approved, command
@@ -775,7 +746,7 @@ class TestAHostCommandIsNotAWorkspaceCommand:
     def test_the_gate_opens_no_workspace_to_judge_one(self):
         # Opening a workspace is a `git worktree add` or a container start, and a host
         # command would be measured against it wrongly anyway.
-        assert not measured_against_root("code_run_host_command")
+        assert not measured_against_root("shell_run_on_host")
         assert measured_against_root("shell_run_command")
         assert measured_against_root("files_write_file")
 

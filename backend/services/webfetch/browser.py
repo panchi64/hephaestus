@@ -1,18 +1,17 @@
 """ManagedBrowser — the headless Chromium the web fetcher renders pages in, run in the
-platform VM.
+services VM.
 
 Rendering a page means executing its untrusted JavaScript, so the browser must not run
-in the backend process or on the host. It runs as a service in the platform VM, as its
+in the backend process or on the host. It runs as a service in the services VM, as its
 own unprivileged user, and we drive it over the Chrome DevTools Protocol via Playwright
-``connect_over_cdp`` on a forwarded loopback port.
+``connect_over_cdp`` on a published loopback port.
 
-**SSRF is enforced at the VM's egress gateway, not by in-browser interception.** The
-browser is pointed at the guest relay with ``--proxy-server``, and every request it makes
-ends at the host-side gateway, which resolves each destination, pins a public IP, and
-refuses non-public ones (:mod:`services.vm.egress`). Enforcing in the browser via
-Playwright ``context.route`` would enable CDP's Fetch domain, which bot walls detect and
-hard-block — the proxy keeps the policy while looking like an ordinary browser. The VM
-has no other route out, so nothing the page does steps around it.
+**SSRF is enforced by the VM's network, not by in-browser interception.** The services
+VM reaches public addresses only (``services/vm/services.py``), so a page cannot reach the
+host or the LAN whatever it does. Enforcing in the browser via Playwright
+``context.route`` would enable CDP's Fetch domain, which bot walls detect and hard-block.
+The VM's own loopback stays reachable to a page; Chromium refuses a page's cross-origin
+connection to its debugging port, and nothing else listening there holds a secret.
 
 Bring-up is **best-effort and non-fatal** (mirrors :class:`services.searxng.ManagedSearxng`):
 a VM that never comes up or a browser that never answers leaves :attr:`available` False
@@ -32,7 +31,7 @@ from playwright.async_api import Browser, BrowserContext, Page, Playwright, asyn
 from playwright.async_api import Error as PlaywrightError
 
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
-from services.vm import PlatformVM, VMError
+from services.vm import ServiceHost, VMError
 
 from .cdp import discover_cdp_ws
 from .cookies import DomainCookieJar
@@ -51,6 +50,7 @@ _SERVICE = "chromium"
 _FORWARDER = "chromium-cdp"
 _USER = "browser"
 _BINARY = "/opt/hephaestus/bin/headless_shell"
+_PORTFWD = "/opt/hephaestus/portfwd.py"
 #: Chromium serves CDP on the guest's loopback only; the forwarder exposes it here.
 _CDP_PORT = 9222
 _CDP_EXPOSED = 9223
@@ -63,7 +63,7 @@ class _CdpSession(Protocol):
 
 
 class ManagedBrowser:
-    """Owns the lifecycle of the headless Chromium that runs in the platform VM.
+    """Owns the lifecycle of the headless Chromium that runs in the services VM.
 
     :attr:`available` is False until the VM is up, the browser is running and the CDP
     connection is live (or forever, if the VM never comes up or is disabled); callers check
@@ -74,7 +74,7 @@ class ManagedBrowser:
         self,
         *,
         enabled: bool,
-        vm: PlatformVM | None,
+        vm: ServiceHost | None,
         startup_timeout_s: float,
         concurrency: int,
         user_agent: str,
@@ -84,7 +84,7 @@ class ManagedBrowser:
         cookie_max: int = 2000,
     ) -> None:
         self._enabled: bool = enabled
-        self._vm: PlatformVM | None = vm
+        self._vm: ServiceHost | None = vm
         self._startup_timeout_s: float = startup_timeout_s
         self._sem: asyncio.Semaphore = asyncio.Semaphore(max(1, concurrency))
         self._user_agent_override: str = user_agent
@@ -231,7 +231,7 @@ class ManagedBrowser:
     async def _bring_up(self) -> None:
         vm = self._vm
         if vm is None:
-            logger.info("web fetch: no platform VM — web fetch unavailable")
+            logger.info("web fetch: no services VM — web fetch unavailable")
             return
         _ = await vm.wait_ready(float("inf"))
         try:
@@ -243,25 +243,16 @@ class ManagedBrowser:
                     _BINARY,
                     *LAUNCH_FLAGS,
                     f"--remote-debugging-port={_CDP_PORT}",
-                    f"--proxy-server={vm.layout.platform_proxy}",
-                    # Drops Chrome's implicit localhost bypass, so a page cannot reach the
-                    # debugging port or anything else on the guest's loopback.
-                    "--proxy-bypass-list=<-loopback>",
                     "--user-data-dir=/tmp/hephaestus-chromium",
-                    # The guest kernel has no user namespaces, which Chromium's own
-                    # sandbox needs; the service's confinement and its user stand in.
+                    # Chromium's own sandbox needs user namespaces the guest kernel may
+                    # lack; the VM and the service's user stand in.
                     "--no-sandbox",
                 ],
             )
             await vm.start_service(
                 _FORWARDER,
                 _USER,
-                [
-                    "python3",
-                    f"{vm.layout.opt}/portfwd.py",
-                    str(_CDP_EXPOSED),
-                    str(_CDP_PORT),
-                ],
+                ["python3", _PORTFWD, str(_CDP_EXPOSED), str(_CDP_PORT)],
             )
             host_port = await vm.forward(_CDP_EXPOSED)
         except VMError as exc:
