@@ -80,6 +80,9 @@ def names_whole_folder(segment: str) -> bool:
 REMOVERS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
 
 _WRITES_ALL = frozenset({"tee", "touch", "truncate"})
+_PRINTERS = frozenset({"cat", "head", "tail", "nl", "tac", "bat"})
+_PRINTER_VALUE_FLAGS = frozenset({"-n", "-c", "--lines", "--bytes"})
+_SED_VALUE_FLAGS = frozenset({"-e", "-f", "-l", "--expression", "--file"})
 _COPIERS = frozenset({"cp", "mv", "install", "ln", "rsync"})
 _COPY_VALUE_FLAGS = frozenset(
     {"-t", "--target-directory", "-S", "--suffix", "-m", "--mode", "-o", "--owner", "-g", "--group"}
@@ -344,3 +347,43 @@ def write_targets(one: ShellCommand) -> list[Target]:
         folders = option_values(args, "P", ("--directory-prefix",))
         return [*(Target(p, "write") for p in files), *(Target(p, "dir") for p in folders)]
     return []
+
+
+def rewrite_targets(one: ShellCommand) -> list[str]:
+    """The paths a command (other than a copy or move) overwrites or rewrites in place.
+    An append, ``touch`` and a removal leave the existing content standing."""
+    name = name_of(one)
+    if name == "touch" or (name == "tee" and _appends(one.arguments)):
+        return []
+    return [target.path for target in write_targets(one) if target.kind == "write"]
+
+
+def landing_paths(moved: Transfer) -> list[str]:
+    """Where a copy or move may land: the destination itself, or each source's name inside
+    it when it is a folder. A source only known when it runs names no landing path."""
+    if OPAQUE in moved.dest:
+        return []
+    inside = [
+        f"{moved.dest.rstrip('/')}/{posixpath.basename(source.rstrip('/'))}"
+        for source in moved.sources
+        if OPAQUE not in source
+    ]
+    return inside if moved.into_directory else [moved.dest, *inside]
+
+
+def printed_files(one: ShellCommand) -> list[str]:
+    """The operands of a command that prints the files it names, whole or in part."""
+    name = name_of(one)
+    args = one.arguments
+    if name in _PRINTERS:
+        return operands(args, _PRINTER_VALUE_FLAGS)
+    if name in ("sed", "gsed") and not _edits_in_place(name, args):
+        return operands(args, _SED_VALUE_FLAGS)
+    return []
+
+
+def _appends(args: tuple[str, ...]) -> bool:
+    return any(
+        word == "--append" or (word.startswith("-") and not word.startswith("--") and "a" in word)
+        for word in args
+    )

@@ -63,6 +63,7 @@ from services.sandbox.thread_shells import ThreadShell, ThreadShells
 from services.vm.project import ProjectCopies
 
 from .briefing import with_brief_payload
+from .command_ledger import command_refusal, ledger_check
 from .deps import RunDeps
 from .emit import RunEventEmitted
 from .home import change_log, resolve_run_home
@@ -358,8 +359,8 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
     ) -> dict[str, object] | str:
         """Runs a shell command in your home and waits for it to finish. Use it for builds,
         tests, git, package installs and anything else a terminal does. Read, search and
-        edit files with the `files_*` tools rather than `cat`, `grep` or `sed`, because
-        their edits are checked against the file's current contents.
+        edit files with the `files_*` tools rather than `cat`, `grep` or `sed`; a command
+        that rewrites a file you have not read is refused.
 
         Your home holds `~/scratch`, which is yours, and `~/projects/<name>` for each of
         the operator's projects. A command starts where the last one left off, so `cd`
@@ -394,6 +395,10 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
             return state
         shell = state.shell
         cwd = shell.home.cwd
+        args = {"command": command, "reach": reach}
+        ledger = ledger_check(ctx.deps, "shell_run_command", args, state.home, cwd)
+        if ledger is not None and ledger.refusal is not None:
+            return ledger.refusal
         bound = boundary("run_command", command, reach, state.home, cwd)
         touched = _touched(state, command, bound, cwd)
         timeout = timeout_seconds if timeout_seconds is not None else SHELL_TIMEOUT_S
@@ -402,6 +407,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
                 command, timeout_seconds=timeout_seconds, on_progress=_progress_hook(ctx)
             )
             payload = _run_payload(result, bound, timeout, cwd=cwd)
+            timed_out = result.timed_out
         else:
             done = await shell.home.run(
                 state.session,
@@ -416,6 +422,9 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
             payload = _run_payload(done.result, bound, timeout, cwd=done.cwd, notes=done.notes)
             if not done.result.ok and bound.network:
                 _name_gateway_denial(payload, state, done.began)
+            timed_out = done.result.timed_out
+        if ledger is not None and not timed_out:
+            ledger.record()
         return await with_brief_payload(ctx, state.home, touched, payload)
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
@@ -445,6 +454,10 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
             return state
         shell = state.shell
         cwd = shell.home.cwd
+        args = {"command": command, "reach": reach}
+        refusal = command_refusal(ctx.deps, "shell_start_command", args, state.home, cwd)
+        if refusal is not None:
+            return refusal
         bound = boundary("start_command", command, reach, state.home, cwd)
         touched = _touched(state, command, bound, cwd)
         if bound.fenced:

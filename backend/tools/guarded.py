@@ -20,16 +20,11 @@ from pydantic_ai import ApprovalRequired, RunContext
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from core.config import get_settings
-from services.permissions.guards import (
-    FILE_REWRITE_TOOLS,
-    GUARD_KEY,
-    GUARDED_TOOLS,
-    guard,
-)
+from services.permissions.guards import GUARD_KEY, GUARDED_TOOLS, guard
 from services.sandbox.thread_shells import ThreadShells
 
+from .command_ledger import LEDGER_TOOLS, ledger_refusal
 from .deps import RunDeps
-from .files import unread_refusal
 from .run_home import home_of
 
 
@@ -51,10 +46,11 @@ class GuardedToolset(WrapperToolset[RunDeps]):
     ) -> object:
         if name in GUARDED_TOOLS and not ctx.tool_call_approved:
             home = await home_of(ctx.deps)
-            if name in FILE_REWRITE_TOOLS:
+            if name in LEDGER_TOOLS:
                 # Refused before it is put to the operator: nobody is asked to approve a
                 # change the read ledger would turn away.
-                unread = await unread_refusal(ctx.deps, name, dict(tool_args), home)
+                cwd = shell_cwd(ctx.deps)
+                unread = await ledger_refusal(ctx.deps, name, tool_args, home, cwd)
                 if unread is not None:
                     return unread
             reason = guard(

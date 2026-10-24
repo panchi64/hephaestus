@@ -196,11 +196,11 @@ def _command_reason(command: str, start: Places, *, host: bool) -> str | None:
             reason = _act_reason(step.command, start.walk(directories), host)
             if reason is not None:
                 return reason
-    for destination, cwds in found.writes:
-        for directories in cwds:
-            why = start.walk(directories).protected(destination, host=host)
+    for redirect in found.writes:
+        for directories in redirect.cwds:
+            why = start.walk(directories).protected(redirect.path, host=host)
             if why is not None:
-                return f"This command writes {destination}: {why}."
+                return f"This command writes {redirect.path}: {why}."
     if host and found.piped_shells:
         return _UNREADABLE_SCRIPT
     for part in found.unreadable:

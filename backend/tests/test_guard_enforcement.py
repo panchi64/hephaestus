@@ -160,12 +160,12 @@ class TestTheDeferredPath:
         asked: list[str] = []
 
         async def unread(
-            _deps: RunDeps, tool: str, _args: dict[str, object], _home: object = None
+            _deps: RunDeps, tool: str, *_args: object, **_kwargs: object
         ) -> str | None:
             asked.append(tool)
             return "Read it first." if tool == "files_write_file" else None
 
-        monkeypatch.setattr(gating, "unread_refusal", unread)
+        monkeypatch.setattr(gating, "ledger_refusal", unread)
         write = ToolCallPart("files_write_file", {"path": "~/a", "content": "x"}, tool_call_id="w")
         read = ToolCallPart("files_read_file", {"path": "~/a"}, tool_call_id="r")
         settled, manual = await _settle("manual", [write, read])
@@ -186,12 +186,12 @@ class TestTheDeferredPath:
             return {}
 
         async def unread(
-            _deps: RunDeps, _tool: str, _args: dict[str, object], _home: object = None
+            _deps: RunDeps, _tool: str, *_args: object, **_kwargs: object
         ) -> str | None:
             return "Read it first."
 
         monkeypatch.setattr(gating, "review_batch", spy)
-        monkeypatch.setattr(gating, "unread_refusal", unread)
+        monkeypatch.setattr(gating, "ledger_refusal", unread)
         write = ToolCallPart("files_write_file", {"path": "~/a", "content": "x"}, tool_call_id="w")
         settled, manual = await _settle("auto", [write])
         assert reviewed == []

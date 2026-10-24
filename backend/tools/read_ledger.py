@@ -2,8 +2,9 @@
 
 An edit or an overwrite of an existing file needs a read behind it in the same
 conversation, and the harness then refuses it if the file changed since (``expected_hash``).
-Losing the ledger on a restart only makes the model read again. The ledger is bounded, and
-the oldest conversation is forgotten first.
+Shell and host commands are held to the same rule (``command_ledger.py``). Losing the
+ledger on a restart only makes the model read again. The ledger is bounded, and the oldest
+conversation is forgotten first.
 """
 
 from __future__ import annotations
@@ -68,7 +69,13 @@ def thread_of(deps: RunDeps) -> str:
 def unread_message(path: str) -> str:
     return render_tool_error(
         f"Read {path} before changing it.",
-        hints=["read it with files_read_file in this conversation, then retry"],
+        hints=["read it with files_read_file (or cat) in this conversation, then retry"],
+    )
+
+
+def stale_message(path: str) -> str:
+    return render_tool_error(
+        f"{path} changed since you read it.", hints=["read it again, then retry"]
     )
 
 

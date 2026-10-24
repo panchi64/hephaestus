@@ -70,7 +70,6 @@ from services.permissions import (
 from services.permissions.decision_reviewer import make_decision_reviewer
 from services.permissions.fence import Fence
 from services.permissions.guards import (
-    FILE_REWRITE_TOOLS,
     GUARD_KEY,
     GUARDED_TOOLS,
     changes_directory,
@@ -80,8 +79,8 @@ from services.permissions.guards import (
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
+from tools.command_ledger import LEDGER_TOOLS, ledger_refusal
 from tools.deps import RunDeps
-from tools.files import unread_refusal
 from tools.guarded import shell_cwd
 from tools.home import resolve_run_home
 from tools.run_home import home_of
@@ -183,21 +182,27 @@ async def settle_deferred(
     # resolve one. Each row carries the decision and whether a grant produced it: an ALLOW
     # can come from a grant or an allowing level, and only the first is revocable.
     home = await _guard_home(deps, approvals)
-    # A write the read ledger would turn away is neither asked nor reviewed; the model is
-    # told to read the file first.
+    # A write or command the read ledger would turn away is neither asked nor reviewed; the
+    # model is told to read the file first. After a `cd` in the batch, commands are left to
+    # the check they meet when they run.
     settled: dict[str, ToolApproved | ToolDenied] = {}
     asking: list[ToolCallPart] = []
+    cwd = shell_cwd(deps)
+    cwd_known = True
     for call in approvals:
+        args = call.args_as_dict()
         refusal = (
-            await unread_refusal(deps, call.tool_name, call.args_as_dict(), home)
-            if call.tool_name in FILE_REWRITE_TOOLS
+            await ledger_refusal(deps, call.tool_name, args, home, cwd, cwd_known=cwd_known)
+            if call.tool_name in LEDGER_TOOLS
             else None
         )
         if refusal is None:
             asking.append(call)
         else:
             settled[call.tool_call_id] = ToolDenied(message=refusal)
-    guarded = _guard_reasons(asking, home, shell_cwd(deps), metadata)
+        if cwd_known and changes_directory(call.tool_name, args):
+            cwd_known = False
+    guarded = _guard_reasons(asking, home, cwd, metadata)
     ruled = [
         (call, Decision.ASK, False)
         if call.tool_call_id in guarded and decide(permission, call.tool_name) is not Decision.BLOCK
