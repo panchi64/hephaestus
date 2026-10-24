@@ -38,6 +38,7 @@ from .context import (
     ContextThresholds,
     ContextWindow,
     FoldPoint,
+    InjectionPlacement,
 )
 from .conversation import (
     CompactionDelta,
@@ -119,6 +120,7 @@ __all__ = [
     "FoldPoint",
     "INJECTED_TEXT_LIMIT",
     "InboxWaiting",
+    "InjectionPlacement",
     "LastRequestUsage",
     "LimitNotice",
     "MessageEdited",

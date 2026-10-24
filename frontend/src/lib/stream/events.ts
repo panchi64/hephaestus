@@ -387,13 +387,14 @@ export interface ConversationCompacted extends Base {
  *
  *  `contributor` is the `ContextSegment.id` slug for the standing brief's rows.
  *  `placement`: `instructions` at the head (re-sent every turn; churn invalidates the
- *  prompt-prefix cache) or `prompt` at the tail of the turn's message (volatile content
- *  kept out of that prefix). `tokens` is a coarse estimate over the whole block; `text` is
- *  capped for the wire, flagged by `truncated`. */
+ *  prompt-prefix cache), `prompt` at the tail of the turn's message (volatile content
+ *  kept out of that prefix), or `summary` on a compaction checkpoint after the briefing.
+ *  `tokens` is a coarse estimate over the whole block; `text` is capped for the wire,
+ *  flagged by `truncated`. */
 export interface ContextInjected extends Base {
   type: "context.injected";
   contributor: string;
-  placement: "instructions" | "prompt";
+  placement: "instructions" | "prompt" | "summary";
   tokens: number;
   text: string;
   truncated: boolean;

@@ -7,13 +7,15 @@ import { ProcessRow, Sep, createAdoptedOpen } from "./ProcessRow";
 
 /** Where in the request a block landed, in the operator's words.
  *
- *  Worth a word on the row because the two placements cost differently and the operator
- *  can act on the difference: a block at the head is re-sent ahead of the whole history
- *  every turn, so churn there invalidates the inference engine's prompt-prefix cache from
- *  byte 0; one at the tail leaves that prefix byte-stable. */
+ *  Worth a word on the row because the placements cost differently and the operator can
+ *  act on the difference: a block at the head is re-sent ahead of the whole history every
+ *  turn, so churn there invalidates the inference engine's prompt-prefix cache from byte
+ *  0; one at the tail leaves that prefix byte-stable; one on a compaction summary is
+ *  stored with the checkpoint and replayed until the next fold. */
 const PLACEMENT: Record<ContextInjection["placement"], string> = {
   instructions: "at the prompt head",
   prompt: "at the turn's tail",
+  summary: "on the compaction summary",
 };
 
 /** One block of context the chassis put in front of the model — a project's instruction

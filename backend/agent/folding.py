@@ -50,6 +50,7 @@ from .history import (
     drop_dangling_tool_calls,
     merge_consecutive_requests,
 )
+from .injections import announce_injection
 from .metrics import post_fold_metrics
 from .summarize import (
     CompactionOutcome,
@@ -156,6 +157,8 @@ async def fold(
                 restored=list(result.restored),
             )
         )
+        if result.running_agents is not None:
+            announce_injection(run, "running_agents", result.running_agents, "summary")
     return result
 
 

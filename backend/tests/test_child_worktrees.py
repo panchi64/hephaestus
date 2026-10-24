@@ -109,6 +109,10 @@ class _Launcher(SubagentLauncher):
         return False
 
     @override
+    async def working_children(self, owner_id: str, conversation_id: str) -> list[SubagentView]:
+        return []
+
+    @override
     async def worktrees(self, owner_id: str, conversation_id: str) -> list[ChildWorktree]:
         child = self.child
         return [child] if child is not None and child.path.exists() else []

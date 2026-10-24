@@ -39,14 +39,14 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal, override
+from typing import override
 
 from pydantic_ai import InstructionPart, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 
 from core.text import CHARS_PER_TOKEN_PROSE, truncate_on_boundary
-from runs import INJECTED_TEXT_LIMIT, ContextInjected, Run
+from runs import INJECTED_TEXT_LIMIT, ContextInjected, InjectionPlacement, Run
 
 from .emit import ChassisEvent, is_side_run
 
@@ -83,9 +83,7 @@ def injected_tokens(text: str) -> int:
     return round(len(text) / CHARS_PER_TOKEN_PROSE)
 
 
-def injection_body(
-    contributor: str, text: str, placement: Literal["instructions", "prompt"]
-) -> ContextInjected:
+def injection_body(contributor: str, text: str, placement: InjectionPlacement) -> ContextInjected:
     """One contribution, as the event body the operator's stream carries.
 
     Built here rather than at each of the two delivery points, because there are two:
@@ -107,7 +105,7 @@ def injection_body(
 
 
 def announce_injection(
-    run: Run, contributor: str, text: str, placement: Literal["instructions", "prompt"]
+    run: Run, contributor: str, text: str, placement: InjectionPlacement
 ) -> None:
     """Put one contribution on the run's stream directly — the pre-run path, for a
     contributor that resolves before the agent exists to emit through."""

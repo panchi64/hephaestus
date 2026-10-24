@@ -157,6 +157,8 @@ class CompactionOutcome:
     reason: CompactionReason = "threshold"
     # What the fold re-read after the briefing, as also written onto the checkpoint.
     restored: tuple[str, ...] = ()
+    # The running-agents block the restore attached, for the fold's injection notice.
+    running_agents: str | None = None
 
 
 #: What one fold answers with. Three outcomes rather than one nullable value, because a
@@ -296,6 +298,8 @@ async def compact_conversation(
     if isinstance(summary, FoldFailed):
         return summary
     restored = await restore_after_fold(deps, cfg)
+    # No await from here to `record_compaction`: the restore's running-agents read is the
+    # cutoff a sub-agent's report has to land on one side of.
     # Labelled on the way in, not on the way out: the stored text is what both the model
     # replays and the operator reads, and it needs to announce itself as a summary in both
     # places. The same framed text rides the event, so the divider a live client draws and
@@ -338,6 +342,7 @@ async def compact_conversation(
         after_message_id=plan.anchor_id,
         reason=reason,
         restored=tuple(restored.names),
+        running_agents=restored.agents,
     )
 
 

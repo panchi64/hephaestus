@@ -3,6 +3,7 @@
 
 import type {
   CompactionReason,
+  ContextInjected,
   ContextWindow,
   SummarySection,
 } from "~/lib/stream";
@@ -385,7 +386,7 @@ export interface ContextBlock {
  *  `tokens` figure is always over the whole block. */
 export interface ContextInjection {
   contributor: string;
-  placement: "instructions" | "prompt";
+  placement: ContextInjected["placement"];
   tokens: number;
   text: string;
   truncated: boolean;

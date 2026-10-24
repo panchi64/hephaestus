@@ -256,6 +256,11 @@ class SubagentLauncher(ABC):
         report to the thread is still to come."""
 
     @abstractmethod
+    async def working_children(self, owner_id: str, conversation_id: str) -> list[SubagentView]:
+        """The agents this thread spawned itself that still have a turn under way, oldest
+        first: the ones whose report to the thread is still to come."""
+
+    @abstractmethod
     async def worktrees(self, owner_id: str, conversation_id: str) -> list[ChildWorktree]:
         """The open worktrees of the agents this thread spawned itself."""
 
