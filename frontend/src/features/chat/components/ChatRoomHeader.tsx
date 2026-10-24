@@ -71,7 +71,7 @@ export interface ChatRoomHeaderProps {
  * question answered and one set of doors, rather than six controls in a line.
  *
  * **It carries no fill.** The room lays it over the top of the transcript, which
- * scrolls beneath it into a `ScrollFade` — so the header is a line of type over the
+ * fades out beneath it through its own mask — so the header is a line of type over the
  * conversation rather than a band taking its own height above it.
  */
 export function ChatRoomHeader(props: ChatRoomHeaderProps): JSX.Element {

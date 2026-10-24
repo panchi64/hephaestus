@@ -124,7 +124,7 @@ function SectionBody(props: { section: SummarySection }): JSX.Element {
         {/* Says there is more below without spending a second control on saying it —
             the toggle underneath is already the answer to how much more. */}
         <Show when={!open() && overflows()}>
-          <ScrollFade variant="clamp" edge="bottom" ground="surface" />
+          <ScrollFade edge="bottom" ground="surface" />
         </Show>
       </div>
       <Show when={overflows()}>

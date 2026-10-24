@@ -35,6 +35,7 @@ import {
 import {
   setAwaitingInput,
   setChatBusy,
+  setChatThreadId,
   setRunErrored,
 } from "~/lib/stores/chatActivity";
 import { markConversationRead } from "~/lib/stores/notifications";
@@ -256,6 +257,7 @@ export function mainChat(): MainChat {
     // so the Chat item shows a live indicator while a turn runs — even from another
     // section. Only the main room drives it (compare panes are ephemeral).
     createEffect(() => setChatBusy(stream.sending()));
+    createEffect(() => setChatThreadId(currentId()));
     // A turn *starting* changes the list as much as one finishing: each row's
     // activity edge is server-derived, so the list has to be re-read for the
     // running thread to light up. `onTurnComplete` above covers the other edge.

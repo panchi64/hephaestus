@@ -67,6 +67,10 @@ describe("markConversationRead", () => {
     fetchSpy.mockRestore();
   });
 
+  test("a backfill is not an arrival", () => {
+    expect(useNotifications().lastCreated).toBeNull();
+  });
+
   test("marks the conversation's unread rows and skips `except`", () => {
     expect(useNotifications().items).toHaveLength(5);
     const marked = markConversationRead("c1", new Set(["n3"]));

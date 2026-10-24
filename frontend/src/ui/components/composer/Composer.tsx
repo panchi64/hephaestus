@@ -95,16 +95,10 @@ export function Composer(props: ComposerProps): JSX.Element {
      The point of action is marked at rest by the opaque fill and ruled edge: no ticks,
      shadow or light, since shadows are for things that float. A live run turns the
      plate info with a blinking square. */
-  // `class` is layout glue for the whole unit. `heph-framed` makes the fill glass on a
-  // page with the dot field so it reads through the composer; a bare composer has no
-  // fill to trade. The whole unit is the drop target.
+  // `class` is layout glue for the whole unit, which is also the drop target.
   return (
     <div
-      class={cx(
-        "heph-composer",
-        !props.bare && "heph-framed bg-surface",
-        props.class,
-      )}
+      class={cx("heph-composer", !props.bare && "bg-surface", props.class)}
       data-live={
         props.streaming && !props.waiting && !recalling() ? "" : undefined
       }

@@ -10,6 +10,13 @@
 .heph-rail {
   container-type: inline-size;
 }
+/* Frosted, so the ambient field (§11.1) reads through the rail as a blur. The
+   thread list owns the scroll, so the sticky bars never sit over rows and need
+   no fill of their own. */
+.heph-rail-glass {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-filter);
+}
 .heph-rail-narrow {
   display: none;
 }

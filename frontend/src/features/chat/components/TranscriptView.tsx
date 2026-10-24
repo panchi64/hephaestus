@@ -88,10 +88,13 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
           ref={props.scroll.ref}
           tabindex={-1}
           onScroll={props.scroll.onScroll}
-          /* The vertical insets are exactly what clears the overlays: the title block's
-           measured height plus one fade band at the top, one band at the bottom. A larger
-           pad would leave bare page above the composer. Scroll padding matches the top so
-           a scrolled-to turn lands below the title.
+          /* Both ends dissolve through a mask rather than an overlay, so the text fades
+           over the ambient field without blurring or tinting it. The vertical insets are
+           exactly the mask's: the title block's measured height plus one fade band at the
+           top, one band at the bottom. A larger pad would leave bare page above the
+           composer. Scroll padding matches the top so a scrolled-to turn lands below the
+           title. The mask makes this a backdrop root: glass inside frosts only the
+           transcript.
 
            Native scroll anchoring is off: `transcriptScroll.ts` keeps its own anchor and
            two would double the correction. */
@@ -100,6 +103,7 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
             "padding-top": `calc(${props.insetTop()}px + var(--scroll-fade-band))`,
             "scroll-padding-top": `calc(${props.insetTop()}px + var(--scroll-fade-band))`,
             "padding-bottom": "var(--scroll-fade-band)",
+            "mask-image": `linear-gradient(to bottom, transparent ${props.insetTop()}px, black calc(${props.insetTop()}px + var(--scroll-fade-band)), black calc(100% - var(--scroll-fade-band)), transparent)`,
           }}
         >
           {/* The measure goes on the content so the scrollbar stays at the pane edge. The

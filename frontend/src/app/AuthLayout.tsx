@@ -5,7 +5,7 @@ import { RegistrationFrame, Text } from "~/ui";
  *  sidebar — just the framed brand and a narrow content column. */
 export function AuthLayout(props: { children: JSX.Element }): JSX.Element {
   return (
-    <div class="flex h-screen items-center justify-center bg-bg text-text">
+    <div class="flex h-screen items-center justify-center text-text">
       <RegistrationFrame class="w-full max-w-sm p-8" assetId="HEPH-AUTH-01.0">
         <div class="mb-6 flex flex-col gap-0.5">
           <Text variant="display" tone="bright">

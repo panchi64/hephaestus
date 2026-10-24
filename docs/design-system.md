@@ -4,7 +4,7 @@
 
 **Version 1.2** · Status: Foundation spec · Supersedes *Terminal-HUD 0.1*
 
-*1.1 adds the mission-control register: a console group, a caution & warning grid, a mission clock, the `plate` type step, and §11.1's licensed moment — one expressive device per screen, where nothing competes.*
+*1.1 adds the mission-control register: a console group, a caution & warning grid, a mission clock, the `plate` type step, and §11.1's ambient field — a dithered planet behind every page.*
 
 *1.2 settles the chat surfaces on that register — **the square console**: ruled frames, bare contents, mono plates, square corners, no resting shadow. A soft-card register (rounded fills, sans labels, soft elevation) was weighed against it and rejected. It adds the **action tier** (§10.18), the one loud frame for anything the run is waiting on the operator for, and removes the LED edge light, the composer's ambient bloom and the ⌘K palette.*
 
@@ -319,7 +319,7 @@ The base is pure neutral. Both modes are built on true black and true white — 
 
 Terminal-HUD banned shadows outright. Instrument uses them, sparingly, and for one purpose: **saying what is on top.** Never for mood, never for a card that is merely present.
 
-**Shadows are for things that float over content** — menus, popovers, tooltips, toasts, modals, drawers. Nothing that sits in the flow of a page carries one: not the composer, not a transcript row, not the action tier (§10.18). The composer is separated from the transcript by its opaque `surface` fill and its `line-strong` frame, and the transcript ends above it in the `ScrollFade` band (§10.17). `Panel` and `Tile` carry no resting shadow either: they are a `surface` fill inside a 1px `line` rule, and a state recolours the rule (`active` → `info`, `alert` → `alert`) rather than glowing.
+**Shadows are for things that float over content** — menus, popovers, tooltips, toasts, modals, drawers. Nothing that sits in the flow of a page carries one: not the composer, not a transcript row, not the action tier (§10.18). The composer is separated from the transcript by its opaque `surface` fill and its `line-strong` frame, and the transcript fades out above it (§10.17). `Panel` and `Tile` carry no resting shadow either: they are a `surface` fill inside a 1px `line` rule, and a state recolours the rule (`active` → `info`, `alert` → `alert`) rather than glowing.
 
 The two modes model elevation differently, because they physically must:
 
@@ -501,7 +501,7 @@ The chat transcript is where the two registers are visible at once, and it is th
 
 ### Forbidden
 
-Bouncing, springs, overshoot, staggered cascades, eased *decorative* spinners, parallax, anything over 240ms, and any animation that runs while the operator is not looking at it.
+Bouncing, springs, overshoot, staggered cascades, eased *decorative* spinners, parallax, anything over 240ms, and any animation that runs while the operator is not looking at it. The ambient field's turning clouds (§11.1) are the one exception to the last: they are stepped, stop on a hidden tab, and hold still under reduced motion.
 
 **One stated exception to the 240ms ceiling: the answer's per-character reveal (320ms).** The ceiling governs anything the operator is *waiting on* — a control answering a click, an overlay opening — where a long duration reads as lag. Nothing waits on this one: it is paced to a stream that already takes seconds, and a character is legible well before it finishes settling. Under the ceiling the resolve is over before the eye reaches it. If a second case ever wants this exemption, it has to clear the same bar — nothing is waiting.
 
@@ -675,11 +675,11 @@ The card — `surface`, **only the writing**, top to bottom:
 
 **No glow, in either size.** The composer used to wear an ambient aura (`shadow-bloom`) on the launchpad and a lit strip along its top edge in a conversation (`edge="bloom" | "led"`). Both are removed, and so is the `edge` prop: the aura's ~90px of reach landed on the last thing the model said, and the frame already separates the input from the conversation (§6).
 
-**Docked, it floats.** No rule welded to the bottom edge — the sticky wrapper carries the page background, and the transcript dissolves into it through a bottom `ScrollFade` (§10.17) reaching one band up over the conversation; the transcript keeps exactly that band as its bottom inset, so the last turn at rest clears the fade. Below the unit, only an 8px margin — the shell gives the chat route its bottom edge flush. **While the approval dock holds the slot**, the bar's trailing cells stand on their own under it as the same `StatusBar`, boxed on all four sides (`edge="box"`), with `DISCONNECTED` as its leading cell — the header line that says it the rest of the time has gone with the composer.
+**Docked, it floats.** No rule welded to the bottom edge and no ground of its own — the dock sits below the transcript's scroller, never over it, so the ambient field (§11.1) runs on beside and under the composer, and the transcript's text fades out over its last band (§10.17); the transcript keeps exactly that band as its bottom inset, so the last turn at rest clears the fade. Below the unit, only an 8px margin — the shell gives the chat route its bottom edge flush. **While the approval dock holds the slot**, the bar's trailing cells stand on their own under it as the same `StatusBar`, boxed on all four sides (`edge="box"`), with `DISCONNECTED` as its leading cell — the header line that says it the rest of the time has gone with the composer.
 
 ### 10.12a The chat room's title
 
-The thread's name and nothing else on its side — the workspace hint under it for a staged worktree thread, the `Frames` throbber while the backend names it — with the branch chip, surface buttons and session menu at the other end. The model, the thread's age and the run state used to ride an eyebrow above it; the model is a control in the composer's status bar, and the state is said in the composer's header line. **The title carries no fill and is laid over the top of the transcript**, which scrolls beneath it into a top `ScrollFade`; the transcript's top inset is the title block's measured height plus one band, so the first turn at rest starts clear of both. A thread recap pinned under the title keeps the ground as a fill — it is a paragraph, and prose scrolling through prose is unreadable at any blur.
+The thread's name and nothing else on its side — the workspace hint under it for a staged worktree thread, the `Frames` throbber while the backend names it — with the branch chip, surface buttons and session menu at the other end. The model, the thread's age and the run state used to ride an eyebrow above it; the model is a control in the composer's status bar, and the state is said in the composer's header line. **The title carries no fill and is laid over the top of the transcript**, whose text is masked out beneath it and fades in over one band below it (§10.17); the transcript's top inset is the title block's measured height plus one band, so the first turn at rest starts clear of both. A thread recap pinned under the title is part of that measured block, so nothing scrolls visibly behind it either.
 
 ### 10.13 The operator’s turn
 
@@ -727,11 +727,11 @@ One is in use: the **run clock** on an in-flight run, from its `started_at`, in 
 
 ### 10.17 Scroll fade
 
-Where a scroll region runs **under** something laid over its edge — the chat title above, the docked composer below — it dissolves rather than being cut at a line. `ScrollFade edge="top" | "bottom"` (`.heph-scroll-fade`) fills its positioned parent and reaches one `--scroll-fade-band` (28px) past the side facing the content. Two effects on one falloff, strongest at the edge and nothing at the band's far end: a **progressive backdrop blur** — three layers, each masked to a shorter reach and blurring harder (a quarter, a half, all of `--scroll-fade-blur`), so there is no seam where one stops — and a **tint of the ground** from `--scroll-fade-tint` (70%) to clear, which keeps a title legible over text passing under it. Either alone fails: a gradient alone is a smear of crisp grey text; a blur alone leaves the title's contrast to whatever scrolls by.
+The chat transcript dissolves at both ends rather than being cut at a line: under the title laid over its top, and above the composer docked below it. It is a **mask on the transcript's own scroller**, not an overlay: the text is fully masked under the title, then fades in over one `--scroll-fade-band` (28px), and fades out over the last band above the composer. Nothing is laid over the page, so the ambient field (§11.1) behind the title and the composer is never blurred or tinted. An overlay of backdrop blur and ground tint was the earlier answer, and over a dithered ground it flattened the field into a dark band at both ends, whether or not any text sat under it.
 
-The scroll region keeps an inset of exactly one band at that edge (plus the overlay's own height at the top), so what rests there at the end of the scroll clears the fade — never more, or the band becomes dead page. The overlay's content must be positioned to paint above it, and the backdrop-root trap applies in full: nothing between the scroller and the fade may set `opacity`, `filter`, `mask`, `isolation` or a `will-change` of them, and the overlay takes its paint order from the DOM rather than a `z-index`. Pointer-transparent and hidden from assistive tech.
+The scroller keeps an inset of exactly one band at each end (plus the title block's measured height at the top), so what rests there at the end of the scroll clears the fade — never more, or the band becomes dead page. The mask makes the scroller a backdrop root: a glass surface inside the transcript frosts only the transcript.
 
-**`variant="clamp"`** is the same idea at the scale of one clamped block — the operator's long turn, a compaction section — saying "there is more below" over its foot: a plain 24px gradient from the block's own ground (`ground="bg" | "surface" | "sunken"`), inside the block, no blur (`.heph-clamp-fade`). A hand-rolled `bg-gradient-to-t` is the thing it replaces.
+**`ScrollFade`** is the same idea at the scale of one clamped block — the operator's long turn, a compaction section — saying "there is more below" over its foot: a plain 24px gradient from the block's own ground (`ground="bg" | "surface" | "sunken" | "raised"`), inside the block, no blur (`.heph-clamp-fade`). A hand-rolled `bg-gradient-to-t` is the thing it replaces.
 
 ### 10.18 The action tier — things that need the operator
 
@@ -797,30 +797,26 @@ Keep:
 
 **The budget:** at most one diegetic detail per panel, and it lives at the panel's edge — a footer line, a header's right slot — never between a label and its value. Terminal-HUD's mistake was letting atmosphere sit in the reading path. Set at `micro`/`meta` in `text-dim`, it becomes texture the eye skips until it wants it, which is exactly the intent.
 
-### 11.1 The licensed moment
+### 11.1 The ambient field
 
-Everything above is texture the eye skips. **One thing per screen is allowed not to be.**
+Everything above is texture the eye skips. The field behind every page is texture too, but it is the one texture that knows what the platform is doing.
 
-A licensed moment is a single expressive device — the `DotField` is currently the only one — permitted on a screen where *nothing is read against it*. That is a short list, and it is the whole rule:
+**What it is.** A gas giant seen from orbit, rising out of the bottom-right corner: a disc about 0.96 of the viewport's height in radius (1.2 of its width on a narrow screen), centred on the right edge a quarter radius below the bottom, so only its upper-left shoulder shows. It reads as something just discovered at the edge of the view, not a planet placed in it. It is ordered-dithered on a 2px cell (half the base unit), each cell lit or unlit against a 4×4 Bayer threshold, shaded on the GPU one canvas pixel per cell and scaled up hard. The canvas covers only the planet and its halo, never the whole viewport (`DitherField`, its constants and geometry in `ui/theme/dither.ts`, the renderer in `ui/theme/dither-gl.ts`, the shaders in `ui/theme/dither-shader.ts`). Its cloud deck is turbulent belts rolled around nine vortices, lit raking from the left, so all of it that shows is day and the dither runs dense on the bright belts and sparse in their troughs, with a thin haze beyond the limb. The night side is always past the viewport's edge. A lit cell is `--dither-on` (`#1a1a1a` on Ink, `#e9e9e9` on Paper): clearly there, still below `--line`. Everywhere off the planet the page is its plain ground. Without WebGL2 it draws nothing.
 
-- an **empty state**, which by definition has nothing in it;
-- the **auth screens**, which hold one form and no work;
-- the **launchpad**, whose one object is a composer and whose ledger and footer are readouts;
-- a **lightbox**, which has already darkened everything else.
+**Where it is.** Behind every page, the auth screens and the 404 included, mounted once at the app root under everything in flow. The rail is glass over it (`.heph-rail-glass`), so it reads through as a blur. Opaque objects occlude it on purpose: panels, console groups, instrument bands and the composer keep their `bg-surface`, so the planet shows only in the gaps between them and never runs through a column of numbers. Dialogs, drawers, menus and toasts sit above it.
 
-**What it is.** 1px square dots on the 4px grid at a 24px pitch (`--space-6`), anchored to the viewport so the grid holds still while the rail is dragged. One neutral token, `--dot-field`: `#1a1a1a` on Ink's black, `#ebebeb` on Paper's white — Paper sits a step shallower because dark marks on a light ground read more readily. A radial mask centred on the focal object (the launchpad's composer, the 404's plate) holds the dots at full strength just around it and takes them to nothing by the page edges. Static, no accent, no glow, no marks. You see it if you look for it.
+**What it says.**
 
-**The field backs a page, not a region.** The falloff has to reach zero at the page edges, not at the edge of a screen's padding box, so the shell paints it behind its whole content column (`isDotFieldRoute`, `AppShell`), status bar included, and the screen stops owning it. The mask's centre is fixed in `.heph-dot-field` where the launchpad composer lands; moving the composer means moving it.
+- **Load.** The clouds turn faster with each live top-level thread (two for one waiting on the operator), up to twice their resting speed at five. The speed is integrated frame by frame, so a change of load never jumps the clouds.
+- **Sub-agents.** Each live thread an agent spawned hangs one aurora curtain over the upper-left limb toward the pole, up to six, all on screen: a faint band of vertical rays that shimmers slowly. Spawned threads count here and nowhere else.
+- **Events.** A top-level thread starting, finishing, failing or asking, and a reminder, task outcome or system notice, strikes lightning at a random spot on the visible disc, through the lit clouds: five flashes scattered a few dozen pixels apart over about a second, each flickering on 100ms beats and fading in 1.4s. Where on the planet carries no meaning.
+- **Hue.** A flash's lit cells take its event's accent, and the aurora's take `--accent-nominal`, each `--dither-tint` of the way from `--dither-on` (4% on Ink, 3% on Paper). Near the ground that is a suggestion of hue and no more, which keeps it inside §5's rules: the field never carries a colour on its own, only the faint echo of one already said elsewhere. The cloud deck is never tinted.
 
-**What makes that safe is glass, and the two are one decision.** A page-wide field runs under content the operator is meant to read, which is the "atmosphere in the reading path" failure this section exists to prevent — unless nothing readable sits *on* the field. On a field page every framed shell (`.heph-framed`: `Panel`, `ConsoleGroup`, `Composer`, `InstrumentBand`) trades its opaque `bg-surface` for the same glass the View and the park dock use, so dots behind a column of numbers arrive as a blur rather than running through them. A shell with no surface of its own — a bare panel, the system strip — carries no marker and is instead given space, which is the same answer §7 gives everywhere else. **Ship one without the other and the rejection above stands.**
+**It turns.** The clouds rotate slowly while the window has focus (a full turn takes about half an hour at rest): the one stated exception to §8's "nothing runs while the operator is not looking". It redraws in hard steps (the machine register), and only when a cell would change: when the clouds at the mean rotation have moved one cell (one to three times a second), and every 100ms while lightning flashes. Between draws nothing runs. While the window is unfocused the clouds and the aurora's shimmer hold still, and only lightning or a change in what the platform is doing redraws, so an event still shows on a screen the operator glances at. Focus inside an embedded frame counts as focus. The bands shear against each other and swing back over half a turn, so the deck never shreds. It stops when the tab is hidden, and under reduced motion holds a still frame with no lightning, changing only when the aurora does. Where the browser renders WebGL in software, it draws one still frame with no aurora or lightning, and redraws it only on a resize or a theme change.
 
-**Still rationed, and still never inside a container holding data.** Two routes carry it (the launchpad and the 404), the list is explicit rather than a default, and matching is exact — `/` is a prefix of every path in the app, and a `matchesHref` here would put the field behind all of it, which is the outcome the ration exists to prevent.
+**It costs nothing you can see.** It draws in a worker on an OffscreenCanvas, so its shader compiles and draws never touch the page's thread; the page only sends it the platform's state when that changes (`ui/theme/dither.worker.ts`, the pacing in `ui/theme/dither-loop.ts`). Where a worker can't draw WebGL2, as in Safari before 17, it draws on the page instead. A draw is a texture lookup per cell: the cloud deck is baked once into a texture and only looked up, and a slowly evolving second bake is made a few rows per draw and crossfaded in. Lightning redraws only the few patches it touches. Measured on an Apple M5 Max, the heaviest draw is under 0.07ms of GPU at 4K, under half a percent of a 144Hz frame. It asks for the integrated GPU on a machine with two.
 
-**Why the exception is worth having at all.** §1.4 says a screen at rest is grayscale and §1.1 says most of the interface should sit at a low volume. Both are right, and followed absolutely they produce a system with no register above "quiet" — which §1.6 already names as the other failure: *restraint is the goal; anonymity is not*. An interface that is only ever recessive has no way to say that the thing in front of you is the point. The moment is that register, and rationing it to one per screen, in a region with nothing to drown out, is what keeps it from becoming decoration.
-
-**It must stay under the thing it sits behind.** The launchpad's moment is densest right around the composer, the screen's point of action — two claims on the eye in the same 200px. The field is neutral, quieter than `--line`, and never takes the accent, and where the two compete the field loses. The composer is the point of the screen; the field is the reason the screen feels like somewhere.
-
-**Nothing in it is an instrument, and nothing in it is a figure.** Registration marks on the grid were tried and dropped: they read as the interface measuring something, and there is nothing there to measure. Diegetic detail that *implies a readout* is a lie about what the product is doing. The same goes for anything mythic or pictorial — schematics, maps, veins, horizons: the background is a material, not an illustration.
+**One figure, and no instruments.** The planet is the field's only figure: no marks, readouts or labels on or around it. Registration marks on a background read as the interface measuring something, and diegetic detail that *implies a readout* is a lie about what the product is doing.
 
 ---
 
@@ -882,6 +878,7 @@ A licensed moment is a single expressive device — the `DotField` is currently 
   --accent-nominal: #34d67f;  --accent-warn: #f2a93b;
   --accent-alert: #ff5c5c;    --accent-info: #5aa2ff;
   --accent-queue: #b48cff;
+  --dither-on: #1a1a1a;  --dither-tint: 4%;    /* the ambient field, §11.1 */
   /* Each carries a 1px hairline ring first — the surface's edge, folded into the
      shadow so it costs no layout (§6). Floating things only. */
   --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.6);
@@ -898,6 +895,7 @@ A licensed moment is a single expressive device — the `DotField` is currently 
   --accent-nominal: #0e7a46;  --accent-warn: #9a6510;
   --accent-alert: #c0342b;    --accent-info: #0f5fa8;
   --accent-queue: #6a3fb5;
+  --dither-on: #e9e9e9;  --dither-tint: 3%;
   --shadow-1: 0 0 0 1px rgb(0 0 0 / 0.07), 0 1px 2px rgb(0 0 0 / 0.05),
     0 1px 1px rgb(0 0 0 / 0.04);
   --shadow-2: 0 0 0 1px rgb(0 0 0 / 0.08), 0 12px 32px -8px rgb(0 0 0 / 0.16),

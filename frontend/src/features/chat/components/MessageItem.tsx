@@ -300,7 +300,7 @@ function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
           {props.text}
         </Markdown>
         <Show when={clampable() && !expanded()}>
-          <ScrollFade variant="clamp" edge="bottom" ground="raised" />
+          <ScrollFade edge="bottom" ground="raised" />
         </Show>
       </div>
       <Show when={clampable()}>

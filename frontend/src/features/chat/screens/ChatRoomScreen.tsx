@@ -12,7 +12,6 @@ import {
 } from "solid-js";
 import {
   Composer,
-  ScrollFade,
   StatusBar,
   StatusCell,
   cx,
@@ -77,7 +76,7 @@ import { nextPermissionLevel, parsePermissionLevel } from "../model";
 
 /** One reading measure shared by the transcript's content and the composer dock so the
  *  input matches the column above it. Only contents are centred; the scroll container
- *  and the dock background stay full width so the transcript scrolls behind the dock. */
+ *  stays full width so the scrollbar sits at the pane's edge. */
 const MEASURE = "mx-auto w-full max-w-4xl";
 
 /** Chat room: a live streaming conversation. On entry it resumes the last conversation
@@ -473,11 +472,9 @@ export function ChatRoomScreen(): JSX.Element {
     <AllowHostContext.Provider value={allowHost}>
       <div ref={viewport.rowRef} class="flex h-full min-h-0">
         <section class="flex min-h-full min-w-0 flex-1 flex-col">
-          {/* The title block overlays the transcript, which scrolls under it through a
-            `ScrollFade`. Nothing in here (this wrapper, the overlay, the transcript's
-            wrapper) may carry `opacity`, `filter`, `mask`, `isolation` or a `will-change`
-            of them: each makes a backdrop root and the fade's blur samples nothing
-            (see `.heph-glass`). */}
+          {/* The title block overlays the transcript, which fades out under it through
+            its own mask. Nothing here paints a ground, so the ambient field runs
+            unbroken behind the title, the transcript and the composer. */}
           <div class="relative flex min-h-0 flex-1 flex-col">
             <TranscriptView
               stream={stream}
@@ -491,9 +488,8 @@ export function ChatRoomScreen(): JSX.Element {
               insetTop={overlayHeight}
             />
             {/* After the transcript in the DOM and with no `z-*`: paint order is DOM order,
-              and a stacking context here would be a backdrop root the fade can't survive. */}
+              so it stays on top without a stacking context. */}
             <div ref={measureOverlay} class="absolute inset-x-0 top-0">
-              <ScrollFade edge="top" />
               <div class="relative">
                 <ChatRoomHeader
                   title={headerTitle}
@@ -515,10 +511,10 @@ export function ChatRoomScreen(): JSX.Element {
                     remove: () => void actions.removeConversation(),
                   }}
                 />
-                {/* Pinned under the title, not in the scroll. It takes an opaque fill because
-                  prose scrolling through prose is unreadable at any blur; `flow-root`
-                  keeps the panel's bottom margin inside. */}
-                <div class="flow-root bg-bg">
+                {/* Pinned under the title, not in the scroll. It is part of the measured
+                  overlay, so the transcript's mask hides everything under it;
+                  `flow-root` keeps the panel's bottom margin inside. */}
+                <div class="flow-root">
                   <ThreadRecap
                     summary={recapSummary}
                     streaming={stream.sending}
@@ -529,20 +525,14 @@ export function ChatRoomScreen(): JSX.Element {
             </div>
           </div>
 
-          {/* The transcript dissolves into the dock through the same `ScrollFade` as the
-            title. No top padding: the fade reaches over the transcript's last band, which
-            the transcript keeps as its bottom inset; a pad would leave bare page between
-            fade and frame. The background spans full width while contents take `MEASURE`.
-            It is dropped while a run is parked, since the park panel is glass and an
-            opaque fill leaves it nothing to frost (see `ParkDock`).
-            `pb-4` is the whole bottom margin (the shell gives this route a flush bottom
-            edge, `isFlushRoute`): it clears the composer's registration ticks, 6px
-            outside its frame, with air to spare. */}
-          <div
-            class={cx("sticky bottom-0 px-4 pb-4", !stream.park() && "bg-bg")}
-          >
-            <ScrollFade edge="bottom" />
-            <div class={cx("relative", MEASURE)}>
+          {/* The composer docks below the transcript's scroller, never over it, so the
+            dock carries no ground: the transcript dissolves into it through its own
+            mask. No top padding: the transcript keeps one fade band as its bottom
+            inset. `pb-4` is the whole bottom margin (the shell gives this route a flush
+            bottom edge, `isFlushRoute`): it clears the composer's registration ticks,
+            6px outside its frame, with air to spare. */}
+          <div class="sticky bottom-0 px-4">
+            <div class={cx("relative pb-4", MEASURE)}>
               {/* A parked run takes the composer's slot and offers only what it waits for. */}
               <Show when={stream.park()}>
                 {(park) => (
@@ -661,9 +651,8 @@ export function ChatRoomScreen(): JSX.Element {
               </Show>
               {/* While parked, the composer's status bar is replaced by a boxed one so the
                 trailing cells stay visible. `Disconnected`, normally in the composer
-                header, takes its leading cell: one place at a time. The fill is its own
-                (shared with the task rows) because the wrapper's is dropped during a park. */}
-              <div class="bg-bg">
+                header, takes its leading cell: one place at a time. */}
+              <div>
                 <Show when={stream.park()}>
                   <StatusBar
                     edge="box"

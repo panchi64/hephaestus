@@ -94,8 +94,8 @@ export function Sidebar(): JSX.Element {
   };
 
   return (
-    <nav class="heph-rail flex h-full min-h-0 flex-col bg-surface">
-      <div class="sticky top-0 z-30 bg-surface">
+    <nav class="heph-rail heph-rail-glass flex h-full min-h-0 flex-col">
+      <div class="sticky top-0 z-30">
         {/* The wordmark in the machine's voice, wide-tracked, with the workspace id
             dim beside it. It stacks under the brand at the rail's narrowest. */}
         <a href="/" class="heph-rail-brand hover:bg-raised">
@@ -112,7 +112,7 @@ export function Sidebar(): JSX.Element {
           conversation list disappear the moment you looked at anything else. */}
       <RecentsRail filter={<ProjectSwitcher />} />
 
-      <div class="sticky bottom-0 border-t border-line-strong bg-surface">
+      <div class="sticky bottom-0 border-t border-line-strong">
         {/* The corpus and the compare bench, on the same footing as COMMS and for
             the same reason: they are things you go and check, not the thing you
             are doing. Above the threads they read as peers of chat and competed

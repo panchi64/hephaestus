@@ -60,8 +60,7 @@ function overallStatus(caps: readonly CapabilityHealth[]): Status {
   return "nominal";
 }
 
-/** The launchpad. Its licensed moment (§11.1) is the dot field, drawn behind the
- *  shell's content column (`isDotFieldRoute`), centred where the composer lands. */
+/** The launchpad. */
 export function DashboardScreen(): JSX.Element {
   const navigate = useNavigate();
   const { data: overview, refetch: refetchOverview } = useOverview();
@@ -173,8 +172,7 @@ export function DashboardScreen(): JSX.Element {
 
       {/* The focal point, and the only framed object on the page. It always opens a
           new thread, so it carries no echo of an existing one's ask: those live in
-          the ledger below. The dot field's falloff is centred where this lands
-          (`.heph-dot-field` in dot-field.css); move the composer and move that too. */}
+          the ledger below. */}
       <div class="mt-6">
         <Composer
           size="lg"

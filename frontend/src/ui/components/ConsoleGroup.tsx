@@ -43,10 +43,7 @@ export function ConsoleGroup(props: ConsoleGroupProps): JSX.Element {
     "class",
   ]);
   return (
-    // `heph-framed`: on a page carrying the dot field this surface goes glass,
-    // so the dots behind a group of readouts arrive blurred rather than running
-    // under the rows (§11.1). Inert on every other page.
-    <div class={cx("heph-framed border border-line bg-surface", local.class)}>
+    <div class={cx("border border-line bg-surface", local.class)}>
       <div class="flex items-center gap-2 border-b border-line px-2 py-1">
         <Text variant="plate" tone="dim" class="min-w-0 truncate">
           {local.label}

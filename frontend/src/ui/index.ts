@@ -96,15 +96,19 @@ export {
   type InstrumentBandProps,
   type BandCell,
 } from "./components/InstrumentBand";
-// The mission-control register. The dot field is the one
-// expressive device per screen, and belongs only in a region with nothing to
-// compete with.
+// The mission-control register.
 export {
   ConsoleGroup,
   type ConsoleGroupProps,
 } from "./components/ConsoleGroup";
 export { MetClock, type MetClockProps } from "./components/MetClock";
-export { DotField, type DotFieldProps } from "./components/DotField";
+export { DitherField, type DitherFieldProps } from "./components/DitherField";
+export {
+  STRIKE_LIFE_MS,
+  strikePoint,
+  type Strike,
+  type StrikeTone,
+} from "./theme/dither";
 export { Tile, type TileProps } from "./components/Tile";
 export { Chip, type ChipProps } from "./components/Chip";
 export {
@@ -132,7 +136,6 @@ export {
   ScrollFade,
   type ScrollFadeProps,
   type ScrollFadeEdge,
-  type ScrollFadeVariant,
   type ScrollFadeGround,
 } from "./components/ScrollFade";
 export { ListRow, type ListRowProps } from "./components/ListRow";

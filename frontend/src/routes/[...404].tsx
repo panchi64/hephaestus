@@ -1,28 +1,17 @@
-import { Button, ConstructionReveal, DotField, Text } from "~/ui";
+import { Button, ConstructionReveal, Text } from "~/ui";
 
 /** A path with no route. The surfaces that became settings sections used to
  *  forward through here into `?settings=…`; nothing is deployed anywhere that
- *  could be holding a link to one, so a dead path reads as dead.
- *
- *  **This screen carries §11.1's licensed moment**, and it is the clearest case the
- *  rule has: a 404 is a whole viewport with one small plate on it and nothing running,
- *  so there is nothing for the field to compete with or sit in front of. It is also
- *  the one screen the operator reaches by accident, which is the right place for the
- *  product to be quietly good-looking rather than merely correct.
- *
- *  It draws its own field rather than going through `isDotFieldRoute`: this route is
- *  outside the `(app)` group, so there is no shell column here to paint behind. */
+ *  could be holding a link to one, so a dead path reads as dead. */
 export default function NotFound() {
   return (
-    <div class="relative flex h-screen items-center justify-center overflow-hidden bg-bg text-text">
-      <DotField />
+    // No fill: the ambient field (§11.1) is this screen's ground.
+    <div class="relative flex h-screen items-center justify-center overflow-hidden text-text">
       {/* The plate is the View's own panel — `ConstructionReveal`: registration
           marks, hairline rules, and the frosted `.heph-glass` surface inside them.
           It is reused rather than reproduced on `RegistrationFrame`, which draws
           marks and no surface: a second "framed glass panel" in the system is two
-          things to keep in step, and the frost is the whole point here. The field
-          is densest right under this plate, so a surface that merely tinted would
-          leave dots behind the words.
+          things to keep in step, and the frost keeps the field out of the words.
 
           `when` is a constant true. Everywhere else this component gates a region
           the operator deliberately opens, and the entry gesture says *a place was
@@ -33,9 +22,7 @@ export default function NotFound() {
       <ConstructionReveal
         when
         origin="top-left"
-        // `relative`: the field is an absolutely positioned sibling and would
-        // otherwise paint over in-flow content in the same stacking context.
-        // NOT `isolate` and no `z-index` — either makes this a backdrop root and
+        // NOT `isolate` and no `z-index`: either makes this a backdrop root and
         // the glass would frost nothing but itself (see `.heph-glass`).
         class="relative w-full max-w-md"
         contentClass="flex flex-col items-center gap-3 p-8 text-center"

@@ -1,7 +1,6 @@
 import { createEffect, onCleanup, Show, Suspense, type JSX } from "solid-js";
 import { useLocation } from "@solidjs/router";
 import {
-  DotField,
   ErrorBoundary,
   LoadingText,
   NotConnectedOverlay,
@@ -16,9 +15,10 @@ import {
   startNotifications,
   stopNotifications,
 } from "~/lib/stores/notifications";
+import { useAmbientSignals } from "./ambient/useAmbientSignals";
 import { NotificationBell } from "./notifications/NotificationBell";
 import { Sidebar, useSidebarWidth } from "./sidebar";
-import { isConnectedRoute, isDotFieldRoute, isFlushRoute } from "./nav";
+import { isConnectedRoute, isFlushRoute } from "./nav";
 import { SettingsDialog } from "./settings-dialog";
 
 /** The authenticated app chrome: sidebar rail + top status bar + the routed
@@ -26,9 +26,9 @@ import { SettingsDialog } from "./settings-dialog";
 export function AppShell(props: { children: JSX.Element }): JSX.Element {
   const location = useLocation();
   const connected = () => isConnectedRoute(location.pathname);
-  const dotField = () => isDotFieldRoute(location.pathname);
   const session = useSession();
   const rail = useSidebarWidth();
+  useAmbientSignals();
 
   // The notification feed is app-lifetime, not per-route: subscribe once the
   // workspace is authenticated (the same signal the auth guard gates on) and
@@ -39,7 +39,8 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
   });
   onCleanup(stopNotifications);
   return (
-    <div class="flex h-screen overflow-hidden bg-bg text-text">
+    // No fill: the ambient field (§11.1) paints under the whole shell.
+    <div class="flex h-screen overflow-hidden text-text">
       {/* The rail is drag-sized; the handle draws the hairline that used to be
           the aside's right border. */}
       {/* `overflow-hidden`, not `overflow-y-auto`: the rail's own body — the
@@ -57,27 +58,7 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
         onResizeEnd={rail.persist}
       />
 
-      {/* `relative` + `heph-field-page`: the column is where the dot field is
-          painted on the screens that carry one (§11.1), and the marker is what
-          turns every framed surface inside it to glass. The shell hosts the field
-          because a screen can only paint inside `main`'s padding box, which would
-          stop the falloff short of the page edges and leave the status bar on
-          bare ground. */}
-      <div
-        class={cx(
-          "relative flex min-w-0 flex-1 flex-col",
-          dotField() && "heph-field-page",
-        )}
-      >
-        <Show when={dotField()}>
-          {/* A sibling BEHIND the column's content, never an ancestor of it:
-              `backdrop-filter` samples only what is painted inside its backdrop
-              root, and the field's own `mask` makes it one — as an ancestor it
-              would leave every glass surface on the page blurring nothing. Both
-              siblings below are positioned, so paint order is DOM order and the
-              field stays underneath. */}
-          <DotField />
-        </Show>
+      <div class="relative flex min-w-0 flex-1 flex-col">
         {/* No rule under the top bar (§7). It is already a distinct region by
             position and by what it holds; a full-width hairline across every
             screen was chrome drawn where the eye had found the break. */}
@@ -105,11 +86,9 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
             and two in the bottom corners of the screen — bracketing the window
             rather than anything in it. They now frame the header row, which is
             an actual object. */}
-        {/* `relative` with no z-index: it and the field are both positioned, so
-            paint order is DOM order and the field stays behind without a
-            stacking context — a `z-*` here risks making this a backdrop root in
-            some engines, which would leave the glass surfaces inside it blurring
-            nothing (see the note on `.heph-glass`). */}
+        {/* No z-index: a stacking context here risks making this a backdrop root
+            in some engines, which would leave the glass surfaces inside it
+            blurring nothing (see the note on `.heph-glass`). */}
         <div class="relative min-h-0 flex-1">
           {/* Scopes a suspending *or throwing* screen to the content region;
               without them the root blanks the shell too, taking the rail and
