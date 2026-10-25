@@ -35,6 +35,8 @@ export interface PluginManifest {
   skills: string[];
   /** Names of the routine templates it contributes while published. */
   routines: string[];
+  /** Ids of the windows it can open over the app. */
+  windows: string[];
 }
 
 export interface Plugin {
@@ -120,6 +122,7 @@ export function contributionParts(plugin: Plugin): string[] {
     [m?.agents.length ?? 0, "agent", "agents"],
     [m?.skills.length ?? 0, "skill", "skills"],
     [m?.routines.length ?? 0, "routine", "routines"],
+    [m?.windows.length ?? 0, "window", "windows"],
   ];
   const parts = counts
     .filter(([n]) => n > 0)
@@ -229,6 +232,7 @@ export function publishChanges(
     agents: [],
     skills: [],
     routines: [],
+    windows: [],
   };
 
   const secretNames = diffSet(

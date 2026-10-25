@@ -1,5 +1,7 @@
 import { createSignal, For, Show, type JSX } from "solid-js";
 import { useLocation } from "@solidjs/router";
+import { pluginEnabled } from "~/lib/stores/builtinPlugins";
+import { pluginOfHref } from "~/plugins/registry";
 import {
   Frames,
   Icon,
@@ -14,7 +16,13 @@ import { createInFlight } from "~/lib/inFlight";
 import { useSession } from "~/lib/stores/session";
 import { useSettingsRoute } from "~/app/settings-dialog";
 import { RecentsRail } from "~/features/chat/components/RecentsRail";
-import { AREAS, areaForPath, railRows, type NavItem } from "../nav";
+import {
+  AREAS,
+  areaForPath,
+  railRows,
+  type NavArea,
+  type NavItem,
+} from "../nav";
 import { AreaSection } from "./AreaSection";
 import { navMeta } from "./navMeta";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -60,13 +68,21 @@ export function Sidebar(): JSX.Element {
   const isActive = (href: string) =>
     location.pathname === href || location.pathname.startsWith(`${href}/`);
 
-  const comms = AREAS[0];
+  // A switched-off built-in plugin's pages drop out of the rail; the routes stay
+  // registered and say the plugin is off.
+  const comms = (): NavArea => ({
+    ...AREAS[0],
+    items: AREAS[0].items.filter((item) => {
+      const plugin = pluginOfHref(item.href);
+      return plugin === undefined || pluginEnabled(plugin);
+    }),
+  });
   // Open when the route is inside COMMS, and otherwise whatever the operator
   // last toggled it to. Derived-then-overridden, like the area sections were —
   // arriving in the area always shows its pages.
   const [commsOverride, setCommsOverride] = createSignal<boolean>();
   const commsOpen = (): boolean =>
-    commsOverride() ?? activeArea()?.id === comms.id;
+    commsOverride() ?? activeArea()?.id === comms().id;
 
   /** LOCK, while the backend is still being told.
    *
@@ -123,8 +139,8 @@ export function Sidebar(): JSX.Element {
         </For>
 
         <AreaSection
-          area={comms}
-          active={activeArea()?.id === comms.id}
+          area={comms()}
+          active={activeArea()?.id === comms().id}
           open={commsOpen}
           onToggle={() => setCommsOverride(!commsOpen())}
         />

@@ -251,6 +251,22 @@ export interface BrowserOpened extends Base {
   type: "browser.opened";
 }
 
+// --- Plugin windows --------------------------------------------------------
+/** The agent asked for a plugin's window to open over the app. */
+export interface PluginWindowOpened extends Base {
+  type: "plugin.window_open";
+  conversation_id: string;
+  plugin_id: string;
+  plugin: string;
+  window: string;
+  title: string;
+  width: number;
+  height: number;
+  min_width: number;
+  min_height: number;
+  resizable: boolean;
+}
+
 // --- View (the conversation's one versioned output surface) ----------------
 // The View's live head — a running server reverse-proxied at `url`. `url` already
 // carries the entry path when one was given, so it renders the page, not a listing.
@@ -676,6 +692,7 @@ export type RunEvent =
   | ToolCompleted
   | ToolFailed
   | BrowserOpened
+  | PluginWindowOpened
   | ViewLive
   | ViewLiveStopped
   | ViewSnapshot

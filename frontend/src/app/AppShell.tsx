@@ -15,8 +15,10 @@ import {
   startNotifications,
   stopNotifications,
 } from "~/lib/stores/notifications";
+import { loadBuiltinPluginSwitches } from "~/features/plugins";
 import { useAmbientSignals } from "./ambient/useAmbientSignals";
 import { NotificationBell } from "./notifications/NotificationBell";
+import { PluginLauncher, PluginWindowLayer } from "./plugin-windows";
 import { Sidebar, useSidebarWidth } from "./sidebar";
 import { isConnectedRoute, isFlushRoute } from "./nav";
 import { SettingsDialog } from "./settings-dialog";
@@ -36,6 +38,11 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
   createEffect(() => {
     if (session.isAuthenticated) startNotifications();
     else stopNotifications();
+  });
+  // Until this answers every built-in plugin reads as on; a failed read leaves it so.
+  createEffect(() => {
+    if (session.isAuthenticated)
+      void loadBuiltinPluginSwitches().catch(() => undefined);
   });
   onCleanup(stopNotifications);
   return (
@@ -76,6 +83,7 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
               sent, not of the application, and a persistent global control sat on
               every screen including the many with nothing to send. */}
           <div class="flex items-center gap-3">
+            <PluginLauncher />
             <NotificationBell />
             <ThemeToggle />
           </div>
@@ -120,6 +128,9 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
           about where it paints — only that it exists on every route, which is
           what lets `?settings=…` open it over any of them. */}
       <SettingsDialog />
+      {/* App-lifetime like the dialog: a window the operator opened stays up across
+          every route change, so a game keeps going while they move around. */}
+      <PluginWindowLayer />
     </div>
   );
 }

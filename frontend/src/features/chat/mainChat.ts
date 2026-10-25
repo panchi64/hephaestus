@@ -41,6 +41,8 @@ import {
 import { markConversationRead } from "~/lib/stores/notifications";
 import { moveDraft } from "~/ui";
 import { agentToSend } from "~/features/agents/model";
+import { toWindowSpec } from "~/features/plugins/windows";
+import { windowActions } from "~/app/plugin-windows";
 import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { refreshSessions } from "./data/sessions";
 import { createHistoryLoad, watchLateRuns } from "./historyLoad";
@@ -195,6 +197,11 @@ export function mainChat(): MainChat {
         // over the one the thread is actually at. Never provisional — this is the thread
         // saying so, not a placeholder for a value still in flight.
         onBrowserOpened: () => setBrowserOpenedSeq((n) => n + 1),
+        onPluginWindowOpened: (opened) =>
+          windowActions.open(toWindowSpec(opened), {
+            width: window.innerWidth,
+            height: window.innerHeight,
+          }),
         onPermissionChanged: (level) => {
           setPermission(level);
           setPermissionPending(false);

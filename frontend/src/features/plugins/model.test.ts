@@ -35,6 +35,7 @@ function manifest(over: Partial<PluginManifest> = {}): PluginManifest {
     agents: [],
     skills: [],
     routines: [],
+    windows: [],
     ...over,
   };
 }

@@ -177,7 +177,7 @@ export type {
   ComposerMenuApi,
   ComposerRecallApi,
 } from "./components/composer/types";
-export { moveDraft } from "./components/composer/composerDraft";
+export { moveDraft, saveDraft } from "./components/composer/composerDraft";
 export {
   ComposerMenu,
   type ComposerMenuProps,

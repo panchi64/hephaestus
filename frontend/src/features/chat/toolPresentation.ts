@@ -19,6 +19,11 @@
  *  and what keeps a newly landed backend tool from rendering as a blank row. */
 
 import { sentenceCase } from "~/lib/format";
+import {
+  PLUGIN_CATEGORY_ICONS,
+  PLUGIN_CATEGORY_PREPARING,
+  PLUGIN_TOOLS,
+} from "~/plugins/registry";
 import type { IconName } from "~/ui";
 import type { ToolInvocation } from "./model";
 
@@ -46,9 +51,11 @@ export interface ToolEntry extends ToolPresentation {
 }
 
 /** The glyph for a category, for any tool without its own row below. Every
- *  registered category is listed, so a new tool lands in the right family on the
- *  day it lands rather than falling through to the generic plug. */
+ *  registered category is listed (a built-in plugin's through its UI entry), so a new
+ *  tool lands in the right family on the day it lands rather than falling through to
+ *  the generic plug. */
 const CATEGORY_ICONS: Record<string, IconName> = {
+  ...PLUGIN_CATEGORY_ICONS,
   agents: "users",
   attachments: "attach",
   browse: "eye",
@@ -59,7 +66,6 @@ const CATEGORY_ICONS: Record<string, IconName> = {
   corpus: "library",
   external: "plug",
   files: "file",
-  mail: "mail",
   memory: "database",
   plan: "note",
   project: "layers",
@@ -74,6 +80,7 @@ const CATEGORY_ICONS: Record<string, IconName> = {
 
 /** The preparing phrase for any tool without its own row, by category. */
 const CATEGORY_PREPARING: Record<string, string> = {
+  ...PLUGIN_CATEGORY_PREPARING,
   agents: "Briefing a sub-agent",
   attachments: "Preparing an attachment",
   browse: "Preparing a browser action",
@@ -84,7 +91,6 @@ const CATEGORY_PREPARING: Record<string, string> = {
   corpus: "Composing a corpus query",
   external: "Preparing a connector call",
   files: "Preparing a file operation",
-  mail: "Preparing a mail action",
   memory: "Preparing a memory change",
   plan: "Preparing a plan step",
   project: "Preparing a project action",
@@ -361,50 +367,6 @@ export const TOOLS: Record<string, ToolEntry> = {
     preparing: "Writing a file",
   },
 
-  mail_draft_reply: {
-    icon: "pen",
-    label: "Draft reply",
-    keys: ["message_id"],
-    preparing: "Drafting a reply",
-  },
-  mail_list_accounts: {
-    icon: "mail",
-    label: "Mail accounts",
-    noun: ["account", "accounts"],
-    preparing: "Listing the mail accounts",
-  },
-  mail_list_messages: {
-    icon: "mail",
-    label: "Inbox",
-    keys: ["folder", "account_id"],
-    noun: ["message", "messages"],
-    preparing: "Choosing a mailbox to list",
-  },
-  mail_mark: {
-    icon: "mail",
-    label: "Mark mail",
-    keys: ["message_id"],
-    preparing: "Marking a message",
-  },
-  mail_read: {
-    icon: "mail",
-    label: "Read mail",
-    keys: ["message_id"],
-    preparing: "Opening a message",
-  },
-  mail_reply: {
-    icon: "send",
-    label: "Reply",
-    keys: ["explanation", "message_id"],
-    preparing: "Writing a reply",
-  },
-  mail_send: {
-    icon: "send",
-    label: "Send mail",
-    keys: ["subject", "to"],
-    preparing: "Writing an email",
-  },
-
   memory_recall: {
     icon: "database",
     label: "Recall",
@@ -633,6 +595,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     noun: ["result", "results"],
     preparing: "Composing a web search",
   },
+  ...PLUGIN_TOOLS,
 };
 
 /** The namespace a name declares, or `""` for a name that declares none. The

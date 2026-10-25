@@ -1,8 +1,5 @@
+import { PLUGIN_ENVELOPES } from "~/plugins/registry";
 import type { ContentPart } from "./model";
-
-/** The `source` a routine's previous-run summary is fenced with; mirrors
- *  `harness/manifests/tasks.py`. */
-const PREVIOUS_RUN_SOURCE = "the routine's previous run";
 
 export interface EnvelopeLabel {
   /** The kind, in the machine voice: the word that carries the distinction. */
@@ -11,8 +8,8 @@ export interface EnvelopeLabel {
   detail?: string;
 }
 
-/** Where a part sits. Inside a user turn an `untrusted` part can only be attachment
- *  text or a previous run; inside a tool result it is whatever the tool fetched. */
+/** Where a part sits. Inside a user turn an `untrusted` part is attachment text or one
+ *  a plugin labels; inside a tool result it is whatever the tool fetched. */
 export type EnvelopeScope = "tool" | "message";
 
 export function envelopeLabel(
@@ -21,7 +18,8 @@ export function envelopeLabel(
 ): EnvelopeLabel {
   if (part.kind === "context_file")
     return { label: "Project instructions", detail: part.path };
-  if (part.source === PREVIOUS_RUN_SOURCE) return { label: "Previous run" };
+  if (part.source && Object.hasOwn(PLUGIN_ENVELOPES, part.source))
+    return PLUGIN_ENVELOPES[part.source];
   if (scope === "message")
     return { label: "Attachment text", detail: part.source };
   return { label: "External", detail: part.source };

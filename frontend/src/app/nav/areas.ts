@@ -1,3 +1,4 @@
+import { PLUGIN_NAV } from "~/plugins/registry";
 import type { NavArea, NavItem, RailRow } from "./types";
 
 /**
@@ -5,9 +6,9 @@ import type { NavArea, NavItem, RailRow } from "./types";
  * the rail is the thread list now, and everything that was configuration moved
  * into the settings dialog (`app/settings-dialog/categories.ts`).
  *
- * COMMS survived as an area because its three surfaces are genuinely *places you
- * go and work* — an inbox, a schedule, a task list — not values you set. They
- * are pages for the same reason chat is.
+ * COMMS survived as an area because its surfaces are genuinely *places you go
+ * and work* — a schedule, and the inbox and routines built-in plugins add — not
+ * values you set. They are pages for the same reason chat is.
  *
  * An `href` must appear in exactly one area: the active area is derived from the
  * current path, so a duplicated href would make that derivation ambiguous.
@@ -20,26 +21,13 @@ export const AREAS: NavArea[] = [
     description: "Mail, schedule, and the agent's standing work",
     items: [
       {
-        label: "Email",
-        href: "/email",
-        icon: "mail",
-        description: "Read and send email",
-        connected: true,
-      },
-      {
         label: "Calendar",
         href: "/calendar",
         icon: "calendar",
         connected: true,
         description: "View and manage your schedule",
       },
-      {
-        label: "Routines",
-        href: "/tasks",
-        icon: "clock",
-        connected: true,
-        description: "Scheduled agent routines and reminders",
-      },
+      ...PLUGIN_NAV.map((entry) => entry.item),
     ],
   },
 ];

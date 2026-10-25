@@ -18,7 +18,7 @@ import { batch, createEffect, createSignal, on, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 import { api } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
-import type { TaskItem } from "~/lib/stream";
+import type { PluginWindowOpened, TaskItem } from "~/lib/stream";
 import type { PlanDocument } from "../model";
 import { toast } from "~/ui";
 import { CONTINUE_PROMPT } from "../data/constants";
@@ -80,6 +80,8 @@ export interface ChatStreamOptions {
   onPermissionChanged?: (level: PermissionLevel) => void;
   /** Fired when the run reports the agent attaching a browser to the thread. */
   onBrowserOpened?: () => void;
+  /** Fired when the run reports the agent opening a plugin window. */
+  onPluginWindowOpened?: (window: PluginWindowOpened) => void;
   /** Context-window state seeded with history so the meter shows before the next turn. */
   initialContext?: () => ContextUsage | null | undefined;
   /** Cumulative readout seeded the same way; rebuilt by the backend from stored messages. */
@@ -196,6 +198,7 @@ export function createChatStream(
     // Reached at call time: the resume ops are built below.
     onFoldMisplaced: () => void resume.reconcileStaleDecision(),
     onBrowserOpened: options.onBrowserOpened,
+    onPluginWindowOpened: options.onPluginWindowOpened,
   });
 
   // The inbox belongs to the thread, not a run: messages queued while no run is live

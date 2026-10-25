@@ -133,6 +133,8 @@ async function toApiError(res: Response): Promise<ApiError> {
 export interface RequestOptions {
   /** Abort the request when this signal fires (e.g. a per-call timeout). */
   signal?: AbortSignal;
+  /** Sent beside the auth header, e.g. the plugin window a bridge call speaks for. */
+  headers?: Record<string, string>;
 }
 
 async function request<T>(
@@ -141,7 +143,7 @@ async function request<T>(
   body?: unknown,
   opts?: RequestOptions,
 ): Promise<T> {
-  const headers = authHeaders();
+  const headers = authHeaders(opts?.headers);
   const init: RequestInit = {
     method,
     headers,
@@ -184,7 +186,8 @@ async function sendForm<T>(
 export const api = {
   get: <T>(path: string, opts?: RequestOptions) =>
     request<T>("GET", path, undefined, opts),
-  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  post: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>("POST", path, body, opts),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   del: <T = void>(path: string) => request<T>("DELETE", path),

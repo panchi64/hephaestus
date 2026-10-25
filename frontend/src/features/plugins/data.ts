@@ -1,5 +1,6 @@
 import { createResource, createSignal, type Resource } from "solid-js";
 import { api, downloadContent, isApiError } from "~/lib/api";
+import type { DescribedItem } from "./builtin";
 import {
   pluginDescription,
   type Plugin,
@@ -31,6 +32,8 @@ export interface ManifestOut {
   agents?: string[];
   skills?: string[];
   routines?: string[];
+  /** Every contribution by type key, as each type describes its items. */
+  contributions?: Record<string, DescribedItem[]>;
 }
 
 export interface PluginOut {
@@ -75,6 +78,7 @@ export function toManifest(dto: ManifestOut): PluginManifest {
     agents: dto.agents ?? [],
     skills: dto.skills ?? [],
     routines: dto.routines ?? [],
+    windows: (dto.contributions?.windows ?? []).map((w) => String(w.name)),
   };
 }
 
