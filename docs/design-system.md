@@ -447,9 +447,10 @@ between them; both drop down the sides as the sides close; and the glass surface
 resolves inside the frame that has just been described. Closing runs the gesture
 in reverse, so the region is taken apart rather than switched off.
 
-Six surfaces use it, and the list is meant to stay short: the chat **View**,
+Seven surfaces use it, and the list is meant to stay short: the chat **View**,
 the **settings dialog**, the **park dock** (the approval/question dock that takes
-the composer's slot), the **404** plate, and the two panels behind the
+the composer's slot), the **404** plate, the **first-run walkthrough's column**
+(a place prepared for the operator before the workspace exists), and the two panels behind the
 composer's status bar — the **context breakdown** (behind the context bar) and the
 conversation's **stats panel** (behind `stats`). Both of those go through one
 shell, `RevealPopover`, so the frame, the glass and the padding inside it cannot
@@ -767,6 +768,18 @@ Text that arrives wrapped, which nobody in the thread wrote, is its own row (`En
 - **The label is a word in the machine voice**, never only a glyph (§12): `External · <source>`, `Attachment text · <file>`, `Previous run`, `Project instructions · <path>`, `Reminder · N tasks open`, or `Notice · <kind>`.
 - **Untrusted bodies** sit behind a hairline under an attribution line ("Quoted from …, not this workspace's own words"), the block a compaction checkpoint uses for tool-derived text (`QuotedBlock`).
 - A **notice** (`role: "notice"`) is the same row as a thread turn: no bubble, no actions.
+
+### 10.20 The first-run walkthrough
+
+After the operator creates the platform password, a full-screen surface walks them through Endpoint, Chat model, Roles, Workspace and Ready. Endpoint and Chat model are required; the rest can be skipped. It can be reopened from Settings › Models (**Run setup walkthrough**).
+
+- **The rail** (left) is a quiet "Preparation" checklist in the app rail's chrome: `RailFrame`, one `RailRow` per step in three states (done, current, upcoming), and mono readouts at the right (`1 FOUND`, `SET`, `DEFAULT`). Its `StatusBar` footer carries the `03 / 06` index and Lock.
+- **The column** (right) is one centered single column, built in once on first mount with the construction reveal (§8).
+- **The status block** is a mono `ConsoleGroup` that lists only probes that ran (the localhost scan, a connection test and its verdict). A step that hasn't run a probe has no block.
+- **One Talos line** follows in sans `body`, first person (voice §14). Labels, buttons and errors are plain UI copy.
+- **One question frame**: a live `ActionFrame tone="question"` holding a `ChoiceList` or a form, with Back and Continue in its footer. It is the only loud element on the page.
+- **Motion.** Moving between steps is a `Reveal` at distance 10 per step. Mono values snap rather than tween, and the rail's rows trace in once.
+- **It must not** wear chat framing (no bubbles, no composer, no thread), show a second loud frame, celebrate the last step (Ready is a mono summary and **Enter workspace**), or stagger its children.
 
 ### States — all components
 
