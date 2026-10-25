@@ -19,6 +19,7 @@ from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
 from services.plugins import PluginManifest, PluginView
+from services.plugins.contributions.base import Described
 from services.plugins.manifest import BUNDLE_MAX_BYTES, validate_path
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
@@ -43,6 +44,8 @@ class ManifestOut(BaseModel):
     agents: list[str]
     skills: list[str]
     routines: list[str] = []
+    #: Every contribution by type key, as each type describes its items.
+    contributions: dict[str, list[Described]] = {}
 
 
 class PluginOut(BaseModel):
@@ -182,6 +185,7 @@ def _out(view: PluginView) -> PluginOut:
 
 
 def _manifest(manifest: PluginManifest) -> ManifestOut:
+    described = manifest.described()
     return ManifestOut(
         description=manifest.description,
         requirements=list(manifest.requirements),
@@ -198,7 +202,8 @@ def _manifest(manifest: PluginManifest) -> ManifestOut:
         ],
         agents=[agent.name for agent in manifest.agents],
         skills=[entry.skill.name for entry in manifest.skills],
-        routines=[template.name for template in manifest.routines],
+        routines=[str(item["name"]) for item in described.get("routines", [])],
+        contributions=described,
     )
 
 

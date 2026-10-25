@@ -6,6 +6,7 @@ from __future__ import annotations
 from core.api_scopes import ScopeClaim
 from harness.manifest import DormantCategory, FeatureManifest, FeatureRuntime, HarnessContext
 from routes import plugins as plugins_routes
+from routes import plugins_builtin as plugins_builtin_routes
 from services.agents import AgentCatalog
 from services.plugins import PluginRuntime, PluginStore
 from services.revisions import RevisionStore
@@ -35,7 +36,8 @@ MANIFEST = FeatureManifest(
     name="plugins",
     # Its published plugins' agents join the agent catalog.
     after=("agents",),
-    routers=(plugins_routes.router,),
+    # The built-in listing first: `/plugins/{id}` would otherwise claim `/plugins/builtin`.
+    routers=(plugins_builtin_routes.router, plugins_routes.router),
     api_scopes=(ScopeClaim("knowledge", ("/plugins",)),),
     toolsets=(("plugins", plugins_toolset),),
     gated_tools=GATED_TOOLS,

@@ -18,6 +18,7 @@ from runs import Run, RunStream
 from services.agents import AgentCatalog
 from services.home.scratch import ScratchDirs
 from services.plugins import PluginStore, validate_files
+from services.routines.contribution import ROUTINES
 from services.skills import SkillStore
 from tools.deps import RunDeps
 from tools.skills import skill_catalog
@@ -174,7 +175,7 @@ def test_a_plugin_offers_routine_templates():
     manifest = validate_files(
         {"plugin.yaml": MANIFEST.encode(), "routines/weekly.md": ROUTINE.encode()}
     )
-    [template] = manifest.routines
+    [template] = ROUTINES.of(manifest.contributions)
     assert (template.name, template.schedule, template.agent) == (
         "weekly",
         "cron 0 9 * * 1",

@@ -23,14 +23,10 @@ from models.plugin import Plugin, PluginSecret
 from services.agents.definition import AgentDefinition
 from services.revisions import Bundle, RevisionStore, decode_bundle, encode_bundle, records
 
-from .manifest import (
-    PluginManifest,
-    PluginSkill,
-    RoutineTemplate,
-    secret_domain,
-    validate_files,
-    validate_name,
-)
+from .contributions.agents import AGENTS
+from .contributions.base import TypedContribution
+from .contributions.skills import SKILLS, PluginSkill
+from .manifest import PluginManifest, secret_domain, validate_files, validate_name
 
 type Source = Literal["user", "agent"]
 
@@ -137,32 +133,22 @@ class PluginStore:
 
         return await in_session(self._engine, work)
 
-    async def agents(self, owner_id: str) -> list[AgentDefinition]:
-        """The agents published plugins contribute."""
+    async def contributed[T](
+        self, owner_id: str, kind: TypedContribution[T]
+    ) -> list[tuple[str, T]]:
+        """One kind of contribution across every published plugin, with each one's plugin."""
         return [
-            agent
+            (view.name, item)
             for view, _files in await self.published(owner_id)
             if view.active is not None
-            for agent in view.active.agents
+            for item in kind.of(view.active.contributions)
         ]
+
+    async def agents(self, owner_id: str) -> list[AgentDefinition]:
+        return [agent for _plugin, agent in await self.contributed(owner_id, AGENTS)]
 
     async def skills(self, owner_id: str) -> list[PluginSkill]:
-        """The skills published plugins contribute."""
-        return [
-            skill
-            for view, _files in await self.published(owner_id)
-            if view.active is not None
-            for skill in view.active.skills
-        ]
-
-    async def routine_templates(self, owner_id: str) -> list[tuple[str, RoutineTemplate]]:
-        """The routine templates published plugins offer, with each one's plugin."""
-        return [
-            (view.name, template)
-            for view, _files in await self.published(owner_id)
-            if view.active is not None
-            for template in view.active.routines
-        ]
+        return [skill for _plugin, skill in await self.contributed(owner_id, SKILLS)]
 
     # --- writes -----------------------------------------------------------------
 

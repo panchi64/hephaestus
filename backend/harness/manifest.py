@@ -39,6 +39,7 @@ __all__ = [
     "FeatureManifest",
     "FeatureRuntime",
     "HarnessContext",
+    "PluginInfo",
     "ServiceContainer",
 ]
 
@@ -68,6 +69,20 @@ class DormantCategory:
         index and the ``search_tools`` corpus. Kept here so composers don't each respell it.
         """
         return {entry.category: entry.summary for entry in entries}
+
+
+@dataclass(frozen=True)
+class PluginInfo:
+    """What makes a manifest a built-in plugin: the operator can see it and switch it off.
+
+    A built-in plugin lives in ``backend/plugins/<name>/``. Switched off, its routes answer
+    404, its tools and prompt blocks are withheld and its contributions are deactivated;
+    its services stay built, so a parked run of its kind can still resume.
+    """
+
+    title: str
+    description: str
+    default_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -126,6 +141,9 @@ class FeatureRuntime:
     # registry's terminal transition, async ones as tracked tasks.
     run_terminal_sync: tuple[SyncRunTerminalHook, ...] = ()
     run_terminal: tuple[RunTerminalHook, ...] = ()
+    # A built-in plugin's contributions: items of the types in ``services/plugins/
+    # contributions``, each matched to its type by class and activated while the plugin is on.
+    contributions: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -135,6 +153,8 @@ class FeatureManifest:
     name: str
     # Manifest names whose services this build resolves; the only ordering input.
     after: tuple[str, ...] = ()
+    # Set on a built-in plugin (``backend/plugins/<name>/``), never on a core feature.
+    plugin: PluginInfo | None = None
     # Registered at app assembly, before the lifespan runs.
     routers: tuple[APIRouter, ...] = ()
     # Inbound-token scope claims; a surface no claim covers stays token-unreachable.

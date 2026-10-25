@@ -336,6 +336,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
 MANIFEST = FeatureManifest(
     name="tasks",
+    composes_turns=True,
     # The executor composes the full interactive capability set, so those features build first.
     after=(
         "agents",

@@ -52,6 +52,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
 MANIFEST = FeatureManifest(
     name="inbox",
+    composes_turns=True,
     routers=(inbox_router,),
     # Starting a turn composes a full interactive one, so every feature contributing to
     # that turn's capability set must have built first.

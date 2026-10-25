@@ -1,4 +1,4 @@
-"""Plugins: tools the agent writes in Python, run in a VM once published."""
+"""Plugins the model writes: contributions declared in a file bundle, run in a VM once live."""
 
 from core.exceptions import PluginValidationError
 
@@ -7,7 +7,6 @@ from .manifest import (
     PluginManifest,
     PluginSkill,
     PluginTool,
-    RoutineTemplate,
     parse_manifest,
     validate_files,
 )
@@ -25,7 +24,6 @@ __all__ = [
     "PluginTool",
     "PluginValidationError",
     "PluginView",
-    "RoutineTemplate",
     "SecretStatus",
     "SecretValue",
     "parse_manifest",

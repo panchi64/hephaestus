@@ -57,6 +57,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
 MANIFEST = FeatureManifest(
     name="subagents",
+    composes_turns=True,
     # A thread property under `/conversations`, reached with the grant that reads the
     # thread, so no scope of its own.
     routers=(subagents_router,),

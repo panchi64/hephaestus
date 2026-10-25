@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import cast
 
 import httpx
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Engine
 
@@ -27,6 +27,13 @@ from core.http_errors import install_error_handlers
 from core.shutdown import begin_shutdown, reset_shutdown
 from core.vault import Vault
 from harness import LifecycleRegistry
+from harness.builtin_plugins import (
+    BuiltinPlugins,
+    gate_availability,
+    gate_instruction,
+    gate_prompt_context,
+    plugin_gate,
+)
 from harness.discovery import discover_manifests
 from harness.manifest import DormantCategory, HarnessContext, ServiceContainer
 from harness.run_terminal import RunTerminalDispatcher
@@ -378,12 +385,23 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         category_availability=state.category_availability,
         app=app,
     )
-    for manifest in state.feature_manifests:
-        if manifest.enabled is not None and not manifest.enabled(settings):
-            continue
+    enabled_manifests = [
+        m for m in state.feature_manifests if m.enabled is None or m.enabled(settings)
+    ]
+    builtin_plugins = BuiltinPlugins(state.settings_store, enabled_manifests)
+    await builtin_plugins.load()
+    container.add(builtin_plugins)
+    agent_capabilities.add(builtin_plugins)
+    for manifest in enabled_manifests:
         if manifest.build is None:
             continue
         runtime = await manifest.build(ctx)
+        if manifest.plugin is not None:
+            await builtin_plugins.attach(manifest.name, runtime.contributions)
+            # At the build's position, so a plugin stands down in the order it came up.
+            lifecycle.on_stop(
+                f"plugin-{manifest.name}", partial(builtin_plugins.deactivate, manifest.name)
+            )
         for service in runtime.services:
             container.add(service)
         for capability in runtime.capabilities:
@@ -449,6 +467,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The `tasks` and `files` categories are core, so their tail context is seeded here.
     prompt_context_providers: list[PromptContextProvider] = [tasks_context, workspace_context]
     for manifest in enabled_manifests:
+        # A built-in plugin's tools and prompt blocks go quiet while it is switched off.
+        plugin = manifest.name if manifest.plugin is not None else None
         for category, factory in manifest.toolsets:
             if category in tool_categories:
                 raise RuntimeError(
@@ -456,13 +476,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     + f"(second claim by manifest {manifest.name!r})"
                 )
             tool_categories[category] = factory()
-            if manifest.available is not None:
+            if plugin is not None:
+                availability_claims.append(
+                    (category, gate_availability(plugin, manifest.available))
+                )
+            elif manifest.available is not None:
                 availability_claims.append((category, manifest.available))
         gated_tools |= manifest.gated_tools
         network_tools |= manifest.network_tools
         dormant_categories.extend(manifest.dormant)
-        instruction_providers.extend(manifest.instructions)
-        prompt_context_providers.extend(manifest.prompt_context)
+        instruction_providers.extend(
+            gate_instruction(plugin, p) if plugin is not None else p for p in manifest.instructions
+        )
+        prompt_context_providers.extend(
+            gate_prompt_context(plugin, p) if plugin is not None else p
+            for p in manifest.prompt_context
+        )
     # A dormant name with no category would advertise a nonexistent group in the agent's index.
     for entry in dormant_categories:
         if entry.category not in tool_categories:
@@ -524,10 +553,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(vm.router)
     app.include_router(tools.router)
     app.include_router(tokens.router)
-    # A manifest whose `enabled` gate is off contributes nothing, so its routes 404.
+    # A manifest whose `enabled` gate is off contributes nothing, so its routes 404; a
+    # built-in plugin's routes also 404 while the operator has it switched off.
     for manifest in enabled_manifests:
+        gate = [Depends(plugin_gate(manifest.name))] if manifest.plugin is not None else []
         for router in manifest.routers:
-            app.include_router(router)
+            app.include_router(router, dependencies=gate)
     return app
 
 

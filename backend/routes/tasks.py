@@ -29,6 +29,7 @@ from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
 from services.projects import project_clause
 from services.routines import Routine, RoutineRun, Schedule, parse_schedule, upcoming
+from services.routines.contribution import ROUTINES
 from tools.catalog import approval_scopes
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -325,7 +326,7 @@ async def list_task_runs(
 
 @router.get("/templates", response_model=TemplateListOut)
 async def list_templates(request: Request) -> TemplateListOut:
-    templates = await deps.plugins(request).routine_templates(OPERATOR_ID)
+    templates = await deps.plugins(request).contributed(OPERATOR_ID, ROUTINES)
     return TemplateListOut(
         items=[
             TemplateOut(
