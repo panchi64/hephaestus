@@ -81,16 +81,19 @@ export function OnboardingScreen(): JSX.Element {
   const entries = (): Record<StepId, RailEntry> => ({
     endpoint: {
       done: isDone("endpoint"),
-      readout: isDone("endpoint") ? `${okEndpoints().length} OK` : "—",
+      readout: isDone("endpoint") ? `${okEndpoints().length} OK` : "REQUIRED",
     },
-    chat: { done: isDone("chat"), readout: isDone("chat") ? "SET" : "—" },
+    chat: {
+      done: isDone("chat"),
+      readout: isDone("chat") ? "SET" : "REQUIRED",
+    },
     roles: {
       done: isDone("roles"),
       readout: boundCount() > 0 ? `${boundCount()} SET` : "DEFAULT",
     },
     workspace: {
       done: isDone("workspace"),
-      readout: isDone("workspace") ? "DONE" : "—",
+      readout: isDone("workspace") ? "DONE" : "OPTIONAL",
     },
     ready: { done: false, readout: "" },
   });
@@ -141,7 +144,7 @@ export function OnboardingScreen(): JSX.Element {
         <ConstructionReveal
           when={step() !== null}
           origin="top-left"
-          class="h-fit w-full max-w-xl"
+          class="my-auto h-fit w-full max-w-xl"
           contentClass="p-6"
         >
           <Show when={step()} keyed>

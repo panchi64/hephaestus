@@ -3,6 +3,7 @@ import { settled } from "~/lib/resource";
 import { MetaAction, Text } from "~/ui";
 import { effectiveSelection } from "~/lib/stores/models";
 import { useEndpoints, useRoles } from "~/features/settings/data";
+import { readyBriefing } from "../briefings";
 import { formatTokens, type StepId } from "../model";
 import { StepShell } from "./StepShell";
 
@@ -83,7 +84,7 @@ export function ReadyStep(props: {
 
   return (
     <StepShell
-      talos="The workspace is ready."
+      briefing={readyBriefing()}
       title="Summary"
       buttons={[
         { label: "Back", onClick: props.onBack },

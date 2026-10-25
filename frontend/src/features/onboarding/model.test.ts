@@ -7,6 +7,7 @@ import type {
 import {
   chatChoices,
   chatReady,
+  embeddingChoices,
   endpointReady,
   formatTokens,
   preferredChoice,
@@ -277,6 +278,57 @@ describe("preferredChoice", () => {
 
   test("no choices yields null", () => {
     expect(preferredChoice([], [endpoint()], [server(url)])).toBeNull();
+  });
+});
+
+describe("embeddingChoices", () => {
+  const url = "http://localhost:1234/v1";
+
+  test("returns only the scanned embedding models when the scan names any", () => {
+    const servers = [
+      server(url, [
+        localModel("chat", { kind: "llm" }),
+        localModel("embed", { kind: "embeddings" }),
+      ]),
+    ];
+    expect(
+      embeddingChoices(
+        [group("ep1", ["chat", "embed"])],
+        [endpoint()],
+        servers,
+      ),
+    ).toEqual([{ endpointId: "ep1", model: "embed" }]);
+  });
+
+  test("falls back to every model when the scan names no embedding model", () => {
+    const servers = [server(url, [localModel("chat", { kind: "llm" })])];
+    expect(
+      embeddingChoices(
+        [group("ep1", ["chat", "other"])],
+        [endpoint()],
+        servers,
+      ),
+    ).toEqual([
+      { endpointId: "ep1", model: "chat" },
+      { endpointId: "ep1", model: "other" },
+    ]);
+  });
+
+  test("ignores endpoints whose last probe was not ok", () => {
+    const endpoints = [
+      endpoint({ id: "good" }),
+      endpoint({ id: "bad", lastStatus: "error", baseUrl: "http://bad/v1" }),
+    ];
+    const servers = [
+      server("http://bad/v1", [localModel("embed", { kind: "embeddings" })]),
+    ];
+    expect(
+      embeddingChoices(
+        [group("good", ["m1"]), group("bad", ["embed"])],
+        endpoints,
+        servers,
+      ),
+    ).toEqual([{ endpointId: "good", model: "m1" }]);
   });
 });
 

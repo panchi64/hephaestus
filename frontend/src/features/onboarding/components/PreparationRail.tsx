@@ -1,7 +1,9 @@
 import { For, type JSX } from "solid-js";
-import { RailRow, StatusBar, Text } from "~/ui";
+import { RailRow, StatusBar, Text, type RailRowState } from "~/ui";
 import { LockCell, RailFrame } from "~/app/sidebar";
-import { STEPS, stepCounter, stepIndex, type StepId } from "../model";
+import { STEPS, stepCounter, type StepId } from "../model";
+
+const TOTAL = STEPS.length + 2;
 
 export interface RailEntry {
   /** What the row reads at its right, in the machine voice. */
@@ -19,6 +21,15 @@ export function PreparationRail(props: {
   reachable: (step: StepId) => boolean;
   onGo: (step: StepId) => void;
 }): JSX.Element {
+  const stateOf = (id: StepId): RailRowState => {
+    if (id === props.current) return "current";
+    return props.entries[id].done ? "done" : "pending";
+  };
+  // The two rows done unasked count toward the total, so the count never reads zero
+  // on a walkthrough that has already started working.
+  const doneCount = (): number =>
+    2 + STEPS.filter((s) => props.entries[s.id].done).length;
+
   return (
     <RailFrame
       assetId="heph-setup-01.0"
@@ -37,30 +48,29 @@ export function PreparationRail(props: {
       <div class="min-h-0 flex-1 overflow-y-auto">
         <div class="heph-list-plate" data-rule="">
           <span class="heph-list-plate-label">Preparation</span>
+          <span class="heph-list-plate-count">
+            {doneCount()}/{TOTAL}
+          </span>
         </div>
         <RailRow
           title="Vault key derived"
+          state="done"
           readout="DONE"
           onOpen={() => undefined}
         />
         <RailRow
           title="Local scan"
-          state={props.scanning ? "running" : "idle"}
+          state={props.scanning ? "running" : "done"}
           readout={props.scanning ? "SCANNING" : `${props.found} FOUND`}
           onOpen={() => undefined}
         />
         <For each={STEPS}>
           {(step) => {
             const entry = () => props.entries[step.id];
-            const upcoming = () =>
-              !entry().done && stepIndex(step.id) > stepIndex(props.current);
             return (
               <RailRow
-                title={
-                  <span class={upcoming() ? "text-dim" : undefined}>
-                    {step.label}
-                  </span>
-                }
+                title={step.label}
+                state={stateOf(step.id)}
                 selected={step.id === props.current}
                 readout={entry().readout}
                 onOpen={() => {

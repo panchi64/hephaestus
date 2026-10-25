@@ -119,6 +119,22 @@ export function useModelAssignments() {
     }
   };
 
+  /** Unbinds `role`, back to its default: background work on the chat model, keyword
+   *  recall, Auto asking the operator. */
+  const clearRole = async (
+    role: AssignableRole,
+    name: string,
+  ): Promise<void> => {
+    try {
+      await setRoleBinding(role, [], null);
+      toast.success(`${name} is back to its default.`);
+    } catch (e) {
+      toast.error(
+        isApiError(e) ? e.detail : `Unable to reset the ${name.toLowerCase()}.`,
+      );
+    }
+  };
+
   return {
     endpoints,
     roles,
@@ -129,5 +145,6 @@ export function useModelAssignments() {
     roleValue,
     pickBackground,
     bindPicked,
+    clearRole,
   };
 }

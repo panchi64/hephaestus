@@ -1,7 +1,9 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
 import { ChoiceList, MetaAction, type ChoiceOption } from "~/ui";
-import type { ModelEndpoint } from "~/lib/stores/models";
+import { modelGroups, type ModelEndpoint } from "~/lib/stores/models";
+import { endpointBriefing, providerReason } from "../briefings";
+import { OptionLabel } from "./OptionLabel";
 import {
   createEndpoint,
   testEndpoint,
@@ -47,26 +49,41 @@ export function EndpointStep(props: {
   const [form, setForm] = createSignal(false);
   const [testing, setTesting] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
+  /** The endpoint the briefing talks about: the one last added, edited or tested. */
+  const [latestId, setLatestId] = createSignal<string | null>(null);
 
   const list = (): ModelEndpoint[] => settled(endpoints) ?? [];
+  const groupSize = (id: string): number =>
+    modelGroups().find((g) => g.endpointId === id)?.choices.length ?? 0;
   const ready = (): boolean => endpointReady(list());
   const available = (): LocalServer[] =>
     unclaimedServers(props.servers ?? [], list());
 
   const options = (): ChoiceOption[] => [
-    ...available().map((s) => ({
+    ...available().map((s, i) => ({
       id: LOCAL + s.baseUrl,
-      label: s.label,
-      hint: serverHint(s),
+      label: (
+        <OptionLabel
+          title={s.label}
+          reason="Runs on this machine; nothing you send leaves it."
+        />
+      ),
+      hint: `${i === 0 ? "RECOMMENDED · " : ""}${serverHint(s)}`,
     })),
     ...(settled(providers) ?? []).map((p) => ({
       id: PROVIDER + p.id,
-      label: p.displayName,
-      hint: p.requiresKey ? "API KEY" : (p.defaultBaseUrl ?? "URL"),
+      label: (
+        <OptionLabel
+          title={p.displayName}
+          reason={providerReason(p.id, p.requiresKey)}
+        />
+      ),
+      hint: p.requiresKey ? "API KEY" : "URL",
     })),
   ];
 
   const test = async (id: string): Promise<void> => {
+    setLatestId(id);
     setTesting(id);
     try {
       await testEndpoint(id);
@@ -157,10 +174,32 @@ export function EndpointStep(props: {
     return [scan, ...rows];
   };
 
-  const talos = (): string =>
-    !props.scanning && available().length === 0 && list().length === 0
-      ? "Nothing is running locally, so point me at a server or an API."
-      : "I need a model to think through. I checked this machine first.";
+  const briefing = (): string => {
+    const latest = list().find((e) => e.id === latestId());
+    const provider = (settled(providers) ?? []).find(
+      (p) => p.id === editor.values().provider,
+    );
+    return endpointBriefing({
+      scanning: props.scanning,
+      available: available(),
+      latest:
+        latest && latest.lastStatus !== null && testing() !== latest.id
+          ? {
+              name: latest.name,
+              ok: latest.lastStatus === "ok",
+              models: groupSize(latest.id),
+              detail: latest.lastErrorDetail,
+            }
+          : undefined,
+      form: form()
+        ? {
+            provider: editor.values().provider,
+            displayName: provider?.displayName ?? editor.values().name,
+            requiresKey: provider?.requiresKey ?? false,
+          }
+        : undefined,
+    });
+  };
 
   return (
     <Show
@@ -168,7 +207,7 @@ export function EndpointStep(props: {
       fallback={
         <StepShell
           status={<StatusBlock label="Connections" lines={statusLines()} />}
-          talos={talos()}
+          briefing={briefing()}
           title={ready() ? "Add another, or continue" : "Choose an endpoint"}
           aside="Required"
         >
@@ -186,7 +225,7 @@ export function EndpointStep(props: {
     >
       <StepShell
         status={<StatusBlock label="Connections" lines={statusLines()} />}
-        talos={talos()}
+        briefing={briefing()}
         title={editor.values().name || "Endpoint"}
         aside="Required"
         buttons={[

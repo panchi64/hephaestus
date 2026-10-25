@@ -773,12 +773,12 @@ Text that arrives wrapped, which nobody in the thread wrote, is its own row (`En
 
 After the operator creates the platform password, a full-screen surface walks them through Endpoint, Chat model, Roles, Workspace and Ready. Endpoint and Chat model are required; the rest can be skipped. It can be reopened from Settings › Models (**Run setup walkthrough**).
 
-- **The rail** (left) is a quiet "Preparation" checklist in the app rail's chrome: `RailFrame`, one `RailRow` per step in three states (done, current, upcoming), and mono readouts at the right (`1 FOUND`, `SET`, `DEFAULT`). Its `StatusBar` footer carries the `03 / 06` index and Lock.
+- **The rail** (left) is a quiet "Preparation" checklist in the app rail's chrome: `RailFrame`, one `RailRow` per step in the checklist states (`done` in nominal, `current` bright, `pending` hollow and dim), mono readouts at the right (`1 FOUND`, `SET`, `REQUIRED`), and a done count on the plate. Its `StatusBar` footer carries the `03 / 05` index and Lock.
 - **The column** (right) is one centered single column, built in once on first mount with the construction reveal (§8).
 - **The status block** is a mono `ConsoleGroup` that lists only probes that ran (the localhost scan, a connection test and its verdict). A step that hasn't run a probe has no block.
-- **One Talos line** follows in sans `body`, first person (voice §14). Labels, buttons and errors are plain UI copy.
-- **One question frame**: a live `ActionFrame tone="question"` holding a `ChoiceList` or a form, with Back and Continue in its footer. It is the only loud element on the page.
-- **Motion.** Moving between steps is a `Reveal` at distance 10 per step. Mono values snap rather than tween, and the rail's rows trace in once.
+- **Talos's briefing** opens each step: a few short paragraphs in the reading voice, first person (voice §14), saying what the step is for, what Talos found or did, what it recommends and why, and what happens next. It is rewritten as the state changes and streams in through the answer's own reveal (`AnswerText`); only the part that changed is spoken again. It carries no label.
+- **One question frame**: a live `ActionFrame tone="question"` holding a `ChoiceList` or a form, with Back and Continue in its footer. It is the only loud element on the page. Every option row says what it is and, under it, why you'd pick it; Talos's pick carries `RECOMMENDED` in its consequence column. A step with several settings (the roles, the workspace) gives each one line — its name and purpose at the left, a `Select` on its current pick at the right — with the default first in the menu and every option's reason under it.
+- **Motion.** Moving between steps is a `Reveal` at distance 10 per step. Mono values snap rather than tween.
 - **It must not** wear chat framing (no bubbles, no composer, no thread), show a second loud frame, celebrate the last step (Ready is a mono summary and **Enter workspace**), or stagger its children.
 
 ### States — all components

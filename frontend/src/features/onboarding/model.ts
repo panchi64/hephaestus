@@ -106,6 +106,30 @@ export function chatChoices(
   });
 }
 
+/** The recall picks: the models the scan names as embedding models, or every model on a
+ *  working endpoint when the scan can't tell (the backend refuses one that isn't). */
+export function embeddingChoices(
+  groups: ModelGroup[],
+  endpoints: ModelEndpoint[],
+  servers: LocalServer[],
+): ModelSelection[] {
+  const ok = new Map(
+    endpoints.filter((e) => e.lastStatus === "ok").map((e) => [e.id, e]),
+  );
+  const all = groups.flatMap((g) =>
+    ok.has(g.endpointId)
+      ? g.choices.map((c) => ({ endpointId: c.endpointId, model: c.model }))
+      : [],
+  );
+  const named = all.filter((c) => {
+    const ep = ok.get(c.endpointId);
+    return (
+      ep && scannedModel(servers, ep.baseUrl, c.model)?.kind === "embeddings"
+    );
+  });
+  return named.length > 0 ? named : all;
+}
+
 /** The pick to preselect: the model a scanned server has loaded, else the first. */
 export function preferredChoice(
   choices: ModelSelection[],

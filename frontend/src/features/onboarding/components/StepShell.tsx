@@ -7,13 +7,14 @@ import {
   Text,
   type ActionButtonSpec,
 } from "~/ui";
+import { TalosBriefing } from "./TalosBriefing";
 
-/** One step, top to bottom: the machine's status block, Talos's one line, and the single
- *  live question frame. `buttons` gives the frame a footer; omit it when the body brings
- *  its own (a `ChoiceList`). */
+/** One step, top to bottom: Talos's briefing, the machine's status block behind it, and
+ *  the single live question frame. `buttons` gives the frame a footer; omit it when the
+ *  body brings its own (a `ChoiceList`). */
 export function StepShell(props: {
+  briefing: string;
   status?: JSX.Element;
-  talos: string;
   title: string;
   aside?: JSX.Element;
   buttons?: ActionButtonSpec[];
@@ -23,8 +24,8 @@ export function StepShell(props: {
   return (
     <Reveal motion="rise" distance={10}>
       <Stack gap={4}>
+        <TalosBriefing text={props.briefing} />
         {props.status}
-        <Text variant="body">{props.talos}</Text>
         <ActionFrame tone="question" title={props.title} aside={props.aside}>
           {props.children}
           <Show when={props.buttons}>

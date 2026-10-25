@@ -20,6 +20,8 @@ import {
   scannedModel,
   type LocalServer,
 } from "../model";
+import { chatBriefing, modelReason } from "../briefings";
+import { OptionLabel } from "./OptionLabel";
 import { StatusBlock } from "./StatusBlock";
 import { StepShell } from "./StepShell";
 
@@ -41,24 +43,47 @@ export function ChatModelStep(props: {
 
   const endpointOf = (id: string) => endpoints().find((e) => e.id === id);
 
-  const hint = (sel: ModelSelection): string => {
+  const scannedFor = (sel: ModelSelection) => {
     const ep = endpointOf(sel.endpointId);
-    const scanned = ep
-      ? scannedModel(props.servers, ep.baseUrl, sel.model)
-      : undefined;
-    const parts = [ep?.name ?? ""];
+    return ep ? scannedModel(props.servers, ep.baseUrl, sel.model) : undefined;
+  };
+  const recommended = (): string | null => {
+    const pick = preferredChoice(choices(), endpoints(), props.servers);
+    return pick ? encodeModelValue(pick) : null;
+  };
+
+  const hint = (sel: ModelSelection): string => {
+    const scanned = scannedFor(sel);
+    const parts = [
+      encodeModelValue(sel) === recommended() ? "RECOMMENDED" : "",
+      endpointOf(sel.endpointId)?.name ?? "",
+    ];
     if (scanned?.contextWindow)
       parts.push(`${formatTokens(scanned.contextWindow)} CTX`);
-    if (scanned?.loaded) parts.push("LOADED");
     return parts.filter(Boolean).join(" · ");
   };
 
   const options = (): ChoiceOption[] =>
     choices().map((c) => ({
       id: encodeModelValue(c),
-      label: c.model,
+      label: (
+        <OptionLabel title={c.model} reason={modelReason(scannedFor(c))} />
+      ),
       hint: hint(c),
     }));
+
+  const briefing = (): string => {
+    const sel = effectiveSelection();
+    const explicit = sel && !main()?.implicit ? sel : undefined;
+    const scanned = explicit ? scannedFor(explicit) : undefined;
+    return chatBriefing({
+      picked: explicit?.model,
+      pickedWindow: main()?.contextWindow ?? null,
+      pickedLoaded: scanned?.loaded === true,
+      choices: choices().length,
+      needsWindow: needsWindow(),
+    });
+  };
 
   const pickedValue = (): string | null => {
     const sel = effectiveSelection();
@@ -120,7 +145,7 @@ export function ChatModelStep(props: {
   return (
     <StepShell
       status={<StatusBlock label="Chat model" lines={status()} />}
-      talos="This is the model you'll talk to. I've picked the one that's loaded."
+      briefing={briefing()}
       title="Pick the chat model"
       aside="Required"
     >
