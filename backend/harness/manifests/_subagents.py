@@ -25,13 +25,13 @@ from typing import override
 from pydantic_ai import RunContext
 
 from agent.recompose import ParkedFacts, Recomposed, register_recompose
-from agent.summarize import resolve_auto_compact_policy
 from core.diagnostics import render_tool_error
 from core.exceptions import InvalidInputError, NotFoundError
-from harness.manifest import DormantCategory, HarnessContext
+from harness.manifest import HarnessContext
+from harness.turns import UnattendedTurns
 from models.subagent import SubagentRecord
 from prompts.voice import CLASSES
-from routes.chat import compose_turn, resolve_turn_models
+from routes.chat import resolve_turn_models
 from routes.chat.thread_composer import ThreadComposer
 from runs import RunRegistry, RunStatus
 from runs.run import StopCause
@@ -45,7 +45,6 @@ from services.agents import (
 from services.agents.definition import WorkspacePolicy
 from services.agents.thread import as_thread, may_delegate, resolve_thread_agent
 from services.conversations import ConversationBinding, ConversationStore
-from services.offline import OfflineModeService
 from services.permissions import DEFAULT_PERMISSION, permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.repo import WorktreeError
@@ -53,7 +52,6 @@ from services.projects.worktree import WorktreeBusyError
 from services.registry import ModelRegistry
 from services.settings_store import (
     SettingsStore,
-    get_context_thresholds,
     get_subagent_limit,
 )
 from services.subagent_store import LIVE_STATUSES, SubagentStore
@@ -78,7 +76,6 @@ from services.subagents.launcher import (
     SubagentUnavailableError,
     SubagentView,
 )
-from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP, split_workspace_key
 from tools import InstructionProvider, RunDeps
 
@@ -135,29 +132,14 @@ class ConversationSubagents(SubagentLauncher):
         self._models: ModelRegistry = ctx.services.get(ModelRegistry)
         self._runs: RunRegistry = ctx.services.get(RunRegistry)
         self._settings: SettingsStore = ctx.services.get(SettingsStore)
-        self._offline: OfflineModeService = ctx.services.get(OfflineModeService)
-        self._uploads: UploadStore = ctx.services.get(UploadStore)
         self._agents: AgentCatalog = ctx.services.get(AgentCatalog)
         #: Handles and folded callsigns chosen but not yet recorded, as (owner, root, name).
         #: A launch picks its names before a whole turn is composed and records them after,
         #: so concurrent launches in one step consult these as well as the register.
         self._reserved: set[tuple[str, str, str]] = set()
         self._reserve_lock: asyncio.Lock = asyncio.Lock()
-        self._composer: ThreadComposer = ThreadComposer(
-            agents=self._agents,
-            model_registry=self._models,
-            conversations=self._conversations,
-            settings_store=self._settings,
-            offline=self._offline,
-            settings=ctx.settings,
-            capabilities=ctx.capabilities,
-            categories=ctx.tool_categories,
-            dormant=DormantCategory.summaries(ctx.dormant_categories),
-            instruction_providers=ctx.instruction_providers,
-            availability=ctx.category_availability,
-            projects=ctx.services.get_optional(ProjectStore),
-            worktrees=ctx.services.get_optional(WorktreeManager),
-        )
+        self._turns: UnattendedTurns = UnattendedTurns(ctx)
+        self._composer: ThreadComposer = self._turns.composer
         register_recompose(self._runs, SUBAGENT_KIND, self._recompose)
 
     async def _recompose(self, facts: ParkedFacts) -> Recomposed:
@@ -298,25 +280,16 @@ class ConversationSubagents(SubagentLauncher):
         root = position.root or thread
         self._wake.remember_root(conversation_id, root)
 
-        created = compose_turn(
+        created = await self._turns.submit(
             prompt=task,
             conversation_id=conversation_id,
             models=models,
-            capabilities=self._ctx.capabilities,
-            categories=self._ctx.tool_categories,
-            dormant=DormantCategory.summaries(self._ctx.dormant_categories),
             instruction_providers=(
                 *self._ctx.instruction_providers,
                 _briefing(brief_for(agent.instructions, policy, agent.agent_class)),
             ),
-            prompt_context_providers=self._ctx.prompt_context_providers,
-            registry=self._runs,
-            store=self._conversations,
-            uploads=self._uploads,
             disabled_tools=disabled,
             binding=binding,
-            context_thresholds=await get_context_thresholds(self._settings, owner_id),
-            auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             owner_id=owner_id,
             kind=SUBAGENT_KIND,
             # A streaming model keeps the inactivity watchdog fed; only a wall clock ends a

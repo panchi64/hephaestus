@@ -19,7 +19,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 
-import harness.manifests.tasks as tasks_manifest
+import harness.turns as harness_turns
 import routes.chat.submit as chat_routes
 import routes.runs as runs_routes
 from agent import build_resume_orchestrator
@@ -399,7 +399,7 @@ async def test_unattended_task_turn_composes_with_the_operator_set_and_the_model
 
         captured: dict[str, frozenset[str]] = {}
         monkeypatch.setattr(
-            tasks_manifest, "compose_turn", spy_disabled_tools(compose_turn, captured)
+            harness_turns, "compose_turn", spy_disabled_tools(compose_turn, captured)
         )
         created = await create_task(client)
         fired = await client.post(f"/tasks/{created['id']}/run_now")

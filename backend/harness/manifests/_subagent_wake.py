@@ -16,8 +16,6 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from pydantic_ai import ModelResponse
-
 from core.exceptions import NotFoundError
 from core.fork import MergeReport
 from core.text import elide_middle
@@ -212,15 +210,10 @@ class SubagentWake:
         )
 
     async def _latest_answer(self, conversation_id: str) -> str | None:
-        """The newest response that said anything. One answering a retry is a second
-        answer, not more of the first, so the rendered turn (which joins them) is not it."""
         try:
-            messages = await self._conversations.history(conversation_id)
+            return await self._conversations.latest_answer(conversation_id)
         except NotFoundError:
             return None
-        return next(
-            (m.text for m in reversed(messages) if isinstance(m, ModelResponse) and m.text), None
-        )
 
     async def _park(self, row: SubagentRecord) -> str | None:
         """Commit the worktree a sub-agent was spawned into and say where it is, for its

@@ -669,7 +669,7 @@ async def _filed_parent(app: FastAPI, root: Path) -> tuple[str, str]:
 def _capture_composition(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """The arguments the sub-agent's turn was composed with; the real `compose_turn` still runs."""
     seen: dict[str, object] = {}
-    monkeypatch.setattr("harness.manifests._subagents.compose_turn", _recording(compose_turn, seen))
+    monkeypatch.setattr("harness.turns.compose_turn", _recording(compose_turn, seen))
     return seen
 
 

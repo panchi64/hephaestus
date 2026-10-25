@@ -13,7 +13,6 @@ import logging
 from uuid import uuid4
 
 from agent.recompose import ParkedFacts, Recomposed, RecomposeError, register_recompose
-from agent.summarize import resolve_auto_compact_policy
 from core.api_scopes import ScopeClaim
 from core.exceptions import NotFoundError
 from core.serde import as_utc
@@ -24,19 +23,17 @@ from harness.manifest import (
     FeatureRuntime,
     HarnessContext,
 )
+from harness.turns import UnattendedTurns
 from models.task import TaskOutcome, TaskOutput
 from routes import tasks as tasks_routes
-from routes.chat import WallClockOverride, compose_turn
-from routes.chat.thread_composer import ThreadComposer
 from routes.deps import OPERATOR_ID
 from runs import Run, RunKind, RunRegistry, RunStatus
+from runs.registry import UNSET
 from services.agents import AgentCatalog
 from services.approval_grants import ONCE_ONLY_TOOLS, ApprovalGrantStore
 from services.conversations import ConversationStore
 from services.corpus import CorpusIndex
 from services.notifications import NotificationService
-from services.offline import OfflineModeService
-from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
 from services.routines import RoutineStore, ScheduleNaturalLanguage
 from services.routines.corpus import SOURCE_KIND, SURFACE_ID, routine_runs_adapter
@@ -46,12 +43,7 @@ from services.scheduler import (
     TaskRunResult,
     TaskRunSuspended,
 )
-from services.settings_store import (
-    SettingsStore,
-    get_context_thresholds,
-)
 from services.tool_sensitivity import Sensitivity
-from services.uploads import UploadStore
 from tools.platform import PlatformSource
 from tools.routines import GATED_TOOLS as ROUTINES_GATED
 from tools.routines import routines_toolset
@@ -90,26 +82,11 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     runs = services.get(RunRegistry)
     grants = services.get(ApprovalGrantStore)
     notifications = services.get(NotificationService)
-    settings_store = services.get(SettingsStore)
-    offline = services.get(OfflineModeService)
     agents = services.get(AgentCatalog)
     routines = RoutineStore(ctx.engine, ctx.vault, agents)
     services.get(CorpusIndex).register(routine_runs_adapter(ctx.engine, ctx.vault))
-    composer = ThreadComposer(
-        agents=agents,
-        model_registry=registry,
-        conversations=conversations,
-        settings_store=settings_store,
-        offline=offline,
-        settings=ctx.settings,
-        capabilities=ctx.capabilities,
-        categories=ctx.tool_categories,
-        dormant=DormantCategory.summaries(ctx.dormant_categories),
-        instruction_providers=ctx.instruction_providers,
-        availability=ctx.category_availability,
-        projects=services.get_optional(ProjectStore),
-        worktrees=services.get_optional(WorktreeManager),
-    )
+    turns = UnattendedTurns(ctx)
+    composer = turns.composer
 
     async def _routine_gone(run_id: str) -> str | None:
         if await scheduler.records_run(run_id):
@@ -204,11 +181,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         disabled = await composer.disabled(
             view.owner_id, kind=TASK_KIND, vision=models.vision, applied=applied, depth=0
         )
-        thresholds = await get_context_thresholds(settings_store, view.owner_id)
-        timeouts: WallClockOverride = {}
-        if applied.agent.wall_clock_timeout_s is not None:
-            timeouts["wall_clock_timeout_s"] = applied.agent.wall_clock_timeout_s
-        auto_compact = await resolve_auto_compact_policy(settings_store, view.owner_id)
+        wall_clock = applied.agent.wall_clock_timeout_s
         prompt = await _with_last_run(view)
         waiter: asyncio.Future[Run] = asyncio.get_running_loop().create_future()
         run_id = uuid4().hex
@@ -218,28 +191,18 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
                 view.task_run_id, run_id=run_id, conversation_id=conversation_id
             )
         try:
-            created = compose_turn(
+            created = await turns.submit(
                 run_id=run_id,
                 prompt=prompt,
                 conversation_id=conversation_id,
                 models=models,
-                capabilities=ctx.capabilities,
-                categories=ctx.tool_categories,
-                dormant=DormantCategory.summaries(ctx.dormant_categories),
                 instruction_providers=thread.instruction_providers,
-                prompt_context_providers=ctx.prompt_context_providers,
-                registry=runs,
-                store=conversations,
-                uploads=services.get(UploadStore),
                 disabled_tools=disabled,
                 binding=applied.binding,
-                context_thresholds=thresholds,
-                auto_compact=auto_compact,
                 owner_id=view.owner_id,
-                # A routine's run takes the `routine` lane (`runs/lanes.py`).
                 kind=TASK_KIND,
                 max_requests=applied.agent.max_requests,
-                **timeouts,
+                wall_clock_timeout_s=wall_clock if wall_clock is not None else UNSET,
             )
         except Exception:
             if view.task_run_id is not None:

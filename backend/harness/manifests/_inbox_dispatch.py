@@ -27,27 +27,18 @@ from fastapi import FastAPI, HTTPException
 
 from agent.injected import injected_text
 from agent.recompose import ParkedFacts, Recomposed, register_recompose
-from agent.summarize import resolve_auto_compact_policy
-from harness.manifest import DormantCategory, HarnessContext
+from harness.manifest import HarnessContext
+from harness.turns import UnattendedTurns
 from models.subagent import SubagentRecord
-from routes.chat import (
-    ConversationBusyError,
-    WallClockOverride,
-    compose_turn,
-    submit_queued,
-)
+from routes.chat import ConversationBusyError, submit_queued
 from routes.chat.thread_composer import ThreadComposer
 from routes.deps import app_state
 from runs import QueuedMessage, Run, RunRegistry
-from services.agents import AgentCatalog, lower_of
+from runs.registry import UNSET
+from services.agents import lower_of
 from services.conversations import ConversationStore
 from services.notifications import NotificationService
-from services.offline import OfflineModeService
-from services.projects import ProjectStore, WorktreeManager
-from services.registry import ModelRegistry
-from services.settings_store import SettingsStore, get_context_thresholds
 from services.subagent_store import SubagentStore
-from services.uploads import UploadStore
 from services.workspace import split_workspace_key
 
 logger = logging.getLogger(__name__)
@@ -77,11 +68,6 @@ class InboxDispatcher:
         self._ctx: HarnessContext = ctx
         self._runs: RunRegistry = ctx.services.get(RunRegistry)
         self._conversations: ConversationStore = ctx.services.get(ConversationStore)
-        self._models: ModelRegistry = ctx.services.get(ModelRegistry)
-        self._settings: SettingsStore = ctx.services.get(SettingsStore)
-        self._offline: OfflineModeService = ctx.services.get(OfflineModeService)
-        self._uploads: UploadStore = ctx.services.get(UploadStore)
-        self._agents: AgentCatalog = ctx.services.get(AgentCatalog)
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         # Consecutive unattended turns per tree root, cleared whenever the operator drives
         # the tree. In memory on purpose: a rail against a runaway loop, not a fact.
@@ -93,21 +79,8 @@ class InboxDispatcher:
         # Threads of each tree left waiting at the ceiling, by root.
         self._stalled: dict[str, set[tuple[str, str]]] = {}
         self._kicks: set[asyncio.Task[None]] = set()
-        self._composer: ThreadComposer = ThreadComposer(
-            agents=self._agents,
-            model_registry=self._models,
-            conversations=self._conversations,
-            settings_store=self._settings,
-            offline=self._offline,
-            settings=ctx.settings,
-            capabilities=ctx.capabilities,
-            categories=ctx.tool_categories,
-            dormant=DormantCategory.summaries(ctx.dormant_categories),
-            instruction_providers=ctx.instruction_providers,
-            availability=ctx.category_availability,
-            projects=ctx.services.get_optional(ProjectStore),
-            worktrees=ctx.services.get_optional(WorktreeManager),
-        )
+        self._turns: UnattendedTurns = UnattendedTurns(ctx)
+        self._composer: ThreadComposer = self._turns.composer
         register_recompose(self._runs, WAKE_KIND, self._recompose)
 
     async def _recompose(self, facts: ParkedFacts) -> Recomposed:
@@ -323,39 +296,32 @@ class InboxDispatcher:
             depth=row.depth if row is not None else 0,
         )
         # A spawned agent's turn gets the wall clock its first one had: nobody is watching.
-        timeouts: WallClockOverride = {}
-        if row is not None:
-            timeouts["wall_clock_timeout_s"] = lower_of(
+        wall_clock = (
+            lower_of(
                 applied.agent.wall_clock_timeout_s,
                 self._ctx.settings.subagent_wall_clock_timeout_s,
             )
-        created = compose_turn(
+            if row is not None
+            else UNSET
+        )
+        created = await self._turns.submit(
             # The envelope a delivery injected into a running turn arrives in, so the model
             # cannot tell which road it took, nor read it as the operator.
             prompt=injected_text(lead),
             conversation_id=conversation_id,
             models=models,
-            capabilities=self._ctx.capabilities,
-            categories=self._ctx.tool_categories,
-            dormant=DormantCategory.summaries(self._ctx.dormant_categories),
             instruction_providers=thread.instruction_providers,
-            prompt_context_providers=self._ctx.prompt_context_providers,
-            registry=self._runs,
-            store=self._conversations,
-            uploads=self._uploads,
             disabled_tools=disabled,
             binding=applied.binding,
             owner_id=owner_id,
             kind=WAKE_KIND,
-            context_thresholds=await get_context_thresholds(self._settings, owner_id),
-            auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             ephemeral=row is not None,
             max_requests=applied.agent.max_requests,
             # Edits belong to the turn that sent the message when it files in the same
             # thread's ledger as this agent, else to the one that launched the agent. A wake
             # that took several messages files under its lead message's prompt.
             ledger_prompt_message_id=(self._wake_prompt(lead.id, row) if row is not None else None),
-            **timeouts,
+            wall_clock_timeout_s=wall_clock,
         )
         self._runs.inbox(conversation_id, owner_id).take(lead)
         if row is not None and records is not None:

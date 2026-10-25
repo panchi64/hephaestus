@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
-import harness.manifests.tasks as tasks_manifest
+import harness.turns as harness_turns
 from core.db import in_session, read_blocking
 from core.vault import Vault
 from models.conversation import Message
@@ -186,7 +186,7 @@ async def test_the_task_run_is_linked_before_the_run_is_submitted_and_unlinked_i
             linked_first.append(kwargs["run_id"] in read_blocking(engine, read))
             raise RuntimeError("submit failed")
 
-        monkeypatch.setattr(tasks_manifest, "compose_turn", refuse)
+        monkeypatch.setattr(harness_turns, "compose_turn", refuse)
         task_id = s((await create_task(client))["id"])
         fired = await client.post(f"/tasks/{task_id}/run_now")
         task_run_id = s(json_body(fired)["taskRunId"])

@@ -71,9 +71,7 @@ def _capturing[**P, R](real: Callable[P, R], calls: list[dict[str, object]]) -> 
 def _woken(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     """Every turn the wake composes; a stubbed wake turn can finish before the registry is read."""
     calls: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "harness.manifests._inbox_dispatch.compose_turn", _capturing(compose_turn, calls)
-    )
+    monkeypatch.setattr("harness.turns.compose_turn", _capturing(compose_turn, calls))
     return calls
 
 
