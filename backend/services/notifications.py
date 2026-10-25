@@ -312,14 +312,15 @@ class NotificationService:
     async def resolve_for_run(self, owner_id: str, run_id: str) -> list[NotificationView]:
         """Resolve every one of the run's not-yet-resolved notifications (in practice
         at most its one `approval_needed`) — the approval was decided by some path, or
-        the run reached terminal without one ever being decided. Returns the resolved
-        views (empty if the run had none pending — idempotent)."""
+        the run reached terminal without one ever being decided. A resolved notification
+        needs no attention, so it is marked read too. Returns the resolved views (empty
+        if the run had none pending — idempotent)."""
         now = utcnow()
         resolved: list[NotificationView] = []
         for notif_id, view in list(self._cache.items()):
             if view.owner_id != owner_id or view.run_id != run_id or view.resolved_at is not None:
                 continue
-            updated = replace(view, resolved_at=now)
+            updated = replace(view, resolved_at=now, read_at=view.read_at or now)
             self._cache[notif_id] = updated
             resolved.append(updated)
         for view in resolved:

@@ -710,7 +710,7 @@ class RunRegistry:
 
     def _fire_terminal(self, run: Run) -> None:
         """Invoke ``on_terminal`` once, synchronously, before the stream closes so it reads an
-        accurate ``run.stream.subscriber_count`` (see that property). Exceptions are logged
+        accurate ``run.stream.watcher_count`` (see that property). Exceptions are logged
         and swallowed: they must not affect the already-decided outcome."""
         if self._on_terminal is None:
             return

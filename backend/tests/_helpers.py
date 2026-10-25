@@ -6,7 +6,7 @@ import asyncio
 import os
 import tempfile
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, override
 
@@ -25,7 +25,7 @@ from app import create_app
 from core.config import Settings
 from harness.manifests._inbox_dispatch import InboxDispatcher
 from routes.deps import app_state
-from runs import EventBody, Run
+from runs import EventBody, Run, RunStream
 from services.providers.base import ModelLimits, Provider, ProviderPreset
 from services.providers.openai_compat import PROVIDER as OPENAI_COMPAT
 from services.reasoning import ModelDescriptor
@@ -384,3 +384,22 @@ def bodies_of[T](run: Run, kind: type[T]) -> list[T]:
 
 def first_body[T](run: Run, kind: type[T]) -> T:
     return next(b for b in run_bodies(run) if isinstance(b, kind))
+
+
+async def watch_stream(stream: RunStream, *, watching: bool = True) -> asyncio.Task[None]:
+    """A subscriber draining ``stream`` in the background, registered by the time this returns."""
+
+    async def consume() -> None:
+        async for _ in stream.subscribe(watching=watching):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0)
+    return task
+
+
+async def leave_stream(task: asyncio.Task[None]) -> None:
+    """Detach a :func:`watch_stream` subscriber, as a client disconnect does."""
+    _ = task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task

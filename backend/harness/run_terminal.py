@@ -58,7 +58,7 @@ class RunTerminalDispatcher:
                 hook(run)
             except Exception:
                 logger.exception("run-terminal: sync hook failed for run %s", run.id)
-        watched = run.stream.subscriber_count > 0
+        watched = run.stream.watcher_count > 0
         for hook in self._async:
             task = asyncio.create_task(self._invoke(hook, run, watched))
             self.tasks.add(task)

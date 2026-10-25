@@ -1,12 +1,15 @@
-"""RunStream: seq stamping, buffer replay, live fan-out, resume, close."""
+"""RunStream: seq stamping, buffer replay, live fan-out, resume, close, unwatched."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
 
+from core.shutdown import begin_shutdown, reset_shutdown
 from runs import Event, RunStream
 from runs.events import AnswerDelta
+
+from ._helpers import leave_stream, watch_stream
 
 
 def _texts(events: Sequence[Event]) -> list[str]:
@@ -139,3 +142,71 @@ async def test_fanout_to_multiple_subscribers():
     _ = await asyncio.gather(*tasks)
     assert _texts(out_a) == ["x"]
     assert _texts(out_b) == ["x"]
+
+
+async def test_when_unwatched_fires_once_on_the_last_detach():
+    stream = RunStream()
+    fired: list[int] = []
+    stream.when_unwatched(lambda: fired.append(1))
+    first, second = await watch_stream(stream), await watch_stream(stream)
+
+    await leave_stream(first)
+    assert fired == []
+    await leave_stream(second)
+    assert fired == [1]
+
+    await leave_stream(await watch_stream(stream))
+    assert fired == [1]
+
+
+async def test_a_tailing_subscriber_is_not_a_watcher():
+    stream = RunStream()
+    fired: list[int] = []
+    stream.when_unwatched(lambda: fired.append(1))
+    watcher = await watch_stream(stream)
+    tail = await watch_stream(stream, watching=False)
+    assert (stream.subscriber_count, stream.watcher_count) == (2, 1)
+
+    await leave_stream(watcher)
+    assert fired == [1]
+    await leave_stream(tail)
+    assert fired == [1]
+
+
+async def test_a_failing_unwatched_callback_does_not_stop_the_rest():
+    stream = RunStream()
+    fired: list[int] = []
+
+    def boom() -> None:
+        raise RuntimeError("boom")
+
+    stream.when_unwatched(boom)
+    stream.when_unwatched(lambda: fired.append(1))
+
+    await leave_stream(await watch_stream(stream))
+    assert fired == [1]
+
+
+async def test_when_unwatched_ignores_close():
+    stream = RunStream()
+    fired: list[int] = []
+    stream.when_unwatched(lambda: fired.append(1))
+    task = await watch_stream(stream)
+
+    stream.close()
+    await task
+    assert fired == []
+
+
+async def test_when_unwatched_ignores_shutdown():
+    stream = RunStream()
+    fired: list[int] = []
+    stream.when_unwatched(lambda: fired.append(1))
+    task = await watch_stream(stream)
+
+    begin_shutdown()
+    try:
+        await task
+    finally:
+        reset_shutdown()
+    assert fired == []

@@ -21,5 +21,7 @@ from .run import Run
 __all__ = ["parse_last_event_id", "sse_response"]
 
 
-def sse_response(run: Run, after_seq: int = 0) -> StreamingResponse:
-    return sse_stream(lambda: run.stream.subscribe(after_seq), lambda event: event.sse())
+def sse_response(run: Run, after_seq: int = 0, *, watching: bool = True) -> StreamingResponse:
+    return sse_stream(
+        lambda: run.stream.subscribe(after_seq, watching=watching), lambda event: event.sse()
+    )

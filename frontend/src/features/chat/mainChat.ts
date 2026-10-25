@@ -49,6 +49,7 @@ import { createHistoryLoad, watchLateRuns } from "./historyLoad";
 import type { HistoryStatus } from "./historyStatus";
 import { DEFAULT_PERMISSION_LEVEL, type PermissionLevel } from "./model";
 import { seatPermission } from "./permissionSeat";
+import { createReadOnView } from "./readOnView";
 import { createChatStream } from "./stream/chatStream";
 
 export interface MainChat {
@@ -251,8 +252,12 @@ export function mainChat(): MainChat {
         void stream.reattachRun(runId, { fromSeq: stream.lastSeq() });
       }
     };
+    const [pageVisible, setPageVisible] = createSignal(
+      document.visibilityState === "visible",
+    );
     const onVisible = () => {
-      if (document.visibilityState === "visible") resume();
+      setPageVisible(document.visibilityState === "visible");
+      if (pageVisible()) resume();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("online", resume);
@@ -283,24 +288,11 @@ export function mainChat(): MainChat {
     // Same mirror for the awaiting-approval echo, so the nav rail and favicon can flag
     // a parked run needing a decision from any screen, not just while on /chat.
     createEffect(() => setAwaitingInput(stream.awaitingInput()));
-    // Read-on-view: the one place a thread selection lands, regardless of whether it
-    // came from the RECENTS rail, the chat screen's warm-resume, or a notification's
-    // deep-link — so opening a conversation always clears its unread notifications
-    // without every caller having to remember to do it. It re-runs as the list changes,
-    // so one arriving while the thread is open is read too; each id is marked once per
-    // visit, so one the operator marks unread again stays unread.
-    let readFor: string | null = null;
-    let autoRead = new Set<string>();
-    createEffect(() => {
-      const id = currentId();
-      if (id !== readFor) {
-        readFor = id;
-        autoRead = new Set();
-      }
-      if (!id) return;
-      for (const marked of markConversationRead(id, autoRead))
-        autoRead.add(marked);
-    });
+    // The one place a thread selection lands, whether from the RECENTS rail, the chat
+    // screen's warm-resume or a notification's deep-link, so every caller gets it.
+    const openId = () => currentId() ?? stream.conversationId();
+    const readOnView = createReadOnView(markConversationRead);
+    createEffect(() => readOnView(openId(), pageVisible()));
     // Runs begun out of sight (another tab, a scheduled task) are
     // found by re-reading the open thread — see `watchLateRuns`.
     watchLateRuns({
@@ -325,7 +317,7 @@ export function mainChat(): MainChat {
       },
       history,
       reloadHistory,
-      openId: () => currentId() ?? stream.conversationId(),
+      openId,
       stream,
       warmResolved,
       markWarmResolved: () => setWarmResolved(true),
