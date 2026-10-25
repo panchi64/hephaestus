@@ -10,19 +10,23 @@ from harness.manifest import (
     FeatureManifest,
     FeatureRuntime,
     HarnessContext,
+    PluginInfo,
     ServiceContainer,
 )
-from routes import mail as mail_routes
 from services.credential_store import CredentialStore
-from services.mail import MailService
-from services.mail.channel import EmailChannel
-from services.mail.oauth import OAUTH_CLIENT_SERVICES
 from services.notifications import NotificationService
 from services.permissions.projections import Projection
+from services.plugins.contributions.alert_channels import AlertChannel
+from services.plugins.contributions.background import Background
 from services.registry import ModelRegistry
 from services.settings_store import SettingsStore
 from services.tool_sensitivity import Sensitivity
-from tools.mail import mail_toolset
+
+from . import routes as mail_routes
+from .services import MailService
+from .services.channel import EmailChannel
+from .services.oauth import OAUTH_CLIENT_SERVICES
+from .tools import mail_toolset
 
 _SENSITIVITY = {
     "mail_list_accounts": Sensitivity.READ,
@@ -74,13 +78,26 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         ctx.services.get(ModelRegistry),
         notifications=notifications,
     )
-    notifications.add_channel(EmailChannel(mail, ctx.services.get(SettingsStore), ctx.vault))
-    await ctx.lifecycle.start("mail", start=mail.start, stop=mail.stop)
-    return FeatureRuntime(services=(mail,), capabilities=(mail,), state={"mail": mail})
+    email = EmailChannel(mail, ctx.services.get(SettingsStore), ctx.vault)
+    return FeatureRuntime(
+        services=(mail,),
+        capabilities=(mail,),
+        contributions=(
+            Background("mail-sync", mail.start, mail.stop),
+            AlertChannel(notifications, email),
+        ),
+    )
 
 
 MANIFEST = FeatureManifest(
     name="mail",
+    plugin=PluginInfo(
+        title="Mail",
+        description=(
+            "Connects your mailboxes (IMAP/SMTP, JMAP, Gmail, Microsoft 365), syncs and "
+            + "triages the inbox, and drafts and sends replies."
+        ),
+    ),
     after=("notifications",),
     routers=(mail_routes.router,),
     toolsets=(("mail", mail_toolset),),

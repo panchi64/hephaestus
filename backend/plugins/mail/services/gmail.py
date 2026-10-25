@@ -6,7 +6,7 @@ the label *is* the folder id — so nothing above the seam has to know, which is
 of the transport being a Protocol.
 
 Reading uses ``format=RAW``: Gmail hands back the original RFC 5322 bytes, so the message
-goes through the same :mod:`services.mail.parse` layer as an IMAP fetch. One parser for
+goes through the same :mod:`plugins.mail.services.parse` layer as an IMAP fetch. One parser for
 every provider, and the quoted/signature split (`EMAIL-4`) behaves identically.
 """
 
@@ -62,7 +62,7 @@ _ROLES = {
 
 
 class GmailTransport(MailTransport):
-    """A :class:`~services.mail.transport.MailTransport` over the Gmail REST API."""
+    """A :class:`~plugins.mail.services.transport.MailTransport` over the Gmail REST API."""
 
     def __init__(self, spec: AccountSpec, *, client: httpx.AsyncClient | None = None) -> None:
         self._spec: AccountSpec = spec

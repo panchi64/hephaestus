@@ -31,4 +31,4 @@ class MailUnavailableError(MailError):
 class MailUnsupportedError(MailError):
     """The account's provider does not support the requested operation (e.g. moving a
     message on a transport that only labels). Reported from
-    :class:`~services.mail.models.TransportCapabilities`, not discovered by failing."""
+    :class:`~plugins.mail.services.models.TransportCapabilities`, not discovered by failing."""

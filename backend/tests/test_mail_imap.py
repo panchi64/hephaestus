@@ -14,9 +14,9 @@ from typing import override
 import aioimaplib
 import pytest
 
-from services.mail.errors import MailAuthError, MailError, MailUnavailableError
-from services.mail.imap import ImapTransport, first_literal, parse_list_line, search_uids
-from services.mail.models import ROLE_SENT, ROLE_SPAM, AccountSpec
+from plugins.mail.services.errors import MailAuthError, MailError, MailUnavailableError
+from plugins.mail.services.imap import ImapTransport, first_literal, parse_list_line, search_uids
+from plugins.mail.services.models import ROLE_SENT, ROLE_SPAM, AccountSpec
 
 RAW = (
     b"From: Ada Lovelace <ada@example.org>\r\n"

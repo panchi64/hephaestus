@@ -11,8 +11,8 @@ import pytest
 
 from core.db import init_db, make_engine
 from core.vault import Vault
-from services.mail.channel import EmailChannel, MailSender
-from services.mail.service import AccountView
+from plugins.mail.services.channel import EmailChannel, MailSender
+from plugins.mail.services.service import AccountView
 from services.notification_channels import PushChannel, default_channels
 from services.notifications import NotificationService
 from services.settings_store import SettingsStore

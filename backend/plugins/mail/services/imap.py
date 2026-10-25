@@ -11,7 +11,7 @@ recovers on the next call instead of failing it.
 
 An OAuth account authenticates with ``XOAUTH2`` using the access token the service opened
 and refreshed; a password account uses ``LOGIN``. Either way, the secret arrives as a
-value on the :class:`~services.mail.models.AccountSpec` — this adapter never touches the
+value on the :class:`~plugins.mail.services.models.AccountSpec` — this adapter never touches the
 vault or the database.
 """
 
@@ -85,7 +85,7 @@ _LIST_LINE = re.compile(r'^\((?P<flags>[^)]*)\)\s+("?(?P<sep>[^"]*)"?|NIL)\s+(?P
 
 
 class ImapTransport(MailTransport, WatchableTransport):
-    """A :class:`~services.mail.transport.MailTransport` over IMAP (read) + SMTP (send)."""
+    """A :class:`~plugins.mail.services.transport.MailTransport` over IMAP (read) + SMTP (send)."""
 
     def __init__(self, spec: AccountSpec) -> None:
         self._spec: AccountSpec = spec

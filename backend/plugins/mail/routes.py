@@ -1,6 +1,6 @@
-"""Mail surface (`EMAIL-1..5`) — the Email screen's REST contract.
+"""Mail surface — the Email screen's REST contract.
 
-Thin pass-throughs to :class:`~services.mail.service.MailService`; every decision the
+Thin pass-throughs to :class:`~plugins.mail.services.service.MailService`; every decision the
 screen appears to make (what's urgent, what's spam, which folder is Sent, whether a
 provider supports a move) was already made below this layer. Out-shapes are camelCase to
 match the frontend's ``email`` seam, and message bodies come back decrypted — the operator
@@ -9,7 +9,7 @@ owns their own mail.
 Two things are deliberately *not* here:
 
 - **No approval gate on sending.** An operator pressing SEND in their own client has
-  already consented; the gate belongs on the *agent's* tool (``tools/mail.py``, `AE-3.1`),
+  already consented; the gate belongs on the *agent's* tool (``plugins/mail/tools.py``),
   which is a different actor asking for a different thing.
 - **No untrusted fencing.** Fencing is for content on its way into a *model's* context
   (`XC-SEC-5`). This content is on its way to a human reading their own inbox, where a
@@ -31,12 +31,14 @@ from core.exceptions import NotFoundError
 from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
-from services.mail import (
+
+from .services import (
     AccountView,
     DraftView,
     MailAuthError,
     MailError,
     MailFolder,
+    MailService,
     MailUnavailableError,
     MailUnsupportedError,
     MessageDetail,
@@ -235,7 +237,9 @@ def _fail(exc: MailError) -> HTTPException:
 
 @router.get("/accounts", response_model=list[AccountOut])
 async def list_accounts(request: Request) -> list[AccountOut]:
-    return [_account_out(v) for v in await deps.mail(request).list_accounts(OPERATOR_ID)]
+    return [
+        _account_out(v) for v in await deps.service(request, MailService).list_accounts(OPERATOR_ID)
+    ]
 
 
 @router.post("/accounts", status_code=201, response_model=AccountOut)
@@ -243,7 +247,7 @@ async def create_account(body: AccountCreate, request: Request) -> AccountOut:
     if not body.address.strip():
         raise HTTPException(status_code=422, detail="an account needs an address")
     try:
-        view = await deps.mail(request).create_account(
+        view = await deps.service(request, MailService).create_account(
             OPERATOR_ID,
             name=body.name or body.address,
             address=body.address,
@@ -259,7 +263,7 @@ async def create_account(body: AccountCreate, request: Request) -> AccountOut:
 @router.patch("/accounts/{account_id}", response_model=AccountOut)
 async def update_account(account_id: str, body: AccountUpdate, request: Request) -> AccountOut:
     try:
-        view = await deps.mail(request).update_account(
+        view = await deps.service(request, MailService).update_account(
             OPERATOR_ID,
             account_id,
             name=body.name,
@@ -277,7 +281,7 @@ async def update_account(account_id: str, body: AccountUpdate, request: Request)
 @router.delete("/accounts/{account_id}", status_code=204)
 async def delete_account(account_id: str, request: Request) -> None:
     try:
-        await deps.mail(request).delete_account(OPERATOR_ID, account_id)
+        await deps.service(request, MailService).delete_account(OPERATOR_ID, account_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="account not found") from None
 
@@ -287,7 +291,7 @@ async def probe_account(account_id: str, request: Request) -> AccountOut:
     """Test the connection. A *connection* failure is a recorded status, not an error —
     the returned account carries the verdict the operator reads (`XC-DEG-3`)."""
     try:
-        view = await deps.mail(request).probe_account(OPERATOR_ID, account_id)
+        view = await deps.service(request, MailService).probe_account(OPERATOR_ID, account_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="account not found") from None
     return _account_out(view)
@@ -296,7 +300,7 @@ async def probe_account(account_id: str, request: Request) -> AccountOut:
 @router.get("/accounts/{account_id}/folders", response_model=list[FolderOut])
 async def list_folders(account_id: str, request: Request) -> list[FolderOut]:
     try:
-        folders = await deps.mail(request).list_folders(OPERATOR_ID, account_id)
+        folders = await deps.service(request, MailService).list_folders(OPERATOR_ID, account_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="account not found") from None
     except MailError as exc:
@@ -320,7 +324,7 @@ async def list_messages(
     """The inbox listing, newest first, served from the cache (`EMAIL-5`) and refreshed
     from the provider when the freshness window has lapsed or ``refresh`` forces it."""
     try:
-        views = await deps.mail(request).list_messages(
+        views = await deps.service(request, MailService).list_messages(
             OPERATOR_ID,
             account_id=account_id,
             folder=folder,
@@ -339,7 +343,7 @@ async def list_messages(
 @router.get("/messages/{message_id}", response_model=MessageOut)
 async def read_message(message_id: str, request: Request) -> MessageOut:
     try:
-        detail = await deps.mail(request).read_message(OPERATOR_ID, message_id)
+        detail = await deps.service(request, MailService).read_message(OPERATOR_ID, message_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="message not found") from None
     except MailError as exc:
@@ -352,7 +356,7 @@ async def update_message(message_id: str, body: MessageUpdate, request: Request)
     """Mark read/unread or flagged. The remote write is authoritative — a provider that
     refuses it leaves the local state honest rather than showing a lie."""
     try:
-        await deps.mail(request).set_flags(
+        await deps.service(request, MailService).set_flags(
             OPERATOR_ID, message_id, seen=body.read, flagged=body.flagged
         )
     except NotFoundError:
@@ -364,7 +368,7 @@ async def update_message(message_id: str, body: MessageUpdate, request: Request)
 @router.delete("/messages/{message_id}", status_code=204)
 async def delete_message(message_id: str, request: Request) -> None:
     try:
-        await deps.mail(request).delete_message(OPERATOR_ID, message_id)
+        await deps.service(request, MailService).delete_message(OPERATOR_ID, message_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="message not found") from None
     except MailError as exc:
@@ -380,7 +384,7 @@ async def reply_suggestions(
     reopening a message doesn't re-spend model calls; a workspace with no utility model
     bound simply gets none (degraded, not an error)."""
     try:
-        drafts = await deps.mail(request).suggest_replies(
+        drafts = await deps.service(request, MailService).suggest_replies(
             OPERATOR_ID, message_id, count=max(1, min(count, 5))
         )
     except NotFoundError:
@@ -398,7 +402,7 @@ async def send_message(body: SendRequest, request: Request) -> SendResult:
     if not body.to:
         raise HTTPException(status_code=422, detail="a message needs at least one recipient")
     try:
-        sent_id = await deps.mail(request).send(
+        sent_id = await deps.service(request, MailService).send(
             OPERATOR_ID,
             body.account_id,
             to=body.to,
@@ -417,7 +421,7 @@ async def send_message(body: SendRequest, request: Request) -> SendResult:
 @router.post("/messages/{message_id}/reply", response_model=SendResult)
 async def reply_to_message(message_id: str, body: ReplyRequest, request: Request) -> SendResult:
     try:
-        sent_id = await deps.mail(request).reply(
+        sent_id = await deps.service(request, MailService).reply(
             OPERATOR_ID, message_id, body.body, reply_all=body.reply_all
         )
     except NotFoundError:
@@ -432,14 +436,16 @@ async def reply_to_message(message_id: str, body: ReplyRequest, request: Request
 
 @router.get("/style-profile", response_model=StyleProfileOut | None)
 async def get_style_profile(request: Request) -> StyleProfileOut | None:
-    return _profile_out(await deps.mail(request).profiles.get(OPERATOR_ID))
+    return _profile_out(await deps.service(request, MailService).profiles.get(OPERATOR_ID))
 
 
 @router.put("/style-profile", response_model=StyleProfileOut)
 async def set_style_profile(body: StyleProfileUpdate, request: Request) -> StyleProfileOut:
     """The operator's own description of their voice. Stored as ``edited``, which is what
     keeps a later learn pass from overwriting it."""
-    stored = await deps.mail(request).profiles.set(OPERATOR_ID, body.profile, edited=True)
+    stored = await deps.service(request, MailService).profiles.set(
+        OPERATOR_ID, body.profile, edited=True
+    )
     out = _profile_out(stored)
     if out is None:
         raise HTTPException(status_code=422, detail="a style profile must not be empty")
@@ -450,7 +456,7 @@ async def set_style_profile(body: StyleProfileUpdate, request: Request) -> Style
 async def learn_style(account_id: str, request: Request) -> StyleProfileOut | None:
     """Learn the operator's voice from their Sent folder. A hand-edited profile is left
     alone — their own description outranks ours."""
-    service = deps.mail(request)
+    service = deps.service(request, MailService)
     try:
         _ = await service.learn_style(OPERATOR_ID, account_id)
     except NotFoundError:

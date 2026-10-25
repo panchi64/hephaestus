@@ -1,4 +1,4 @@
-"""The `/mail` surface (`EMAIL-1..5`): what the Email screen reads and writes, and how a
+"""The `/mail` surface: what the Email screen reads and writes, and how a
 provider failure is reported rather than leaked."""
 
 from __future__ import annotations
@@ -9,9 +9,10 @@ import httpx
 from fastapi import FastAPI
 from pydantic import JsonValue
 
+from plugins.mail.services import MailService
+from plugins.mail.services.models import MailBody
+from plugins.mail.services.service import AccountView
 from routes.deps import app_state
-from services.mail.models import MailBody
-from services.mail.service import AccountView
 
 from ._helpers import client_app
 from ._json import json_body, json_list, obj, parse_json, s
@@ -22,7 +23,7 @@ async def _connected(
     app: FastAPI, *, subject: str = "Quarterly report", text: str = "The report is attached.\n"
 ) -> tuple[AccountView, FakeTransport]:
     """An account with a fake transport already wired, so nothing touches a network."""
-    mail = app_state(app).mail
+    mail = app_state(app).services.get(MailService)
     account = await mail.create_account(
         "operator", name="Personal", address="operator@example.com", password="hunter2"
     )

@@ -44,7 +44,7 @@ dependencies = [
     # rather than approximated. Already resolved transitively (uvicorn's extras); pinned
     # direct since the bundle parser calls yaml.safe_load/safe_dump itself.
     "pyyaml>=6.0.3",
-    # Mail (services/mail): IMAP reading with IDLE (so new mail arrives as a push rather
+    # Mail (plugins/mail): IMAP reading with IDLE (so new mail arrives as a push rather
     # than a poll) and SMTP submission. Both are pure-Python and async-native. The Gmail,
     # Graph and JMAP transports need no client library of their own — they are REST/JSON
     # over the httpx client this app already carries.

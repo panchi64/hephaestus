@@ -343,7 +343,6 @@ MANIFEST = FeatureManifest(
         "calendar",
         "corpus",
         "external",
-        "mail",
         "memory",
         "notifications",
         "secret-vault",

@@ -1,6 +1,6 @@
 """Backup & restore (`BACKUP-1..2`).
 
-See ``routes/mail.py`` for why the surface is registered before it exists.
+See ``plugins/mail/routes.py`` for why the surface is registered before it exists.
 
 The export comes back as the envelope **JSON object** rather than a file download: the whole
 format is already a single JSON document, and returning it as a normal response lets the

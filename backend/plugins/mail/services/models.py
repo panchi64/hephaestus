@@ -1,7 +1,7 @@
 """The mail capability's domain shapes — what every transport speaks.
 
 These dataclasses are the *only* currency crossing the
-:class:`~services.mail.transport.MailTransport` seam. No protocol type ever escapes an
+:class:`~plugins.mail.services.transport.MailTransport` seam. No protocol type ever escapes an
 adapter: an IMAP ``FETCH`` response, a JMAP ``Email/get`` blob and a Gmail REST resource
 all land here, so everything above the seam (the sync loop, triage, the routes, the
 agent's tools) is written once against one shape.

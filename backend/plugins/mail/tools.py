@@ -1,6 +1,6 @@
-"""Mail tools (`EMAIL-1..4`) — the agent's read/write access to the operator's mailboxes.
+"""Mail tools — the agent's read/write access to the operator's mailboxes.
 
-A thin adapter over :class:`services.mail.MailService`, with two rules that make it
+A thin adapter over :class:`plugins.mail.services.MailService`, with two rules that make it
 different from the other toolsets:
 
 **Every message body is untrusted.** Mail is the one ingress an attacker fully controls —
@@ -10,11 +10,11 @@ bodies all go through :mod:`core.untrusted` (`XC-SEC-5`). The fence carries a pe
 nonce the content cannot predict, so a message cannot forge its own closing marker to
 "break out" of the fence and issue instructions.
 
-**Sending is sensitive.** ``mail_send`` and ``mail_reply`` are ``requires_approval=True``
-(`AE-3.1`): they leave the machine, they cannot be undone, and they speak in the operator's
-name. Each carries a plain-language ``explanation`` the operator judges the call on, exactly
-like ``shell_run_on_host``. Whether any of these actually pauses is the thread's
-permission level to decide, so no description here claims it.
+**Sending is sensitive.** ``mail_send`` and ``mail_reply`` are
+``requires_approval=True``: they leave the machine, they cannot be undone, and they speak
+in the operator's name. Each carries a plain-language ``explanation`` the operator judges
+the call on, exactly like ``shell_run_on_host``. Whether any of these actually pauses is
+the thread's permission level to decide, so no description here claims it.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from core.diagnostics import render_tool_error
 from core.exceptions import NotFoundError
 from core.untrusted import untrusted_fence, untrusted_preamble, wrap_untrusted
-from services.mail import MailError, MailService, MessageDetail, MessageView
+from tools.deps import RunDeps
 
-from .deps import RunDeps
+from .services import MailError, MailService, MessageDetail, MessageView
 
 # The capability isn't wired for this run — the model is told plainly rather than shown a
 # broken tool, and adapts (the degrade posture every toolset here shares).
@@ -109,7 +109,7 @@ def _no_such_account(exc: NotFoundError) -> ModelRetry:
 
 
 def mail_toolset() -> FunctionToolset[RunDeps]:
-    """The mail category (`EMAIL-1..4`)."""
+    """The mail category."""
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool

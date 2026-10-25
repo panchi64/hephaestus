@@ -9,9 +9,9 @@ service against a fake that implements nothing but this protocol.
 Two rules make the seam worth having:
 
 1. **Domain models only.** Every method returns the dataclasses in
-   :mod:`services.mail.models` — never an ``aioimaplib`` response, a JMAP blob, or a REST
+   :mod:`plugins.mail.services.models` — never an ``aioimaplib`` response, a JMAP blob, or a REST
    dict. Nothing above this file knows which provider it is talking to.
-2. **Domain errors only.** Failures surface as :mod:`services.mail.errors` types, so the
+2. **Domain errors only.** Failures surface as :mod:`plugins.mail.services.errors` types, so the
    route layer maps them to HTTP and the tool layer decides retry-vs-degrade.
 """
 
@@ -34,8 +34,8 @@ class MailTransport(Protocol):
 
     async def probe(self) -> None:
         """Verify the account can actually connect and authenticate. Returns ``None`` on
-        success; raises :class:`~services.mail.errors.MailAuthError` for rejected
-        credentials or :class:`~services.mail.errors.MailUnavailableError` for an
+        success; raises :class:`~plugins.mail.services.errors.MailAuthError` for rejected
+        credentials or :class:`~plugins.mail.services.errors.MailUnavailableError` for an
         unreachable server. Drives the operator-facing account health (`XC-DEG-3`)."""
         ...
 
@@ -86,7 +86,7 @@ class WatchableTransport(Protocol):
 
     Kept off :class:`MailTransport` deliberately: a transport that cannot push should not
     have to stub a method, and the sync loop already reads
-    :attr:`~services.mail.models.TransportCapabilities.idle` to choose push-vs-poll.
+    :attr:`~plugins.mail.services.models.TransportCapabilities.idle` to choose push-vs-poll.
     """
 
     def watch(self, folder: str) -> AsyncIterator[None]:

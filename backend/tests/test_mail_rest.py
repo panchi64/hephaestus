@@ -12,10 +12,10 @@ import httpx
 import pytest
 from pydantic import JsonValue
 
-from services.mail.errors import MailAuthError
-from services.mail.gmail import GmailTransport
-from services.mail.graph import GraphTransport
-from services.mail.models import (
+from plugins.mail.services.errors import MailAuthError
+from plugins.mail.services.gmail import GmailTransport
+from plugins.mail.services.graph import GraphTransport
+from plugins.mail.services.models import (
     ROLE_INBOX,
     ROLE_SENT,
     ROLE_SPAM,

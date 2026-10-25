@@ -42,7 +42,6 @@ from services.egress import EgressPolicy
 from services.external_tools import ExternalTools
 from services.home.scratch import ScratchDirs
 from services.integrations import IntegrationService
-from services.mail import MailService
 from services.mcp import McpRegistry
 from services.memory import MemoryStore
 from services.notifications import NotificationService
@@ -149,7 +148,6 @@ class AppState(State):
         self.scheduler: SchedulerService
         self.routines: RoutineStore
         self.schedule_parser: ScheduleNaturalLanguage
-        self.mail: MailService
         self.calendar: CalendarService
         self.external: ExternalTools
         self.secret_vault: SecretVaultService
@@ -612,12 +610,6 @@ def routines(request: Request) -> RoutineStore:
 
 def schedule_parser(request: Request) -> ScheduleNaturalLanguage:
     return app_state(request).schedule_parser
-
-
-def mail(request: Request) -> MailService:
-    """The mail capability: accounts, sync loop, inbox cache, triage and drafts. Its
-    background worker starts and stops with the app."""
-    return app_state(request).mail
 
 
 def calendar(request: Request) -> CalendarService:

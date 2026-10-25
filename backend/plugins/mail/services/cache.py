@@ -26,8 +26,8 @@ from core.db import in_session
 from core.exceptions import NotFoundError
 from core.vault import Vault
 from models._fields import utcnow
-from models.mail import MailMessage
 
+from ..models import MailMessage
 from .models import MailAddress, MailBody, MailHeader
 from .quoting import split_body
 
@@ -239,7 +239,7 @@ class MailCache:
         ``"9"``, which a lexical sort gets backwards), while a REST provider's ids are
         opaque strings with no order at all — for those the cursor is only ever used as
         an equality boundary ("stop when you reach this one"), which
-        :meth:`~services.mail.transport.MailTransport.list_messages` honours.
+        :meth:`~plugins.mail.services.transport.MailTransport.list_messages` honours.
         """
 
         def work(session: Session) -> list[str]:

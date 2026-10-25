@@ -55,6 +55,7 @@ from core.config import Settings
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from models._fields import utcnow
+from plugins.mail.tools import mail_toolset
 from prompts.compaction import COMPACT_PREAMBLE
 from routes.deps import app_state
 from runs import Orchestrator, ReviewStarted, Run, RunRegistry, RunStatus, RunStream
@@ -91,7 +92,6 @@ from tools.browse import browse_toolset
 from tools.calendar import calendar_toolset
 from tools.code import code_toolset
 from tools.delegation import ProjectRoster
-from tools.mail import mail_toolset
 from tools.rebound import ReboundToolset
 from tools.skills import skills_toolset
 from tools.vault import vault_toolset

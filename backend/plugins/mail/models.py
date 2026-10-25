@@ -1,4 +1,4 @@
-"""Mail schema (`EMAIL-*`) — accounts, the inbox cache, drafts, and the style profile.
+"""Mail schema — accounts, the inbox cache, drafts, and the style profile.
 
 Four tables, one per durable shape the mail capability needs:
 

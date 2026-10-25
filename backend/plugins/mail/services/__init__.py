@@ -1,8 +1,8 @@
-"""The mail capability (`EMAIL-1..5`).
+"""The mail capability.
 
-One facade (:class:`~services.mail.service.MailService`) over a pluggable provider seam
-(:class:`~services.mail.transport.MailTransport`), with the AI parts — triage (`EMAIL-2`)
-and the writing-style profile (`EMAIL-3`) — layered on top of the cache rather than the
+One facade (:class:`~plugins.mail.services.service.MailService`) over a pluggable provider seam
+(:class:`~plugins.mail.services.transport.MailTransport`), with the AI parts — triage
+and the writing-style profile — layered on top of the cache rather than the
 network.
 """
 

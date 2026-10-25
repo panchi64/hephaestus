@@ -85,7 +85,7 @@ _EMAIL_PROPERTIES = [
 
 
 class JmapTransport(MailTransport):
-    """A :class:`~services.mail.transport.MailTransport` over JMAP."""
+    """A :class:`~plugins.mail.services.transport.MailTransport` over JMAP."""
 
     def __init__(self, spec: AccountSpec, *, client: httpx.AsyncClient | None = None) -> None:
         self._spec: AccountSpec = spec

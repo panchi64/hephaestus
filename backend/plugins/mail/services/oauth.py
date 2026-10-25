@@ -41,10 +41,10 @@ from core.db import in_session
 from core.serde import parse_json
 from core.vault import Vault, VaultLocked
 from models._fields import utcnow
-from models.mail import AUTH_OAUTH, MailAccount
 from services.credential_store import CredentialStore, ServiceInfo
 from services.shapes import as_dict, as_number, as_str
 
+from ..models import AUTH_OAUTH, MailAccount
 from .errors import MailAuthError, MailUnavailableError
 
 logger = logging.getLogger(__name__)

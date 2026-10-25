@@ -4,7 +4,7 @@ Graph is the closest of the three REST-ish providers to a classic mailbox: real 
 with real ids, and a message resource that already carries structured sender, recipients
 and body. So unlike Gmail (which hands back raw RFC 5322) this adapter maps Graph's JSON
 straight onto the domain models, converting an HTML body through the shared
-:mod:`services.mail.parse` reducer so every provider's ``MailBody.text`` means the same
+:mod:`plugins.mail.services.parse` reducer so every provider's ``MailBody.text`` means the same
 thing downstream.
 """
 
@@ -58,7 +58,7 @@ _LIST_FIELDS = (
 
 
 class GraphTransport(MailTransport):
-    """A :class:`~services.mail.transport.MailTransport` over Microsoft Graph."""
+    """A :class:`~plugins.mail.services.transport.MailTransport` over Microsoft Graph."""
 
     def __init__(self, spec: AccountSpec, *, client: httpx.AsyncClient | None = None) -> None:
         self._spec: AccountSpec = spec

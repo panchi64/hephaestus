@@ -1,6 +1,6 @@
 """Password-vault schema (`VAULT-*`) — the operator's secrets manager.
 
-See ``models/mail.py`` for why the module is imported before it declares anything.
+See ``plugins/mail/models.py`` for why the module is imported before it declares anything.
 
 This is the operator's user-facing secrets manager — an additional encrypted layer on top of
 at-rest encryption — and is deliberately distinct from ``core/vault``, the password-derived

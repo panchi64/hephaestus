@@ -5,19 +5,19 @@ from __future__ import annotations
 
 import pytest
 
-from services.mail.errors import MailError, MailUnsupportedError
-from services.mail.gmail import GmailTransport
-from services.mail.graph import GraphTransport
-from services.mail.imap import ImapTransport
-from services.mail.jmap import JmapTransport
-from services.mail.models import (
+from plugins.mail.services.errors import MailError, MailUnsupportedError
+from plugins.mail.services.gmail import GmailTransport
+from plugins.mail.services.graph import GraphTransport
+from plugins.mail.services.imap import ImapTransport
+from plugins.mail.services.jmap import JmapTransport
+from plugins.mail.services.models import (
     ROLE_INBOX,
     AccountSpec,
     MailAddress,
     OutgoingMail,
     TransportCapabilities,
 )
-from services.mail.transport import MailTransport
+from plugins.mail.services.transport import MailTransport
 from tests.mail_fakes import FakeTransport
 
 type _Adapter = type[ImapTransport | JmapTransport | GmailTransport | GraphTransport]

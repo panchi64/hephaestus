@@ -5,7 +5,7 @@ below it — the provider adapters, the cache, triage, style — is an implement
 composes. It owns four things:
 
 - **Accounts.** CRUD over ``MailAccount``, with the secret sealed on write via
-  :class:`~services.mail.oauth.MailSecrets` and never returned on read.
+  :class:`~plugins.mail.services.oauth.MailSecrets` and never returned on read.
 - **The transport factory.** Provider kind → adapter, built with a freshly-opened secret.
   Transports are cached per account and torn down when the account changes or is removed.
 - **Reads, cache-first.** A listing is answered from the local cache inside a short
@@ -38,7 +38,9 @@ from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from core.vault import Vault
 from core.worker import WriteBehindWorker
 from models._fields import utcnow
-from models.mail import (
+from services.credential_store import CredentialStore
+
+from ..models import (
     AUTH_OAUTH,
     AUTH_PASSWORD,
     PROVIDER_GMAIL,
@@ -47,8 +49,6 @@ from models.mail import (
     PROVIDER_JMAP,
     MailAccount,
 )
-from services.credential_store import CredentialStore
-
 from .cache import MailCache, MessageDetail, MessageView
 from .drafts import KIND_SUGGESTED, DraftStore, DraftView, StyleProfileStore
 from .errors import MailError, MailUnavailableError
@@ -102,7 +102,7 @@ class LiveTransport:
     """A built adapter together with the credentials it was built with.
 
     One unit, so "cached" and "cached with these credentials" cannot drift apart: an
-    adapter snapshots its secret into an :class:`~services.mail.models.AccountSpec` at
+    adapter snapshots its secret into an :class:`~plugins.mail.services.models.AccountSpec` at
     construction and holds a connection authenticated with it, so a cache that remembers
     only the adapter has no way to notice that the account's token has rotated since.
     """

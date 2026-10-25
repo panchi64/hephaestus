@@ -22,6 +22,9 @@ from services.plugins.contributions.base import Described, TypedContribution
 from services.plugins.contributions.registry import CONTRIBUTIONS
 from services.settings_store import SettingsStore
 
+from ._helpers import client_app
+from ._json import json_list, obj
+
 BACKEND = Path(__file__).resolve().parent.parent
 
 
@@ -171,3 +174,18 @@ def test_no_plugin_imports_another():
             if name.startswith("plugins.") and not name.startswith(f"{own}.") and name != own
         }
         assert not others, f"{path.relative_to(BACKEND)} imports {sorted(others)}"
+
+
+async def test_switching_mail_off_withdraws_its_routes_and_back_on_restores_them():
+    async with client_app() as (client, _app):
+        assert (await client.get("/mail/accounts")).status_code == 200
+
+        off = await client.put("/plugins/builtin/mail", json={"enabled": False})
+        assert off.status_code == 200
+        assert (await client.get("/mail/accounts")).status_code == 404
+        listed = {obj(p)["name"]: obj(p) for p in json_list(await client.get("/plugins/builtin"))}
+        assert listed["mail"]["enabled"] is False
+
+        on = await client.put("/plugins/builtin/mail", json={"enabled": True})
+        assert on.status_code == 200
+        assert (await client.get("/mail/accounts")).status_code == 200

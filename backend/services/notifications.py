@@ -198,8 +198,14 @@ class NotificationService:
         self._channels = value
 
     def add_channel(self, channel: NotificationChannel) -> None:
-        """Fan out to one more channel, for a feature that brings its own at build."""
-        self._channels.append(channel)
+        """Fan out to one more channel, for a feature that brings its own."""
+        if channel not in self._channels:
+            self._channels.append(channel)
+
+    def remove_channel(self, channel: NotificationChannel) -> None:
+        """Stop fanning out to a channel; deliveries already queued still go."""
+        if channel in self._channels:
+            self._channels.remove(channel)
 
     @property
     def subscriber_count(self) -> int:

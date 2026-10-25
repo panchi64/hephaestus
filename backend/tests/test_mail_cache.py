@@ -18,12 +18,12 @@ from sqlmodel import Session, select
 
 from core.db import in_session, init_db, make_engine
 from core.vault import Vault
-from models.mail import MailMessage
+from plugins.mail.models import MailMessage
+from plugins.mail.services.errors import MailUnavailableError
+from plugins.mail.services.models import MailAddress, MailBody, MailHeader
+from plugins.mail.services.service import AccountView, MailService
+from plugins.mail.services.triage import TriageVerdict
 from services.credential_store import CredentialStore
-from services.mail.errors import MailUnavailableError
-from services.mail.models import MailAddress, MailBody, MailHeader
-from services.mail.service import AccountView, MailService
-from services.mail.triage import TriageVerdict
 from tests.mail_fakes import FakeTransport, install_transport, sample_header
 
 

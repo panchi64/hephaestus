@@ -1,7 +1,7 @@
 """The shared plumbing behind the two REST mail adapters (Gmail, Microsoft Graph).
 
 Both are the same shape — a fixed vendor API root, a bearer access token from
-:mod:`services.mail.oauth`, JSON in and JSON out — and differ only in paths and payload
+:mod:`plugins.mail.services.oauth`, JSON in and JSON out — and differ only in paths and payload
 schemas. That common half lives here so a status-code-to-domain-error rule or a timeout
 change lands once for both, and each adapter is left holding only its vendor's shapes.
 

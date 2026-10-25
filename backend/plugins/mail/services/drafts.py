@@ -1,7 +1,7 @@
 """Drafts and the writing-style profile — the two sealed stores behind `EMAIL-3`.
 
 Both are small, both are pure persistence (no model calls, no network), and both are the
-seal/open boundary for their own content — the same split :mod:`services.mail.cache` makes
+seal/open boundary for their own content — the same split :mod:`plugins.mail.services.cache` makes
 for messages. Kept together because they are two halves of one feature: a profile
 describes how the operator writes, and a draft is what that produces.
 """
@@ -21,7 +21,8 @@ from core.db import in_session
 from core.exceptions import NotFoundError
 from core.vault import Vault
 from models._fields import utcnow
-from models.mail import MailDraft, MailStyleProfile
+
+from ..models import MailDraft, MailStyleProfile
 
 # A draft the operator composed, versus one pre-generated as a reply suggestion.
 KIND_MANUAL = "manual"
