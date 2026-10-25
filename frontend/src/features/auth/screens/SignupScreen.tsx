@@ -5,8 +5,8 @@ import { Button, Input, Stack, StatusFlag, Text } from "~/ui";
 
 /**
  * First-run setup: choose the operator password. This derives the vault key and
- * unlocks the workspace — there is exactly one operator, so this runs once. After
- * setup, this surface redirects to login (the workspace is already initialized).
+ * unlocks the workspace — there is exactly one operator, so this runs once. The gate
+ * then shows the first-run walkthrough.
  */
 export function SignupScreen(): JSX.Element {
   const session = useSession();

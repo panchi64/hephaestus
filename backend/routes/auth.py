@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from core.auth import SESSION_COOKIE, auth_attempt_limiter, client_key, token_from_headers
 from core.exceptions import RateLimitedError
 from routes import deps
+from routes.deps import OPERATOR_ID
+from services import onboarding
 from services.workspace_reset import reset_workspace
 
 router = APIRouter(tags=["auth"])
@@ -80,6 +82,7 @@ async def setup(body: PasswordBody, request: Request, response: Response) -> Tok
     # database are in step again — without this, a setup performed after a reset would
     # keep reporting `db_missing` for the rest of the process's life.
     deps.mark_workspace_db_intact(request)
+    await onboarding.mark_pending(deps.settings_store(request), OPERATOR_ID)
     return _issue_session(request, response)
 
 

@@ -3,8 +3,16 @@ import { cx } from "../cx";
 import { Icon } from "../primitives/Icon";
 
 /** What a rail row's glyph column says. `waiting` is the action tier's echo: the run is
- *  parked on the operator. */
-export type RailRowState = "idle" | "queued" | "running" | "waiting" | "failed";
+ *  parked on the operator. `done`, `current` and `pending` are a checklist's states. */
+export type RailRowState =
+  | "idle"
+  | "queued"
+  | "running"
+  | "waiting"
+  | "failed"
+  | "done"
+  | "current"
+  | "pending";
 
 export interface RailRowProps {
   state?: RailRowState;

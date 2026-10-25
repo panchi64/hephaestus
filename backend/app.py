@@ -47,6 +47,7 @@ from routes import (
     conversations,
     health,
     models,
+    onboarding,
     overview,
     runs,
     tokens,
@@ -63,6 +64,7 @@ from services.credential_store import CredentialStore
 from services.egress import EgressPolicy
 from services.embeddings import RegistryEmbedder
 from services.home.scratch import ScratchDirs
+from services.onboarding import mark_pending as mark_onboarding_pending
 from services.plan_mode import PlanMode
 from services.registry import ModelRegistry
 from services.sandbox import (
@@ -204,11 +206,13 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # auth-disabled path); otherwise it stays locked until login/setup.
     vault = Vault(settings.data_dir / "keyfile.json")
     state.vault = vault
+    created_at_boot = False
     if settings.unlock_passphrase:
         if vault.is_initialized:
             _ = await vault.unlock(settings.unlock_passphrase)
         else:
             await vault.setup(settings.unlock_passphrase)
+            created_at_boot = True
 
     # Pooled client for provider model discovery; follows redirects (some providers 30x).
     discovery_client = httpx.AsyncClient(follow_redirects=True)
@@ -239,6 +243,8 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Built before the capabilities that read it: the notification channels resolve their
     # configuration from it.
     state.settings_store = SettingsStore(engine)
+    if created_at_boot:
+        await mark_onboarding_pending(state.settings_store, OPERATOR_ID)
     # Conversation-scoped tool auto-approval grants; core, beside the run substrate the
     # approvals park on.
     state.approval_grants = ApprovalGrantStore(engine, settings.approval_grant_ttl_s)
@@ -544,6 +550,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(onboarding.router)
     app.include_router(runs.router)
     app.include_router(chat.router)
     app.include_router(conversations.router)
