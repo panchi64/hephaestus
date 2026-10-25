@@ -15,10 +15,15 @@ from sqlmodel import Session
 from core.db import in_session
 from core.exceptions import NotFoundError
 from models._fields import utcnow
-from models.task import TaskRun
+from plugins.routines.models import TaskRun
+from plugins.routines.scheduler import (
+    ScheduledTaskView,
+    SchedulerService,
+    TaskRunResult,
+    TaskRunSuspended,
+)
 from routes.deps import app_state
 from services.registry import ModelRegistry
-from services.scheduler import ScheduledTaskView, TaskRunResult, TaskRunSuspended
 
 from ._helpers import await_parked, client_app, swap_tool_catalog
 from ._json import json_body, obj, s
@@ -76,7 +81,7 @@ async def test_an_approved_parked_routine_run_finalizes_its_one_task_run(
         swap_tool_catalog(app, danger_categories())
         restored = await await_parked(app, run_id)
         assert restored.kind == "task"
-        assert app_state(app).scheduler.running == {}
+        assert app_state(app).services.get(SchedulerService).running == {}
         _ = await app_state(app).runs.parks_restored.wait()
         await asyncio.sleep(0.1)
         (open_row,) = await task_runs(client, task_id)
@@ -181,11 +186,11 @@ async def test_an_executor_that_suspends_leaves_its_task_run_open():
         async def suspends(_view: ScheduledTaskView) -> TaskRunResult:
             raise TaskRunSuspended
 
-        app_state(app).scheduler.executor = suspends
+        app_state(app).services.get(SchedulerService).executor = suspends
         fired = json_body(await client.post(f"/tasks/{task_id}/run_now"))
         task_run_id = s(fired["taskRunId"])
         for _ in range(200):
-            if not app_state(app).scheduler.running:
+            if not app_state(app).services.get(SchedulerService).running:
                 break
             await asyncio.sleep(0.01)
         row = next(r for r in await task_runs(client, task_id) if r["id"] == task_run_id)

@@ -9,9 +9,10 @@ from sqlalchemy import ColumnElement, Engine, func
 from sqlmodel import Session, col, select
 
 from core.vault import Vault
-from models.task import ScheduledTask, TaskRun
 from services.corpus.records import RecordAdapter, RecordMeta
 from services.recall_index import Collection, Doc, Loaded
+
+from ..models import ScheduledTask, TaskRun
 
 SOURCE_KIND = "routines"
 SURFACE_ID = "surf-routines"

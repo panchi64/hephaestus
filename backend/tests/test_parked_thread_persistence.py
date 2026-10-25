@@ -16,7 +16,7 @@ import harness.turns as harness_turns
 from core.db import in_session, read_blocking
 from core.vault import Vault
 from models.conversation import Message
-from models.task import TaskRun
+from plugins.routines.models import TaskRun
 from routes.deps import app_state
 from services.conversations.core import StoreCore
 from services.embeddings import Embedder

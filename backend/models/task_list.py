@@ -7,7 +7,7 @@ in the same thread all expect the same tasks to still be there. So it is persist
 than held for the life of one run, keyed the way the sandbox workspace is keyed — by
 conversation.
 
-**Not to be confused with `models/task.py`**, which is the *scheduled* task feature — a
+**Not to be confused with `plugins/routines/models.py`**, which is the *scheduled* task feature — a
 cron-shaped thing the operator configures. This is the agent's own working checklist, and
 nothing but a conversation ever owns one.
 

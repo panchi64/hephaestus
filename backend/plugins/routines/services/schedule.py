@@ -9,9 +9,10 @@ from datetime import datetime
 from croniter import croniter
 
 from core.exceptions import RoutineValidationError
-from models.task import ScheduleType
 from services.calendar.recurrence import parse_zone
-from services.scheduler import compute_next_run
+
+from ..models import ScheduleType
+from ..scheduler import compute_next_run
 
 _TYPES = frozenset(t.value for t in ScheduleType)
 

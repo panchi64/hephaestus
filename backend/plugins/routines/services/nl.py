@@ -16,10 +16,10 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from core.exceptions import DegradedCapabilityError, InvalidInputError, RoutineValidationError
-from prompts.routines import ROUTINE_SCHEDULE_INSTRUCTIONS
 from services.calendar.nl import DEFAULT_TIMEOUT_S, MAX_PHRASE_CHARS, ResolveModel
 from services.calendar.recurrence import parse_zone
 
+from ..prompts import ROUTINE_SCHEDULE_INSTRUCTIONS
 from .schedule import Schedule, check_schedule
 
 logger = logging.getLogger(__name__)

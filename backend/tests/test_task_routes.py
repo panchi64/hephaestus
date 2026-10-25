@@ -16,13 +16,14 @@ from sqlmodel import Session, select
 
 from agent import ParkedTurn
 from core.db import in_session
-from models.task import ScheduledTask, TaskRun
+from plugins.routines.executor import RunWaiters
+from plugins.routines.models import ScheduledTask, TaskRun
+from plugins.routines.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
 from routes.deps import app_state
 from runs import Orchestrator, Run
 from services.approval_grants import ApprovalGrantStore
 from services.notifications import NotificationService
 from services.registry import ModelRegistry
-from services.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
 
 from ._helpers import (
     client_app,
@@ -89,7 +90,7 @@ def parked_call_id(run: Run) -> str:
 
 
 def _scheduler(app: FastAPI) -> SchedulerService:
-    return app_state(app).scheduler
+    return app_state(app).services.get(SchedulerService)
 
 
 def _notifications(app: FastAPI) -> NotificationService:
@@ -534,9 +535,9 @@ def install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
 async def await_parked_task_run(app: FastAPI, *, timeout: float = 2.0) -> Run:
     loop_budget = int(timeout / 0.01)
     for _ in range(loop_budget):
-        waiters = app_state(app).task_run_waiters
-        if waiters:
-            run_id = next(iter(waiters))
+        run_ids = app_state(app).services.get(RunWaiters).run_ids()
+        if run_ids:
+            run_id = run_ids[0]
             run = app_state(app).runs.get(run_id)
             if run is not None and run.status == "awaiting_input":
                 return run

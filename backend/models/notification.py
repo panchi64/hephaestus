@@ -8,7 +8,7 @@ The content (``title`` and optional ``body``) is encrypted; kind, links, timesta
 read/resolved state are structural metadata the DB indexes and orders by, so they stay in
 the clear. ``task_id`` links a notification to its scheduled task: a reminder's fire, or an
 agent task's outcome when its output channel is ``notification`` (see
-`services/scheduler.py`).
+`plugins/routines/scheduler.py`).
 """
 
 from __future__ import annotations

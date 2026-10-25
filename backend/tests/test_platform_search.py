@@ -19,7 +19,8 @@ from core.container import ServiceContainer
 from core.vault import Vault
 from models.conversation import Conversation
 from models.subagent import SubagentRecord
-from models.task import ScheduledTask, TaskRun
+from plugins.routines.models import ScheduledTask, TaskRun
+from plugins.routines.services.corpus import routine_runs_adapter
 from runs import Run, RunStream
 from services.conversations import ConversationStore
 from services.corpus import (
@@ -34,7 +35,6 @@ from services.corpus.chunk_store import stitch
 from services.memory import MemoryStore
 from services.plugins import PluginStore
 from services.registry import ModelRegistry
-from services.routines.corpus import routine_runs_adapter
 from services.skills import SkillStore
 from tools.deps import RunDeps
 from tools.platform import PlatformDocument, PlatformResults, platform_toolset

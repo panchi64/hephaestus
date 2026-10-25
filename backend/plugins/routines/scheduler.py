@@ -36,7 +36,8 @@ from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from core.vault import Vault, VaultLocked
 from core.worker import wait_unlocked_or_stop
 from models._fields import new_id, utcnow
-from models.task import ScheduledTask, ScheduleType, TaskKind, TaskOutcome, TaskRun
+
+from .models import ScheduledTask, ScheduleType, TaskKind, TaskOutcome, TaskRun
 
 logger = logging.getLogger(__name__)
 

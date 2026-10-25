@@ -1,6 +1,6 @@
 """The routines surface — CRUD, approval, manual fire, run history, natural-language
 schedules, and the inbound webhook trigger. Routines are `ScheduledTask` rows; every write
-goes through :class:`~services.routines.RoutineStore`, the same rules the agent's
+goes through :class:`~plugins.routines.services.RoutineStore`, the same rules the agent's
 `routines_*` tools apply. Out-shapes are camelCase.
 
 ``POST /tasks/hooks/{token}`` is the one auth-EXEMPT route here (``core/auth.py``
@@ -23,14 +23,24 @@ from sqlmodel import Session, select
 
 from core.db import in_session
 from models.calendar import DEFAULT_TIMEZONE
-from models.task import ScheduledTask, ScheduleType
 from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
 from services.projects import project_clause
-from services.routines import Routine, RoutineRun, Schedule, parse_schedule, upcoming
-from services.routines.contribution import ROUTINES
 from tools.catalog import approval_scopes
+
+from .models import ScheduledTask, ScheduleType
+from .scheduler import SchedulerService
+from .services import (
+    Routine,
+    RoutineRun,
+    RoutineStore,
+    Schedule,
+    ScheduleNaturalLanguage,
+    parse_schedule,
+    upcoming,
+)
+from .services.contribution import ROUTINES
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -240,14 +250,14 @@ async def list_tasks(request: Request) -> TaskListOut:
     # Only the listing is scoped; the scheduler fires every due routine regardless of
     # what the operator happens to be looking at.
     scope = project_clause(ScheduledTask.project_id, await deps.project_scope(request))
-    routines = await deps.routines(request).list(OPERATOR_ID, scope=scope)
+    routines = await deps.service(request, RoutineStore).list(OPERATOR_ID, scope=scope)
     return TaskListOut(items=[_task_out(r) for r in routines])
 
 
 @router.post("", status_code=201, response_model=TaskOut)
 async def create_task(body: TaskCreate, request: Request) -> TaskOut:
     await _validate_pre_authorized(request, body.pre_authorized)
-    routine = await deps.routines(request).create(
+    routine = await deps.service(request, RoutineStore).create(
         OPERATOR_ID,
         {
             "kind": body.kind,
@@ -263,7 +273,7 @@ async def create_task(body: TaskCreate, request: Request) -> TaskOut:
         # Filed under the active project; null is unfiled and visible everywhere.
         project_id=await deps.active_project(request),
     )
-    deps.scheduler(request).wake()
+    deps.service(request, SchedulerService).wake()
     return _task_out(routine)
 
 
@@ -276,10 +286,10 @@ async def update_task(task_id: str, body: TaskPatch, request: Request) -> TaskOu
         changes["schedule"] = body.schedule.to_schedule()
     if body.pre_authorized is not None:
         changes["pre_authorized"] = tuple(body.pre_authorized)
-    routine = await deps.routines(request).update(
+    routine = await deps.service(request, RoutineStore).update(
         OPERATOR_ID, task_id, changes, rotate_webhook_token=body.rotate_webhook_token
     )
-    deps.scheduler(request).wake()
+    deps.service(request, SchedulerService).wake()
     return _task_out(routine)
 
 
@@ -287,30 +297,30 @@ async def update_task(task_id: str, body: TaskPatch, request: Request) -> TaskOu
 async def approve_task(task_id: str, request: Request) -> TaskOut:
     """Let a routine an agent drafted fire. Its pre-authorizations are checked here, since
     this is where the operator accepts them."""
-    store = deps.routines(request)
+    store = deps.service(request, RoutineStore)
     await _validate_pre_authorized(
         request, list((await store.get(OPERATOR_ID, task_id)).pre_authorized)
     )
     routine = await store.approve(OPERATOR_ID, task_id)
-    deps.scheduler(request).wake()
+    deps.service(request, SchedulerService).wake()
     return _task_out(routine)
 
 
 @router.delete("/{task_id}", status_code=204)
 async def delete_task(task_id: str, request: Request) -> None:
-    await deps.routines(request).delete(OPERATOR_ID, task_id)
+    await deps.service(request, RoutineStore).delete(OPERATOR_ID, task_id)
 
 
 @router.post("/{task_id}/run_now", status_code=202, response_model=RunNowOut)
 async def run_now(task_id: str, request: Request) -> RunNowOut:
     """Fire the routine immediately, through the scheduler's own non-overlap path — a
     still-live previous execution records a ``skipped`` run rather than running twice."""
-    routine = await deps.routines(request).get(OPERATOR_ID, task_id)
+    routine = await deps.service(request, RoutineStore).get(OPERATOR_ID, task_id)
     if not routine.approved:
         raise HTTPException(status_code=409, detail="task is awaiting approval")
     if not routine.enabled:
         raise HTTPException(status_code=409, detail="task is disabled")
-    task_run_id = await deps.scheduler(request).fire_now(task_id)
+    task_run_id = await deps.service(request, SchedulerService).fire_now(task_id)
     if task_run_id is None:  # a delete or disable raced the fire
         raise HTTPException(status_code=404, detail="task not found")
     return RunNowOut(task_run_id=task_run_id)
@@ -320,7 +330,7 @@ async def run_now(task_id: str, request: Request) -> RunNowOut:
 async def list_task_runs(
     task_id: str, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 50
 ) -> TaskRunListOut:
-    runs = await deps.routines(request).runs(OPERATOR_ID, task_id, limit=limit)
+    runs = await deps.service(request, RoutineStore).runs(OPERATOR_ID, task_id, limit=limit)
     return TaskRunListOut(items=[_task_run_out(run) for run in runs])
 
 
@@ -345,7 +355,9 @@ async def list_templates(request: Request) -> TemplateListOut:
 @router.post("/parse-schedule", response_model=ParseScheduleOut)
 async def read_schedule(body: ParseScheduleIn, request: Request) -> ParseScheduleOut:
     """Read a phrase ("every weekday at 9") into a schedule, without saving anything."""
-    schedule = await deps.schedule_parser(request).parse(body.phrase, timezone=body.timezone)
+    schedule = await deps.service(request, ScheduleNaturalLanguage).parse(
+        body.phrase, timezone=body.timezone
+    )
     return ParseScheduleOut(
         schedule=_schedule_out(schedule), upcoming=upcoming(schedule, datetime.now(UTC))
     )
@@ -388,4 +400,4 @@ async def fire_webhook(token: str, request: Request) -> None:
     )
     if matched is None:
         raise HTTPException(status_code=404, detail="not found")
-    _ = await deps.scheduler(request).fire_now(matched.id)
+    _ = await deps.service(request, SchedulerService).fire_now(matched.id)

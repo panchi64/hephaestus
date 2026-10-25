@@ -16,7 +16,7 @@ the same words naming a path outside the worktree. Both tests apply when a scope
 recorded too, so a scope that could never match is never written.
 
 **One whole-tool grant on a command-running tool is written deliberately.** A scheduled
-task's ``pre_authorized`` list (``harness/manifests/tasks.py``) seeds one per tool name;
+task's ``pre_authorized`` list (``plugins/routines/executor.py``) seeds one per tool name;
 there is no command to name ahead of any turn, and a narrower grant would park the task
 forever.
 

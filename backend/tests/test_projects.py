@@ -28,9 +28,9 @@ from core.exceptions import InvalidInputError, NotFoundError
 from core.vault import Vault, VaultLocked
 from models.conversation import Conversation
 from models.corpus import CorpusSource
-from models.task import ScheduledTask
 from models.thread_change import ThreadChange
 from models.thread_worktree import ThreadWorktree
+from plugins.routines.models import ScheduledTask
 from routes.deps import app_state
 from services.projects import ProjectStore, project_clause, visible_project_ids
 from services.projects.store import scoped_tables

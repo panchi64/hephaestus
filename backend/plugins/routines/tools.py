@@ -17,7 +17,10 @@ from pydantic_ai.exceptions import ApprovalRequired
 from core.diagnostics import render_rejection, render_tool_error
 from core.exceptions import NotFoundError, RoutineValidationError
 from models.calendar import DEFAULT_TIMEZONE
-from services.routines import (
+from tools.deps import RunDeps
+
+from .scheduler import SchedulerService
+from .services import (
     Routine,
     RoutineStore,
     format_schedule,
@@ -25,9 +28,6 @@ from services.routines import (
     parse_schedule,
     upcoming,
 )
-from services.scheduler import SchedulerService
-
-from .deps import RunDeps
 
 #: Raised for approval only when the routine being rewritten or deleted is approved.
 GATED_TOOLS: frozenset[str] = frozenset({"routines_write", "routines_delete"})

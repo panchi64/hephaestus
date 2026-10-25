@@ -27,7 +27,8 @@ from agent.finalize import persist_parked_cancel
 from agent.parking import ParkedTurn
 from core.db import in_session
 from models.parked_turn import ParkedTurnRecord
-from models.task import ScheduledTask
+from plugins.routines.models import ScheduledTask
+from plugins.routines.services import RoutineStore
 from routes.chat.turn import resolve_turn_models
 from routes.deps import app_state
 from runs import Run, RunRegistry, RunStatus, RunStream
@@ -136,7 +137,7 @@ async def test_a_routine_deleting_itself_is_not_cancelled_by_the_delete(
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
         task_id, _task_run_id, run_id, _call_id = await park_a_fire(client, app)
-        await app_state(app).routines.delete("operator", task_id, by_run=run_id)
+        await app_state(app).services.get(RoutineStore).delete("operator", task_id, by_run=run_id)
         run = app_state(app).runs.get(run_id)
         assert run is not None and run.status is RunStatus.awaiting_input
 

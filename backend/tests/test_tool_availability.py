@@ -52,8 +52,12 @@ def _ctx(disabled: frozenset[str]) -> RunContext[RunDeps]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
+#: Plugin categories whose only check is the plugin's own switch, not a backing service.
+SWITCH_ONLY = {"routines"}
+
+
 def _availability(app: FastAPI) -> tuple[CategoryAvailability, ...]:
-    return app_state(app).category_availability
+    return tuple(e for e in app_state(app).category_availability if e.category not in SWITCH_ONLY)
 
 
 def _tools(app: FastAPI, category: str) -> frozenset[str]:

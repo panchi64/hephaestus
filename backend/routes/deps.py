@@ -21,7 +21,7 @@ from core.container import ServiceContainer
 from core.exceptions import DegradedCapabilityError, NotFoundError, PermissionDeniedError
 from core.ratelimit import RateLimiter
 from core.vault import Vault
-from runs import ConversationBusyError, InboxDispatch, Run, RunRegistry
+from runs import ConversationBusyError, InboxDispatch, RunRegistry
 from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
@@ -52,8 +52,6 @@ from services.projects import ProjectStore, WorktreeManager, visible_project_ids
 from services.projects.tree import worktree_root
 from services.registry import ModelRegistry
 from services.reindex import EmbeddingReindexer
-from services.routines import RoutineStore, ScheduleNaturalLanguage
-from services.scheduler import SchedulerService
 from services.search import SearchService
 from services.searxng import ManagedSearxng
 from services.secret_vault import SecretVaultService
@@ -145,9 +143,6 @@ class AppState(State):
         self.auth_manager: AuthManager
         self.workspace_db_intact: bool
         self.db_engine: Engine
-        self.scheduler: SchedulerService
-        self.routines: RoutineStore
-        self.schedule_parser: ScheduleNaturalLanguage
         self.calendar: CalendarService
         self.external: ExternalTools
         self.secret_vault: SecretVaultService
@@ -168,7 +163,6 @@ class AppState(State):
         self.corpus_uploads: UploadsAdapter
         self.corpus_folder: FolderAdapter
         self.corpus_chunk_store: CorpusChunkStore
-        self.task_run_waiters: dict[str, asyncio.Future[Run]]
 
 
 #: What an accessor resolves app state from; the app itself serves a turn the inbox starts
@@ -598,18 +592,6 @@ def mark_workspace_db_intact(request: Request) -> None:
 def db_engine(request: Request) -> Engine:
     """The raw DB engine, for surfaces with no dedicated service that use their own rows."""
     return app_state(request).db_engine
-
-
-def scheduler(request: Request) -> SchedulerService:
-    return app_state(request).scheduler
-
-
-def routines(request: Request) -> RoutineStore:
-    return app_state(request).routines
-
-
-def schedule_parser(request: Request) -> ScheduleNaturalLanguage:
-    return app_state(request).schedule_parser
 
 
 def calendar(request: Request) -> CalendarService:

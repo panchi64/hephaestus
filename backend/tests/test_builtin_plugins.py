@@ -189,3 +189,17 @@ async def test_switching_mail_off_withdraws_its_routes_and_back_on_restores_them
         on = await client.put("/plugins/builtin/mail", json={"enabled": True})
         assert on.status_code == 200
         assert (await client.get("/mail/accounts")).status_code == 200
+
+
+async def test_switching_routines_off_withdraws_its_routes_and_back_on_restores_them():
+    async with client_app() as (client, _app):
+        assert (await client.get("/tasks")).status_code == 200
+
+        off = await client.put("/plugins/builtin/routines", json={"enabled": False})
+        assert off.status_code == 200
+        assert (await client.get("/tasks")).status_code == 404
+        assert (await client.post("/tasks/hooks/anything")).status_code == 404
+
+        on = await client.put("/plugins/builtin/routines", json={"enabled": True})
+        assert on.status_code == 200
+        assert (await client.get("/tasks")).status_code == 200

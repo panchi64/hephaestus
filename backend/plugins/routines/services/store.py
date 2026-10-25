@@ -22,7 +22,9 @@ from core.exceptions import NotFoundError, RoutineValidationError
 from core.serde import as_utc
 from core.vault import Vault
 from models._fields import utcnow
-from models.task import (
+from services.agents import AgentCatalog
+
+from ..models import (
     ScheduledTask,
     ScheduleType,
     TaskKind,
@@ -30,8 +32,6 @@ from models.task import (
     TaskRun,
     new_webhook_token,
 )
-from services.agents import AgentCatalog
-
 from .schedule import Schedule, check_schedule
 
 _KINDS = frozenset(k.value for k in TaskKind)
