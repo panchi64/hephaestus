@@ -67,6 +67,7 @@ from .model_errors import (
     model_load_hint,
 )
 from .open_tasks import open_tasks_notice
+from .park_notice import ParkNotices
 from .parking import DEFAULT_BINDING, park_for_input
 from .translate import stream_agent_run
 
@@ -504,6 +505,7 @@ async def drive_turn(
                 announced,
                 settled=settled,
                 notifications=caps.get_optional(NotificationService),
+                holds=caps.get_optional(ParkNotices),
                 store=store,
                 conversation_id=conversation_id,
                 # Live level, so a resume after a revision request stays in plan mode.

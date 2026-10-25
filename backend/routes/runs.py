@@ -20,6 +20,7 @@ from agent import ParkedTurn, build_resume_orchestrator
 from agent.approval_guards import guarded_approvals
 from agent.gating import GrantApproved
 from agent.recompose import RecomposeError, recompose
+from core.auth import via_api_token
 from core.config import get_settings
 from routes import deps
 from runs import (
@@ -137,10 +138,11 @@ async def stream_run_events(
     request: Request,
     last_event_id: Annotated[int | None, Query()] = None,
 ):
-    """SSE event stream. Reconnect with ``Last-Event-ID`` to replay missed events."""
+    """SSE event stream. Reconnect with ``Last-Event-ID`` to replay missed events. A client
+    on an API token tails the run without counting as the operator watching it."""
     run = _require_run(request, run_id)
     after = parse_last_event_id(request.headers.get("last-event-id"), last_event_id)
-    return sse_response(run, after)
+    return sse_response(run, after, watching=not via_api_token(request.state))
 
 
 class CancelRequest(BaseModel):

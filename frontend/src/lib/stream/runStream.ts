@@ -7,6 +7,9 @@
  * the last seen `seq` drives reconnect-with-replay if the transport drops before
  * a terminal event. Resolves when the run ends, the caller aborts, or reconnects
  * are exhausted.
+ *
+ * A hidden page holds no connection, because the backend holds a run's notices while its
+ * stream is open; the reader lets go on hide and reconnects from the last seq on show.
  */
 import { API_BASE } from "~/lib/config";
 import { getToken } from "~/lib/api/token";
@@ -55,6 +58,34 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+const pageHidden = (): boolean =>
+  typeof document !== "undefined" && document.visibilityState === "hidden";
+
+/** Resolves once `pageHidden()` equals `hidden`, or the signal aborts; `stop` unlistens. */
+function visibility(
+  hidden: boolean,
+  signal?: AbortSignal,
+): { reached: Promise<void>; stop: () => void } {
+  let stop = () => {};
+  const reached = new Promise<void>((resolve) => {
+    if (typeof document === "undefined") return;
+    const check = () => {
+      if (pageHidden() === hidden) done();
+    };
+    const done = () => {
+      stop();
+      resolve();
+    };
+    stop = () => {
+      document.removeEventListener("visibilitychange", check);
+      signal?.removeEventListener("abort", done);
+    };
+    document.addEventListener("visibilitychange", check);
+    signal?.addEventListener("abort", done);
+  });
+  return { reached, stop };
+}
+
 /** Parse one SSE frame (the lines between blank lines) into an event. */
 function parseFrame(frame: string): RunEvent | null {
   const data = frame
@@ -79,6 +110,11 @@ export async function streamRun(
   let totalDelayMs = 0;
 
   while (!signal?.aborted) {
+    if (pageHidden()) {
+      await visibility(false, signal).reached;
+      continue;
+    }
+    const hides = visibility(true, signal);
     try {
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       const token = getToken();
@@ -112,9 +148,11 @@ export async function streamRun(
           new Promise<"timeout">((resolve) => {
             timer = setTimeout(() => resolve("timeout"), READ_TIMEOUT_MS);
           }),
+          hides.reached.then(() => "hidden" as const),
         ]).finally(() => clearTimeout(timer));
-        if (result === "timeout") {
-          // Dead connection — drop it and reconnect from lastSeq (replays the gap).
+        if (result === "timeout" || result === "hidden") {
+          // A dead connection, or a page that hid: drop it and reconnect from lastSeq
+          // (replaying the gap), which waits for the page to be visible again.
           await reader.cancel().catch(() => {});
           break;
         }
@@ -151,6 +189,8 @@ export async function streamRun(
         throw new StreamDetachedError();
       }
       await delay(backoff, signal);
+    } finally {
+      hides.stop();
     }
   }
 }

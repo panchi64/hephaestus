@@ -13,8 +13,9 @@ and requests are in hand, and a resume continues the same turn instead of replay
 prompt against whatever the world looks like later. Each field exists because re-deriving
 it on resume would be a second, disagreeing source for a settled fact.
 
-The notify precedes the park: ``RunRegistry.cancel`` reads ``awaiting_input`` as "the task
-has fully exited", so nothing may await after ``run.park(...)``.
+An unwatched park notifies before it parks: ``RunRegistry.cancel`` reads ``awaiting_input``
+as "the task has fully exited", so nothing may await after ``run.park(...)``. A watched park
+parks first and hands its notice to ``ParkNotices`` until the operator leaves.
 
 ``gating.py`` decides which approvals get here; every question does, since nothing can
 answer one in the operator's place.
@@ -47,6 +48,7 @@ from services.permissions.guards import GUARD_KEY, unconfined
 from .compaction_context import CompactionContext
 from .factory import TurnAgent
 from .naming import TitleContext, approval_conversation_title
+from .park_notice import ParkNotices
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +218,7 @@ async def park_for_input(
     *,
     settled: dict[str, ToolApproved | ToolDenied] | None = None,
     notifications: ParkNotifier | None = None,
+    holds: ParkNotices | None = None,
     store: ConversationStore | None = None,
     conversation_id: str | None = None,
     binding: ConversationBinding = DEFAULT_BINDING,
@@ -230,10 +233,27 @@ async def park_for_input(
     events, pending_names, asked = announcements(requests, settled)
     for event in events:
         _ = run.emit(event)
-    # Notify before `run.park(...)` exposes the parked status: `RunRegistry.cancel`'s parked
-    # branch assumes "awaiting_input ⇒ the task has fully exited", and a concurrent
-    # cancel/approve landing while this coroutine awaits would race the run's finalize.
-    if notifications is not None and (pending_names or asked):
+    parked = ParkedTurn(
+        agent,
+        messages,
+        requests,
+        announced,
+        settled=settled,
+        binding=binding,
+        vision=vision,
+        compaction=compaction,
+        workspace_key=workspace_key,
+        endpoint_id=run.endpoint.id if run.endpoint is not None else None,
+        model=primary_model_name(agent),
+        max_requests=max_requests,
+        requests_used=requests_used,
+        ledger_prompt_message_id=ledger_prompt_message_id,
+    )
+    if notifications is None or not (pending_names or asked):
+        run.park(parked)
+        return
+
+    async def send() -> None:
         title = await approval_conversation_title(store, run.owner_id, conversation_id)
         # One kind for both: `approval_needed` is the routing key five client behaviours
         # hang off (bell accent, deep link, the age-filter exemption), equally true of a
@@ -243,31 +263,20 @@ async def park_for_input(
             wants.append(f"approval for {', '.join(sorted(pending_names))}")
         if asked:
             wants.append("an answer from you")
-        try:
-            _ = await notifications.notify(
-                run.owner_id,
-                "approval_needed",
-                f'"{title}" needs {" and ".join(wants)}',
-                conversation_id=conversation_id,
-                run_id=run.id,
-            )
-        except Exception:  # a notify failure must not break the park
-            logger.warning("approval_needed notification failed for run %s", run.id, exc_info=True)
-    run.park(
-        ParkedTurn(
-            agent,
-            messages,
-            requests,
-            announced,
-            settled=settled,
-            binding=binding,
-            vision=vision,
-            compaction=compaction,
-            workspace_key=workspace_key,
-            endpoint_id=run.endpoint.id if run.endpoint is not None else None,
-            model=primary_model_name(agent),
-            max_requests=max_requests,
-            requests_used=requests_used,
-            ledger_prompt_message_id=ledger_prompt_message_id,
+        _ = await notifications.notify(
+            run.owner_id,
+            "approval_needed",
+            f'"{title}" needs {" and ".join(wants)}',
+            conversation_id=conversation_id,
+            run_id=run.id,
         )
-    )
+
+    if holds is not None and run.stream.watcher_count > 0:
+        run.park(parked)
+        holds.hold(run, parked, send)
+        return
+    try:
+        await send()
+    except Exception:  # a notify failure must not break the park
+        logger.warning("approval_needed notification failed for run %s", run.id, exc_info=True)
+    run.park(parked)

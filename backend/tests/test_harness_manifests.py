@@ -128,18 +128,18 @@ def test_container_get_is_loud_and_optional_is_quiet():
 
 
 class _WatchedStream(RunStream):
-    def __init__(self, subscribers: int) -> None:
+    def __init__(self, watchers: int) -> None:
         super().__init__()
-        self._watchers: int = subscribers
+        self.watching: int = watchers
 
     @property
     @override
-    def subscriber_count(self) -> int:
-        return self._watchers
+    def watcher_count(self) -> int:
+        return self.watching
 
 
-def _run(subscribers: int = 0) -> Run:
-    return Run(id="run-1", kind="chat", owner_id="o", stream=_WatchedStream(subscribers))
+def _run(watchers: int = 0) -> Run:
+    return Run(id="run-1", kind="chat", owner_id="o", stream=_WatchedStream(watchers))
 
 
 async def test_dispatcher_runs_sync_inline_then_async_as_tracked_tasks():
@@ -151,7 +151,7 @@ async def test_dispatcher_runs_sync_inline_then_async_as_tracked_tasks():
         log.append(f"async:{run.id}:watched={watched}")
 
     dispatcher.add(notice)
-    run = _run(subscribers=2)
+    run = _run(watchers=2)
     dispatcher(run)
     assert log == ["sync:run-1"]  # sync ran inline; async is scheduled, not run
     assert len(dispatcher.tasks) == 1

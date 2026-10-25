@@ -14,6 +14,7 @@ import logging
 import time
 from collections.abc import Callable
 
+from agent.park_notice import ParkNotices
 from core.api_scopes import ScopeClaim
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from harness.run_terminal import RunTerminalDispatcher
@@ -88,6 +89,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # In-flight run-terminal tasks write here; registered after so they stop first, and a run
     # finishing at shutdown never notifies through a stopped store.
     ctx.lifecycle.on_stop("run-terminal-notifies", ctx.services.get(RunTerminalDispatcher).drain)
+    park_notices = ParkNotices()
+    ctx.lifecycle.on_stop("held-park-notices", park_notices.drain)
 
     async def _resolve_dangling_approvals(run: Run, _watched: bool) -> None:
         """The backstop: a cancel-while-parked never reaches the approve route, and a normal
@@ -105,9 +108,14 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         conversation is kept out of the session list, so announcing one points somewhere
         unreachable. This matters for sub-agents (a fan-out of six unwatched would raise six
         notices while the operator watches the cards; the launching thread still notifies
-        when its own turn ends). Compare panes are ephemeral too and lose their
-        `run_failed` notice by design: the failure is on the pane being watched."""
-        if run.conversation_id is None or run.status in (RunStatus.cancelled, RunStatus.blocked):
+        when its own turn ends).
+
+        A watched run notifies nothing: whoever is on its stream already saw it end."""
+        if (
+            watched
+            or run.conversation_id is None
+            or run.status in (RunStatus.cancelled, RunStatus.blocked)
+        ):
             return
         try:
             if await conversations.is_hidden(run.conversation_id):
@@ -128,9 +136,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
                     conversation_id=run.conversation_id,
                     run_id=run.id,
                 )
-            elif run.status is RunStatus.done and not watched:
-                # Only notify a plain completion when nobody was watching — a
-                # subscriber attached to the run's own stream already saw it finish.
+            elif run.status is RunStatus.done:
                 _ = await notifications.notify(
                     OPERATOR_ID,
                     "run_completed",
@@ -143,9 +149,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
     return FeatureRuntime(
         services=(notifications,),
-        # Agent-facing so the engine's park path can notify — the engine resolves it
-        # from the bag rather than carrying a dedicated notifier parameter.
-        capabilities=(notifications,),
+        # Agent-facing so the engine's park path can notify or hold, resolved from the bag.
+        capabilities=(notifications, park_notices),
         state={"notifications": notifications},
         run_terminal=(_resolve_dangling_approvals, _notify_conversation_terminal),
     )

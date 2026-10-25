@@ -32,7 +32,7 @@ def _ended(run: Run) -> RunEnded:
 
 def _count_subscribers(seen: dict[str, int]) -> Callable[[Run], None]:
     def hook(run: Run) -> None:
-        _ = seen.setdefault("count", run.stream.subscriber_count)
+        _ = seen.setdefault("count", run.stream.watcher_count)
 
     return hook
 
@@ -505,7 +505,7 @@ async def test_on_terminal_hook_failure_is_swallowed_and_logged(
     assert "on_terminal hook failed" in caplog.text
 
 
-async def test_on_terminal_reads_the_live_subscriber_count_before_close():
+async def test_on_terminal_reads_the_live_watcher_count_before_close():
     # The hook must see who was watching at the transition, before subscriber cleanup runs.
     seen: dict[str, int] = {}
     reg = RunRegistry(on_terminal=_count_subscribers(seen))

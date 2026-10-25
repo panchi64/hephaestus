@@ -6,6 +6,8 @@ Distinct from `test_api_tokens.py`, which covers the *outbound* service credenti
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 from fastapi import FastAPI
 from pydantic import JsonValue
@@ -13,7 +15,8 @@ from sqlmodel import Session, select
 
 from core.db import in_session
 from models.api_token import ApiToken
-from routes.deps import app_state
+from routes.deps import OPERATOR_ID, app_state
+from runs import Run
 
 from ._helpers import client_app
 from ._json import arr, json_body, obj, parse_json, s
@@ -106,6 +109,29 @@ async def test_token_authenticates_in_scope_and_is_refused_out_of_scope():
         assert denied.status_code == 403
         # Unclaimed by every scope — a token can't manage tokens.
         assert (await client.get("/tokens", headers=headers)).status_code == 403
+
+
+async def test_a_token_tailing_a_run_is_not_the_operator_watching_it():
+    async with client_app(auth_enabled=True, passphrase=None) as (client, app):
+        _ = await client.post("/setup", json={"password": "the-password"})
+        token = s((await _issue(client, scopes=("chat",)))["token"])
+        client.cookies.clear()
+        release = asyncio.Event()
+
+        async def orch(_run: Run) -> None:
+            _ = await release.wait()
+
+        run = app_state(app).runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
+        tail = asyncio.create_task(
+            client.get(f"/runs/{run.id}/events", headers={"Authorization": f"Bearer {token}"})
+        )
+        while run.stream.subscriber_count == 0:
+            await asyncio.sleep(0.01)
+
+        assert run.stream.watcher_count == 0
+        release.set()
+        await run.wait()
+        _ = await tail
 
 
 async def test_revoked_token_is_refused_even_after_it_has_been_used():

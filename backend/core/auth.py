@@ -39,6 +39,14 @@ SESSION_COOKIE = "hephaestus_session"
 # gate can route it without a database lookup. The minted form is `odyt_<prefix>_<secret>`.
 TOKEN_SCHEME = "odyt_"
 
+# The request-state key the gate sets on a request it let in on an API token.
+_VIA_API_TOKEN = "via_api_token"
+
+
+def via_api_token(state: State) -> bool:
+    """Whether the request owning ``state`` came in on an API token, not the operator's session."""
+    return bool(getattr(state, _VIA_API_TOKEN, False))
+
 # Password guesses and token guesses are the same attack, so they share one limiter under
 # separate key namespaces. Generous enough that a human never meets it and a script does.
 _AUTH_ATTEMPT_RATE_PER_MINUTE = 12.0
@@ -299,6 +307,7 @@ class AuthMiddleware:
                 )
                 if rejection is not None:
                     return await _reject(send, *rejection)
+                cast("dict[str, object]", scope.setdefault("state", {}))[_VIA_API_TOKEN] = True
         if not state.vault.is_unlocked:
             return await _reject(send, 423, "the vault is locked")
         await self.app(scope, receive, send)
