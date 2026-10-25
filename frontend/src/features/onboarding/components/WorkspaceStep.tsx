@@ -111,7 +111,7 @@ export function WorkspaceStep(props: {
   return (
     <StepShell
       briefing={workspaceBriefing()}
-      title="Workspace preferences"
+      title="Preferences"
       aside="Optional"
       buttons={[
         { label: "Back", onClick: props.onBack },

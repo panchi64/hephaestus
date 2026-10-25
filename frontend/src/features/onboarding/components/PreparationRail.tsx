@@ -53,13 +53,13 @@ export function PreparationRail(props: {
           </span>
         </div>
         <RailRow
-          title="Vault key derived"
+          title="Workspace encrypted"
           state="done"
           readout="DONE"
           onOpen={() => undefined}
         />
         <RailRow
-          title="Local scan"
+          title="Looked for local models"
           state={props.scanning ? "running" : "done"}
           readout={props.scanning ? "SCANNING" : `${props.found} FOUND`}
           onOpen={() => undefined}

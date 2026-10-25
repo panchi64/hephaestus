@@ -18,7 +18,7 @@ import { Text } from "~/ui";
  *                   &scenario=nothing   the scan finds nothing
  *                   &scenario=no-window a model with no context window
  *                   &scenario=failing   a configured endpoint that fails its test
- *                   &scenario=resume    required steps done; resumes at Roles
+ *                   &scenario=resume    required steps done; resumes at Helper models
  *
  * A URL containing "fail" never passes the connection test; a cloud provider passes once
  * it has a key. State lives in the page, so a reload starts the scenario over.

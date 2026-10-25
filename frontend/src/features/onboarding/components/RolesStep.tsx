@@ -88,7 +88,7 @@ export function RolesStep(props: {
   return (
     <StepShell
       briefing={briefing()}
-      title="Assign the other roles"
+      title="Helper models"
       aside="Optional"
       buttons={[
         { label: "Back", onClick: props.onBack },

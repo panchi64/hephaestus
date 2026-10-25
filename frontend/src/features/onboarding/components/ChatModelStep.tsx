@@ -72,13 +72,19 @@ export function ChatModelStep(props: {
       hint: hint(c),
     }));
 
+  // Read off the selection itself, which a pick moves at once, rather than off the
+  // binding: the binding refetches after every pick, and between the two it would
+  // describe no model and then the new one, re-revealing the whole line.
   const briefing = (): string => {
     const sel = effectiveSelection();
-    const explicit = sel && !main()?.implicit ? sel : undefined;
-    const scanned = explicit ? scannedFor(explicit) : undefined;
+    const scanned = sel ? scannedFor(sel) : undefined;
+    const bound = main();
+    const window =
+      scanned?.contextWindow ??
+      (bound && bound.model === sel?.model ? bound.contextWindow : null);
     return chatBriefing({
-      picked: explicit?.model,
-      pickedWindow: main()?.contextWindow ?? null,
+      picked: choices().length > 0 ? sel?.model : undefined,
+      pickedWindow: window,
       pickedLoaded: scanned?.loaded === true,
       needsWindow: needsWindow(),
     });

@@ -85,7 +85,7 @@ export function ReadyStep(props: {
   return (
     <StepShell
       briefing={readyBriefing()}
-      title="Summary"
+      title="Review and enter"
       buttons={[
         { label: "Back", onClick: props.onBack },
         {

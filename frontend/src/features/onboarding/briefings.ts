@@ -101,7 +101,7 @@ export function rolesBriefing(embedder?: {
   model: string;
 }): string {
   return join(
-    "These are side jobs: background work like titles, a reviewer for Auto, and recall across past conversations. Each default works.",
+    "Helper models take the side jobs: background work like titles, a reviewer for Auto, and recall across past conversations. Each default works.",
     embedder &&
       `One is worth changing: \`${embedder.model}\` on ${embedder.server} lets me recall by meaning, not just keywords.`,
   );

@@ -185,7 +185,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: "resume",
     label: "Required steps done",
-    note: "A reopen from Settings: it resumes at Roles.",
+    note: "A reopen from Settings: it resumes at Helper models.",
     servers: [LM_STUDIO],
     endpoints: [
       endpoint({ last_status: "ok", last_checked_at: "2026-10-24T09:00:00Z" }),

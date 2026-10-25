@@ -208,7 +208,7 @@ export function EndpointStep(props: {
         <StepShell
           status={<StatusBlock label="Connections" lines={statusLines()} />}
           briefing={briefing()}
-          title={ready() ? "Add another, or continue" : "Choose an endpoint"}
+          title={ready() ? "Add another, or continue" : "Connect a model"}
           aside="Required"
         >
           <ChoiceList

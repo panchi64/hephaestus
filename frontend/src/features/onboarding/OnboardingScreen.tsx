@@ -22,7 +22,9 @@ import {
   type LocalServer,
   type StepId,
 } from "./model";
+import { BriefingSlot } from "./components/briefingSlot";
 import { ChatModelStep } from "./components/ChatModelStep";
+import { TalosBriefing } from "./components/TalosBriefing";
 import { EndpointStep } from "./components/EndpointStep";
 import { PreparationRail, type RailEntry } from "./components/PreparationRail";
 import { ReadyStep } from "./components/ReadyStep";
@@ -42,6 +44,7 @@ export function OnboardingScreen(): JSX.Element {
   const servers = (): LocalServer[] => settled(scan) ?? [];
   const [step, setStep] = createSignal<StepId | null>(null);
   const [visited, setVisited] = createSignal<Set<StepId>>(new Set());
+  const [briefing, setBriefing] = createSignal("");
 
   createEffect(() => {
     const eps = settled(endpoints);
@@ -145,41 +148,44 @@ export function OnboardingScreen(): JSX.Element {
           when={step() !== null}
           origin="top-left"
           class="my-auto h-fit w-full max-w-xl"
-          contentClass="p-6"
+          contentClass="flex flex-col gap-4 p-6"
         >
-          <Show when={step()} keyed>
-            {(current) => (
-              <Switch>
-                <Match when={current === "endpoint"}>
-                  <EndpointStep
-                    servers={settled(scan)}
-                    scanning={scan.loading}
-                    onContinue={next}
-                  />
-                </Match>
-                <Match when={current === "chat"}>
-                  <ChatModelStep
-                    servers={servers()}
-                    onBack={back}
-                    onContinue={next}
-                  />
-                </Match>
-                <Match when={current === "roles"}>
-                  <RolesStep
-                    servers={servers()}
-                    onBack={back}
-                    onContinue={next}
-                  />
-                </Match>
-                <Match when={current === "workspace"}>
-                  <WorkspaceStep onBack={back} onContinue={next} />
-                </Match>
-                <Match when={current === "ready"}>
-                  <ReadyStep onEdit={go} onBack={back} onEnter={enter} />
-                </Match>
-              </Switch>
-            )}
-          </Show>
+          <TalosBriefing text={briefing()} />
+          <BriefingSlot.Provider value={setBriefing}>
+            <Show when={step()} keyed>
+              {(current) => (
+                <Switch>
+                  <Match when={current === "endpoint"}>
+                    <EndpointStep
+                      servers={settled(scan)}
+                      scanning={scan.loading}
+                      onContinue={next}
+                    />
+                  </Match>
+                  <Match when={current === "chat"}>
+                    <ChatModelStep
+                      servers={servers()}
+                      onBack={back}
+                      onContinue={next}
+                    />
+                  </Match>
+                  <Match when={current === "roles"}>
+                    <RolesStep
+                      servers={servers()}
+                      onBack={back}
+                      onContinue={next}
+                    />
+                  </Match>
+                  <Match when={current === "workspace"}>
+                    <WorkspaceStep onBack={back} onContinue={next} />
+                  </Match>
+                  <Match when={current === "ready"}>
+                    <ReadyStep onEdit={go} onBack={back} onEnter={enter} />
+                  </Match>
+                </Switch>
+              )}
+            </Show>
+          </BriefingSlot.Provider>
         </ConstructionReveal>
       </main>
     </div>

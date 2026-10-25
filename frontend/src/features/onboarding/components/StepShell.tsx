@@ -1,4 +1,4 @@
-import { Show, type JSX } from "solid-js";
+import { createEffect, Show, type JSX } from "solid-js";
 import {
   ActionButtons,
   ActionFrame,
@@ -7,11 +7,12 @@ import {
   Text,
   type ActionButtonSpec,
 } from "~/ui";
-import { TalosBriefing } from "./TalosBriefing";
+import { useBriefingSlot } from "./briefingSlot";
 
-/** One step, top to bottom: Talos's briefing, the machine's status block behind it, and
- *  the single live question frame. `buttons` gives the frame a footer; omit it when the
- *  body brings its own (a `ChoiceList`). */
+/** One step under Talos's briefing: the machine's status block, then the single live
+ *  question frame. The briefing goes to the screen's one `TalosBriefing` rather than
+ *  rendering here. `buttons` gives the frame a footer; omit it when the body brings its
+ *  own (a `ChoiceList`). */
 export function StepShell(props: {
   briefing: string;
   status?: JSX.Element;
@@ -21,10 +22,12 @@ export function StepShell(props: {
   hint?: string;
   children: JSX.Element;
 }): JSX.Element {
+  const setBriefing = useBriefingSlot();
+  createEffect(() => setBriefing(props.briefing));
+
   return (
     <Reveal motion="rise" distance={10}>
       <Stack gap={4}>
-        <TalosBriefing text={props.briefing} />
         {props.status}
         <ActionFrame tone="question" title={props.title} aside={props.aside}>
           {props.children}

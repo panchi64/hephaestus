@@ -771,7 +771,7 @@ Text that arrives wrapped, which nobody in the thread wrote, is its own row (`En
 
 ### 10.20 The first-run walkthrough
 
-After the operator creates the platform password, a full-screen surface walks them through Endpoint, Chat model, Roles, Workspace and Ready. Endpoint and Chat model are required; the rest can be skipped. It can be reopened from Settings › Models (**Run setup walkthrough**).
+After the operator creates the platform password, a full-screen surface walks them through Connect a model, Pick the chat model, Helper models, Preferences, and Review and enter. The first two are required; the rest can be skipped. It can be reopened from Settings › Models (**Run setup walkthrough**).
 
 - **The rail** (left) is a quiet "Preparation" checklist in the app rail's chrome: `RailFrame`, one `RailRow` per step in the checklist states (`done` in nominal, `current` bright, `pending` hollow and dim), mono readouts at the right (`1 FOUND`, `SET`, `REQUIRED`), and a done count on the plate. Its `StatusBar` footer carries the `03 / 05` index and Lock.
 - **The column** (right) is one centered single column, built in once on first mount with the construction reveal (§8).

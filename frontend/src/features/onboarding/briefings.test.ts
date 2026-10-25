@@ -22,7 +22,7 @@ import type { LocalModel, LocalServer } from "./model";
 
 const ENDPOINT_PURPOSE = "An endpoint is where I reach a model";
 const CHAT_PURPOSE = "The chat model answers you";
-const ROLES_PURPOSE = "These are side jobs";
+const ROLES_PURPOSE = "Helper models take the side jobs";
 
 const MAX_PARAGRAPHS = 2;
 const MAX_LENGTH = 320;

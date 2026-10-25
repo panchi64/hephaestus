@@ -14,11 +14,11 @@ export interface Step {
 }
 
 export const STEPS: Step[] = [
-  { id: "endpoint", label: "Endpoint", required: true },
-  { id: "chat", label: "Chat model", required: true },
-  { id: "roles", label: "Roles", required: false },
-  { id: "workspace", label: "Workspace", required: false },
-  { id: "ready", label: "Ready", required: false },
+  { id: "endpoint", label: "Connect a model", required: true },
+  { id: "chat", label: "Pick the chat model", required: true },
+  { id: "roles", label: "Helper models", required: false },
+  { id: "workspace", label: "Preferences", required: false },
+  { id: "ready", label: "Review and enter", required: false },
 ];
 
 export interface LocalModel {
