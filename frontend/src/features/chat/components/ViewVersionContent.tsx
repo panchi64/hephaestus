@@ -96,7 +96,7 @@ export function ViewVersionContent(props: {
     extensionOf(props.title) ?? undefined;
 
   const urlArm = (render: (url: string) => JSX.Element): JSX.Element => (
-    <Switch fallback={<LoadingText label="Loading view…" />}>
+    <Switch fallback={<LoadingText label="Loading view" />}>
       <Match when={objectUrl.error}>
         <ErrorState message="Could not load this version." />
       </Match>
@@ -105,7 +105,7 @@ export function ViewVersionContent(props: {
   );
 
   const blobArm = (render: (b: Blob) => JSX.Element): JSX.Element => (
-    <Switch fallback={<LoadingText label="Loading view…" />}>
+    <Switch fallback={<LoadingText label="Loading view" />}>
       <Match when={blob.error}>
         <ErrorState
           message="Could not load this version."
@@ -193,7 +193,7 @@ export function ViewVersionContent(props: {
         ))}
       </Match>
       <Match when={isTextLike() && inline()}>
-        <Switch fallback={<LoadingText label="Loading view…" />}>
+        <Switch fallback={<LoadingText label="Loading view" />}>
           <Match when={text.error}>
             <ErrorState message="Could not load this version." />
           </Match>

@@ -105,7 +105,7 @@ function TranscriptBody(props: { subagent: Subagent }): JSX.Element {
           }}
         </Match>
         <Match when={transcript.loading()}>
-          <LoadingText label="Reading the transcript…" />
+          <LoadingText label="Reading the transcript" />
         </Match>
       </Switch>
       {/* Live, the turn itself shows the progress. */}

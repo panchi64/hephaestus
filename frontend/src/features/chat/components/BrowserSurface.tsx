@@ -496,7 +496,7 @@ export function BrowserSurface(props: {
         <Show when={!shown()}>
           <div class="absolute inset-0 flex items-center justify-center">
             <Show when={status() === "connecting"}>
-              <LoadingText label="Connecting to the browser…" />
+              <LoadingText label="Connecting to the browser" />
             </Show>
             <Show when={status() === "none"}>
               <EmptyState
@@ -553,7 +553,7 @@ export function BrowserSurface(props: {
         <Show when={shown() && !live()}>
           <div class="absolute inset-x-0 bottom-0 bg-raised/90 px-3 py-1">
             <Show when={status() === "connecting"}>
-              <LoadingText label="Reconnecting…" />
+              <LoadingText label="Reconnecting" />
             </Show>
             <Show when={status() === "lost"}>
               <Button

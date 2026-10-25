@@ -142,7 +142,7 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
                     >
                       <Match when={props.history() === "loading"}>
                         <div class="px-4 py-8 text-center">
-                          <LoadingText label="Loading conversation…" />
+                          <LoadingText label="Loading conversation" />
                         </div>
                       </Match>
                       <Match when={props.history() === "error"}>

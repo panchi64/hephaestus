@@ -39,9 +39,7 @@ export default function App() {
             <Suspense
               fallback={
                 // A cold load before unlock keeps boot's label: nothing is waking yet.
-                <AppSplash
-                  label={session.isAuthenticated ? "Waking Talos…" : undefined}
-                />
+                <AppSplash waking={session.isAuthenticated} />
               }
             >
               {props.children}

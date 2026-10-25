@@ -447,9 +447,10 @@ between them; both drop down the sides as the sides close; and the glass surface
 resolves inside the frame that has just been described. Closing runs the gesture
 in reverse, so the region is taken apart rather than switched off.
 
-Seven surfaces use it, and the list is meant to stay short: the chat **View**,
+Eight surfaces use it, and the list is meant to stay short: the chat **View**,
 the **settings dialog**, the **park dock** (the approval/question dock that takes
-the composer's slot), the **404** plate, the **first-run walkthrough's column**
+the composer's slot), the **404** plate, the **unlock plate** (login and setup),
+the **first-run walkthrough's column**
 (a place prepared for the operator before the workspace exists), and the two panels behind the
 composer's status bar — the **context breakdown** (behind the context bar) and the
 conversation's **stats panel** (behind `stats`). Both of those go through one
@@ -496,7 +497,7 @@ behind it — an overlay over the transcript, a dialog over a working page.
 
 - Eased (human): the reveal above, hover and focus transitions, height on disclosure, ambient state colour (240ms).
 - **The trace-in** (`.heph-trace-*`) — a row arriving on a trunk. The construction reveal's sentence at the size of one line: the elbow hanging the row off its parent draws itself down and then across (overlapping, so it reads as one L), and the row resolves out of the ordinary blur-fade as the stroke reaches it. The stroke arrives **charged**: the elbow, its length of trunk and the hard-cornered socket around the row's glyph land in the info tone and cool to their own colour over 240ms, and one band of light crosses the row's text from the socket outward — every segment clips the same band, so it reads as one sweep across the row, not one per segment. No phase runs past 240ms, the whole gesture is over by ~420ms, and nothing waits on it. The row's label speaks `meta` at the dim tone — it recedes under the header's reason, the line meant to be read first. The socket and the label are the whole work log's voice: open, the log is drawn as a schematic — one trunk down from the header's chevron, an elbow into each row's socket, a script's calls branching off the script's own socket, the chevron at the row's far end. A row the chassis put there rather than the model (injected context, a review) hangs off a **dashed** elbow into a dashed socket, which is what tells the two apart now that no row has a card to refuse; and the running row's length of trunk and its elbow turn `info`. **It plays on arrival and nowhere else.** A row traces in when its id is new to the trunk: a work log's row that a streaming run just added, and an agent thread the latest read of the thread list put under its parent in the rail. A row that only moves — a settled call leaving the pinned run for the fold or the collapsed log's latest slot — is not an arrival and stays still, as does everything on a thread opening, a log folding open, or a list re-read that added nothing. Lighting a row that had merely moved is what put the glow on the previous call instead of the new one.
-- Stepped (machine): caret blink, the braille throbber (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) as a "working now" indicator, live-state pulse, the action tier's waiting square (`steps(2)`, 1.2s; static under reduced motion, §10.18), value tick-over, **the reasoning wall** (§10.10).
+- Stepped (machine): caret blink, the braille throbber (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) as a "working now" indicator, the loading ellipsis (no dots to three, 400ms a step, read off the page clock so every label and every remounted splash ticks on one beat; still in a hidden tab, a static `…` under reduced motion), live-state pulse, the action tier's waiting square (`steps(2)`, 1.2s; static under reduced motion, §10.18), value tick-over, **the reasoning wall** (§10.10).
 
 The chat transcript is where the two registers are visible at once, and it is the reference implementation: the mono reasoning wall lands hard, the sans answer beneath it eases in token by token.
 
@@ -792,7 +793,7 @@ After the operator creates the platform password, a full-screen surface walks th
 | Focus (keyboard) | `shadow-focus` — neutral, both modes |
 | Primary focus | `shadow-accent` — one per screen |
 | Alert | `accent-alert` on the value or border, never a fill |
-| Loading | sans "Loading…" or a mono braille throbber — never an eased spinner |
+| Loading | sans "Loading" with a stepped ellipsis, or a mono braille throbber — never an eased spinner |
 | Empty | sans "No data" / a written sentence explaining what would appear here |
 
 ---

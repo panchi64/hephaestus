@@ -67,7 +67,7 @@ export function ViewSnapshotPreview(props: {
   });
 
   return (
-    <Switch fallback={<LoadingText label="Loading preview…" />}>
+    <Switch fallback={<LoadingText label="Loading preview" />}>
       <Match when={props.files.error}>
         <ErrorState
           message="Could not load this version."

@@ -247,6 +247,7 @@ export {
   ConstructionReveal,
   type ConstructionRevealProps,
 } from "./components/ConstructionReveal";
+export { Plate, type PlateProps } from "./components/Plate";
 export {
   FramedOverlay,
   type FramedOverlayProps,

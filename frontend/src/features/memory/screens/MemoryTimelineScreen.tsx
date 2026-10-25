@@ -442,7 +442,7 @@ export function MemoryTimelineScreen(): JSX.Element {
           when={!auditing()}
           fallback={
             <div class="p-4">
-              <LoadingText label="Auditing…" />
+              <LoadingText label="Auditing" />
             </div>
           }
         >

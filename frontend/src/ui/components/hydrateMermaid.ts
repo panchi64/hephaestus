@@ -333,7 +333,7 @@ function body(
           children: "This diagram could not be drawn.",
         })
       : LoadingText({
-          label: state.kind === "waiting" ? "Receiving…" : "Drawing…",
+          label: state.kind === "waiting" ? "Receiving" : "Drawing",
         }),
   );
   return holder;

@@ -123,7 +123,7 @@ export function WorktreeFileTree(props: {
         <ResourceView
           data={props.listing}
           onRetry={props.onRetry}
-          loadingLabel="Reading the workspace…"
+          loadingLabel="Reading the workspace"
           isEmpty={() => rows().length === 0}
           emptyMessage={
             props.editedOnly ? "No files changed" : "No files in the workspace"

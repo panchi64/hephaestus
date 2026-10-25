@@ -2,7 +2,16 @@ import { createSignal, Show, type JSX } from "solid-js";
 import { isApiError } from "~/lib/api";
 import { useSession } from "~/lib/stores/session";
 import { bytes } from "~/lib/format";
-import { Button, confirm, Input, Stack, StatusFlag, Text, toast } from "~/ui";
+import {
+  Button,
+  confirm,
+  Input,
+  Reveal,
+  Stack,
+  StatusFlag,
+  Text,
+  toast,
+} from "~/ui";
 
 /**
  * Unlock the workspace. The vault key is password-derived and memory-only, so
@@ -127,21 +136,29 @@ export function LoginScreen(): JSX.Element {
           autocomplete="current-password"
         />
         <Show when={error()}>
-          <Text variant="micro" tone="alert">
-            {error()}
-          </Text>
+          <Reveal>
+            <Text variant="micro" tone="alert">
+              {error()}
+            </Text>
+          </Reveal>
         </Show>
-        <Button variant="primary" type="submit" disabled={loading()}>
-          {loading() ? "Unlocking…" : "Unlock"}
+        <Button
+          variant="primary"
+          type="submit"
+          pending={loading()}
+          pendingLabel="Unlocking"
+        >
+          Unlock
         </Button>
         <Show when={session.dbMissing}>
           <Button
             variant="danger"
             type="button"
-            disabled={resetting()}
+            pending={resetting()}
+            pendingLabel="Clearing"
             onClick={handleReset}
           >
-            {resetting() ? "Clearing…" : "Start fresh"}
+            Start fresh
           </Button>
         </Show>
       </Stack>

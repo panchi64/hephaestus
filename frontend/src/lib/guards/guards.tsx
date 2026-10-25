@@ -10,15 +10,11 @@ import { useSession } from "../stores/session";
  * unlocked? While the boot probe runs we hold on a splash; an un-unlocked
  * workspace gets its entry surface — setup on first run, otherwise unlock.
  *
- * **The gate renders those screens itself; it does not redirect to them.** It
- * used to `<Navigate>` to `/login`, which made unlocking a *route transition* —
- * and Solid commits a transition only once every resource read in the new tree
- * has settled, showing no fallback in the meantime. The shell's cold
- * `/projects` and `/conversations` reads therefore pinned the transition and the
- * login form stayed on screen until the operator reloaded the page by hand. As a
- * branch of one already-mounted route, unlocking is a plain signal flip: the
- * subtree swaps in the same tick and the shell's resources suspend normally,
- * against a fallback the operator can see.
+ * **The gate renders those screens itself; it does not redirect to them.** A
+ * redirect makes unlocking a route transition, which Solid commits only once every
+ * resource in the new tree settles, with no fallback meanwhile — the shell's cold
+ * reads would pin the login form on screen. As a branch of one mounted route,
+ * unlocking is a signal flip and the shell suspends against a visible fallback.
  *
  * Behind unlock sits the first-run walkthrough (`OnboardingGate`), a branch of the same kind.
  *
@@ -32,14 +28,17 @@ export function RequireAuth(props: { children: JSX.Element }): JSX.Element {
       <Show
         when={session.isAuthenticated}
         fallback={
-          <AuthLayout>
-            <Show
-              when={session.status === "uninitialized"}
-              fallback={<LoginScreen />}
-            >
-              <SignupScreen />
-            </Show>
-          </AuthLayout>
+          // Keyed so a swap between setup and unlock builds a fresh plate.
+          <Show
+            when={session.status === "uninitialized" ? "setup" : "unlock"}
+            keyed
+          >
+            {(screen) => (
+              <AuthLayout>
+                {screen === "setup" ? <SignupScreen /> : <LoginScreen />}
+              </AuthLayout>
+            )}
+          </Show>
         }
       >
         <OnboardingGate>{props.children}</OnboardingGate>

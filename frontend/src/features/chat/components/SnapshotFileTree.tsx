@@ -78,7 +78,7 @@ export function SnapshotFileTree(props: {
         <ResourceView
           data={props.files}
           onRetry={props.onRetry}
-          loadingLabel="Loading files…"
+          loadingLabel="Loading files"
           isEmpty={(rows) => rowsOf(rows).length === 0}
           emptyMessage={props.editedOnly ? "No files changed" : "No files"}
         >

@@ -90,7 +90,7 @@ export function SubagentApproval(props: {
         when={approvals().length > 0}
         fallback={
           <div class="px-3 py-3">
-            <LoadingText label="Reading what it is asking for…" />
+            <LoadingText label="Reading what it is asking for" />
           </div>
         }
       >
