@@ -1,4 +1,4 @@
-"""Persistence for plugins: drafts, the published version, history and secrets.
+"""Persistence for plugins: drafts, the published version and history.
 
 Every write goes through :func:`~services.plugins.manifest.validate_files`, so a stored
 plugin always has a manifest that parses and names files it contains. A draft never
@@ -8,7 +8,7 @@ plugin's tools reachable.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -26,7 +26,7 @@ from services.revisions import Bundle, RevisionStore, decode_bundle, encode_bund
 from .contributions.agents import AGENTS
 from .contributions.base import TypedContribution
 from .contributions.skills import SKILLS, PluginSkill
-from .manifest import PluginManifest, secret_domain, validate_files, validate_name
+from .manifest import PluginManifest, validate_files, validate_name
 
 type Source = Literal["user", "agent"]
 
@@ -51,19 +51,6 @@ class PluginView:
         return manifest
 
 
-@dataclass(frozen=True)
-class SecretStatus:
-    name: str
-    domain: str
-    is_set: bool
-
-
-@dataclass(frozen=True)
-class SecretValue:
-    value: str
-    domain: str
-
-
 class PluginStore:
     revision_kind: str = "plugin"
 
@@ -73,6 +60,7 @@ class PluginStore:
         self._engine: Engine = engine
         self._vault: Vault = vault
         self.revisions: RevisionStore | None = revisions
+        self._listeners: list[Callable[[str], None]] = []
 
     # --- reads ------------------------------------------------------------------
 
@@ -244,7 +232,15 @@ class PluginStore:
             session.flush()
             return self._view(row)
 
-        return await in_session(self._engine, work)
+        return self._changed(await in_session(self._engine, work))
+
+    async def publish_if_inert(self, owner_id: str, plugin_id: str) -> PluginView:
+        """Publish the draft when it can only show the operator something; anything that
+        runs code or reaches out still waits for them."""
+        view = await self.get(owner_id, plugin_id)
+        if view.draft is None or not view.draft.inert:
+            return view
+        return await self.publish(owner_id, plugin_id)
 
     async def unpublish(self, owner_id: str, plugin_id: str) -> PluginView:
         """Switch the plugin's tools off, keeping its versions."""
@@ -257,7 +253,7 @@ class PluginStore:
             session.flush()
             return self._view(row)
 
-        return await in_session(self._engine, work)
+        return self._changed(await in_session(self._engine, work))
 
     async def delete(self, owner_id: str, plugin_id: str) -> None:
         def work(session: Session) -> None:
@@ -265,6 +261,11 @@ class PluginStore:
 
         await in_session(self._engine, work)
         await self._forget(owner_id, plugin_id)
+        self._notify(plugin_id)
+
+    def on_change(self, listener: Callable[[str], None]) -> None:
+        """Call ``listener`` with a plugin's id whenever what it runs changes or stops."""
+        self._listeners.append(listener)
 
     # --- history ----------------------------------------------------------------
 
@@ -289,85 +290,17 @@ class PluginStore:
             session.flush()
             return self._view(row)
 
-        return await in_session(self._engine, work)
-
-    # --- secrets ----------------------------------------------------------------
-
-    async def secrets(self, owner_id: str, plugin_id: str) -> list[SecretStatus]:
-        """The secrets the current version declares, each with the host its value goes
-        to and whether the operator has set it."""
-        view = await self.get(owner_id, plugin_id)
-        stored = await self._stored_secrets(owner_id, plugin_id)
-        return [
-            SecretStatus(name, stored[name].domain if name in stored else domain, name in stored)
-            for name, domain in sorted(view.current.secrets.items())
-        ]
-
-    async def secret_values(self, owner_id: str, plugin_id: str) -> dict[str, SecretValue]:
-        return await self._stored_secrets(owner_id, plugin_id)
-
-    async def set_secret(
-        self, owner_id: str, plugin_id: str, name: str, value: str, domain: str | None = None
-    ) -> None:
-        """Store a secret's value, bound to ``domain`` (by default the host the manifest
-        names for it). Only the operator calls this."""
-        view = await self.get(owner_id, plugin_id)
-        declared = view.current.secrets
-        if name not in declared:
-            raise PluginValidationError("secrets", f"{view.name} declares no secret {name!r}")
-        host = declared[name] if domain is None else secret_domain(domain)
-        if not value:
-            raise PluginValidationError("secrets", "a secret needs a value")
-
-        def work(session: Session) -> None:
-            row = session.exec(
-                select(PluginSecret)
-                .where(PluginSecret.plugin_id == plugin_id)
-                .where(PluginSecret.name == name)
-            ).first()
-            encrypted = self._vault.encrypt_str(value)
-            if row is None:
-                row = PluginSecret(
-                    owner_id=owner_id,
-                    plugin_id=plugin_id,
-                    name=name,
-                    domain=host,
-                    value_enc=encrypted,
-                )
-            row.domain = host
-            row.value_enc = encrypted
-            row.updated_at = datetime.now(UTC)
-            session.add(row)
-
-        await in_session(self._engine, work)
-
-    async def delete_secret(self, owner_id: str, plugin_id: str, name: str) -> None:
-        _ = await self.get(owner_id, plugin_id)
-
-        def work(session: Session) -> None:
-            _ = session.exec(
-                delete(PluginSecret)
-                .where(col(PluginSecret.plugin_id) == plugin_id)
-                .where(col(PluginSecret.name) == name)
-            )
-
-        await in_session(self._engine, work)
-
-    async def _stored_secrets(self, owner_id: str, plugin_id: str) -> dict[str, SecretValue]:
-        def work(session: Session) -> dict[str, SecretValue]:
-            rows = session.exec(
-                select(PluginSecret)
-                .where(PluginSecret.owner_id == owner_id)
-                .where(PluginSecret.plugin_id == plugin_id)
-            ).all()
-            return {
-                row.name: SecretValue(self._vault.decrypt_str(row.value_enc), row.domain)
-                for row in rows
-            }
-
-        return await in_session(self._engine, work)
+        return self._changed(await in_session(self._engine, work))
 
     # --- helpers ----------------------------------------------------------------
+
+    def _notify(self, plugin_id: str) -> None:
+        for listener in self._listeners:
+            listener(plugin_id)
+
+    def _changed(self, view: PluginView) -> PluginView:
+        self._notify(view.id)
+        return view
 
     async def _forget(self, owner_id: str, plugin_id: str) -> None:
         if self.revisions is not None:

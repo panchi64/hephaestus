@@ -168,6 +168,7 @@ _PINNED_CATALOG = {
     "platform_read",
     "platform_search",
     "plugins_read",
+    "plugins_open_window",
     "plugins_test",
     "plugins_write",
     "project_active",

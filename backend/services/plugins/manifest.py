@@ -7,6 +7,7 @@ requirements: [httpx]           # pip requirement lines, installed into the plug
 egress: [api.open-meteo.com]    # the only hosts its code can reach
 secrets:                        # values the operator sets; the code sees a placeholder
   OPEN_METEO_KEY: api.open-meteo.com
+api: 1                          # optional; the manifest format's version
 tools: [...]                    # and any other contribution type's key
 ```
 
@@ -31,9 +32,11 @@ from services.agents.definition import AgentDefinition
 
 from .contributions.agents import AGENTS
 from .contributions.base import BundleSource, Described
+from .contributions.permissions import PERMISSIONS
 from .contributions.registry import load_types
 from .contributions.skills import SKILLS, PluginSkill
 from .contributions.tools import TOOLS, PluginTool
+from .contributions.windows import WINDOWS, PluginWindow
 from .fields import (
     MANIFEST_FILE,
     as_list,
@@ -50,6 +53,7 @@ __all__ = [
     "PluginManifest",
     "PluginSkill",
     "PluginTool",
+    "PluginWindow",
     "parse_manifest",
     "secret_domain",
     "validate_files",
@@ -61,7 +65,8 @@ BUNDLE_MAX_BYTES = 1024 * 1024
 BUNDLE_MAX_FILES = 200
 
 #: Keys that configure the plugin's VM rather than contribute to the platform.
-_RUNTIME_KEYS = frozenset({"name", "description", "requirements", "egress", "secrets"})
+_RUNTIME_KEYS = frozenset({"api", "name", "description", "requirements", "egress", "secrets"})
+API_VERSION = 1
 _SECRET = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 _REQUIREMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\-\[\],<>=!~ ;'\"]*")
 
@@ -89,8 +94,32 @@ class PluginManifest:
     def skills(self) -> tuple[PluginSkill, ...]:
         return SKILLS.of(self.contributions)
 
+    @property
+    def windows(self) -> tuple[PluginWindow, ...]:
+        return WINDOWS.of(self.contributions)
+
+    @property
+    def permissions(self) -> frozenset[str]:
+        return frozenset(item.name for item in PERMISSIONS.of(self.contributions))
+
+    @property
+    def inert(self) -> bool:
+        """Whether it can only show the operator something: no code reaching anything, and
+        every contribution of an inert type. Such a plugin goes live without publishing."""
+        if self.requirements or self.egress or self.secrets:
+            return False
+        registry = load_types()
+        return all(
+            (kind := registry.get(key)) is not None and kind.trust == "inert"
+            for key, items in self.contributions.items()
+            if items
+        )
+
     def tool(self, name: str) -> PluginTool | None:
         return next((tool for tool in self.tools if tool.name == name), None)
+
+    def window(self, window_id: str) -> PluginWindow | None:
+        return next((window for window in self.windows if window.id == window_id), None)
 
     def described(self) -> dict[str, list[Described]]:
         """Every contribution as the Plugins screen lists it, by type key."""
@@ -159,6 +188,8 @@ def parse_manifest(manifest_text: str, files: Mapping[str, bytes] | None = None)
             f"unknown key {sorted(unknown)[0]!r}; a plugin may use "
             + ", ".join(sorted(_RUNTIME_KEYS | set(_sandboxed_keys()))),
         )
+    if data.get("api", API_VERSION) != API_VERSION:
+        raise PluginValidationError("api", f"this platform reads plugin api {API_VERSION}")
     name = validate_name(text(data, "name"))
     contributions: dict[str, tuple[object, ...]] = {}
     for kind in registry:

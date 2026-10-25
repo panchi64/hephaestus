@@ -12,7 +12,7 @@ import pytest
 import smol
 
 from services.plugins import PluginError, PluginManifest, PluginRuntime, validate_files
-from services.plugins.store import SecretValue
+from services.plugins.secrets import SecretValue
 from services.vm import GuestImage, Platform
 
 MANIFEST = """\

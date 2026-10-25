@@ -78,6 +78,9 @@ from .plan import (
     PlanUpdated,
     TasksUpdated,
 )
+from .plugins import (
+    PluginWindowOpened,
+)
 from .tools import (
     ToolCompleted,
     ToolFailed,
@@ -102,6 +105,7 @@ __all__ = [
     "AnsweredQuestionOut",
     "ApprovalRequired",
     "BrowserOpened",
+    "PluginWindowOpened",
     "CitationAdded",
     "CompactionDelta",
     "CompactionFailed",

@@ -3,7 +3,9 @@
 **What an agent writes is a draft.** It runs only through ``plugins_test``, in a
 VM of its own, reaching only the hosts this conversation may already reach. The operator
 reads the draft and publishes it; only then do its tools join this category,
-each gated by the class its manifest declares and reaching only its declared hosts.
+each gated by the class its manifest declares and reaching only its declared hosts. A
+plugin of windows alone is the exception: its pages run sandboxed with no network, so it
+goes live as written.
 
 A test that would send the operator's secrets asks first: a draft's code is whatever
 the agent wrote, and a secret is the operator's authority at its host.
@@ -11,7 +13,7 @@ the agent wrote, and a secret is the operator's authority at its host.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast, override
 
@@ -25,32 +27,28 @@ from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 from pydantic_core import SchemaValidator, core_schema
 
 from core.diagnostics import render_rejection, render_tool_error
-from core.untrusted import wrap_untrusted
 from services.egress import EgressPolicy
 from services.plugins import (
-    PluginError,
     PluginManifest,
     PluginRuntime,
+    PluginSecretStore,
     PluginStore,
     PluginTool,
     PluginValidationError,
-    SecretValue,
+    plugin_secrets,
+    run_plugin_tool,
 )
 from services.revisions import Bundle
 from services.tool_sensitivity import SENSITIVITY_METADATA_KEY
-from services.vm import VMError
 
 from .deps import RunDeps
 from .describe import registered_tools
+from .plugin_windows import add_window_tools
 
 #: Raised for approval only when a test would send the operator's secrets.
 GATED_TOOLS: frozenset[str] = frozenset({"plugins_test"})
 
 _UNAVAILABLE = "Plugins cannot be written in this deployment."
-_NO_VM = render_tool_error(
-    "plugins run in a VM, which is not running right now",
-    hints=["carry on without this plugin, and tell the operator if the task needs it"],
-)
 _READ_MAX_CHARS = 200_000
 _ANY_ARGS = SchemaValidator(core_schema.any_schema())
 
@@ -65,17 +63,18 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         files: dict[str, str],
         remove: list[str] | None = None,
     ) -> dict[str, object]:
-        """Drafts a plugin, a set of tools written in Python that each run in a VM of their own,
-        or revises its draft. Write one when the operator wants a lasting capability the
-        platform lacks, such as a client for an API they use; for a one-off task, write
-        and run the code directly instead.
+        """Writes a plugin, or revises it: a lasting capability the platform lacks. A plugin
+        can add tools written in Python, each run in a VM of its own (such as a client for
+        an API the operator uses), and small apps or games that open in a floating window
+        over the app. For a one-off task, write and run the code directly instead.
 
-        `plugin.yaml` sits beside the modules:
+        `plugin.yaml` sits beside the files:
 
+            api: 1
             name: weather
             description: Forecasts.
             requirements: [httpx]          # pip lines
-            egress: [api.example.com]      # the only hosts it can reach
+            egress: [api.example.com]      # the only hosts its tools can reach
             secrets: {API_KEY: api.example.com}
             tools:
               - name: forecast
@@ -83,6 +82,12 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
                 entry: weather:forecast    # module:function
                 sensitivity: read          # or workspace_write, external_effect
                 parameters: {type: object, properties: {city: {type: string}}}
+            windows:
+              - id: main
+                title: Weather
+                entry: ui/index.html
+                size: {width: 360, height: 420}
+            permissions: [storage, tools, chat.read, chat.post]
 
         A tool function takes its parameters as keyword arguments, may be async, and
         returns data that serializes to JSON. A secret's environment variable holds a
@@ -90,11 +95,21 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         request to its declared host, so the plugin never sees the secret itself.
         `agents/<name>.md` and `skills/<name>/SKILL.md` add agents and skills.
 
-        It stays a draft until the operator publishes it, and only then are its tools
-        offered. Run each tool with `plugins_test` before you tell the operator it is
-        ready, and name any secret in `secrets_unset` that they still have to fill in.
+        A window is a page under `ui/` (html, js, css, json, svg, images, fonts, audio),
+        sandboxed with no network at all: inline everything or ship it in `ui/`. It loads
+        `<script src="__bridge.js"></script>` for `window.odysseus`, which reaches only what
+        `permissions` lists: `storage.get/set/delete/list` (`storage`), `tools.call(name,
+        args)` for this plugin's own tools (`tools`), `on("agent.status" |
+        "agent.turn_finished", fn)` (`chat.read`), `chat.post(prompt)` (`chat.post`, which
+        the operator confirms), plus `chat.open(prompt)` and `window.close()`.
 
-        Returns the plugin's `name`, its `tools`, and `secrets_unset`.
+        A plugin of only windows and permissions goes live at once (`status: enabled`);
+        open it with `plugins_open_window`. Anything with tools, requirements, egress or
+        secrets stays a draft (`status: draft`) until the operator publishes it. Run each
+        tool with `plugins_test` before you tell the operator it is ready, and name any
+        secret in `secrets_unset` that they still have to fill in.
+
+        Returns the plugin's `name`, `status`, `tools`, `windows` and `secrets_unset`.
 
         Args:
             name: The plugin's name, in lowercase.
@@ -102,7 +117,8 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
             remove: Paths to delete from the draft.
         """
         store = ctx.deps.caps.get_optional(PluginStore)
-        if store is None:
+        secret_store = ctx.deps.caps.get_optional(PluginSecretStore)
+        if store is None or secret_store is None:
             return {"ok": False, "error": _UNAVAILABLE}
         existing = await store.get_by_name(ctx.deps.owner_id, name.strip().lower())
         if existing is not None and existing.source == "user" and existing.draft is not None:
@@ -116,14 +132,18 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
             view = await store.write_draft(ctx.deps.owner_id, name, changes, source="agent")
         except PluginValidationError as exc:
             raise ModelRetry(render_rejection("the plugin", exc)) from None
+        view = await store.publish_if_inert(ctx.deps.owner_id, view.id)
         manifest = view.current
         return {
             "ok": True,
             "name": view.name,
-            "status": "draft",
+            "status": "draft" if view.draft is not None else "enabled",
             "tools": [tool.name for tool in manifest.tools],
+            "windows": [window.id for window in manifest.windows],
             "secrets_unset": [
-                s.name for s in await store.secrets(ctx.deps.owner_id, view.id) if not s.is_set
+                s.name
+                for s in await secret_store.secrets(ctx.deps.owner_id, view.id)
+                if not s.is_set
             ],
         }
 
@@ -182,7 +202,8 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         """
         store = ctx.deps.caps.get_optional(PluginStore)
         runtime = ctx.deps.caps.get_optional(PluginRuntime)
-        if store is None or runtime is None:
+        secret_store = ctx.deps.caps.get_optional(PluginSecretStore)
+        if store is None or runtime is None or secret_store is None:
             return {"ok": False, "error": _UNAVAILABLE}
         view = await store.get_by_name(ctx.deps.owner_id, name.strip().lower())
         if view is None:
@@ -196,7 +217,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
                     hints=[f"its tools: {', '.join(t.name for t in manifest.tools)}"],
                 )
             )
-        secrets = await _secrets(store, ctx.deps.owner_id, view.id, manifest)
+        secrets = await plugin_secrets(secret_store, ctx.deps.owner_id, view.id, manifest)
         if secrets and not ctx.tool_call_approved:
             raise ApprovalRequired()
         policy = ctx.deps.caps.get_optional(EgressPolicy)
@@ -205,8 +226,9 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         )
         hosts = [host for host in manifest.egress if host in reachable]
         files = await store.files(ctx.deps.owner_id, view.id, "current")
-        return await _run(runtime, manifest, files, chosen, args or {}, hosts, secrets)
+        return await run_plugin_tool(runtime, manifest, files, chosen, args or {}, hosts, secrets)
 
+    add_window_tools(toolset)
     return PluginsToolset(toolset)
 
 
@@ -283,8 +305,13 @@ class PluginsToolset(WrapperToolset[RunDeps]):
                     hints=["call it again with arguments that match its schema"],
                 )
             )
-        secrets = await _secrets(store, ctx.deps.owner_id, route.plugin_id, route.manifest)
-        return await _run(
+        secret_store = ctx.deps.caps.get_optional(PluginSecretStore)
+        if secret_store is None:
+            raise ModelRetry(render_tool_error(f"`{name}` is no longer available"))
+        secrets = await plugin_secrets(
+            secret_store, ctx.deps.owner_id, route.plugin_id, route.manifest
+        )
+        return await run_plugin_tool(
             runtime,
             route.manifest,
             route.files,
@@ -323,37 +350,3 @@ def _first_problem(validator: Validator, args: JsonValue) -> str | None:
     """The message of the first schema violation in ``args``, in a stable order."""
     errors = sorted(validator.iter_errors(args), key=str)
     return errors[0].message if errors else None
-
-
-async def _secrets(
-    store: PluginStore, owner_id: str, plugin_id: str, manifest: PluginManifest
-) -> dict[str, SecretValue]:
-    """The operator's values for the secrets ``manifest`` declares."""
-    values = await store.secret_values(owner_id, plugin_id)
-    return {name: value for name, value in values.items() if name in manifest.secrets}
-
-
-async def _run(
-    runtime: PluginRuntime,
-    manifest: PluginManifest,
-    files: Bundle,
-    tool: PluginTool,
-    args: Mapping[str, object],
-    hosts: Iterable[str],
-    secrets: Mapping[str, SecretValue],
-) -> dict[str, object]:
-    if not runtime.available:
-        return {"ok": False, "error": _NO_VM}
-    try:
-        result = await runtime.call(manifest, files, tool, args, hosts=hosts, secret_values=secrets)
-    except (PluginError, VMError) as exc:
-        return {"ok": False, "error": str(exc)}
-    source = f"plugin {manifest.name}"
-    reply: dict[str, object] = {"ok": result.ok}
-    if result.ok:
-        reply["result"] = wrap_untrusted(result.output, source=source)
-    else:
-        reply["error"] = wrap_untrusted(result.output, source=source)
-    if result.log.strip():
-        reply["log"] = wrap_untrusted(result.log, source=source)
-    return reply

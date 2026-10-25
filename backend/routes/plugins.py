@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
-from services.plugins import PluginManifest, PluginView
+from services.plugins import PluginManifest, PluginSecretStore, PluginView
 from services.plugins.contributions.base import Described
 from services.plugins.manifest import BUNDLE_MAX_BYTES, validate_path
 
@@ -155,19 +155,21 @@ async def delete_plugin(request: Request, plugin_id: str) -> Response:
 
 @router.get("/{plugin_id}/secrets", response_model=list[SecretOut])
 async def list_secrets(request: Request, plugin_id: str) -> list[SecretOut]:
-    statuses = await deps.plugins(request).secrets(OPERATOR_ID, plugin_id)
+    statuses = await deps.service(request, PluginSecretStore).secrets(OPERATOR_ID, plugin_id)
     return [SecretOut(name=s.name, domain=s.domain, is_set=s.is_set) for s in statuses]
 
 
 @router.put("/{plugin_id}/secrets/{name}", status_code=204)
 async def set_secret(request: Request, plugin_id: str, name: str, body: SecretWrite) -> Response:
-    await deps.plugins(request).set_secret(OPERATOR_ID, plugin_id, name, body.value, body.domain)
+    await deps.service(request, PluginSecretStore).set_secret(
+        OPERATOR_ID, plugin_id, name, body.value, body.domain
+    )
     return Response(status_code=204)
 
 
 @router.delete("/{plugin_id}/secrets/{name}", status_code=204)
 async def delete_secret(request: Request, plugin_id: str, name: str) -> Response:
-    await deps.plugins(request).delete_secret(OPERATOR_ID, plugin_id, name)
+    await deps.service(request, PluginSecretStore).delete_secret(OPERATOR_ID, plugin_id, name)
     return Response(status_code=204)
 
 

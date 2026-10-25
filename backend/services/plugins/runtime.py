@@ -28,7 +28,7 @@ from services.vm.platform import Platform
 from services.vm.target import LOCAL
 
 from .manifest import PluginManifest, PluginTool
-from .store import SecretValue
+from .secrets import SecretValue
 
 CALL_TIMEOUT_S = 120.0
 INSTALL_TIMEOUT_S = 900.0

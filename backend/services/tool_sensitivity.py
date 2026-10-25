@@ -143,6 +143,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "platform_read",
             "platform_search",
             "plugins_read",
+            # Shows a live plugin's sandboxed page; nothing it can reach changes.
+            "plugins_open_window",
             "project_active",
             "project_list",
             # Reading the status and output of a command someone else started. Starting
@@ -194,7 +196,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # thread works in, the same reach as writing those files itself.
             "agents_merge",
             "agents_discard",
-            # A plugin an agent writes is a draft: it runs only through `plugins_test`.
+            # A plugin an agent writes is a draft that runs only through `plugins_test`,
+            # unless it is windows alone: sandboxed pages with no network.
             "plugins_write",
             "skills_create",
             "skills_edit",

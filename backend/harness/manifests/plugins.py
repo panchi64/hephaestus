@@ -5,10 +5,13 @@ from __future__ import annotations
 
 from core.api_scopes import ScopeClaim
 from harness.manifest import DormantCategory, FeatureManifest, FeatureRuntime, HarnessContext
+from routes import plugin_ui as plugin_ui_routes
+from routes import plugin_windows as plugin_windows_routes
 from routes import plugins as plugins_routes
 from routes import plugins_builtin as plugins_builtin_routes
 from services.agents import AgentCatalog
-from services.plugins import PluginRuntime, PluginStore
+from services.plugins import PluginRuntime, PluginSecretStore, PluginStore
+from services.plugins.windows import WindowSessions
 from services.revisions import RevisionStore
 from services.vm import ConversationMachines
 from services.vm.target import machine_prefix
@@ -27,25 +30,40 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             prefix=machine_prefix(ctx.settings.data_dir),
         )
     )
+    secrets = PluginSecretStore(ctx.engine, ctx.vault, store)
+    windows = WindowSessions()
+    store.on_change(windows.revoke)
+    ctx.vault.register_on_lock(windows.clear)
     ctx.services.get(AgentCatalog).contribute(store.agents)
-    services = (store,) if runtime is None else (store, runtime)
-    return FeatureRuntime(services=services, capabilities=services, state={"plugins": store})
+    services = (store, secrets) if runtime is None else (store, secrets, runtime)
+    return FeatureRuntime(
+        services=(*services, windows), capabilities=services, state={"plugins": store}
+    )
 
 
 MANIFEST = FeatureManifest(
     name="plugins",
     # Its published plugins' agents join the agent catalog.
     after=("agents",),
-    # The built-in listing first: `/plugins/{id}` would otherwise claim `/plugins/builtin`.
-    routers=(plugins_builtin_routes.router, plugins_routes.router),
+    # The fixed paths first: `/plugins/{id}` would otherwise claim `/plugins/builtin` and
+    # `/plugins/windows`.
+    routers=(
+        plugins_builtin_routes.router,
+        plugin_windows_routes.router,
+        plugins_routes.router,
+        plugin_ui_routes.router,
+    ),
     api_scopes=(ScopeClaim("knowledge", ("/plugins",)),),
+    # A window's page token is its credential; the page has no session cookie to send.
+    public_prefixes=("/plugin-ui",),
     toolsets=(("plugins", plugins_toolset),),
     gated_tools=GATED_TOOLS,
     dormant=(
         DormantCategory(
             "plugins",
             "the tools of the operator's published plugins, and writing and testing new "
-            + "plugins: tools in Python that each run in a VM of their own",
+            + "plugins: tools in Python that each run in a VM of their own, and small apps "
+            + "and games that open in a floating window",
         ),
     ),
     build=_build,

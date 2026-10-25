@@ -9,17 +9,27 @@ from pathlib import Path
 import pytest
 
 from core.exceptions import PluginValidationError
-from services.plugins import PluginStore, parse_manifest, validate_files
+from services.plugins import PluginSecretStore, PluginStore, parse_manifest, validate_files
 from services.revisions import restore
 
 from ._helpers import client_app
 from ._json import arr, json_body, json_list, obj, s
-from ._plugin_helpers import CODE, MANIFEST, OWNER, bundle, make_store
+from ._plugin_helpers import CODE, MANIFEST, OWNER, bundle, make_plugin_stores
 
 
 @pytest.fixture
-async def store(tmp_path: Path) -> PluginStore:
-    return await make_store(tmp_path)
+async def stores(tmp_path: Path) -> tuple[PluginStore, PluginSecretStore]:
+    return await make_plugin_stores(tmp_path)
+
+
+@pytest.fixture
+def store(stores: tuple[PluginStore, PluginSecretStore]) -> PluginStore:
+    return stores[0]
+
+
+@pytest.fixture
+def secrets(stores: tuple[PluginStore, PluginSecretStore]) -> PluginSecretStore:
+    return stores[1]
 
 
 # --- the manifest ---------------------------------------------------------------
@@ -133,25 +143,27 @@ async def test_rolling_back_publishes_an_earlier_version_and_keeps_the_draft(sto
 # --- secrets ----------------------------------------------------------------------
 
 
-async def test_a_secret_is_set_for_its_declared_host_and_never_listed(store: PluginStore):
+async def test_a_secret_is_set_for_its_declared_host_and_never_listed(
+    store: PluginStore, secrets: PluginSecretStore
+):
     view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
-    [status] = await store.secrets(OWNER, view.id)
+    [status] = await secrets.secrets(OWNER, view.id)
     assert (status.name, status.domain, status.is_set) == ("API_KEY", "api.example.com", False)
 
-    await store.set_secret(OWNER, view.id, "API_KEY", "s3cret")
+    await secrets.set_secret(OWNER, view.id, "API_KEY", "s3cret")
 
-    [status] = await store.secrets(OWNER, view.id)
+    [status] = await secrets.secrets(OWNER, view.id)
     assert status.is_set
     assert "s3cret" not in repr(status)
-    assert (await store.secret_values(OWNER, view.id))["API_KEY"].value == "s3cret"
+    assert (await secrets.secret_values(OWNER, view.id))["API_KEY"].value == "s3cret"
 
 
-async def test_only_declared_secrets_can_be_set(store: PluginStore):
+async def test_only_declared_secrets_can_be_set(store: PluginStore, secrets: PluginSecretStore):
     view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
     with pytest.raises(PluginValidationError):
-        await store.set_secret(OWNER, view.id, "OTHER", "x")
+        await secrets.set_secret(OWNER, view.id, "OTHER", "x")
     with pytest.raises(PluginValidationError):
-        await store.set_secret(OWNER, view.id, "API_KEY", "x", domain="*.example.com")
+        await secrets.set_secret(OWNER, view.id, "API_KEY", "x", domain="*.example.com")
 
 
 # --- the REST surface ---------------------------------------------------------------
