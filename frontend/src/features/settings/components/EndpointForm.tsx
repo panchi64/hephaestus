@@ -1,5 +1,6 @@
 import { Show, type JSX } from "solid-js";
 import {
+  Disclosure,
   Field,
   Input,
   Row,
@@ -39,61 +40,72 @@ export interface EndpointFormProps {
   providerOptions?: SelectOption[];
   /** The chosen provider's key hint (e.g. "sk-ant-…"), shown on the key field. */
   keyHint?: string;
+  /** Show only Base URL and API key; the rest sits under a closed "Advanced". */
+  essentials?: boolean;
+  /** Essentials mode only: render the provider select (when options are given). */
+  showProvider?: boolean;
 }
 
-/** The create/edit endpoint field set — name, how it is reached, and what it can
- *  do. It carried a second `simple` variant for a guided first-run setup that no
- *  longer exists; the branch went with it rather than staying as a mode nothing
- *  selects. */
+/** The create/edit endpoint field set — name, how it is reached, and what it can do. */
 export function EndpointForm(props: EndpointFormProps): JSX.Element {
   const v = () => props.values;
 
-  return (
-    <Stack gap={3}>
-      <Input
-        label="Name"
-        value={v().name}
-        onInput={(e) => props.onChange("name", e.currentTarget.value)}
-        placeholder="e.g. local-qwen"
-      />
+  const name = () => (
+    <Input
+      label="Name"
+      value={v().name}
+      onInput={(e) => props.onChange("name", e.currentTarget.value)}
+      placeholder="e.g. local-qwen"
+    />
+  );
 
-      <Show when={props.providerOptions}>
-        {(options) => (
-          <Select
-            label="Provider"
-            value={v().provider}
-            options={options()}
-            onChange={(id) => props.onChange("provider", id)}
-            hint="How Hephaestus talks to this endpoint. Presets prefill the base URL."
-          />
-        )}
-      </Show>
+  const provider = () => (
+    <Show when={props.providerOptions}>
+      {(options) => (
+        <Select
+          label="Provider"
+          value={v().provider}
+          options={options()}
+          onChange={(id) => props.onChange("provider", id)}
+          hint="How Hephaestus talks to this endpoint. Presets prefill the base URL."
+        />
+      )}
+    </Show>
+  );
 
-      <Input
-        label="Base URL"
-        value={v().baseUrl}
-        onInput={(e) => props.onChange("baseUrl", e.currentTarget.value)}
-        placeholder="http://localhost:11434/v1"
-      />
+  const baseUrl = () => (
+    <Input
+      label="Base URL"
+      value={v().baseUrl}
+      onInput={(e) => props.onChange("baseUrl", e.currentTarget.value)}
+      placeholder="http://localhost:1234/v1"
+    />
+  );
 
-      <Input
-        label="DEFAULT MODEL (optional)"
-        value={v().model}
-        onInput={(e) => props.onChange("model", e.currentTarget.value)}
-        placeholder="qwen2.5-coder:32b"
-        hint="Models are discovered from the provider and picked in the top bar. Set a default only as a fallback for providers without a models API."
-      />
+  const model = () => (
+    <Input
+      label="DEFAULT MODEL (optional)"
+      value={v().model}
+      onInput={(e) => props.onChange("model", e.currentTarget.value)}
+      placeholder="qwen2.5-coder:32b"
+      hint="Models are discovered from the provider and picked in the composer. Set a default only as a fallback for providers without a models API."
+    />
+  );
 
-      <Input
-        label={
-          props.editing ? "API KEY (blank = unchanged)" : "API KEY (optional)"
-        }
-        type="password"
-        value={v().apiKey}
-        onInput={(e) => props.onChange("apiKey", e.currentTarget.value)}
-        placeholder={props.keyHint ?? "••••••••"}
-      />
+  const apiKey = () => (
+    <Input
+      label={
+        props.editing ? "API KEY (blank = unchanged)" : "API KEY (optional)"
+      }
+      type="password"
+      value={v().apiKey}
+      onInput={(e) => props.onChange("apiKey", e.currentTarget.value)}
+      placeholder={props.keyHint ?? "••••••••"}
+    />
+  );
 
+  const capabilities = () => (
+    <>
       <Input
         label="CONTEXT WINDOW (optional)"
         value={v().contextWindow}
@@ -131,6 +143,35 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
           onChange={(c) => props.onChange("thinking", c)}
         />
       </Row>
-    </Stack>
+    </>
+  );
+
+  return (
+    <Show
+      when={props.essentials}
+      fallback={
+        <Stack gap={3}>
+          {name()}
+          {provider()}
+          {baseUrl()}
+          {model()}
+          {apiKey()}
+          {capabilities()}
+        </Stack>
+      }
+    >
+      <Stack gap={3}>
+        <Show when={props.showProvider}>{provider()}</Show>
+        {baseUrl()}
+        {apiKey()}
+        <Disclosure label="Advanced">
+          <Stack gap={3}>
+            {name()}
+            {model()}
+            {capabilities()}
+          </Stack>
+        </Disclosure>
+      </Stack>
+    </Show>
   );
 }

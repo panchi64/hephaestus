@@ -1,23 +1,14 @@
-import { createSignal, For, Show, type JSX } from "solid-js";
+import { createSignal, For, type JSX } from "solid-js";
 import { useLocation } from "@solidjs/router";
-import {
-  Frames,
-  Icon,
-  ListRow,
-  StatusBar,
-  StatusCell,
-  Text,
-  Tooltip,
-  toast,
-} from "~/ui";
-import { createInFlight } from "~/lib/inFlight";
-import { useSession } from "~/lib/stores/session";
+import { Icon, ListRow, StatusBar, StatusCell, Tooltip } from "~/ui";
 import { useSettingsRoute } from "~/app/settings-dialog";
 import { RecentsRail } from "~/features/chat/components/RecentsRail";
 import { AREAS, areaForPath, railRows, type NavItem } from "../nav";
 import { AreaSection } from "./AreaSection";
+import { LockCell } from "./LockCell";
 import { navMeta } from "./navMeta";
 import { ProjectSwitcher } from "./ProjectSwitcher";
+import { RailFrame } from "./RailFrame";
 
 /** A destination kept outside the one area. */
 function PinRow(props: { item: NavItem; active: boolean }): JSX.Element {
@@ -54,7 +45,6 @@ function PinRow(props: { item: NavItem; active: boolean }): JSX.Element {
  *  reads as chat with two rows underneath. */
 export function Sidebar(): JSX.Element {
   const location = useLocation();
-  const session = useSession();
   const settings = useSettingsRoute();
   const activeArea = () => areaForPath(location.pathname);
   const isActive = (href: string) =>
@@ -68,68 +58,29 @@ export function Sidebar(): JSX.Element {
   const commsOpen = (): boolean =>
     commsOverride() ?? activeArea()?.id === comms.id;
 
-  /** LOCK, while the backend is still being told.
-   *
-   *  The call is a round trip and the screen used to do nothing at all across it: the
-   *  button stayed live, nothing moved, and on a backend that hangs the operator gets
-   *  up and leaves a workspace that still looks — and is — unlocked. The throbber is
-   *  the minimum, and the failure is said out loud, because "it didn't lock" is the
-   *  one outcome here that no amount of the interface looking calm can be allowed to
-   *  hide. */
-  const locking = createInFlight<"lock">();
-  const onLock = (): void => {
-    void locking.run("lock", async () => {
-      try {
-        await session.lock();
-      } catch (err) {
-        // This session ended either way, which is why the screen still goes to the
-        // gate — but the vault key is the backend's, and it never said it dropped it.
-        toast.error(
-          `This session ended, but the vault did NOT lock — the backend never confirmed it. ${
-            err instanceof Error ? err.message : "Try again."
-          }`,
-        );
-      }
-    });
-  };
-
   return (
-    <nav class="heph-rail heph-rail-glass flex h-full min-h-0 flex-col">
-      <div class="sticky top-0 z-30">
-        {/* The wordmark in the machine's voice, wide-tracked, with the workspace id
-            dim beside it. It stacks under the brand at the rail's narrowest. */}
-        <a href="/" class="heph-rail-brand hover:bg-raised">
-          <span class="heph-rail-wordmark">Hephaestus</span>
-          <Text variant="micro" tone="dim">
-            heph-workspace-02.1
-          </Text>
-        </a>
-      </div>
+    <RailFrame
+      brandHref="/"
+      assetId="heph-workspace-02.1"
+      footer={
+        <>
+          {/* The corpus and the compare bench, on the same footing as COMMS and for
+              the same reason: they are things you go and check, not the thing you
+              are doing. Above the threads they read as peers of chat and competed
+              with it for the top of the rail; down here they are a click away and
+              the rail above is one subject. */}
+          <For each={railRows("footer")}>
+            {(item) => <PinRow item={item} active={isActive(item.href)} />}
+          </For>
 
-      {/* The threads, with the search strip over them and the project filter at
-          the right end of their heading. Mounted on every route, not only `/chat` —
-          the rail used to host this through a route-matched slot, which made the
-          conversation list disappear the moment you looked at anything else. */}
-      <RecentsRail filter={<ProjectSwitcher />} />
+          <AreaSection
+            area={comms}
+            active={activeArea()?.id === comms.id}
+            open={commsOpen}
+            onToggle={() => setCommsOverride(!commsOpen())}
+          />
 
-      <div class="sticky bottom-0 border-t border-line-strong">
-        {/* The corpus and the compare bench, on the same footing as COMMS and for
-            the same reason: they are things you go and check, not the thing you
-            are doing. Above the threads they read as peers of chat and competed
-            with it for the top of the rail; down here they are a click away and
-            the rail above is one subject. */}
-        <For each={railRows("footer")}>
-          {(item) => <PinRow item={item} active={isActive(item.href)} />}
-        </For>
-
-        <AreaSection
-          area={comms}
-          active={activeArea()?.id === comms.id}
-          open={commsOpen}
-          onToggle={() => setCommsOverride(!commsOpen())}
-        />
-
-        {/* The last line: the two things you do *to* the workspace rather than
+          {/* The last line: the two things you do *to* the workspace rather than
             in it.
 
             `Operator` held the left of this strip and was a label, not a
@@ -143,44 +94,36 @@ export function Sidebar(): JSX.Element {
             it is a button and not a destination row: a row that looks like every
             other destination but changes no route would be a lie about what
             clicking it does. It recedes, like the composer's strip — the rail's
-            last line is the one read least. Lock has no keyboard shortcut, on
-            purpose: ending the session is never a chord away. */}
-        <StatusBar
-          variant="recede"
-          start={
-            <Tooltip
-              delay={1000}
-              side="right"
-              label="Preferences, connections, and the state of the machine"
-              class="flex flex-1"
-            >
-              <StatusCell
-                active={settings.open()}
-                onClick={() => settings.show()}
-                class="flex-1 px-3"
+            last line is the one read least. */}
+          <StatusBar
+            variant="recede"
+            start={
+              <Tooltip
+                delay={1000}
+                side="right"
+                label="Preferences, connections, and the state of the machine"
+                class="flex flex-1"
               >
-                <Icon name="settings" size={16} />
-                settings
-              </StatusCell>
-            </Tooltip>
-          }
-          end={
-            <StatusCell
-              disabled={locking.has("lock")}
-              onClick={onLock}
-              class="border-l border-line px-3"
-            >
-              <Show
-                when={locking.has("lock")}
-                fallback={<Icon name="lock" size={16} />}
-              >
-                <Frames />
-              </Show>
-              {locking.has("lock") ? "locking…" : "lock"}
-            </StatusCell>
-          }
-        />
-      </div>
-    </nav>
+                <StatusCell
+                  active={settings.open()}
+                  onClick={() => settings.show()}
+                  class="flex-1 px-3"
+                >
+                  <Icon name="settings" size={16} />
+                  settings
+                </StatusCell>
+              </Tooltip>
+            }
+            end={<LockCell />}
+          />
+        </>
+      }
+    >
+      {/* The threads, with the search strip over them and the project filter at
+          the right end of their heading. Mounted on every route, not only `/chat` —
+          the rail used to host this through a route-matched slot, which made the
+          conversation list disappear the moment you looked at anything else. */}
+      <RecentsRail filter={<ProjectSwitcher />} />
+    </RailFrame>
   );
 }

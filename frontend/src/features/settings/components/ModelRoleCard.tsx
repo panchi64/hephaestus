@@ -34,6 +34,11 @@ export interface ModelRoleCardProps {
    *  describes the configuration, so it has to distinguish the two: a default moves
    *  when a better endpoint appears, and a pin does not. */
   implicit?: boolean;
+  /** The window the binding runs under. The endpoint's own column is only the
+   *  operator's override, so a server reporting its window would otherwise show none. */
+  contextWindow?: number | null;
+  /** A sentence saying why this pick can't be used yet (the send gate's reason). */
+  warning?: string;
   /** Extra controls belonging to this job (e.g. the re-embed readout). */
   children?: JSX.Element;
 }
@@ -71,7 +76,7 @@ export function ModelRoleCard(props: ModelRoleCardProps): JSX.Element {
                   · defaulting to this
                 </Text>
               </Show>
-              <Show when={ep().contextWindow}>
+              <Show when={props.contextWindow ?? ep().contextWindow}>
                 {(cw) => <Chip>CTX {num(cw(), 0)}</Chip>}
               </Show>
               <Show when={ep().nativeTools}>
@@ -81,6 +86,14 @@ export function ModelRoleCard(props: ModelRoleCardProps): JSX.Element {
                 <Chip>Vision</Chip>
               </Show>
             </Row>
+          )}
+        </Show>
+
+        <Show when={props.warning}>
+          {(w) => (
+            <Text variant="micro" tone="alert">
+              {w()}
+            </Text>
           )}
         </Show>
 
