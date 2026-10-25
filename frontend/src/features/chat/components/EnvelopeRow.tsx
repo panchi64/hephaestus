@@ -39,7 +39,7 @@ function resolve(source: EnvelopeSource): {
  *  page, an attachment's text, a project's instruction file, a chassis reminder — set as
  *  its own row instead of inline in the text around it.
  *
- *  Same anatomy and dashed glyph as `ContextInjectionCard`: it is something put in front
+ *  Same anatomy and dashed diamond as `ContextInjectionCard`: it is something put in front
  *  of the model, not something anyone said, so it takes no hover fill and rests closed.
  *  The label is a word and not only a glyph, because colour and shape never carry a
  *  distinction alone (§12).
@@ -66,7 +66,8 @@ export function EnvelopeRow(
         open={open()}
         onToggle={toggle}
         icon={INJECTION_ICON}
-        iconClass="border-dashed text-dim"
+        frame="diamond"
+        dashed
         label={shown().label.label}
         title={shown().label.label}
       >

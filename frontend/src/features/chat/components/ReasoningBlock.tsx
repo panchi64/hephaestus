@@ -68,6 +68,7 @@ export function ReasoningBlock(props: {
             open={open()}
             onToggle={toggle}
             icon={THINK_ICON}
+            frame="circle"
             label="Reasoning"
           >
             {/* The same "what was this about" slot a tool row fills with its

@@ -23,6 +23,6 @@
       "~/*": ["./src/*"]
     }
   },
-  // Typecheck our app code only — not vite.config.ts / build tooling.
-  "include": ["src"]
+  // App code and the bun test preload; not vite.config.ts / build tooling.
+  "include": ["src", "test"]
 }

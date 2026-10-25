@@ -6,11 +6,11 @@
  *  registry. Reading `files_read_file, path=backend/app.py` costs a beat that
  *  "Read · backend/app.py" does not, and a turn is a dozen of those rows.
  *
- *  So each tool gets three things here: the glyph for its family (so a column of
- *  rows is scannable by shape before any word is read), a short label in the
- *  interface's own voice, and — where the generic fallbacks would guess wrong —
- *  which argument actually says what the call is about and what its results are
- *  counted in.
+ *  So each tool gets these things here: the glyph for its family and the outline
+ *  the work log frames it in (so a column of rows is scannable by shape before any
+ *  word is read), a short label in the interface's own voice, and — where the
+ *  generic fallbacks would guess wrong — which argument actually says what the
+ *  call is about and what its results are counted in.
  *
  *  **The table is a display convenience, never a gate.** A tool missing from it
  *  still renders: it falls back to its category's glyph and a humanized form of
@@ -25,6 +25,7 @@ import {
   PLUGIN_TOOLS,
 } from "~/plugins/registry";
 import type { IconName } from "~/ui";
+import type { Frame } from "./frames";
 import type { ToolInvocation } from "./model";
 
 export interface ToolPresentation {
@@ -48,6 +49,10 @@ export interface ToolEntry extends ToolPresentation {
   script?: string;
   /** What the row says while the model is still writing the call's arguments. */
   preparing?: string;
+  /** The work-log outline, by what the call does rather than its family: a read that
+   *  brings context into the model is a `diamond` and traffic to a sub-agent is `out`,
+   *  so `memory_recall` and `memory_remember` differ. Omitted means `square`. */
+  frame?: Frame;
 }
 
 /** The glyph for a category, for any tool without its own row below. Every
@@ -121,12 +126,14 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "users",
     label: "Sub-agent",
     keys: ["agent_name", "task"],
+    frame: "out",
     preparing: "Briefing a sub-agent",
   },
   agents_message: {
     icon: "users",
     label: "Message agent",
     keys: ["to", "text"],
+    frame: "out",
     preparing: "Writing to a sub-agent",
   },
   agents_list: {
@@ -317,6 +324,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "library",
     label: "Retrieve",
     keys: ["query"],
+    frame: "diamond",
     noun: ["passage", "passages"],
     preparing: "Composing a corpus query",
   },
@@ -371,6 +379,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "database",
     label: "Recall",
     keys: ["query"],
+    frame: "diamond",
     noun: ["memory", "memories"],
     preparing: "Composing a memory query",
   },
@@ -384,6 +393,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "database",
     label: "Open memory",
     keys: ["id"],
+    frame: "diamond",
     preparing: "Picking a memory to open",
   },
   memory_update: {
@@ -396,12 +406,14 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "database",
     label: "List memories",
     noun: ["memory", "memories"],
+    frame: "diamond",
     preparing: "Listing the memories",
   },
   memory_audit: {
     icon: "database",
     label: "Audit memory",
     noun: ["group", "groups"],
+    frame: "diamond",
     preparing: "Setting up a memory audit",
   },
   memory_forget: {
@@ -421,6 +433,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "note",
     label: "Read tasks",
     noun: ["task", "tasks"],
+    frame: "diamond",
     preparing: "Opening the task list",
   },
   tasks_update_statuses: {
@@ -441,6 +454,7 @@ export const TOOLS: Record<string, ToolEntry> = {
   plan_read: {
     icon: "note",
     label: "Read plan",
+    frame: "diamond",
     preparing: "Opening the plan",
   },
   plan_submit: {
@@ -482,6 +496,7 @@ export const TOOLS: Record<string, ToolEntry> = {
   repo_inventory_agent_context: {
     icon: "branch",
     label: "Repo context",
+    frame: "diamond",
     preparing: "Asking for repo context",
   },
 
@@ -506,6 +521,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "grid",
     label: "Loading tools",
     keys: ["queries"],
+    frame: "diamond",
     noun: ["tool", "tools"],
     preparing: "Asking for more tools",
   },
@@ -553,6 +569,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "library",
     label: "Open skill",
     keys: ["name"],
+    frame: "diamond",
     preparing: "Picking a skill to open",
   },
 

@@ -1,6 +1,7 @@
 import { type JSX } from "solid-js";
 import { Markdown, Stack, Text } from "~/ui";
 import type { ChatMessage } from "../model";
+import { Socket } from "./Socket";
 
 /**
  * A sub-agent's report, where the thread received it.
@@ -38,6 +39,9 @@ export function SubagentReport(props: {
     // (design §7). The 2px left rule this replaced is the emphasis border §7 retired.
     <Stack gap={2} class="my-1 w-full">
       <div class="flex items-center gap-3">
+        {/* Inbound: the same outline a brief or message to a sub-agent leaves
+            in the work log, pointing back. */}
+        <Socket icon="users" frame="in" />
         <Text variant="plate" tone="dim" class="shrink-0">
           {plate()}
         </Text>

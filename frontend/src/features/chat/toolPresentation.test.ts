@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   TOOLS,
   preparingPhrase,
+  toolEntry,
   toolPresentation,
   toolRowLabel,
 } from "./toolPresentation";
@@ -96,6 +97,42 @@ describe("a tool reads as a glyph and a short label", () => {
       icon: "plug",
       label: "ToString thing",
     });
+  });
+});
+
+describe("a call's work-log outline says what the call does", () => {
+  test("a read that brings context into the model is a diamond", () => {
+    for (const name of [
+      "skills_open",
+      "memory_recall",
+      "memory_open",
+      "memory_list",
+      "memory_audit",
+      "repo_inventory_agent_context",
+      "search_tools",
+      "plan_read",
+      "tasks_read",
+      "corpus_retrieve",
+    ])
+      expect([name, toolEntry(name).frame]).toEqual([name, "diamond"]);
+  });
+
+  test("a brief or message to a sub-agent points out", () => {
+    expect(toolEntry("agents_spawn").frame).toBe("out");
+    expect(toolEntry("agents_message").frame).toBe("out");
+  });
+
+  // Split by effect, not by family: writing a memory or a skill builds something.
+  // No frame is the socket's default square.
+  test("everything else is a square, writes in a context family included", () => {
+    for (const name of [
+      "memory_remember",
+      "skills_create",
+      "agents_stop",
+      "memory_unlisted",
+      "external_linear_create_issue",
+    ])
+      expect([name, toolEntry(name).frame]).toEqual([name, undefined]);
   });
 });
 
