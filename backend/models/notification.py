@@ -55,8 +55,8 @@ class Notification(Table, table=True):
     run_id: str | None = Field(default=None, index=True)
     task_id: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)
-    # When the operator saw it (mark-read, or opening its conversation). Independent of
-    # resolution: an approval seen but undecided is read yet unresolved.
+    # When the operator saw it (mark-read, or opening its conversation). An approval seen
+    # but undecided is read yet unresolved; resolving one also marks it read.
     read_at: datetime | None = None
     # When what it was about settled: an approval decided by any path, or its run reaching
     # terminal undecided. Only `approval_needed` is ever resolved; the others are born settled.
