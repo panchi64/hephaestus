@@ -2,6 +2,7 @@ import { Show, type JSX } from "solid-js";
 import { AuthLayout } from "~/app/AuthLayout";
 import { AppSplash } from "~/app/AppSplash";
 import { LoginScreen, SignupScreen } from "~/features/auth";
+import { OnboardingGate } from "~/features/onboarding";
 import { useSession } from "../stores/session";
 
 /**
@@ -18,6 +19,8 @@ import { useSession } from "../stores/session";
  * branch of one already-mounted route, unlocking is a plain signal flip: the
  * subtree swaps in the same tick and the shell's resources suspend normally,
  * against a fallback the operator can see.
+ *
+ * Behind unlock sits the first-run walkthrough (`OnboardingGate`), a branch of the same kind.
  *
  * `/login` and `/signup` still resolve (bookmarks, an old toast) — they redirect
  * to `/` and land here.
@@ -39,7 +42,7 @@ export function RequireAuth(props: { children: JSX.Element }): JSX.Element {
           </AuthLayout>
         }
       >
-        {props.children}
+        <OnboardingGate>{props.children}</OnboardingGate>
       </Show>
     </Show>
   );

@@ -27,6 +27,8 @@ export const onboardingCompleted = completed;
 /** A backend that can't answer lets the operator in: the walkthrough is a convenience,
  *  and the send gate still explains a missing model. */
 export async function loadOnboarding(): Promise<void> {
+  // A reset and a fresh setup in the same tab must not reuse the last workspace's answer.
+  setCompleted(null);
   try {
     setCompleted((await api.get<OnboardingStateDTO>("/onboarding")).completed);
   } catch (err) {

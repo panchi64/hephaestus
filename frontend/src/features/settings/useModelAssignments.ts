@@ -26,7 +26,7 @@ export const SAME_AS_CHAT = "";
 
 /** Reads and writes for "which model does what", shared by Settings › Models and the
  *  first-run walkthrough. Every write goes through the store's role actions, and the chat
- *  pick through the same action the top-bar picker uses, so no surface can disagree. */
+ *  pick through the same action the composer's picker uses, so no surface can disagree. */
 export function useModelAssignments() {
   const endpoints = useEndpoints();
   const roles = useRoles();

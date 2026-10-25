@@ -1,0 +1,173 @@
+import { createEffect, createSignal, on, Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
+import { isApiError } from "~/lib/api";
+import { ChoiceList, Input, Text, toast, type ChoiceOption } from "~/ui";
+import {
+  effectiveSelection,
+  encodeModelValue,
+  modelGroups,
+  refreshRoles,
+  sendBlockedReason,
+  type ModelSelection,
+} from "~/lib/stores/models";
+import { updateEndpoint } from "~/features/settings/data";
+import { useModelAssignments } from "~/features/settings/useModelAssignments";
+import {
+  chatChoices,
+  chatReady,
+  formatTokens,
+  preferredChoice,
+  scannedModel,
+  type LocalServer,
+} from "../model";
+import { StatusBlock } from "./StatusBlock";
+import { StepShell } from "./StepShell";
+
+/** Chat model: the discovered models on working endpoints, the loaded one picked for the
+ *  operator. A pick is written at once; Continue waits for a binding with a window. */
+export function ChatModelStep(props: {
+  servers: LocalServer[];
+  onBack: () => void;
+  onContinue: () => void;
+}): JSX.Element {
+  const a = useModelAssignments();
+  const [windowDraft, setWindowDraft] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+
+  const endpoints = () => settled(a.endpoints) ?? [];
+  const main = () => settled(a.roles)?.main;
+  const choices = (): ModelSelection[] =>
+    chatChoices(modelGroups(), endpoints(), props.servers);
+
+  const endpointOf = (id: string) => endpoints().find((e) => e.id === id);
+
+  const hint = (sel: ModelSelection): string => {
+    const ep = endpointOf(sel.endpointId);
+    const scanned = ep
+      ? scannedModel(props.servers, ep.baseUrl, sel.model)
+      : undefined;
+    const parts = [ep?.name ?? ""];
+    if (scanned?.contextWindow)
+      parts.push(`${formatTokens(scanned.contextWindow)} CTX`);
+    if (scanned?.loaded) parts.push("LOADED");
+    return parts.filter(Boolean).join(" · ");
+  };
+
+  const options = (): ChoiceOption[] =>
+    choices().map((c) => ({
+      id: encodeModelValue(c),
+      label: c.model,
+      hint: hint(c),
+    }));
+
+  const pickedValue = (): string | null => {
+    const sel = effectiveSelection();
+    return sel && !main()?.implicit ? encodeModelValue(sel) : null;
+  };
+
+  const pick = async (id: string | null): Promise<void> => {
+    const sel = choices().find((c) => encodeModelValue(c) === id);
+    if (!sel) return;
+    setBusy(true);
+    try {
+      await a.pickChat(sel);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // An unchosen chat model is chosen for the operator once the list is known; Talos says
+  // so, and any row overrides it.
+  createEffect(
+    on([choices, () => settled(a.roles)], ([list, roles]) => {
+      if (busy() || !roles || roles.main?.implicit === false) return;
+      const preferred = preferredChoice(list, endpoints(), props.servers);
+      if (preferred) void pick(encodeModelValue(preferred));
+    }),
+  );
+
+  const needsWindow = (): boolean =>
+    !!main() && !main()?.implicit && main()?.contextWindow === null;
+
+  const saveWindow = async (): Promise<void> => {
+    const n = Number(windowDraft().trim());
+    const id = main()?.endpointIds[0];
+    if (!id || !Number.isInteger(n) || n <= 0) return;
+    try {
+      await updateEndpoint(id, { contextWindow: n });
+      refreshRoles();
+    } catch (e) {
+      toast.error(
+        isApiError(e) ? e.detail : "Unable to set the context window.",
+      );
+    }
+  };
+
+  const status = () => {
+    const m = main();
+    if (!m || m.implicit) return [];
+    return [
+      {
+        label: effectiveSelection()?.model ?? "Chat model",
+        value: m.contextWindow
+          ? `${formatTokens(m.contextWindow)} CTX`
+          : "No context window",
+        tone: m.contextWindow ? ("nominal" as const) : ("alert" as const),
+      },
+    ];
+  };
+
+  return (
+    <StepShell
+      status={<StatusBlock label="Chat model" lines={status()} />}
+      talos="This is the model you'll talk to. I've picked the one that's loaded."
+      title="Pick the chat model"
+      aside="Required"
+    >
+      <Show when={needsWindow()}>
+        <form
+          class="flex items-end gap-2 p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveWindow();
+          }}
+        >
+          <Input
+            label="Context window"
+            value={windowDraft()}
+            onInput={(e) => setWindowDraft(e.currentTarget.value)}
+            placeholder="32768"
+            inputMode="numeric"
+            hint={sendBlockedReason() ?? undefined}
+          />
+        </form>
+      </Show>
+      <Show
+        when={options().length > 0}
+        fallback={
+          <Text variant="micro" tone="dim" class="block p-3">
+            No working endpoint lists any models yet. Go back and check the
+            endpoint.
+          </Text>
+        }
+      >
+        <ChoiceList
+          options={options()}
+          value={pickedValue()}
+          onChange={(id) => void pick(id)}
+          onSubmit={() => {
+            if (needsWindow() && windowDraft().trim()) void saveWindow();
+            else if (chatReady(main())) props.onContinue();
+          }}
+          submitLabel="Continue"
+          submitDisabled={
+            busy() ||
+            (!chatReady(main()) && !(needsWindow() && windowDraft().trim()))
+          }
+          secondary={[{ label: "Back", onClick: props.onBack }]}
+          disabled={busy()}
+        />
+      </Show>
+    </StepShell>
+  );
+}
