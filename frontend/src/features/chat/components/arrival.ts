@@ -52,7 +52,7 @@ export function useArrival(): {
   const arriving = useContext(ArrivalContext);
   return {
     body: arriving ? "heph-trace-body" : undefined,
-    socket: arriving ? "heph-trace-charge" : undefined,
+    socket: arriving ? "heph-trace-charge-socket" : undefined,
     sweep: (el) => {
       if (arriving) sweepText(el);
     },

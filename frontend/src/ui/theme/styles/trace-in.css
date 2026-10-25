@@ -21,11 +21,24 @@
 .heph-trace-body {
   animation: heph-reveal-fade var(--motion-base) var(--ease) 60ms backwards;
 }
-/* The trunk and the socket. `backwards` and a `from`-only keyframe: charged
-   until the stroke lands, then eased back to whatever the element's own colour
-   is — the hairline, or the info tone of a call still running. */
+/* The trunk. `backwards` and a `from`-only keyframe: charged until the stroke
+   lands, then eased back to whatever the element's own colour is — the
+   hairline, or the info tone of a call still running. */
 .heph-trace-charge {
   animation: heph-trace-cool 240ms var(--ease) 180ms backwards;
+}
+/* A socket's outline and glyph, with the same timing. A box-shadow would glow as
+   a square around a diamond, so this glows along the strokes instead. */
+.heph-trace-charge-socket {
+  animation: heph-trace-cool-socket 240ms var(--ease) 180ms backwards;
+}
+@keyframes heph-trace-cool-socket {
+  from {
+    color: var(--color-info);
+    filter: drop-shadow(
+      0 0 3px color-mix(in srgb, var(--color-info) 50%, transparent)
+    );
+  }
 }
 @keyframes heph-trace-cool {
   from {

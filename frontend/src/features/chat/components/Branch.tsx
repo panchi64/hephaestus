@@ -17,12 +17,12 @@ export interface BranchEdge {
  *  inside a `Collapse`, which clips, so `WorkLog` draws the short length from the
  *  chevron to the header's foot itself.
  *
- *  `nested` hangs a script's calls off the script's own socket — 8px in (half the
- *  16px socket) — and its first branch reaches the 4px (the row's `py-1`) up to
- *  that socket's foot. */
+ *  `nested` hangs a script's calls off the script's own socket — 12px in, the
+ *  centre every `Socket` frame shares — and its first branch reaches the 4px (the
+ *  row's `py-1`) up to that socket's foot. */
 const GEOMETRY = {
   log: { trunk: "left-3.5", elbow: "w-3.5", body: "pl-7", reach: "" },
-  nested: { trunk: "left-2", elbow: "w-3", body: "pl-5", reach: "-top-1" },
+  nested: { trunk: "left-3", elbow: "w-2", body: "pl-5", reach: "-top-1" },
 } as const;
 
 type Geometry = (typeof GEOMETRY)[keyof typeof GEOMETRY];
@@ -46,8 +46,9 @@ function trunkSpan(g: Geometry, edge: BranchEdge): string {
  *  last branch stops its trunk at its elbow, which is what turns `├` into `└`.
  *
  *  The elbow lands at 12px — the centre of a schematic `ProcessRow` (`py-1` plus
- *  half the 16px socket), so it meets the glyph's socket edge-on. A row that is
- *  not a `ProcessRow` (a host terminal) takes the elbow on its own edge instead.
+ *  half the 16px socket) — on the socket's left edge, where the socket's own lead
+ *  carries it into the frame. A row that is not a `ProcessRow` (a host terminal)
+ *  takes the elbow on its own edge instead.
  *
  *  `lit` marks the running row: its length of trunk and its elbow turn `info`.
  *  `chassis` dashes the elbow — the trace for a row the chassis put

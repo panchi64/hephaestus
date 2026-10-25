@@ -11,7 +11,7 @@ import {
 } from "~/ui";
 import { compactCount, num } from "~/lib/format";
 import { isLiveStatus, type ToolInvocation } from "../model";
-import { preparingPhrase, toolPresentation } from "../toolPresentation";
+import { preparingPhrase, toolEntry } from "../toolPresentation";
 import { Branch } from "./Branch";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
 import { EnvelopeRow } from "./EnvelopeRow";
@@ -81,7 +81,7 @@ export function ToolCallCard(props: {
     props,
     props.tool.status === "error",
   );
-  const shown = createMemo(() => toolPresentation(props.tool.name));
+  const shown = createMemo(() => toolEntry(props.tool.name));
   const preparing = (): boolean => props.tool.status === "preparing";
   const argsSize = (): string | undefined => {
     const n = props.tool.argsChars;
@@ -126,6 +126,7 @@ export function ToolCallCard(props: {
         foldable={preparing() ? false : undefined}
         icon={shown().icon}
         iconClass={iconTone[props.tool.status]}
+        frame={shown().frame}
         label={
           preparing() ? `${preparingPhrase(props.tool.name)}…` : shown().label
         }

@@ -25,7 +25,7 @@ const PLACEMENT: Record<ContextInjection["placement"], string> = {
  *  something the model *did*. This is the opposite kind of fact: nobody in the
  *  conversation wrote it and the model did not ask for it — we put it there. So it keeps
  *  `ProcessRow` (the column only reads as one sequence if its rows share an anatomy, §7)
- *  but hangs off the trunk by a dashed elbow into a dashed socket (`Branch chassis`),
+ *  but hangs off the trunk by a dashed elbow into a dashed diamond (`Branch chassis`),
  *  and takes no hover fill. Glyph, tone and the dashed trace all say the same thing at a
  *  glance, which is what the separation has to survive on: an operator scanning a turn
  *  should never have to read a row to know whether the model or the chassis is speaking.
@@ -56,7 +56,8 @@ export function ContextInjectionCard(props: {
         open={open()}
         onToggle={toggle}
         icon={INJECTION_ICON}
-        iconClass="border-dashed text-dim"
+        frame="diamond"
+        dashed
         label={segmentLabel(props.injection.contributor)}
         title={`Context injected by ${props.injection.contributor}`}
         trailing={

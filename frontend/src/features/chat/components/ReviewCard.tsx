@@ -85,7 +85,7 @@ const AUTHORIZATION: Record<NonNullable<Review["authorization"]>, string> = {
  *  **It shares the log's anatomy and dashes its trace**, exactly as the injection row
  *  does and for the same reason: every solid trace is something the *model* did, and
  *  this is not. The model asked; we answered for the operator. A dashed elbow into a
- *  dashed socket beside the call it judged is what says that at a glance, before a word
+ *  dashed octagon beside the call it judged is what says that at a glance, before a word
  *  of the row is read.
  *
  *  **A refusal is the one state that gets a flag.** A cleared call is followed by the call
@@ -114,10 +114,10 @@ export function ReviewCard(props: {
         onToggle={toggle}
         icon="review"
         iconClass={
-          props.review.decision === "block"
-            ? "border-dashed text-alert"
-            : "border-dashed text-dim"
+          props.review.decision === "block" ? "text-alert" : "text-dim"
         }
+        frame="octagon"
+        dashed
         label="Review"
         title={`Review of ${props.review.name}`}
         trailing={
