@@ -18,8 +18,8 @@ import {
 } from "./chatSettingsDto";
 import type {
   AgentTool,
+  CapabilityHealth,
   ChatSettings,
-  EmbeddingHealth,
   EndpointInput,
   OfflineState,
   ReindexStatus,
@@ -137,30 +137,49 @@ interface CapabilityDTO {
   detail: string;
 }
 
-const [embeddingHealth, setEmbeddingHealth] =
-  createSignal<EmbeddingHealth | null>(null);
+/** One capability's verdict off `/overview`, the home page's source of truth: the
+ *  backend owns it and Settings only renders it. `undefined` means the read failed. */
+async function fetchCapability(
+  key: string,
+): Promise<CapabilityHealth | null | undefined> {
+  try {
+    const o = await api.get<{ capabilities: CapabilityDTO[] }>("/overview");
+    const cap = o.capabilities.find((c) => c.key === key);
+    return cap
+      ? {
+          status: cap.status as CapabilityHealth["status"],
+          detail: cap.detail,
+        }
+      : null;
+  } catch {
+    return undefined;
+  }
+}
 
-/** The backend owns the verdict on recall health — Settings only renders it (read
- *  off `/overview`, the home page's source of truth, not re-derived here). */
-export function useEmbeddingHealth(): () => EmbeddingHealth | null {
+const [embeddingHealth, setEmbeddingHealth] =
+  createSignal<CapabilityHealth | null>(null);
+
+export function useEmbeddingHealth(): () => CapabilityHealth | null {
   return embeddingHealth;
 }
 
 export async function refreshEmbeddingHealth(): Promise<void> {
-  try {
-    const o = await api.get<{ capabilities: CapabilityDTO[] }>("/overview");
-    const cap = o.capabilities.find((c) => c.key === "embeddings");
-    setEmbeddingHealth(
-      cap
-        ? {
-            status: cap.status as EmbeddingHealth["status"],
-            detail: cap.detail,
-          }
-        : null,
-    );
-  } catch {
-    // Keep the last known health — a transient failure shouldn't blank the badge.
-  }
+  const health = await fetchCapability("embeddings");
+  // A failed read keeps the last known health rather than blanking the badge.
+  if (health !== undefined) setEmbeddingHealth(health);
+}
+
+const [webSearchHealth, setWebSearchHealth] =
+  createSignal<CapabilityHealth | null>(null);
+
+/** Whether web search works, through the built-in SearXNG or an operator's own. */
+export function useWebSearchHealth(): () => CapabilityHealth | null {
+  return webSearchHealth;
+}
+
+export async function refreshWebSearchHealth(): Promise<void> {
+  const health = await fetchCapability("web_search");
+  if (health !== undefined) setWebSearchHealth(health);
 }
 
 function toReindexStatus(d: ReindexStatusDTO): ReindexStatus {
@@ -247,6 +266,12 @@ function toProviderBody(
 
 const [providersTick, setProvidersTick] = createSignal(0);
 
+/** An enabled provider overrides the built-in instance, so a write can flip search health. */
+function providersChanged(): void {
+  setProvidersTick((n) => n + 1);
+  void refreshWebSearchHealth();
+}
+
 async function fetchSearchProviders(): Promise<SearchProvider[]> {
   const rows = await api.get<SearchProviderView[]>("/search/providers");
   return rows.map(toSearchProvider);
@@ -261,7 +286,7 @@ export async function createSearchProvider(
   input: SearchProviderInput,
 ): Promise<void> {
   await api.post("/search/providers", toProviderBody(input));
-  setProvidersTick((n) => n + 1);
+  providersChanged();
 }
 
 export async function updateSearchProvider(
@@ -269,12 +294,12 @@ export async function updateSearchProvider(
   patch: Partial<SearchProviderInput>,
 ): Promise<void> {
   await api.patch(`/search/providers/${id}`, toProviderBody(patch));
-  setProvidersTick((n) => n + 1);
+  providersChanged();
 }
 
 export async function deleteSearchProvider(id: string): Promise<void> {
   await api.del(`/search/providers/${id}`);
-  setProvidersTick((n) => n + 1);
+  providersChanged();
 }
 
 /* ── Chat settings (turn budgets + conversation compaction) ──────────────────

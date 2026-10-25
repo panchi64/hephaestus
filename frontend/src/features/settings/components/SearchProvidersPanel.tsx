@@ -1,4 +1,4 @@
-import { createSignal, For, Show, type JSX } from "solid-js";
+import { createSignal, For, onMount, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
 import {
   Button,
@@ -20,18 +20,25 @@ import {
 import {
   createSearchProvider,
   deleteSearchProvider,
+  refreshWebSearchHealth,
   updateSearchProvider,
   useSearchProviders,
+  useWebSearchHealth,
 } from "../data";
-import type { SearchProvider } from "../model";
+import { webSearchReadout, type SearchProvider } from "../model";
 
-/** Web-search provider registry (SearXNG instances the agent's `search` tool
- *  queries). Self-contained: owns its catalog resource and its add/edit form so
- *  the Settings screen just composes it. Mirrors the model-endpoint panel's shape
- *  — enabled/disabled is read via brightness (the design system separates active
- *  from inactive by brightness, not hue), and the API key is write-only. */
+/** Web search: the built-in SearXNG, and the operator's own instances that override it.
+ *  Owns its catalog resource and its add/edit form so the Settings screen just composes
+ *  it. Enabled/disabled reads by brightness, not hue; the API key is write-only. */
 export function SearchProvidersPanel(): JSX.Element {
   const providers = useSearchProviders();
+  const health = useWebSearchHealth();
+  const readout = () =>
+    webSearchReadout(
+      health(),
+      (settled(providers) ?? []).filter((p) => p.enabled).length,
+    );
+  onMount(() => void refreshWebSearchHealth());
 
   const [formOpen, setFormOpen] = createSignal(false);
   const [editing, setEditing] = createSignal<SearchProvider | null>(null);
@@ -147,7 +154,7 @@ export function SearchProvidersPanel(): JSX.Element {
       !(await confirm({
         title: `Delete provider "${p.name}"?`,
         detail:
-          "Web search falls back to the next enabled provider, or becomes unavailable if none remain.",
+          "Web search falls back to the next enabled provider, or to the built-in SearXNG if none remain.",
         confirmLabel: "Delete",
         tone: "alert",
       }))
@@ -172,18 +179,40 @@ export function SearchProvidersPanel(): JSX.Element {
     >
       <Stack gap={4}>
         <Text variant="micro" tone="dim">
-          SearXNG instances the agent's web search queries. The first enabled
-          provider is used; the rest stay configured as alternates. Requires the
-          instance's JSON output format to be enabled.
+          Web search runs on a built-in SearXNG instance. Add your own to use it
+          instead: the first enabled one is used, and the rest stay as
+          alternates. Your instance needs JSON output enabled.
         </Text>
+        <Row align="center" justify="between" gap={3} class="py-2">
+          <Stack gap={1} class="min-w-0">
+            <Text
+              variant="label"
+              tone={readout().source === "built-in" ? "bright" : "dim"}
+            >
+              Built-in SearXNG
+            </Text>
+            <Text variant="micro" tone="dim">
+              {readout().source === "built-in"
+                ? "In use."
+                : "Standing by while your instance is enabled."}
+            </Text>
+          </Stack>
+          <Text
+            variant="micro"
+            tone={readout().source === "built-in" ? readout().tone : "dim"}
+            class="shrink-0 font-mono uppercase"
+          >
+            {readout().source === "built-in" ? readout().label : "Standby"}
+          </Text>
+        </Row>
         <Show when={settled(providers)} fallback={<LoadingText />}>
           <Show
             when={(settled(providers) ?? []).length}
             fallback={
               <EmptyState
                 icon="search"
-                message="No providers"
-                hint="Add a SearXNG instance to give the agent web search."
+                message="No instance of your own"
+                hint="Add a SearXNG instance to search through it instead of the built-in one."
               />
             }
           >

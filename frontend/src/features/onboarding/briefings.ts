@@ -108,7 +108,7 @@ export function rolesBriefing(embedder?: {
 }
 
 export function workspaceBriefing(): string {
-  return "How the workspace looks, and where I search the web. Both can change later in Settings.";
+  return "How the workspace looks, and where I search the web. I search through my own SearXNG unless you give me yours. Both can change later in Settings.";
 }
 
 export function readyBriefing(): string {

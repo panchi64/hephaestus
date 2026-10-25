@@ -1,24 +1,32 @@
-import { createSignal, Show, type JSX } from "solid-js";
+import { createSignal, onMount, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
 import { isApiError } from "~/lib/api";
 import { Input, MetaAction, Text, toast, useTheme } from "~/ui";
 import {
   createSearchProvider,
+  refreshWebSearchHealth,
   useSearchProviders,
+  useWebSearchHealth,
 } from "~/features/settings/data";
+import { webSearchReadout } from "~/features/settings/model";
 import { workspaceBriefing } from "../briefings";
 import { ChoiceRow, DEFAULT_PICK } from "./ChoiceRow";
 import { StepShell } from "./StepShell";
 
-/** Web search as one row: off until a SearXNG address is given. The full provider list
- *  stays in Settings. */
+/** Web search as one row: the built-in SearXNG unless the operator gives an address of
+ *  their own. The full provider list stays in Settings. */
 function SearchRow(): JSX.Element {
   const providers = useSearchProviders();
+  const health = useWebSearchHealth();
   const [open, setOpen] = createSignal(false);
   const [url, setUrl] = createSignal("");
   const [saving, setSaving] = createSignal(false);
-  const count = () =>
-    (settled(providers) ?? []).filter((p) => p.enabled).length;
+  const readout = () =>
+    webSearchReadout(
+      health(),
+      (settled(providers) ?? []).filter((p) => p.enabled).length,
+    );
+  onMount(() => void refreshWebSearchHealth());
 
   const add = async (): Promise<void> => {
     const baseUrl = url().trim();
@@ -34,9 +42,9 @@ function SearchRow(): JSX.Element {
       });
       setUrl("");
       setOpen(false);
-      toast.success("Web search added.");
+      toast.success("Searches now go to your SearXNG.");
     } catch (e) {
-      toast.error(isApiError(e) ? e.detail : "Unable to add web search.");
+      toast.error(isApiError(e) ? e.detail : "Unable to add your SearXNG.");
     } finally {
       setSaving(false);
     }
@@ -50,24 +58,28 @@ function SearchRow(): JSX.Element {
             Web search
           </Text>
           <Text variant="micro" tone="dim">
-            Where web searches go. Needs a SearXNG instance with JSON output.
+            {readout().source === "own"
+              ? "Searches go to your SearXNG instance."
+              : "Searches go to the built-in SearXNG. Add your own, with JSON output on, to use it instead."}
           </Text>
         </div>
         <div class="ml-auto flex shrink-0 items-center gap-2 pt-0.5">
           <Text
             variant="micro"
-            tone={count() > 0 ? "nominal" : "dim"}
+            tone={readout().tone}
             class="font-mono uppercase"
           >
-            {count() > 0 ? `${count()} configured` : "Off"}
+            {readout().label}
           </Text>
-          <MetaAction
-            active={open()}
-            aria-expanded={open()}
-            onClick={() => setOpen((v) => !v)}
-          >
-            {open() ? "close" : "add"}
-          </MetaAction>
+          <Show when={readout().source === "built-in"}>
+            <MetaAction
+              active={open()}
+              aria-expanded={open()}
+              onClick={() => setOpen((v) => !v)}
+            >
+              {open() ? "close" : "use own"}
+            </MetaAction>
+          </Show>
         </div>
       </div>
       <Show when={open()}>

@@ -41,14 +41,40 @@ export interface ReindexStatus {
   completedAt: string | null;
 }
 
-/** Whether semantic recall is healthy: `nominal` is hybrid recall, `warn` is
- *  keyword-only (no ready embedder). */
-export interface EmbeddingHealth {
+/** A capability row from `/overview`. For recall, `warn` is keyword-only (no ready
+ *  embedder); for web search, `warn` is no usable instance (offline, or the built-in
+ *  one not up). */
+export interface CapabilityHealth {
   status: "nominal" | "warn" | "alert";
   detail: string;
 }
 
-/** A configured SearXNG instance. Web search queries the first `enabled` one. */
+export interface WebSearchReadout {
+  /** Which instance answers: "built-in" or "own". */
+  source: "built-in" | "own";
+  label: string;
+  tone: "nominal" | "warn" | "dim";
+}
+
+/** What web search runs on. An enabled operator instance overrides the built-in
+ *  SearXNG; a non-nominal health shows the backend's reason (starting, offline…). */
+export function webSearchReadout(
+  health: CapabilityHealth | null,
+  ownEnabled: number,
+): WebSearchReadout {
+  const source = ownEnabled > 0 ? "own" : "built-in";
+  if (!health) return { source, label: "Checking", tone: "dim" };
+  if (health.status !== "nominal")
+    return { source, label: health.detail, tone: "warn" };
+  return {
+    source,
+    label: source === "own" ? "Your instance" : "Built in",
+    tone: "nominal",
+  };
+}
+
+/** An operator-configured SearXNG instance. The first `enabled` one overrides the
+ *  built-in instance. */
 export interface SearchProvider {
   id: string;
   name: string;

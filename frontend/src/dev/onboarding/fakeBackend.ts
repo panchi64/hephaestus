@@ -13,6 +13,12 @@ interface FakeState {
   completed: boolean;
   endpoints: EndpointViewDTO[];
   roles: Record<string, RoleViewDTO>;
+  searchProviders: {
+    id: string;
+    name: string;
+    base_url: string;
+    enabled: boolean;
+  }[];
   nextId: number;
 }
 
@@ -36,6 +42,7 @@ export function installFakeBackend(scenario: Scenario): () => void {
     completed: false,
     endpoints: structuredClone(scenario.endpoints),
     roles: structuredClone(scenario.roles),
+    searchProviders: [],
     nextId: 100,
   };
 
@@ -249,8 +256,37 @@ export function installFakeBackend(scenario: Scenario): () => void {
         detail: null,
         completed_at: null,
       });
-    if (path === "/overview") return json(200, { capabilities: [] });
-    if (path === "/search/providers") return json(200, []);
+    if (path === "/overview")
+      return json(200, {
+        capabilities: [
+          {
+            key: "web_search",
+            status: "nominal",
+            detail: state.searchProviders.some((p) => p.enabled)
+              ? "SearXNG configured"
+              : "SearXNG (managed)",
+          },
+        ],
+      });
+    if (path === "/search/providers" && method === "POST") {
+      state.searchProviders.push({
+        id: `sp-${state.nextId++}`,
+        name: typeof body.name === "string" ? body.name : "SearXNG",
+        base_url: typeof body.base_url === "string" ? body.base_url : "",
+        enabled: body.enabled !== false,
+      });
+      return json(201, state.searchProviders.at(-1));
+    }
+    if (path === "/search/providers")
+      return json(
+        200,
+        state.searchProviders.map((p) => ({
+          ...p,
+          engines: [],
+          params: {},
+          has_api_key: false,
+        })),
+      );
     if (path === "/vm") return json(200, { state: "ready", detail: null });
     return fail(404, `not modelled by the dev bench: ${method} ${path}`);
   };
