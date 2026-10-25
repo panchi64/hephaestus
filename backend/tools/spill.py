@@ -26,6 +26,7 @@ from pydantic_core import to_json
 
 from core.citations import Citable
 from core.config import get_settings
+from core.declarations import DeclaredSet
 from core.text import elide_middle
 from core.untrusted import PREAMBLE_LINE, wrap_untrusted
 from services.home.paths import SCRATCH
@@ -49,8 +50,9 @@ _NEVER_SPILLED = frozenset({READ_BACK_TOOL})
 
 #: Categories whose results may carry personal data. Scratch is plaintext, so they are never
 #: saved to it; they stay in the context under their own caps, and ``external`` is cut.
-_PERSONAL = frozenset(
-    {"mail", "calendar", "memory", "vault", "corpus", "platform", "agents", "browse", "external"}
+#: Features add theirs on the manifest (``FeatureManifest.personal_categories``).
+PERSONAL_CATEGORIES: DeclaredSet[str] = DeclaredSet(
+    frozenset({"calendar", "memory", "vault", "corpus", "platform", "agents", "browse", "external"})
 )
 _EXTERNAL = "external"
 _NOT_SAVED_NOTE = (
@@ -267,7 +269,7 @@ def _script_personal_categories(result: ToolReturn[object]) -> frozenset[str] | 
     for call in cast(Mapping[object, object], calls).values():
         if not isinstance(call, ToolCallPart):
             return None
-        if (category := _category(call.tool_name)) in _PERSONAL:
+        if (category := _category(call.tool_name)) in PERSONAL_CATEGORIES:
             found.add(category)
     return frozenset(found)
 
@@ -276,11 +278,11 @@ async def _spill(ctx: RunContext[RunDeps], name: str, result: object) -> object:
     category = _category(name)
     if (
         name in _NEVER_SPILLED
-        or (category in _PERSONAL and category != _EXTERNAL)
+        or (category in PERSONAL_CATEGORIES and category != _EXTERNAL)
         or script_call_of(ctx) is not None
     ):
         return result
-    save = category not in _PERSONAL
+    save = category not in PERSONAL_CATEGORIES
     wrapped = _tool_return(result)
     if wrapped is not None and name == RUN_CODE:
         personal = _script_personal_categories(wrapped)

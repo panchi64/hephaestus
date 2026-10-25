@@ -80,6 +80,15 @@ def _call_everything_but_scripts(
 _TestModel.customize_request_parameters = _call_everything_but_scripts
 
 
+def pytest_configure() -> None:
+    """Every app boot pushes the features' declarations (tool classes, run kinds, service
+    keys) into core's process-wide tables; a test driving one service without booting an
+    app needs them too."""
+    from harness.discovery import discover_manifests  # after the patches above
+
+    _ = discover_manifests()
+
+
 def egress_policy(domains: tuple[str, ...] = ("pypi.org",)) -> EgressPolicy:
     """A real :class:`~services.egress.EgressPolicy` over a throwaway database."""
     from core.db import init_db, make_engine  # after the patches above

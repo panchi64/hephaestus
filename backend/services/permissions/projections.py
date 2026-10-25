@@ -34,6 +34,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
+from core.declarations import DeclaredTable
+
 #: How much of one *identity* value a summary quotes. A subject line, an address list or a
 #: selector fits; a pasted document does not, and the summary is a line the operator reads
 #: on a review row rather than the place to put one.
@@ -169,102 +171,89 @@ def _content(key: str, value: object, limit: int) -> str:
 #: way ``tools/browse.py`` pins its own tool names. Anything absent falls back to its
 #: argument *keys* (``capability._arg_shape``) — the honest description for an operator's
 #: own MCP server, whose argument names mean whatever the far side decided they mean.
-PROJECTIONS: dict[str, Projection] = {
-    # Mail. The body is in none of the three groups, on purpose: it is the one part of a
-    # send that is pure content, it is frequently the operator's own words, and knowing
-    # who a message goes to and what it announces itself as is what a review of "should
-    # this be sent" actually turns on. `explanation` is the opposite case — the tool
-    # *mandates* it as a plain statement of who the mail reaches and what it says, written
-    # for a reader, which is precisely the reviewer's `correctness` input.
-    "mail_send": Projection(
-        "Sends an email",
-        identity=("account_id", "to", "cc", "subject"),
-        content=("explanation",),
-    ),
-    "mail_reply": Projection(
-        "Replies to an email",
-        identity=("message_id", "reply_all"),
-        content=("explanation",),
-    ),
-    "mail_mark": Projection("Changes an email's flags", identity=("message_id", "seen", "flagged")),
-    # Calendar. A list per tool rather than one shared union, because the three take
-    # genuinely different arguments and a row naming keys its tool does not have is a row
-    # nothing can check against the real schema. What each carries beyond the event's
-    # identity is the argument that *changes the act* rather than describing it: `rrule`
-    # is the difference between one meeting and every Monday forever, and
-    # `occurrence_start` between cancelling one standup and deleting the series.
-    # `description` is deliberately in no group — it is the event's prose, the calendar's
-    # equivalent of a mail body — and is named at the end of the line like any other key.
-    "calendar_create_event": Projection(
-        "Adds an event to a calendar",
-        identity=("calendar_id", "title", "start", "end", "all_day", "rrule"),
-    ),
-    "calendar_update_event": Projection(
-        "Changes an existing calendar event",
-        identity=("event_id", "title", "start", "end", "rrule"),
-    ),
-    "calendar_delete_event": Projection(
-        "Deletes a calendar event", identity=("event_id", "occurrence_start")
-    ),
-    # Browsing. Every one of these runs inside a browser carrying the operator's own
-    # logins, so *where* on the page it lands is the whole question — and what is typed
-    # into it is the one thing a review must not carry off to another model. Navigation is
-    # here for the row the operator reads rather than for a review: it is a classified
-    # read and cleared as one, and "opens example.com" is what they need to see rather
-    # than "reads with browse_navigate, using arguments url".
-    "browse_navigate": Projection("Opens a page in the browser", identity=("url",)),
-    "browse_click": Projection("Clicks an element on the page", identity=("selector",)),
-    "browse_type_text": Projection(
-        "Types into a field on the page", identity=("selector",), measured=("text",)
-    ),
-    "browse_press_key": Projection("Presses a key on the page", identity=("key", "selector")),
-    "browse_select_option": Projection(
-        "Chooses an option on the page", identity=("selector", "values")
-    ),
-    # Measured rather than quoted, for the same reason `browse_type_text` is: filling a
-    # field is one line of script (`document.querySelector('#password').value = …`), so a
-    # projection that copied the program out would carry off the very credential the row
-    # above it protects. What the reviewer rules on here is the act — arbitrary script in
-    # a browser holding the operator's own logins — which the verb already states in full.
-    "browse_execute_js": Projection(
-        "Runs JavaScript with the page's own authority", measured=("script",)
-    ),
-    "browse_handle_next_dialog": Projection(
-        "Answers the page's next dialog", identity=("accept",), measured=("prompt_text",)
-    ),
-    # The vault. The stated reason is the act's content rather than its identity: it is a
-    # sentence the model wrote about why it needs a credential, and it is what the operator
-    # is really being asked to weigh.
-    "vault_get_entry": Projection(
-        "Reads one stored credential in full, password included",
-        identity=("entry_id",),
-        content=("reason",),
-    ),
-    "vault_list_entries": Projection(
-        "Lists the vault's entries — names and usernames, not passwords",
-        content=("reason",),
-    ),
-    "agents_spawn": Projection(
-        "Hands a task to another agent with its own tools, which does it on its own",
-        identity=("agent_name",),
-        content=("task",),
-    ),
-    # A skill's text is followed in *future* conversations, so a review of an edit is a
-    # review of the replacement words themselves — the name alone says a file changed and
-    # nothing about what it will now instruct. Both halves ride as content, with the
-    # explanation the tool mandates alongside them. (`skills_create` has no row because it
-    # never reaches a review: it is ungated and inside every acting level's ceiling, since
-    # all it can produce is a draft the operator has to publish themselves.)
-    "skills_edit": Projection(
-        "Edits a stored skill's instructions",
-        identity=("name",),
-        content=("explanation", "old_text", "new_text"),
-    ),
-    "code_execute": Projection(
-        "Runs a Python program in the conversation's sandbox",
-        content=("code",),
-    ),
-}
+#: A feature's own tools are declared on its manifest (``FeatureManifest.projections``).
+PROJECTIONS: DeclaredTable[str, Projection] = DeclaredTable(
+    "projections",
+    {
+        # Calendar. A list per tool rather than one shared union, because the three take
+        # genuinely different arguments and a row naming keys its tool does not have is a row
+        # nothing can check against the real schema. What each carries beyond the event's
+        # identity is the argument that *changes the act* rather than describing it: `rrule`
+        # is the difference between one meeting and every Monday forever, and
+        # `occurrence_start` between cancelling one standup and deleting the series.
+        # `description` is deliberately in no group — it is the event's prose, the calendar's
+        # equivalent of a mail body — and is named at the end of the line like any other key.
+        "calendar_create_event": Projection(
+            "Adds an event to a calendar",
+            identity=("calendar_id", "title", "start", "end", "all_day", "rrule"),
+        ),
+        "calendar_update_event": Projection(
+            "Changes an existing calendar event",
+            identity=("event_id", "title", "start", "end", "rrule"),
+        ),
+        "calendar_delete_event": Projection(
+            "Deletes a calendar event", identity=("event_id", "occurrence_start")
+        ),
+        # Browsing. Every one of these runs inside a browser carrying the operator's own
+        # logins, so *where* on the page it lands is the whole question — and what is typed
+        # into it is the one thing a review must not carry off to another model. Navigation is
+        # here for the row the operator reads rather than for a review: it is a classified
+        # read and cleared as one, and "opens example.com" is what they need to see rather
+        # than "reads with browse_navigate, using arguments url".
+        "browse_navigate": Projection("Opens a page in the browser", identity=("url",)),
+        "browse_click": Projection("Clicks an element on the page", identity=("selector",)),
+        "browse_type_text": Projection(
+            "Types into a field on the page", identity=("selector",), measured=("text",)
+        ),
+        "browse_press_key": Projection("Presses a key on the page", identity=("key", "selector")),
+        "browse_select_option": Projection(
+            "Chooses an option on the page", identity=("selector", "values")
+        ),
+        # Measured rather than quoted, for the same reason `browse_type_text` is: filling a
+        # field is one line of script (`document.querySelector('#password').value = …`), so a
+        # projection that copied the program out would carry off the very credential the row
+        # above it protects. What the reviewer rules on here is the act — arbitrary script in
+        # a browser holding the operator's own logins — which the verb already states in full.
+        "browse_execute_js": Projection(
+            "Runs JavaScript with the page's own authority", measured=("script",)
+        ),
+        "browse_handle_next_dialog": Projection(
+            "Answers the page's next dialog", identity=("accept",), measured=("prompt_text",)
+        ),
+        # The vault. The stated reason is the act's content rather than its identity: it is a
+        # sentence the model wrote about why it needs a credential, and it is what the operator
+        # is really being asked to weigh.
+        "vault_get_entry": Projection(
+            "Reads one stored credential in full, password included",
+            identity=("entry_id",),
+            content=("reason",),
+        ),
+        "vault_list_entries": Projection(
+            "Lists the vault's entries — names and usernames, not passwords",
+            content=("reason",),
+        ),
+        "agents_spawn": Projection(
+            "Hands a task to another agent with its own tools, which does it on its own",
+            identity=("agent_name",),
+            content=("task",),
+        ),
+        # A skill's text is followed in *future* conversations, so a review of an edit is a
+        # review of the replacement words themselves — the name alone says a file changed and
+        # nothing about what it will now instruct. Both halves ride as content, with the
+        # explanation the tool mandates alongside them. (`skills_create` has no row because it
+        # never reaches a review: it is ungated and inside every acting level's ceiling, since
+        # all it can produce is a draft the operator has to publish themselves.)
+        "skills_edit": Projection(
+            "Edits a stored skill's instructions",
+            identity=("name",),
+            content=("explanation", "old_text", "new_text"),
+        ),
+        "code_execute": Projection(
+            "Runs a Python program in the conversation's sandbox",
+            content=("code",),
+        ),
+    },
+)
 
 
 def describe(tool: str, args: Mapping[str, object], *, fallback: str) -> tuple[str, str | None]:

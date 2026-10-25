@@ -26,7 +26,7 @@ from harness.manifests._inbox_dispatch import WAKE_CHAIN_LIMIT, WAKE_KIND, Inbox
 from models.subagent import SubagentRecord
 from runs import Run, RunRegistry, RunStatus
 from runs.events import MessageSource
-from runs.lanes import CHAT_TURN_KINDS, is_attended
+from runs.lanes import is_attended, is_chat_turn
 from runs.run import StopCause
 from services.conversations import ConversationStore
 from services.home.paths import Place
@@ -144,7 +144,7 @@ class SubagentWake:
     async def _report(self, run: Run) -> None:
         """Report every turn a spawned agent finishes (first, message-woken, or sent by the
         operator after opening it) to the thread that spawned it."""
-        if run.conversation_id is None or run.kind not in CHAT_TURN_KINDS:
+        if run.conversation_id is None or not is_chat_turn(run.kind):
             return
         row = await self._records.by_child(run.conversation_id)
         if row is None or row.owner_id != run.owner_id:

@@ -802,9 +802,9 @@ class TestAClassifiedReadClears:
     def test_the_read_kind_tracks_the_sensitivity_registry(self):
         # The kind is not a second list to keep in step with `tool_sensitivity` — it *is*
         # that list, read at call time. A tool reclassified there changes here.
-        from services.tool_sensitivity import SENSITIVITY_CLASSES, Sensitivity
+        from services.tool_sensitivity import Sensitivity, classified_names
 
-        for tool in SENSITIVITY_CLASSES[Sensitivity.WORKSPACE_WRITE]:
+        for tool in classified_names()[Sensitivity.WORKSPACE_WRITE]:
             assert capability_of(tool, {}, root=ROOT).kind is not ActionKind.READ, tool
         assert capability_of("web_search", {"query": "x"}, root=ROOT).kind is ActionKind.READ
 

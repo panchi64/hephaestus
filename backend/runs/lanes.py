@@ -40,10 +40,12 @@ out attended work.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Literal
+
+from core.declarations import DeclaredTable
 
 type Lane = Literal["interactive", "routine", "background", "linked"]
 
@@ -53,54 +55,52 @@ LANES: tuple[Lane, ...] = ("interactive", "routine", "background", "linked")
 #: What an unmapped kind waits in — see the module docstring.
 DEFAULT_LANE: Lane = "background"
 
-#: Run kind → lane. The keys are the vocabulary the chat composition path
-#: (``routes/chat.py``'s ``compose_turn``) submits under: ``chat`` is the operator's own
-#: turn, ``task`` a routine's run, ``linked`` a thread the agent opened from
-#: inside another one. They name the turn's *provenance*, which is exactly what decides
-#: the lane — hence one mapping rather than a lane argument at each call site.
-LANE_BY_KIND: Mapping[str, Lane] = {
-    "chat": "interactive",
-    "task": "routine",
-    "linked": "linked",
-    # A thread continuing itself: a sub-agent it launched has reported, and the turn that
-    # launched one has long since ended. Foreground for the model and background for the
-    # operator, exactly like the ``linked`` threads it shares a lane with — and emphatically
-    # not interactive, because nobody is sitting in front of it and a burst of sub-agents
-    # finishing at once must not put the operator's own message in a queue.
-    "wake": "linked",
-    # The operator folding a thread by hand. Interactive because that is literally true —
-    # they pressed a button and are watching the summary arrive — and it is not a chat
-    # turn: no model drives it, it composes nothing, and it must not drain the
-    # queued-message inbox.
-    "compaction": "interactive",
-}
 
-#: The kinds that are a chat turn — the ones composed by ``compose_turn``, and therefore
-#: the ones whose orchestrator drains the queued-message inbox a mid-run send lands in.
-#:
-#: **Named rather than derived from the lane map**, which is what it used to be. That
-#: derivation read as the tidier of the two and was only ever right by coincidence: every
-#: kind happened to be a chat turn, so "has a lane" and "is a chat turn" could not be told
-#: apart. The first kind that needed a lane *without* being a turn — a hand-started fold —
-#: would have been enrolled as one silently, and the symptom is a fold quietly swallowing
-#: a message the operator sent while it ran.
-CHAT_TURN_KINDS: frozenset[str] = frozenset({"chat", "task", "linked", "wake"})
+@dataclass(frozen=True)
+class RunKind:
+    """How runs submitted under one ``kind`` are queued and treated."""
+
+    lane: Lane
+    #: Composed by ``compose_turn``, so its orchestrator drains the queued-message inbox.
+    #: Declared separately from the lane: a hand-started fold has a lane but is no turn,
+    #: and one that drained the inbox would swallow a message sent while it ran.
+    chat_turn: bool = False
+    #: Someone is in front of it to answer a question or approve a plan.
+    attended: bool = False
 
 
-#: The kinds someone is in front of: the operator's turn and their own fold. Separate from
-#: the lanes because a routine's run queues like interactive work yet has nobody to answer
-#: a question or approve a plan.
-ATTENDED_KINDS: frozenset[str] = frozenset({"chat", "compaction"})
+#: Run kind → treatment. Core seeds its own kinds; a feature declares the ones it submits
+#: under on its manifest (``FeatureManifest.run_kinds``).
+RUN_KINDS: DeclaredTable[str, RunKind] = DeclaredTable(
+    "run kinds",
+    {
+        "chat": RunKind("interactive", chat_turn=True, attended=True),
+        # A thread the agent opened from inside another one.
+        "linked": RunKind("linked", chat_turn=True),
+        # A thread continuing itself after a sub-agent reported. Nobody is in front of it,
+        # so a burst of these must not queue the operator's own message.
+        "wake": RunKind("linked", chat_turn=True),
+        # The operator folding a thread by hand: watched, but nothing composes it.
+        "compaction": RunKind("interactive", attended=True),
+    },
+)
 
 
 def is_attended(kind: str) -> bool:
-    return kind in ATTENDED_KINDS
+    spec = RUN_KINDS.get(kind)
+    return spec is not None and spec.attended
+
+
+def is_chat_turn(kind: str) -> bool:
+    spec = RUN_KINDS.get(kind)
+    return spec is not None and spec.chat_turn
 
 
 def lane_for(kind: str) -> Lane:
     """The lane a run of this kind waits in. Never raises — a stored or forwarded kind
     can outlive the code that coined it, and an unknown one has to queue somewhere."""
-    return LANE_BY_KIND.get(kind, DEFAULT_LANE)
+    spec = RUN_KINDS.get(kind)
+    return spec.lane if spec is not None else DEFAULT_LANE
 
 
 @dataclass(frozen=True)

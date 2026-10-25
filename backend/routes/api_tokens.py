@@ -1,10 +1,9 @@
 """API Tokens surface — the operator's outbound service credentials.
 
-Set/clear the API keys the system calls third-party services with (today, the mail
-OAuth clients). The key is **write-only**:
-accepted on set and sealed with the vault, never returned — listings expose only
-``has_key``. The set of services is the backend's declared catalog (`KNOWN_SERVICES`);
-an unknown id is a 404.
+Set/clear the API keys the system calls third-party services with. The key is
+**write-only**: accepted on set and sealed with the vault, never returned — listings expose
+only ``has_key``. The set of services is what the features declare (`known_services`); an
+unknown id is a 404.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from pydantic import BaseModel
 from core.exceptions import NotFoundError
 from routes import deps
 from routes.deps import OPERATOR_ID
-from services.credential_store import KNOWN_SERVICES
+from services.credential_store import known_services
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
 
@@ -33,7 +32,7 @@ class CredentialView(BaseModel):
 
 
 def _view(service: str, has_key: bool) -> CredentialView:
-    info = next(s for s in KNOWN_SERVICES if s.id == service)
+    info = next(s for s in known_services() if s.id == service)
     return CredentialView(
         service=info.id,
         label=info.label,
@@ -46,7 +45,7 @@ def _view(service: str, has_key: bool) -> CredentialView:
 @router.get("", response_model=list[CredentialView])
 async def list_credentials(request: Request) -> list[CredentialView]:
     present = await deps.credentials(request).status(OPERATOR_ID)
-    return [_view(s.id, present.get(s.id, False)) for s in KNOWN_SERVICES]
+    return [_view(s.id, present.get(s.id, False)) for s in known_services()]
 
 
 @router.put("/{service}", response_model=CredentialView)

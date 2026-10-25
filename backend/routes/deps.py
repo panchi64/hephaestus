@@ -97,6 +97,7 @@ class AppState(State):
         )
         self.runs: RunRegistry
         self.inbox_dispatcher: InboxDispatch | None
+        self.services: ServiceContainer
         self.capabilities: ServiceContainer
         self.tool_categories: dict[str, AbstractToolset[RunDeps]]
         self.gated_tools: frozenset[str]
@@ -214,6 +215,12 @@ def subagent_records(request: Request) -> SubagentStore | None:
 
 def registry(request: Source) -> RunRegistry:
     return app_state(request).runs
+
+
+def service[T](request: Source, service_type: type[T]) -> T:
+    """A service any manifest built, by type: how a plugin's routes reach their own
+    services without a named accessor here."""
+    return app_state(request).services.get(service_type)
 
 
 def capabilities(request: Source) -> ServiceContainer:

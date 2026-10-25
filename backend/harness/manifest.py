@@ -26,8 +26,13 @@ if TYPE_CHECKING:
     from core.vault import Vault
     from harness.lifecycle import LifecycleRegistry
     from harness.run_terminal import RunTerminalHook, SyncRunTerminalHook
+    from runs.lanes import RunKind
+    from services.credential_store import ServiceInfo
+    from services.permissions.projections import Projection
     from services.tool_policy import AvailabilityCheck, CategoryAvailability
+    from services.tool_sensitivity import Sensitivity
     from tools import InstructionProvider, PromptContextProvider, RunDeps
+    from tools.platform import PlatformSource
 
 __all__ = [
     "DormantCategory",
@@ -160,6 +165,27 @@ class FeatureManifest:
     # owning feature so the offline service needn't be edited for each new one (a
     # hard-coded set there would silently offer a dead tool).
     network_tools: frozenset[str] = frozenset()
+    # Rows this feature adds to core's process-wide tables (``harness/declarations.py``),
+    # so core never names a feature's tools, kinds or keys.
+    # Namespaced tool name → what the tool can do.
+    tool_sensitivity: Mapping[str, Sensitivity] = field(default_factory=lambda: {})
+    # Namespaced tool name → how an approval card and the auto-reviewer describe a call.
+    projections: Mapping[str, Projection] = field(default_factory=lambda: {})
+    # Tool categories whose results may carry personal data, so they are never spilled
+    # to plaintext scratch.
+    personal_categories: frozenset[str] = frozenset()
+    # Outbound service keys the operator can store for this feature.
+    credentials: tuple[ServiceInfo, ...] = ()
+    # Run kinds this feature submits turns under.
+    run_kinds: Mapping[str, RunKind] = field(default_factory=lambda: {})
+    # Notification kinds worth reaching the operator over out-of-band channels.
+    out_of_band_kinds: frozenset[str] = frozenset()
+    # Named sources ``platform_search`` can be pointed at, over corpus records this
+    # feature registers at build.
+    platform_sources: Mapping[str, PlatformSource] = field(default_factory=lambda: {})
+    # Composes agent turns of its own. Discovery orders it after every plugin that doesn't,
+    # so it stops first and a turn it starts can't outlive a plugin's services.
+    composes_turns: bool = False
     # ── Which seam a block of text belongs on ────────────────────────────────────────
     #
     # A block byte-stable across a conversation's turns belongs in the head; one that churns

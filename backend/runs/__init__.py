@@ -85,7 +85,7 @@ from .inbox import (
     QueuedMessage,
     TurnPayload,
 )
-from .lanes import CHAT_TURN_KINDS, LANE_BY_KIND, LaneLimits, lane_for
+from .lanes import RUN_KINDS, LaneLimits, RunKind, is_chat_turn, lane_for
 from .overhead import BriefBlock, ToolGroupOverhead, TurnOverhead
 from .parked import NO_PARKED_JOURNAL, ParkedJournal
 from .prefix import FIRST_REQUEST, PrefixDigest, PrefixLedger, PrefixVerdict
@@ -106,8 +106,9 @@ __all__ = [
     "Endpoint",
     "EndpointGate",
     "outside_lease",
-    "LANE_BY_KIND",
-    "CHAT_TURN_KINDS",
+    "RUN_KINDS",
+    "RunKind",
+    "is_chat_turn",
     "lane_for",
     "ConversationBusyError",
     "Run",

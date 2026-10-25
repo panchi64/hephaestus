@@ -144,6 +144,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Typed capability handles. Core wiring adds what it builds; each manifest's build
     # resolves its cross-feature dependencies here, never by importing another feature's wiring.
     container = ServiceContainer()
+    state.services = container
     # The agent-facing bag (`RunDeps.caps`): the curated services the agent's tools may
     # reach, from each manifest's `capabilities` export plus the core handles below. Every
     # run path hands this same bag to the engine.

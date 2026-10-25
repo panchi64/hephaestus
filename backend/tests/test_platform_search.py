@@ -34,9 +34,10 @@ from services.corpus.chunk_store import stitch
 from services.memory import MemoryStore
 from services.plugins import PluginStore
 from services.registry import ModelRegistry
+from services.routines.corpus import routine_runs_adapter
 from services.skills import SkillStore
 from tools.deps import RunDeps
-from tools.platform import PlatformDocument, PlatformResults, Source, platform_toolset
+from tools.platform import PlatformDocument, PlatformResults, platform_toolset
 
 from ._plugin_helpers import bundle
 from .test_conversation_search import DegradedEmbedder, record_conversation, setup_search
@@ -79,7 +80,7 @@ class Platform:
     async def search(
         self,
         query: str,
-        sources: list[Source] | None = None,
+        sources: list[str] | None = None,
         since: str | None = None,
         *,
         conversation_id: str | None = "current",
@@ -117,6 +118,7 @@ async def platform() -> AsyncIterator[Platform]:
     index.register(ConversationAdapter(search))
     for adapter in record_adapters(engine, vault):
         index.register(adapter)
+    index.register(routine_runs_adapter(engine, vault))
     yield Platform(
         engine,
         vault,

@@ -1,68 +1,50 @@
-"""Out-of-band notification channels — email and push (`AE-3.2`, `TASK-6`).
+"""Out-of-band notification channels: the contract, and the push webhook core ships.
 
 The in-app surface (`services/notifications.py`) is always on: everything the workspace
-records shows up in the app. These channels are the *other* half — the ones that reach the
-operator when the app isn't in front of them, which is the whole point of an unattended run
-parking for approval (`AE-3.2`) or a reminder firing on its date (`TASK-6`).
-
-Three rules shape the design:
+records shows up in the app. These channels reach the operator when the app isn't in front
+of them, which is the whole point of an unattended run parking for approval.
 
 - **A channel is a seam, not a hard-coded vendor.** :class:`NotificationChannel` is the
-  whole contract — say whether you're configured, and deliver one notification. Email and
-  push are the two implementations; an SMS or Matrix channel later is a new class here and
-  nothing else.
+  whole contract. Core ships push; a feature adds its own at build
+  (``NotificationService.add_channel``), as mail does for email.
 - **A channel never breaks the thing that notified.** Delivery runs on the notification
   service's lock-aware drainer, off the critical path; a channel that is unconfigured or
   unreachable degrades to in-app-only rather than failing the park or the reminder.
 - **Only interruption-worthy kinds leave the machine.** Every notification is in-app; only
   the kinds in :data:`OUT_OF_BAND_KINDS` are worth reaching for someone's phone over.
 
-The push channel is deliberately a **webhook**, not a browser Web Push subscription: the
-operator points it at whatever notifier they already run (ntfy, Gotify, Pushover, Home
-Assistant, a Shortcuts endpoint), so a notification reaches a phone with the app closed and
-no browser, no vendor account, and no service worker in the loop. Its URL is
-operator-configured — the same trust level as the IMAP host they typed — so it is checked
-for shape only and a LAN address is allowed on purpose, since a self-hosted notifier
-usually *is* on the LAN. Nothing model-supplied ever reaches it.
+The push channel is a **webhook**, not a browser Web Push subscription: the operator points
+it at whatever notifier they already run (ntfy, Gotify, Pushover, Home Assistant), so a
+notification reaches a phone with the app closed. Its URL is operator-configured, so it is
+checked for shape only and a LAN address is allowed on purpose. Nothing model-supplied
+ever reaches it.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 from urllib.parse import urlsplit
 
 import httpx
 
+from core.declarations import DeclaredSet
 from core.vault import Vault
 from services.notification_view import NotificationView
 from services.settings_store import SettingsStore
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from services.mail import AccountView
-
 logger = logging.getLogger(__name__)
 
-CHANNEL_EMAIL = "email"
 CHANNEL_PUSH = "push"
 
-# The kinds worth interrupting the operator away from the app for: a run that has stopped
-# dead waiting on them (`AE-3.2` — an unattended run parks until answered) and a reminder,
-# which is worthless if it only lands somewhere they aren't looking (`TASK-6`). Run
-# outcomes, task outcomes and triage alerts stay in-app: they are informational, and mailing
-# every one of them would train the operator to ignore the channel.
-OUT_OF_BAND_KINDS = frozenset({"approval_needed", "reminder"})
+#: The kinds worth interrupting the operator away from the app for. A run stopped dead
+#: waiting on them is core's; a feature adds its own (``FeatureManifest.out_of_band_kinds``).
+#: Informational kinds stay in-app: mailing every one would train the operator to ignore it.
+OUT_OF_BAND_KINDS: DeclaredSet[str] = DeclaredSet(frozenset({"approval_needed"}))
 
-# Owner-scoped preference keys (`services/settings_store.py`). The two address-shaped values
-# are vault-sealed before they are stored — a delivery address and a push endpoint (whose
-# path is often the only credential) are the operator's data like anything else, and the
-# settings table is otherwise plaintext.
-EMAIL_ENABLED_KEY = "notifications.email.enabled"
-EMAIL_ADDRESS_KEY = "notifications.email.address_enc"
-EMAIL_ACCOUNT_KEY = "notifications.email.account_id"
+# Owner-scoped preference keys. The endpoint is vault-sealed before it is stored: its path
+# is often the only credential, and the settings table is otherwise plaintext.
 PUSH_ENABLED_KEY = "notifications.push.enabled"
 PUSH_ENDPOINT_KEY = "notifications.push.endpoint_enc"
 
@@ -74,7 +56,7 @@ _PUSH_BODY_MAX = 1_000
 
 @dataclass(frozen=True, slots=True)
 class ChannelHealth:
-    """One channel as the operator sees it (`XC-DEG-3`).
+    """One channel as the operator sees it.
 
     ``status``/``detail`` are decided here and rendered verbatim — the overview route maps
     them onto its own row shape without re-deciding what counts as healthy.
@@ -108,120 +90,6 @@ class NotificationChannel(Protocol):
         connection). Called once at shutdown; a channel that borrows every resource it
         uses implements this as a no-op."""
         ...
-
-
-class MailSender(Protocol):
-    """The slice of the mail service the email channel lists accounts and sends through."""
-
-    async def list_accounts(self, owner_id: str) -> list[AccountView]: ...
-
-    async def send(
-        self,
-        owner_id: str,
-        account_id: str,
-        *,
-        to: list[str],
-        subject: str,
-        body: str,
-        cc: list[str] | None = None,
-        bcc: list[str] | None = None,
-        in_reply_to: str | None = None,
-    ) -> str: ...
-
-
-class EmailChannel:
-    """Delivers through the operator's own mail account (`EMAIL-1`).
-
-    Configuration-free by default: with a mail account connected, the workspace mails the
-    operator at that account's own address, from that account. There is exactly one operator
-    (`XC-SEC-*`), so their mailbox is not a guess. An explicit address/account override wins
-    when set, and disabling the channel is honored either way.
-    """
-
-    key: str = CHANNEL_EMAIL
-    label: str = "EMAIL ALERTS"
-
-    def __init__(
-        self,
-        mail: Callable[[], MailSender | None],
-        settings: SettingsStore,
-        vault: Vault,
-    ) -> None:
-        self._mail: Callable[[], MailSender | None] = mail
-        self._settings: SettingsStore = settings
-        self._vault: Vault = vault
-
-    async def health(self, owner_id: str) -> ChannelHealth:
-        service = self._mail()
-        if service is None:
-            return ChannelHealth(
-                self.key, self.label, False, "warn", "no mail account — in-app only"
-            )
-        if not await self._enabled(owner_id):
-            return ChannelHealth(self.key, self.label, False, "warn", "turned off")
-        try:
-            target = await self._target(owner_id)
-        except Exception:  # health never raises; a broken read is a state
-            logger.warning("notifications: could not read the email channel target", exc_info=True)
-            target = None
-        if target is None:
-            return ChannelHealth(
-                self.key, self.label, False, "warn", "no mail account — in-app only"
-            )
-        _account_id, address = target
-        return ChannelHealth(self.key, self.label, True, "nominal", f"to {address}")
-
-    async def deliver(self, view: NotificationView) -> None:
-        service = self._mail()
-        if service is None or not await self._enabled(view.owner_id):
-            return
-        target = await self._target(view.owner_id)
-        if target is None:
-            return
-        account_id, address = target
-        _ = await service.send(
-            view.owner_id,
-            account_id,
-            to=[address],
-            subject=view.title,
-            body=view.body or view.title,
-        )
-
-    async def _enabled(self, owner_id: str) -> bool:
-        """On unless explicitly turned off — a connected mailbox is consent enough to be
-        told that a run is stuck waiting on you."""
-        return await self._settings.get(owner_id, EMAIL_ENABLED_KEY, "true") != "false"
-
-    async def _target(self, owner_id: str) -> tuple[str, str] | None:
-        """``(account to send from, address to send to)``, or ``None`` when there is no
-        usable mailbox. The stored override is used only when its account still exists —
-        a deleted account falls back rather than sending nowhere."""
-        service = self._mail()
-        if service is None:
-            return None
-        accounts = [a for a in await service.list_accounts(owner_id) if a.enabled]
-        if not accounts:
-            return None
-        stored_id = await self._settings.get(owner_id, EMAIL_ACCOUNT_KEY)
-        account = next((a for a in accounts if a.id == stored_id), accounts[0])
-        sealed = await self._settings.get(owner_id, EMAIL_ADDRESS_KEY)
-        address = self._vault.decrypt_str(sealed) if sealed else account.address
-        return account.id, address
-
-    async def configure(
-        self, owner_id: str, *, enabled: bool, address: str | None, account_id: str | None
-    ) -> None:
-        """Persist the operator's choices. The address is sealed on the way in and is never
-        read back out to a caller — only used to address a delivery."""
-        await self._settings.set(owner_id, EMAIL_ENABLED_KEY, "true" if enabled else "false")
-        if address is not None:
-            await self._settings.set(owner_id, EMAIL_ADDRESS_KEY, self._vault.encrypt_str(address))
-        if account_id is not None:
-            await self._settings.set(owner_id, EMAIL_ACCOUNT_KEY, account_id)
-
-    async def close(self) -> None:
-        """Nothing to release — this channel borrows the mail service, which owns (and
-        closes) its own transports."""
 
 
 class PushChannel:
@@ -318,8 +186,6 @@ class PushChannel:
         self._client = None
 
 
-def default_channels(
-    mail: Callable[[], MailSender | None], settings: SettingsStore, vault: Vault
-) -> list[NotificationChannel]:
-    """The channels every workspace gets, in the order the operator sees them."""
-    return [EmailChannel(mail, settings, vault), PushChannel(settings, vault)]
+def default_channels(settings: SettingsStore, vault: Vault) -> list[NotificationChannel]:
+    """The channels core ships; features add theirs with ``add_channel``."""
+    return [PushChannel(settings, vault)]

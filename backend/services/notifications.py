@@ -197,6 +197,10 @@ class NotificationService:
     def channels(self, value: list[NotificationChannel]) -> None:
         self._channels = value
 
+    def add_channel(self, channel: NotificationChannel) -> None:
+        """Fan out to one more channel, for a feature that brings its own at build."""
+        self._channels.append(channel)
+
     @property
     def subscriber_count(self) -> int:
         """How many live subscribers are attached right now."""

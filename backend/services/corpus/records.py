@@ -1,5 +1,5 @@
-"""Corpus sources over what the platform itself wrote: thread work summaries, sub-agent
-reports and routine run outputs.
+"""Corpus sources over what the platform itself wrote: thread work summaries and sub-agent
+reports. A feature adds its own through :class:`RecordAdapter`.
 
 Each is a short sealed text on an existing row, so each is a :class:`RecallCollection`
 over that row ranked by BM25 alone. They carry no embeddings; adding them would mean a
@@ -21,7 +21,6 @@ from core.db import in_session
 from core.vault import Vault
 from models.conversation import Conversation
 from models.subagent import SubagentRecord
-from models.task import ScheduledTask, TaskRun
 from services.conversation_search import snippet
 from services.corpus.adapter import CorpusDocument, CorpusHit, SourceAdapter, SourceStatus
 from services.recall_index import Collection, Doc, Loaded, Query, RecallIndex
@@ -118,57 +117,6 @@ class ReportCollection(Collection[RecordMeta]):
             )
             for row in rows
             if row.summary_enc is not None
-        ]
-
-
-class RoutineRunCollection(Collection[RecordMeta]):
-    name: str = "routine-runs"
-
-    @staticmethod
-    def _owned(owner_id: str) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
-        return (
-            col(ScheduledTask.owner_id) == owner_id,
-            col(TaskRun.summary_enc).is_not(None),
-        )
-
-    @override
-    def signature(self, session: Session, owner_id: str) -> Hashable:
-        stmt = (
-            select(func.count(), func.max(TaskRun.finished_at))
-            .join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
-            .where(*self._owned(owner_id))
-        )
-        return tuple(session.exec(stmt).one())
-
-    @override
-    def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
-        stmt = (
-            select(TaskRun.id, TaskRun.finished_at)
-            .join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
-            .where(*self._owned(owner_id))
-        )
-        return dict(session.exec(stmt).all())
-
-    @override
-    def load(
-        self, session: Session, vault: Vault, owner_id: str, ids: list[str]
-    ) -> list[Loaded[RecordMeta]]:
-        rows = session.exec(
-            select(TaskRun, ScheduledTask)
-            .join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
-            .where(col(TaskRun.id).in_(ids))
-        ).all()
-        return [
-            Loaded(
-                Doc(
-                    run.id,
-                    run.finished_at or run.started_at,
-                    RecordMeta(vault.decrypt_str(task.title_enc)),
-                ),
-                vault.decrypt_str(run.summary_enc),
-            )
-            for run, task in rows
-            if run.summary_enc is not None
         ]
 
 
@@ -280,16 +228,6 @@ def _report_text(session: Session, vault: Vault, owner_id: str, ref: str) -> str
     )
 
 
-def _run_text(session: Session, vault: Vault, owner_id: str, ref: str) -> str | None:
-    run = session.get(TaskRun, ref)
-    if run is None or run.summary_enc is None:
-        return None
-    task = session.get(ScheduledTask, run.task_id)
-    if task is None or task.owner_id != owner_id:
-        return None
-    return vault.decrypt_str(run.summary_enc)
-
-
 def record_adapters(engine: Engine, vault: Vault) -> list[RecordAdapter]:
     return [
         RecordAdapter(
@@ -309,14 +247,5 @@ def record_adapters(engine: Engine, vault: Vault) -> list[RecordAdapter]:
             source_id="surf-reports",
             label="Agent reports",
             read_text=_report_text,
-        ),
-        RecordAdapter(
-            engine,
-            vault,
-            RoutineRunCollection(),
-            source_kind="routines",
-            source_id="surf-routines",
-            label="Routine outputs",
-            read_text=_run_text,
         ),
     ]

@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from core.db import in_session, init_db, make_engine
 from core.vault import Vault
 from models.mail import AUTH_OAUTH, AUTH_PASSWORD, MailAccount
-from services.credential_store import KNOWN_SERVICES, CredentialStore
+from services.credential_store import CredentialStore, known_services
 from services.mail.errors import MailAuthError, MailUnavailableError
 from services.mail.oauth import (
     PROVIDERS,
@@ -65,8 +65,8 @@ async def _account(engine: Engine, vault: Vault, **overrides: str | None) -> Mai
     return account
 
 
-def test_the_oauth_client_registrations_are_in_the_static_catalog():
-    ids = {service.id for service in KNOWN_SERVICES}
+def test_the_oauth_client_registrations_are_in_the_declared_catalog():
+    ids = {service.id for service in known_services()}
     assert {"google_oauth", "microsoft_oauth"} <= ids
     # Every provider's declared credential service must actually exist in the catalog.
     assert all(provider.credential_service in ids for provider in PROVIDERS.values())

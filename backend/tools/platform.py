@@ -2,9 +2,9 @@
 
 A conversation's context holds only that conversation. Everything else the platform has
 accumulated (other conversations, memory, indexed files and uploads, thread work
-summaries, sub-agent reports, routine outputs, and the skill and agent catalogs) is
-searched here on demand instead of being injected, so the brief does not grow with the
-platform's history.
+summaries, sub-agent reports, whatever a feature indexes, and the skill and agent
+catalogs) is searched here on demand instead of being injected, so the brief does not
+grow with the platform's history.
 
 ``platform_search`` fans out over the corpus sources and the catalogs and fuses them by
 rank. Each hit carries a ``ref``; ``platform_read`` opens one in full. Searching sources
@@ -15,13 +15,15 @@ them does not.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Literal
+from typing import cast
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai.tools import ToolDefinition
 
 from core.citations import Citation
+from core.declarations import DeclaredTable
 from core.diagnostics import render_tool_error
 from core.untrusted import new_nonce, unfence, untrusted_fence, untrusted_preamble
 from services import ranking
@@ -35,49 +37,41 @@ from .project_agents import run_catalog
 from .recall_gate import gate_global_recall
 from .skills import skill_catalog
 
-Source = Literal[
-    "conversations",
-    "memory",
-    "files",
-    "summaries",
-    "reports",
-    "routines",
-    "skills",
-    "agents",
-    "plugins",
-]
 
-_CORPUS_KINDS: dict[str, tuple[str, ...]] = {
-    "conversations": ("conversations",),
-    "memory": ("memory",),
-    "files": ("folder", "uploads"),
-    "summaries": ("summaries",),
-    "reports": ("reports",),
-    "routines": ("routines",),
-}
-_SOURCE_OF_SURFACE = {
-    "surf-conversations": "conversations",
-    "surf-memory": "memory",
-    "surf-summaries": "summaries",
-    "surf-reports": "reports",
-    "surf-routines": "routines",
-}
+@dataclass(frozen=True)
+class PlatformSource:
+    """A corpus-backed source ``platform_search`` can be pointed at by name."""
+
+    #: The corpus source kinds searched for it.
+    corpus_kinds: tuple[str, ...]
+    #: The corpus surface whose hits are reported as this source; ``None`` for one made of
+    #: indexed folders and uploads.
+    surface_id: str | None = None
+
+
+#: Source name → what it searches. A feature indexing its own records into the corpus
+#: declares its source on its manifest (``FeatureManifest.platform_sources``).
+PLATFORM_SOURCES: DeclaredTable[str, PlatformSource] = DeclaredTable(
+    "platform sources",
+    {
+        "conversations": PlatformSource(("conversations",), "surf-conversations"),
+        "memory": PlatformSource(("memory",), "surf-memory"),
+        "files": PlatformSource(("folder", "uploads")),
+        "summaries": PlatformSource(("summaries",), "surf-summaries"),
+        "reports": PlatformSource(("reports",), "surf-reports"),
+    },
+)
 #: Surfaces keyed by conversation id, which never return the caller's own thread.
 _THREAD_SURFACES = frozenset({"surf-conversations", "surf-summaries"})
 #: Sources answered from a catalog of what the operator published, not from the corpus.
 _CATALOGS: frozenset[str] = frozenset({"skills", "agents", "plugins"})
 _UNGATED: frozenset[str] = frozenset({"memory"}) | _CATALOGS
-_ALL: tuple[Source, ...] = (
-    "conversations",
-    "memory",
-    "files",
-    "summaries",
-    "reports",
-    "routines",
-    "skills",
-    "agents",
-    "plugins",
-)
+
+
+def all_sources() -> tuple[str, ...]:
+    return (*PLATFORM_SOURCES, *sorted(_CATALOGS))
+
+
 #: Characters of one item ``platform_read`` returns before cutting it short.
 READ_LIMIT = 40_000
 
@@ -157,25 +151,44 @@ def _stamp(at: datetime | None) -> str | None:
 
 
 def _source_of(hit: CorpusHit) -> str:
-    return _SOURCE_OF_SURFACE.get(hit.source_id, "files")
+    return next(
+        (name for name in PLATFORM_SOURCES if PLATFORM_SOURCES[name].surface_id == hit.source_id),
+        "files",
+    )
+
+
+async def _enumerate_sources(_ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> ToolDefinition:
+    """Name every source in the schema; the set is declared by features, so it can't be a
+    ``Literal`` in the signature."""
+    schema = dict(tool_def.parameters_json_schema)
+    properties = dict(cast(dict[str, object], schema.get("properties", {})))
+    properties["sources"] = {
+        "anyOf": [
+            {"type": "array", "items": {"type": "string", "enum": list(all_sources())}},
+            {"type": "null"},
+        ],
+        "default": None,
+    }
+    schema["properties"] = properties
+    return replace(tool_def, parameters_json_schema=schema)
 
 
 def platform_toolset() -> FunctionToolset[RunDeps]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool(prepare=_enumerate_sources)
     async def search(
         ctx: RunContext[RunDeps],
         query: str,
-        sources: list[Source] | None = None,
+        sources: list[str] | None = None,
         since: str | None = None,
         limit: int = 8,
     ) -> PlatformResults | str:
         """Searches everything the platform holds outside this conversation: other
         conversations, memory, the operator's indexed files and uploads, work summaries,
-        sub-agent reports, routine outputs, and the catalogs of skills, agents and
-        plugins. Your context holds only this conversation, so this is how you reach the
-        rest.
+        sub-agent reports, what features such as routines index, and the catalogs of
+        skills, agents and plugins. Your context holds only this conversation, so this is
+        how you reach the rest.
 
         Use it before you say you don't know something, and before you ask the operator
         anything they may have told you already. Use `web_search` for the public web
@@ -199,7 +212,13 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
                 set.
             limit: The most hits to return. Default 8.
         """
-        chosen = tuple(dict.fromkeys(sources or _ALL))
+        known = all_sources()
+        chosen = tuple(dict.fromkeys(sources or known))
+        unknown = [source for source in chosen if source not in known]
+        if unknown:
+            raise ModelRetry(
+                f"Unknown source(s) {', '.join(unknown)}; choose from {', '.join(known)}."
+            )
         after = _since(since)
         if not set(chosen) <= _UNGATED:
             gate_global_recall(ctx)
@@ -207,7 +226,12 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         lists: list[list[PlatformHit]] = []
         nonce = new_nonce()
 
-        kinds = [kind for source in chosen for kind in _CORPUS_KINDS.get(source, ())]
+        kinds = [
+            kind
+            for source in chosen
+            if (spec := PLATFORM_SOURCES.get(source)) is not None
+            for kind in spec.corpus_kinds
+        ]
         index = deps.caps.get_optional(CorpusIndex)
         if kinds and index is None and not _CATALOGS & set(chosen):
             return "Platform search is unavailable."

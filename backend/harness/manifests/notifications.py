@@ -2,9 +2,8 @@
 from the per-run event protocol.
 
 The emit policy (which run outcomes are noteworthy) lives here as run-terminal hooks: the
-approval-backstop resolve and the conversation-linked completion/failure notices.
-Out-of-band channels (email through the operator's mailbox, a push webhook) compose in at
-construction.
+approval-backstop resolve and the conversation-linked completion/failure notices. Core's
+push channel composes in at construction; a feature adds its own at build.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from routes.deps import OPERATOR_ID
 from runs import Run, RunStatus
 from services.agents.definition import agent_display_name
 from services.conversations import ConversationStore
-from services.mail import MailService
 from services.notification_channels import default_channels
 from services.notifications import NotificationService
 from services.settings_store import SettingsStore
@@ -72,16 +70,10 @@ def save_failure_reporter(
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     conversations = ctx.services.get(ConversationStore)
-    # The email channel takes mail as a callable because the dependency runs both ways
-    # (mail raises triage alerts here; this sends through mail); resolving late breaks the cycle.
     notifications = NotificationService(
         ctx.engine,
         ctx.vault,
-        channels=default_channels(
-            lambda: ctx.services.get(MailService),
-            ctx.services.get(SettingsStore),
-            ctx.vault,
-        ),
+        channels=default_channels(ctx.services.get(SettingsStore), ctx.vault),
     )
     await ctx.lifecycle.start("notifications", start=notifications.start, stop=notifications.stop)
     conversations.set_save_failed_listener(save_failure_reporter(notifications))

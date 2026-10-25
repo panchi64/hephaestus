@@ -54,8 +54,8 @@ from services.permissions import (
 )
 from services.tool_policy import permission_disabled_tools
 from services.tool_sensitivity import (
-    SENSITIVITY_CLASSES,
     Sensitivity,
+    classified_names,
     declared_sensitivity,
     sensitivity_of,
 )
@@ -97,7 +97,7 @@ SELF_MARKED_WRITE = "skills_edit"
 
 
 def _classified_names() -> set[str]:
-    return {name for names in SENSITIVITY_CLASSES.values() for name in names}
+    return {name for names in classified_names().values() for name in names}
 
 
 class TestTheKnobs:

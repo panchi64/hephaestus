@@ -26,19 +26,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import ColumnElement, Engine, delete, or_, update
+from sqlalchemy import ColumnElement, Engine, Table, delete, or_, update
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, select
+from sqlmodel import Session, SQLModel, col, select
 
 from core.db import in_session
 from core.exceptions import InvalidInputError, NotFoundError
 from core.vault import Vault
+from models._discovery import import_all_models
 from models._fields import utcnow
-from models.conversation import Conversation
-from models.corpus import CorpusSource
 from models.project import Project
-from models.subagent import SubagentRecord
-from models.task import ScheduledTask
 from models.thread_change import ThreadChange
 from models.thread_worktree import ThreadWorktree
 from services.sandbox.gitenv import GIT_ARG_PINS, git_config_pins
@@ -49,14 +46,23 @@ from .slugs import slug_for
 #: How many times a registration picks a slug before a clash is reported.
 _SLUG_ATTEMPTS = 3
 
-#: Every entity that carries a `project_id`; there is no shared base class, and deleting a
-#: project must unfile all of them. `tests/test_projects.py` pins this against the schema.
-SCOPED_MODELS: tuple[type[Conversation | ScheduledTask | CorpusSource | SubagentRecord], ...] = (
-    Conversation,
-    ScheduledTask,
-    CorpusSource,
-    SubagentRecord,
-)
+#: Rows of a deleted project that go with it rather than being unfiled: neither a worktree
+#: nor a recorded change of a gone project is usable.
+_DROPPED_WITH_PROJECT = (ThreadWorktree, ThreadChange)
+
+
+def scoped_tables() -> list[Table]:
+    """Every table whose rows are unfiled when their project is deleted.
+
+    Read off the schema rather than listed, so a feature's own `project_id` table can't be
+    forgotten and orphaned on the next delete."""
+    import_all_models()
+    dropped = {model.__tablename__ for model in _DROPPED_WITH_PROJECT}
+    return [
+        table
+        for table in SQLModel.metadata.sorted_tables
+        if "project_id" in table.c and table.name not in dropped
+    ]
 
 
 def visible_project_ids(active: str | None) -> tuple[str | None, ...]:
@@ -382,14 +388,11 @@ class ProjectStore:
         row = await self._row(owner_id, project_id)
 
         def work(session: Session) -> None:
-            for model_cls in SCOPED_MODELS:
+            for table in scoped_tables():
                 _ = session.exec(
-                    update(model_cls)
-                    .where(col(model_cls.project_id) == row.id)
-                    .values(project_id=None)
+                    update(table).where(table.c.project_id == row.id).values(project_id=None)
                 )
-            # Neither a worktree nor a recorded change of a deleted project is usable.
-            for gone in (ThreadWorktree, ThreadChange):
+            for gone in _DROPPED_WITH_PROJECT:
                 _ = session.exec(delete(gone).where(col(gone.project_id) == row.id))
             stored = session.get(Project, row.id)
             if stored is not None:

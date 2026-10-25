@@ -21,9 +21,9 @@ from services.tool_policy import (
     set_tool_enabled,
 )
 from services.tool_sensitivity import (
-    SENSITIVITY_CLASSES,
     UNCLASSIFIED,
     Sensitivity,
+    classified_names,
     sensitivity_of,
     tools_above,
 )
@@ -40,7 +40,7 @@ def _catalog_names() -> set[str]:
 
 
 def _classified() -> set[str]:
-    return {name for names in SENSITIVITY_CLASSES.values() for name in names}
+    return {name for names in classified_names().values() for name in names}
 
 
 class TestEveryToolIsClassified:
@@ -64,13 +64,13 @@ class TestEveryToolIsClassified:
         assert not set(CHASSIS_TOOLS) & _catalog_names()
 
     def test_no_tool_is_in_two_classes(self):
-        total = sum(len(names) for names in SENSITIVITY_CLASSES.values())
+        total = sum(len(names) for names in classified_names().values())
         assert total == len(_classified())
 
     def test_every_class_is_used(self):
         # A class nothing carries is a distinction the system does not actually make.
-        assert all(names for names in SENSITIVITY_CLASSES.values())
-        assert set(SENSITIVITY_CLASSES) == set(Sensitivity)
+        assert all(names for names in classified_names().values())
+        assert set(classified_names()) == set(Sensitivity)
 
 
 class TestTheClassesAgreeWithTheExistingMarkings:
@@ -143,7 +143,7 @@ class TestEscalation:
 
     def test_tools_above_read_is_everything_that_changes_something(self):
         above = tools_above(Sensitivity.READ)
-        assert _classified() - above == SENSITIVITY_CLASSES[Sensitivity.READ]
+        assert _classified() - above == classified_names()[Sensitivity.READ]
         assert "files_read_file" not in above
         assert "files_write_file" in above
 
@@ -161,7 +161,7 @@ class TestPlanNarrowsTheCatalog:
 
     def test_plan_keeps_every_read(self):
         withheld = permission_disabled_tools("plan")
-        assert not withheld & SENSITIVITY_CLASSES[Sensitivity.READ]
+        assert not withheld & classified_names()[Sensitivity.READ]
 
     def test_plan_keeps_the_two_surfaces_it_ends_with(self):
         # The one exemption. A read-only turn that could not record what it decided would

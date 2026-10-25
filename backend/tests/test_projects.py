@@ -21,7 +21,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import Engine
-from sqlmodel import Session, SQLModel, select
+from sqlmodel import Session, select
 
 from core.db import in_session, init_db, make_engine
 from core.exceptions import InvalidInputError, NotFoundError
@@ -33,7 +33,7 @@ from models.thread_change import ThreadChange
 from models.thread_worktree import ThreadWorktree
 from routes.deps import app_state
 from services.projects import ProjectStore, project_clause, visible_project_ids
-from services.projects.store import SCOPED_MODELS
+from services.projects.store import scoped_tables
 from services.settings_store import SettingsStore
 from tests._helpers import client_app
 from tests._json import arr, json_body, json_list, obj, s
@@ -279,22 +279,16 @@ class TestWorkspaceRootsAreMemoised:
 class TestDeletingAProject:
     """Deleting a project deletes a **label**, not the work filed under it."""
 
-    async def test_every_scoped_model_is_listed(self):
-        # The unfiling below walks `SCOPED_MODELS` by hand — there is no shared base
-        # class to derive it from. Another scoped entity that forgets to join the tuple
-        # would have its rows orphaned on the next project delete, silently and
-        # permanently, so the list is checked against the live schema instead.
-        def descendants(cls: type[SQLModel]) -> set[type[SQLModel]]:
-            direct = set(cls.__subclasses__())
-            return direct.union(*(descendants(sub) for sub in direct))
-
-        scoped = {
-            cls
-            for cls in descendants(SQLModel)
-            if getattr(cls, "__tablename__", None) and "project_id" in cls.model_fields
-        }
+    async def test_every_project_scoped_table_is_unfiled(self):
+        names = {table.name for table in scoped_tables()}
+        assert {
+            Conversation.__tablename__,
+            ScheduledTask.__tablename__,
+            CorpusSource.__tablename__,
+            "subagent_records",
+        } <= names
         # A thread's worktree and its changes to the folder go with the project.
-        assert scoped == {*SCOPED_MODELS, ThreadWorktree, ThreadChange}
+        assert not names & {ThreadWorktree.__tablename__, ThreadChange.__tablename__}
 
     async def test_its_rows_are_unfiled_rather_than_orphaned(self, tmp_path: Path):
         store = await _store(tmp_path)

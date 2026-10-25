@@ -42,7 +42,7 @@ from core.serde import parse_json
 from core.vault import Vault, VaultLocked
 from models._fields import utcnow
 from models.mail import AUTH_OAUTH, MailAccount
-from services.credential_store import CredentialStore
+from services.credential_store import CredentialStore, ServiceInfo
 from services.shapes import as_dict, as_number, as_str
 
 from .errors import MailAuthError, MailUnavailableError
@@ -62,9 +62,34 @@ class OAuthProvider:
     authorize_url: str
     token_url: str
     scopes: tuple[str, ...]
-    # The `KNOWN_SERVICES` id whose stored key is this provider's client secret. The
+    # The `OAUTH_CLIENT_SERVICES` id whose stored key is this provider's client secret. The
     # client id is not a secret and is held beside it in the account's config.
     credential_service: str
+
+
+#: The OAuth *client* registrations mail reads a stored secret for, one per install rather
+#: than per mailbox. The rotating per-account token bundle is a different secret, sealed on
+#: the account row (`MailAccount.secret_enc`).
+OAUTH_CLIENT_SERVICES: tuple[ServiceInfo, ...] = (
+    ServiceInfo(
+        "google_oauth",
+        "Google (OAuth client)",
+        (
+            "Gmail accounts — the client secret of your Google OAuth app, used to obtain and "
+            "refresh each connected mailbox's access."
+        ),
+        "https://console.cloud.google.com/apis/credentials",
+    ),
+    ServiceInfo(
+        "microsoft_oauth",
+        "Microsoft (OAuth client)",
+        (
+            "Outlook / Microsoft 365 accounts — the client secret of your Entra app "
+            "registration, used to obtain and refresh each connected mailbox's access."
+        ),
+        "https://entra.microsoft.com/",
+    ),
+)
 
 
 PROVIDERS: dict[str, OAuthProvider] = {

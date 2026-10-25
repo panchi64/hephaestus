@@ -25,9 +25,10 @@ kinds of reach, not degrees of danger:
   later approval can take back, which is why it is its own class and not an external read.
 
 **Why the names are written out.** ``tools/`` sits above ``services/`` in the dependency
-order, so walking the live catalog from here would invert it. The literal is not left to rot:
-``tests/test_tool_sensitivity.py`` pins it against the catalog a real run resolves, in both
-directions, so a renamed tool fails a test rather than silently losing its class.
+order, so walking the live catalog from here would invert it. Core's tools are listed
+below; a feature's are declared on its manifest (``FeatureManifest.tool_sensitivity``).
+``tests/test_tool_sensitivity.py`` pins both against the catalog a real run resolves, in
+both directions, so a renamed tool fails a test rather than silently losing its class.
 
 **Why an unclassified name is treated as an external effect.** The catalog is not closed:
 ``external_{slug}_{tool}`` names come from the operator's own MCP servers and connectors,
@@ -41,6 +42,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
+
+from core.declarations import DeclaredTable
 
 
 class Sensitivity(StrEnum):
@@ -130,9 +133,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "files_list_directory",
             "files_read_file",
             "files_search_files",
-            "mail_list_accounts",
-            "mail_list_messages",
-            "mail_read",
             "memory_audit",
             "memory_list",
             "memory_open",
@@ -145,7 +145,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "plugins_read",
             "project_active",
             "project_list",
-            "routines_list",
             # Reading the status and output of a command someone else started. Starting
             # and stopping one are execution; asking what it printed is not.
             "shell_check_command",
@@ -170,10 +169,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "files_create_directory",
             "files_edit_file",
             "files_write_file",
-            # Sealed in this installation's own database and shown to the operator — the
-            # draft never reaches the mail server, which is the whole point of preferring
-            # it over `mail_reply`.
-            "mail_draft_reply",
             # Both delete, so both also gate themselves on every call.
             "memory_consolidate",
             "memory_forget",
@@ -201,10 +196,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "agents_discard",
             # A plugin an agent writes is a draft: it runs only through `plugins_test`.
             "plugins_write",
-            # A routine an agent drafts never fires until the operator approves it;
-            # rewriting or deleting an approved one is gated on the tool itself.
-            "routines_delete",
-            "routines_write",
             "skills_create",
             "skills_edit",
             "tasks_update_statuses",
@@ -240,8 +231,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # Both are reachable at every level all the same (`permissions.COORDINATION_TOOLS`):
             # a spawned agent runs at its spawner's level, so each of its acts is held there.
             "agents_message",
-            # Starts a routine's agent turn, with its pre-authorizations, after this one.
-            "routines_run_now",
         }
     ),
     Sensitivity.EXTERNAL_EFFECT: frozenset(
@@ -262,10 +251,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # when it is called, and everything the box holds can once it has been —
             # which is the effect, and it is on the outside.
             "code_request_egress",
-            # Reversible, and still on the far side of the operator's mail server.
-            "mail_mark",
-            "mail_reply",
-            "mail_send",
         }
     ),
     Sensitivity.SECRET: frozenset(
@@ -291,10 +276,31 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
 CHASSIS_TOOLS: Mapping[str, Sensitivity] = {"run_code": Sensitivity.READ}
 
 
-_BY_NAME: Mapping[str, Sensitivity] = {
-    **{name: sensitivity for sensitivity, names in SENSITIVITY_CLASSES.items() for name in names},
-    **CHASSIS_TOOLS,
-}
+_BY_NAME: DeclaredTable[str, Sensitivity] = DeclaredTable(
+    "tool sensitivity",
+    {
+        **{
+            name: sensitivity
+            for sensitivity, names in SENSITIVITY_CLASSES.items()
+            for name in names
+        },
+        **CHASSIS_TOOLS,
+    },
+)
+
+
+def declare_sensitivity(rows: Mapping[str, Sensitivity]) -> None:
+    """Classify a feature's own tools (``FeatureManifest.tool_sensitivity``)."""
+    _BY_NAME.declare(rows)
+
+
+def classified_names() -> dict[Sensitivity, frozenset[str]]:
+    """Every classified catalog name, core and declared, grouped by class (no chassis tools)."""
+    grouped: dict[Sensitivity, set[str]] = {s: set() for s in Sensitivity}
+    for name, sensitivity in _BY_NAME.items():
+        if name not in CHASSIS_TOOLS:
+            grouped[sensitivity].add(name)
+    return {s: frozenset(names) for s, names in grouped.items()}
 
 
 def sensitivity_of(name: str) -> Sensitivity:
@@ -305,7 +311,8 @@ def sensitivity_of(name: str) -> Sensitivity:
     time. The fallback is the conservative direction, so an unclassified tool is withheld
     from a read-only thread rather than admitted to one.
     """
-    return _BY_NAME.get(name, UNCLASSIFIED)
+    found = _BY_NAME.get(name)
+    return found if found is not None else UNCLASSIFIED
 
 
 def classified(name: str) -> bool:

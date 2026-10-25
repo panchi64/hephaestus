@@ -29,15 +29,17 @@ from routes import tasks as tasks_routes
 from routes.chat import WallClockOverride, compose_turn
 from routes.chat.thread_composer import ThreadComposer
 from routes.deps import OPERATOR_ID
-from runs import Run, RunRegistry, RunStatus
+from runs import Run, RunKind, RunRegistry, RunStatus
 from services.agents import AgentCatalog
 from services.approval_grants import ONCE_ONLY_TOOLS, ApprovalGrantStore
 from services.conversations import ConversationStore
+from services.corpus import CorpusIndex
 from services.notifications import NotificationService
 from services.offline import OfflineModeService
 from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
 from services.routines import RoutineStore, ScheduleNaturalLanguage
+from services.routines.corpus import SOURCE_KIND, SURFACE_ID, routine_runs_adapter
 from services.scheduler import (
     ScheduledTaskView,
     SchedulerService,
@@ -48,7 +50,9 @@ from services.settings_store import (
     SettingsStore,
     get_context_thresholds,
 )
+from services.tool_sensitivity import Sensitivity
 from services.uploads import UploadStore
+from tools.platform import PlatformSource
 from tools.routines import GATED_TOOLS as ROUTINES_GATED
 from tools.routines import routines_toolset
 
@@ -59,6 +63,16 @@ _TASK_SUMMARY_MAX_CHARS = 280
 
 #: The kind a routine's run is submitted under (``runs/lanes.py``).
 TASK_KIND = "task"
+
+_SENSITIVITY = {
+    "routines_list": Sensitivity.READ,
+    # A routine an agent drafts never fires until the operator approves it; rewriting or
+    # deleting an approved one is gated on the tool itself.
+    "routines_delete": Sensitivity.WORKSPACE_WRITE,
+    "routines_write": Sensitivity.WORKSPACE_WRITE,
+    # Starts a routine's agent turn, with its pre-authorizations, after this one.
+    "routines_run_now": Sensitivity.HOST_EXEC,
+}
 
 # `TaskRun.outcome` by the Run status it settled at.
 _TASK_OUTCOME_BY_RUN_STATUS = {
@@ -80,6 +94,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     offline = services.get(OfflineModeService)
     agents = services.get(AgentCatalog)
     routines = RoutineStore(ctx.engine, ctx.vault, agents)
+    services.get(CorpusIndex).register(routine_runs_adapter(ctx.engine, ctx.vault))
     composer = ThreadComposer(
         agents=agents,
         model_registry=registry,
@@ -387,5 +402,11 @@ MANIFEST = FeatureManifest(
     # The webhook trigger is auth-exempt: the per-task unguessable path token is the
     # credential. Every other `/tasks` route stays behind the gate.
     public_prefixes=("/tasks/hooks",),
+    tool_sensitivity=_SENSITIVITY,
+    # Queues like interactive work in slots of its own, with nobody in front of it.
+    run_kinds={TASK_KIND: RunKind("routine", chat_turn=True)},
+    # A reminder is worthless if it only lands somewhere the operator isn't looking.
+    out_of_band_kinds=frozenset({"reminder"}),
+    platform_sources={"routines": PlatformSource((SOURCE_KIND,), SURFACE_ID)},
     build=_build,
 )

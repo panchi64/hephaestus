@@ -1,9 +1,9 @@
 """Outbound service credentials — the store behind the Service Keys section.
 
-Holds the API keys the system calls *outbound* services with (today, the mail OAuth
-clients), sealed with the vault exactly like the model-endpoint / search-provider
-`api_key`. The set of services is a **static catalog** (`KNOWN_SERVICES`) — the system
-declares which integrations it has; the store only holds a key per known service. A read
+Holds the API keys the system calls *outbound* services with, sealed with the vault exactly
+like the model-endpoint / search-provider `api_key`. The set of services is a **declared
+catalog**: each feature declares the integrations it reads a key for
+(``FeatureManifest.credentials``); the store only holds a key per declared service. A read
 returns ``None`` while the vault is locked so callers degrade to their env fallback
 rather than crashing at boot.
 
@@ -13,7 +13,7 @@ Raises domain errors only (`NotFoundError`); the route maps to HTTP.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -21,6 +21,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from core.db import in_session
+from core.declarations import DeclaredTable
 from core.exceptions import NotFoundError
 from core.vault import Vault, VaultLocked
 from models.service_credential import ServiceCredential
@@ -38,43 +39,19 @@ class ServiceInfo:
     docs_url: str
 
 
-# The outbound services the system integrates with. Display metadata lives here (not the
-# DB); a key is stored per id. Extend this as new keyed integrations land.
-#
-# A service is declared here only while something reads its key. Three entries were
-# removed when the surfaces that used them went (the model-quality rankings behind the
-# Cookbook's recommendations, and the HuggingFace token that lifted the download rate
-# limit) — a Service Keys row offering a credential nothing consumes is a settings
-# surface lying about what the system does. Removing the declaration alone would have
-# stranded any stored key: `status()` returns whatever rows exist, but the UI renders one
-# row per *declared* service, so the operator could neither see it nor clear it. The rows
-# are deleted with the declaration, by migration `b7ad41c9e208`.
-KNOWN_SERVICES: tuple[ServiceInfo, ...] = (
-    # The two OAuth *client* registrations mail uses (`EMAIL-1`). One per install, not
-    # per mailbox — which is exactly what this static catalog models. The rotating
-    # per-account token bundle is a different secret and lives sealed on the account row
-    # (`MailAccount.secret_enc`), because this table cannot express several accounts,
-    # refresh tokens, or expiry.
-    ServiceInfo(
-        "google_oauth",
-        "Google (OAuth client)",
-        (
-            "Gmail accounts — the client secret of your Google OAuth app, used to obtain and "
-            "refresh each connected mailbox's access."
-        ),
-        "https://console.cloud.google.com/apis/credentials",
-    ),
-    ServiceInfo(
-        "microsoft_oauth",
-        "Microsoft (OAuth client)",
-        (
-            "Outlook / Microsoft 365 accounts — the client secret of your Entra app "
-            "registration, used to obtain and refresh each connected mailbox's access."
-        ),
-        "https://entra.microsoft.com/",
-    ),
-)
-_SERVICE_IDS = frozenset(s.id for s in KNOWN_SERVICES)
+# Declared only while something reads the key: the UI renders one row per declared
+# service, so a declaration with no consumer is a settings row lying about the system, and
+# a stored key whose declaration is gone can't be seen or cleared (retired rows are deleted
+# by migration, as `b7ad41c9e208` did).
+_SERVICES: DeclaredTable[str, ServiceInfo] = DeclaredTable("outbound services")
+
+
+def declare_services(services: Iterable[ServiceInfo]) -> None:
+    _SERVICES.declare({service.id: service for service in services})
+
+
+def known_services() -> tuple[ServiceInfo, ...]:
+    return tuple(_SERVICES[service_id] for service_id in _SERVICES)
 
 
 class CredentialStore:
@@ -82,10 +59,6 @@ class CredentialStore:
         self._engine: Engine = engine
         self._vault: Vault = vault
         self._on_change: list[Callable[[], None]] = []
-
-    @staticmethod
-    def known_services() -> tuple[ServiceInfo, ...]:
-        return KNOWN_SERVICES
 
     def on_change(self, callback: Callable[[], None]) -> None:
         """Register a callback fired after any credential write (set/clear) — so a
@@ -112,7 +85,7 @@ class CredentialStore:
 
     async def set_key(self, owner_id: str, service: str, api_key: str) -> None:
         """Seal and upsert the key for a known service. An empty key clears it."""
-        if service not in _SERVICE_IDS:
+        if service not in _SERVICES:
             raise NotFoundError(f"unknown service {service!r}")
         if not api_key:
             await self.clear_key(owner_id, service)
@@ -138,7 +111,7 @@ class CredentialStore:
         self._fire_change()
 
     async def clear_key(self, owner_id: str, service: str) -> None:
-        if service not in _SERVICE_IDS:
+        if service not in _SERVICES:
             raise NotFoundError(f"unknown service {service!r}")
 
         def work(session: Session) -> None:

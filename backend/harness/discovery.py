@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from graphlib import TopologicalSorter
 
 from harness import manifests as manifests_pkg
+from harness.declarations import declare
 from harness.manifest import FeatureManifest
 
 
@@ -41,6 +42,7 @@ def order_manifests(manifests: Iterable[FeatureManifest]) -> tuple[FeatureManife
 
 
 def discover_manifests() -> tuple[FeatureManifest, ...]:
+    """Every manifest, ordered, with its static declarations pushed into core's tables."""
     found: list[FeatureManifest] = []
     for info in pkgutil.iter_modules(manifests_pkg.__path__):
         if info.name.startswith("_"):
@@ -50,4 +52,6 @@ def discover_manifests() -> tuple[FeatureManifest, ...]:
         if not isinstance(manifest, FeatureManifest):
             raise TypeError(f"harness/manifests/{info.name}.py does not expose a MANIFEST")
         found.append(manifest)
-    return order_manifests(found)
+    ordered = order_manifests(found)
+    declare(ordered)
+    return ordered
