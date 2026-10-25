@@ -32,7 +32,7 @@ from services import reasoning
 from services.endpoint_spec import EndpointSpec
 from services.gated_model import EndpointGatedModel
 from services.providers import get_provider
-from services.shapes import as_dict, as_list
+from services.shapes import as_dict, as_list, dict_list
 
 logger = logging.getLogger(__name__)
 
@@ -434,6 +434,19 @@ def _native_listing_url(base_url: str) -> str | None:
     if not trimmed.endswith("/v1"):
         return None
     return trimmed[: -len("/v1")] + _LMSTUDIO_NATIVE
+
+
+async def lmstudio_listing(
+    base_url: str, api_key: str | None = None, *, client: httpx.AsyncClient | None = None
+) -> dict[str, Mapping[str, object]]:
+    """LM Studio's native model rows keyed by id, carrying `type` and `state`; empty for
+    any other server or on failure."""
+    url = _native_listing_url(base_url)
+    if url is None:
+        return {}
+    payload = as_dict(await _get_json(url, api_key, client=client))
+    rows = dict_list(payload.get("data")) if payload else []
+    return {model_id: row for row in rows if isinstance(model_id := row.get("id"), str)}
 
 
 async def _get_json(
