@@ -5,14 +5,18 @@ from __future__ import annotations
 
 from core.api_scopes import ScopeClaim
 from harness.manifest import DormantCategory, FeatureManifest, FeatureRuntime, HarnessContext
+from routes import plugin_bridge as plugin_bridge_routes
 from routes import plugin_ui as plugin_ui_routes
 from routes import plugin_windows as plugin_windows_routes
 from routes import plugins as plugins_routes
 from routes import plugins_builtin as plugins_builtin_routes
 from services.agents import AgentCatalog
 from services.plugins import PluginRuntime, PluginSecretStore, PluginStore
+from services.plugins.bridge.gate import BridgeGate
+from services.plugins.storage import PluginStorage
 from services.plugins.windows import WindowSessions
 from services.revisions import RevisionStore
+from services.settings_store import SettingsStore
 from services.vm import ConversationMachines
 from services.vm.target import machine_prefix
 from tools.plugins import GATED_TOOLS, plugins_toolset
@@ -34,10 +38,15 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     windows = WindowSessions()
     store.on_change(windows.revoke)
     ctx.vault.register_on_lock(windows.clear)
+    bridge = (
+        windows,
+        PluginStorage(ctx.engine, ctx.vault),
+        BridgeGate(ctx.services.get(SettingsStore)),
+    )
     ctx.services.get(AgentCatalog).contribute(store.agents)
     services = (store, secrets) if runtime is None else (store, secrets, runtime)
     return FeatureRuntime(
-        services=(*services, windows), capabilities=services, state={"plugins": store}
+        services=(*services, *bridge), capabilities=services, state={"plugins": store}
     )
 
 
@@ -50,6 +59,7 @@ MANIFEST = FeatureManifest(
     routers=(
         plugins_builtin_routes.router,
         plugin_windows_routes.router,
+        plugin_bridge_routes.router,
         plugins_routes.router,
         plugin_ui_routes.router,
     ),

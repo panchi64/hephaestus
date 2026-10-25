@@ -17,8 +17,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast, override
 
-from jsonschema import Draft202012Validator
-from jsonschema.protocols import Validator
 from pydantic import JsonValue
 from pydantic_ai import AbstractToolset, FunctionToolset, ModelRetry, RunContext, Tool
 from pydantic_ai.exceptions import ApprovalRequired
@@ -35,6 +33,7 @@ from services.plugins import (
     PluginStore,
     PluginTool,
     PluginValidationError,
+    argument_problem,
     plugin_secrets,
     run_plugin_tool,
 )
@@ -296,7 +295,7 @@ class PluginsToolset(WrapperToolset[RunDeps]):
         runtime = ctx.deps.caps.get_optional(PluginRuntime)
         if store is None or runtime is None:
             raise ModelRetry(render_tool_error(f"`{name}` is no longer available"))
-        problem = _first_problem(Draft202012Validator(route.tool.parameters), tool_args)
+        problem = argument_problem(route.tool, tool_args)
         if problem is not None:
             raise ModelRetry(
                 render_tool_error(
@@ -344,9 +343,3 @@ def _no_such_plugin(name: str) -> ModelRetry:
             hints=["`platform_search` over the `plugins` source lists the published ones"],
         )
     )
-
-
-def _first_problem(validator: Validator, args: JsonValue) -> str | None:
-    """The message of the first schema violation in ``args``, in a stable order."""
-    errors = sorted(validator.iter_errors(args), key=str)
-    return errors[0].message if errors else None

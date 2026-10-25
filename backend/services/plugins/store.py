@@ -19,7 +19,7 @@ from sqlmodel import Session, col, select
 from core.db import in_session
 from core.exceptions import NotFoundError, PluginValidationError
 from core.vault import Vault
-from models.plugin import Plugin, PluginSecret
+from models.plugin import Plugin, PluginSecret, PluginStorageEntry
 from services.agents.definition import AgentDefinition
 from services.revisions import Bundle, RevisionStore, decode_bundle, encode_bundle, records
 
@@ -327,6 +327,7 @@ class PluginStore:
 
 def _delete(session: Session, row: Plugin) -> None:
     _ = session.exec(delete(PluginSecret).where(col(PluginSecret.plugin_id) == row.id))
+    _ = session.exec(delete(PluginStorageEntry).where(col(PluginStorageEntry.plugin_id) == row.id))
     session.delete(row)
 
 

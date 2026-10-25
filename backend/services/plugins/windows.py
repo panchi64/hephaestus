@@ -9,6 +9,7 @@ were minted for, and are dropped when the plugin changes or the vault locks.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -28,12 +29,24 @@ class WindowSession:
     permissions: frozenset[str]
     #: The window's files, by path under ``ui/``.
     files: Mapping[str, bytes]
+    #: Names the published version it was opened on, so what the operator allows one
+    #: version is not carried over to code written later.
+    digest: str
     page_token: str
     bridge_token: str
 
     @property
     def src(self) -> str:
         return f"/plugin-ui/{self.page_token}/{self.window.entry.removeprefix(UI_FOLDER)}"
+
+
+def bundle_digest(files: Mapping[str, bytes]) -> str:
+    digest = hashlib.sha256()
+    for path, blob in sorted(files.items()):
+        for part in (path.encode(), blob):
+            digest.update(len(part).to_bytes(8, "big"))
+            digest.update(part)
+    return digest.hexdigest()
 
 
 class WindowSessions:
@@ -65,6 +78,7 @@ class WindowSessions:
                 for path, blob in files.items()
                 if path.startswith(UI_FOLDER)
             },
+            digest=bundle_digest(files),
             page_token=secrets.token_urlsafe(32),
             bridge_token=secrets.token_urlsafe(32),
         )

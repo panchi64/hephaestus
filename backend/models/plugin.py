@@ -38,6 +38,23 @@ class Plugin(Table, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class PluginStorageEntry(Table, table=True):
+    """One key a plugin's windows saved through the bridge; its JSON value is sealed."""
+
+    __tablename__: ClassVar[str] = "plugin_storage"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("plugin_id", "key", name="uq_plugin_storage_plugin_key"),
+    )
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    owner_id: str = Field(index=True)
+    plugin_id: str = Field(index=True)
+    key: str
+    value_enc: str
+    size_bytes: int
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class PluginSecret(Table, table=True):
     __tablename__: ClassVar[str] = "plugin_secrets"
     __table_args__: ClassVar[TableArgs] = (

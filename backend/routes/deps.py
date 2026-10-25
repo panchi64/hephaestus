@@ -170,12 +170,17 @@ class AppState(State):
 type Source = FastAPI | Request | WebSocket
 
 
-def app_state(source: Source) -> AppState:
-    """The typed ``app.state`` of the app behind a request, socket or the app itself."""
+def app_of(source: Source) -> FastAPI:
+    """The app behind a request, socket or the app itself."""
     app = source if isinstance(source, FastAPI) else cast(object, source.app)
     if not isinstance(app, FastAPI):
         raise RuntimeError("request is not served by a FastAPI app")
-    state = app.state
+    return app
+
+
+def app_state(source: Source) -> AppState:
+    """The typed ``app.state`` of the app behind a request, socket or the app itself."""
+    state = app_of(source).state
     if not isinstance(state, AppState):
         raise RuntimeError("app.state was not built by create_app")
     return state

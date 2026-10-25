@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+from jsonschema import Draft202012Validator
+from jsonschema.protocols import Validator
+from pydantic import JsonValue
+
 from core.diagnostics import render_tool_error
 from core.untrusted import wrap_untrusted
 from services.revisions import Bundle
@@ -17,6 +21,16 @@ _NO_VM = render_tool_error(
     "plugins run in a VM, which is not running right now",
     hints=["carry on without this plugin, and tell the operator if the task needs it"],
 )
+
+
+def argument_problem(tool: PluginTool, args: JsonValue) -> str | None:
+    """The first way ``args`` breaks the tool's schema, in a stable order; None if none."""
+    return _first_problem(Draft202012Validator(tool.parameters), args)
+
+
+def _first_problem(validator: Validator, args: JsonValue) -> str | None:
+    errors = sorted(validator.iter_errors(args), key=str)
+    return errors[0].message if errors else None
 
 
 async def plugin_secrets(

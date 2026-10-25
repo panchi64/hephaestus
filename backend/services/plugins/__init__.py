@@ -2,7 +2,7 @@
 
 from core.exceptions import PluginValidationError
 
-from .calls import plugin_secrets, run_plugin_tool
+from .calls import argument_problem, plugin_secrets, run_plugin_tool
 from .manifest import (
     MANIFEST_FILE,
     PluginManifest,
@@ -29,6 +29,7 @@ __all__ = [
     "PluginView",
     "SecretStatus",
     "SecretValue",
+    "argument_problem",
     "parse_manifest",
     "plugin_secrets",
     "run_plugin_tool",
