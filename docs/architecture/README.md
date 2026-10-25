@@ -111,8 +111,9 @@ Backend lives under `backend/`, parallel to `frontend/`.
 ```
 backend/
   app.py            # FastAPI assembly: middleware, auth, router registration, run registry on app state
-  harness/          # app-assembly substrate: the lifecycle registry (start/stop order for all background
-                    #   work); feature manifests + discovery land here as they arrive
+  harness/          # app-assembly substrate: the lifecycle registry, feature manifests, discovery,
+                    #   and the built-in plugin switches
+  plugins/          # built-in plugins (mail, routines, discord), each a manifest with plugin metadata
   pyproject.toml    # uv-managed
   core/             # foundation: config, db engine + schema/migrations, auth, security/crypto, exceptions
   models/           # ORM entities + Pydantic schemas (the data contracts)
@@ -147,4 +148,4 @@ Deep research is not a different skeleton. It is the `research` platform skill t
 
 Document streaming with auto-promotion (`AE-6.2/6.4`, `DOC-3`) and attachment/upload ingestion (`CHAT-2`, `UP-*`) are deferred until their features are in scope; the foundation does not depend on them.
 
-The foundation is built: Pillars I–III, approval, memory, auth, at-rest encryption, the model registry and the per-conversation VM for commands and code live under `backend/`. What is built is what the tests hold. Detail docs written so far: [`40-tools-and-toolsets.md`](./40-tools-and-toolsets.md) (the gating stack, VM isolation, scheduled-task pre-authorization, external-tool gating). Remaining detail docs (`10-run-substrate.md`, `20-event-protocol.md`, `30-agent-engine.md`, `50-capabilities.md`, `60-data-model.md`) are still to be written.
+The foundation is built: Pillars I–III, approval, memory, auth, at-rest encryption, the model registry and the per-conversation VM for commands and code live under `backend/`. What is built is what the tests hold. Detail docs written so far: [`40-tools-and-toolsets.md`](./40-tools-and-toolsets.md) (the gating stack, VM isolation, scheduled-task pre-authorization, external-tool gating) and [`45-plugins.md`](./45-plugins.md) (built-in and sandboxed plugins, contribution types, plugin windows and their bridge, messaging channels). Remaining detail docs (`10-run-substrate.md`, `20-event-protocol.md`, `30-agent-engine.md`, `50-capabilities.md`, `60-data-model.md`) are still to be written.

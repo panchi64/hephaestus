@@ -117,9 +117,9 @@ Two deliberate omissions:
 | `document` | `create`, `edit` | `services/documents` (versioned library, `DOC-1`/`DOC-2`) | ✅ built |
 | `attachments` | `provision` | `services/uploads` (stage a file into the thread's scratch) | ✅ built |
 | `skills` | `open`, `create`, `edit` | `services/skills` (Agent Skills bundles, `SKILL-1..3`) | ✅ built |
-| `plugins` | `write`, `read`, `test`, and each published plugin's tools as `plugins_<plugin>_<tool>` | `services/plugins`: drafts the operator publishes, each tool call run in a fresh VM | ✅ built |
-| `routines` | `write`, `list`, `delete`, `run_now` | `services/routines`: drafts the operator approves, each run on time in a new thread by its agent | ✅ built |
-| `mail`, … | — | land with their `services/` capability | ⬜ pending |
+| `plugins` | `write`, `read`, `test`, `open_window`, and each published plugin's tools as `plugins_<plugin>_<tool>` | `services/plugins`: drafts the operator publishes, each tool call run in a fresh VM; window-only plugins go live as written ([`45-plugins.md`](./45-plugins.md)) | ✅ built |
+| `routines` | `write`, `list`, `delete`, `run_now` | the Routines built-in plugin (`plugins/routines/`): drafts the operator approves, each run on time in a new thread by its agent | ✅ built |
+| `mail` | `list_accounts`, `list_messages`, `read`, `draft_reply`, `reply`, `send`, `mark` | the Mail built-in plugin (`plugins/mail/`) | ✅ built |
 | MCP servers, integrations | — | external (`MCP-*`, `INTEG-*`) | ⬜ pending (gating designed — §4.4) |
 
 Naming is `category_tool` (the `.prefixed(name)` step), so `recall` is offered as `memory_recall` — stable, collision-free names the operator's enable/disable list and the event stream both reference.
@@ -133,6 +133,8 @@ The catalog is lean and unfiltered: no runtime relevance step decides which tool
 ## 4. Sensitivity & gating — the four-decision story
 
 `AE-3` divides tools by **sensitivity**: powerful or hard-to-reverse capabilities (host execution, host fs-write, email-send, model serve/stop, config, vault, *and* externally-registered tools) are **approval-gated when the agent invokes them**. Crucially, **gating is not a filter in the stack above** — a sensitive tool is *present* in the catalog; it simply **pauses for the operator before it executes**. That pause is one mechanism that the sections below build on.
+
+Each tool's class lives in one table, `services/tool_sensitivity.py`. Core's own tools are listed there; a built-in plugin declares its tools' classes on its manifest (`tool_sensitivity`), merged at discovery, so the table never names a plugin's tools. A sandboxed plugin's tool carries the class its `plugin.yaml` declares, as `plugins_<plugin>_<tool>`.
 
 ### 4.1 Approval via Pydantic AI deferred tools (the base mechanism)
 
@@ -282,12 +284,12 @@ The result: access control (`AE-2` categories, `AE-3` sensitivity and enable/dis
 | Agent definitions (`agents` category, catalog, per-thread agent, tool-access gate) | ✅ built (`services/agents/`, `harness/manifests/agents.py`, `tools/agents.py`, `routes/agents.py`) — the roster's specs became `AgentDefinition`s; the enabled gate also checks `RunDeps.tool_access` |
 | Agent trees (`agents_spawn`/`message`/`list`/`read`/`stop`, depth, tree messaging, open-as-thread) | ✅ built (`harness/manifests/_subagents.py`, `_subagent_wake.py`, `tools/delegation.py`, `routes/subagents.py`) — the `subagents` category folded into `agents`; `tools/subagents.py` is gone |
 | Version history (skills, agents, plugins: history, diff, restore) | ✅ built (`services/revisions.py`, `routes/revisions.py`) |
-| Plugins (drafts, VM runtime, declared egress, secret placeholders) | ✅ built (`services/plugins/`, `tools/plugins.py`, `routes/plugins.py`) |
-| Routines (agent per routine, on-time runs in their own threads, time zones, agent drafts, natural-language schedules) | ✅ built (`services/routines/`, `tools/routines.py`, `routes/tasks.py`) |
+| Plugins (drafts, VM runtime, declared egress, secret placeholders, windows, bridge) | ✅ built (`services/plugins/`, `tools/plugins.py`, `routes/plugins.py`) — see [`45-plugins.md`](./45-plugins.md) |
+| Routines (agent per routine, on-time runs in their own threads, time zones, agent drafts, natural-language schedules) | ✅ built (the Routines built-in plugin, `plugins/routines/`) |
 | Privilege gate | 🔭 seam reserved — empty until a second user exists |
 | Relevance pre-filter | 🔭 seam reserved — deliberately omitted |
 | Scheduled-task pre-authorization | ⬜ designed, lands with `TASK-*` |
 | External-tool gating + trusted allowlist | ⬜ designed, lands with `MCP-*` / `INTEG-*` |
-| `search` / `mail` / `documents` / … categories | ⬜ land with their `services/` capability |
+| `search` / `documents` / … categories | ⬜ land with their `services/` capability |
 
 → related detail: [`30-agent-engine.md`](./30-agent-engine.md) (the meta-loop and event translation), [`50-capabilities.md`](./50-capabilities.md) (the `services/` implementations tools adapt over).
