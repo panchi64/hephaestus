@@ -53,14 +53,18 @@ function drag(
  *  and a corner grip to resize it. */
 export function PluginWindow(props: {
   win: PluginWindowState;
+  /** Its place in the stack; higher is in front. */
+  layer: number;
   top: boolean;
   onSettled: () => void;
 }): JSX.Element {
   const navigate = useNavigate();
   const [reloadKey, setReloadKey] = createSignal(0);
+  // A string source: moving or resizing the window must not open a new session, which
+  // would reload its page.
   const [session] = createResource(
-    () => [props.win.pluginId, props.win.window, reloadKey()] as const,
-    ([pluginId, win]) => openWindowSession(pluginId, win),
+    () => `${props.win.key}#${reloadKey()}`,
+    () => openWindowSession(props.win.pluginId, props.win.window),
   );
   // While dragging, the frame would swallow the pointer; a shield over it keeps it here.
   const [dragging, setDragging] = createSignal(false);
@@ -105,6 +109,7 @@ export function PluginWindow(props: {
         top: `${props.win.y}px`,
         width: `${props.win.width}px`,
         height: `${props.win.height}px`,
+        "z-index": props.layer,
       }}
       onPointerDown={focus}
     >

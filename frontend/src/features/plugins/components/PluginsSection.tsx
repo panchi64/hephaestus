@@ -11,8 +11,8 @@ export function PluginsSection(): JSX.Element {
     <LibrarySection
       directory={(nav) => (
         <div class="flex flex-col gap-6">
-          <BuiltinPluginsPanel />
           <PluginsDirectoryScreen onOpen={nav.view} />
+          <BuiltinPluginsPanel />
         </div>
       )}
       detail={(id, nav) => <PluginDetailScreen id={id} onBack={nav.back} />}

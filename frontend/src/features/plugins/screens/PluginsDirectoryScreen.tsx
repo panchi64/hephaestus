@@ -42,7 +42,7 @@ export function PluginsDirectoryScreen(props: {
   return (
     <LibraryDirectory
       title="Plugins"
-      subtitle="Tools, agents and skills that agents write. Python tools run in the conversation's VM once you review and publish them."
+      subtitle="Tools, agents, skills and small apps that agents write. Python tools run in a VM once you review and publish them; a plugin of windows alone goes live as written."
       assetId="HEPH-PLG-01.0"
       noun="plugin"
       nouns="plugins"

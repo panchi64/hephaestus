@@ -49,11 +49,11 @@ export async function fetchPluginWindows(): Promise<WindowSpec[]> {
   return (await api.get<WindowOut[]>("/plugins/windows")).map(toWindowSpec);
 }
 
-export function usePluginWindows(
-  refetchOn: () => unknown,
-): Resource<WindowSpec[]> {
-  const [data] = createResource(refetchOn, fetchPluginWindows);
-  return data;
+/** The windows on offer, and a refresh that keeps the current list until the next
+ *  one arrives. */
+export function usePluginWindows(): [Resource<WindowSpec[]>, () => void] {
+  const [data, { refetch }] = createResource(fetchPluginWindows);
+  return [data, () => void refetch()];
 }
 
 export async function openWindowSession(

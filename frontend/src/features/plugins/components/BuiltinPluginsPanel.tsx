@@ -9,7 +9,7 @@ import {
 
 function contributionSummary(plugin: BuiltinPluginOut): string {
   return Object.entries(plugin.contributions)
-    .map(([kind, items]) => `${items.length} ${kind}`)
+    .map(([kind, items]) => `${items.length} ${kind.replaceAll("_", " ")}`)
     .join(" · ");
 }
 

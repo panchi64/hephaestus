@@ -1,4 +1,13 @@
-import { createEffect, For, on, onCleanup, onMount, type JSX } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  For,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+  type JSX,
+} from "solid-js";
 import { Portal } from "solid-js/web";
 import { readLS, writeLS } from "~/lib/storage";
 import { PluginWindow } from "./PluginWindow";
@@ -63,16 +72,31 @@ export function PluginWindowLayer(): JSX.Element {
     onCleanup(() => window.removeEventListener("resize", onResize));
   });
 
+  // Rendered by key in the order they opened, never re-sorted: moving an iframe in the
+  // DOM reloads it, so raising a window changes its z-index, not its place.
+  const mounted = createMemo<string[]>((previous) => {
+    const open = pluginWindows().map((w) => w.key);
+    const kept = previous.filter((key) => open.includes(key));
+    return [...kept, ...open.filter((key) => !kept.includes(key))];
+  }, []);
+  const stacking = (key: string): number =>
+    pluginWindows().findIndex((w) => w.key === key);
+
   return (
     <Portal>
       <div class="pointer-events-none fixed inset-0 z-[45]">
-        <For each={pluginWindows()}>
-          {(win, index) => (
-            <PluginWindow
-              win={win}
-              top={index() === pluginWindows().length - 1}
-              onSettled={persist}
-            />
+        <For each={mounted()}>
+          {(key) => (
+            <Show when={pluginWindows().find((w) => w.key === key)}>
+              {(win) => (
+                <PluginWindow
+                  win={win()}
+                  layer={stacking(key) + 1}
+                  top={stacking(key) === pluginWindows().length - 1}
+                  onSettled={persist}
+                />
+              )}
+            </Show>
           )}
         </For>
       </div>
