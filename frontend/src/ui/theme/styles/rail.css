@@ -220,6 +220,24 @@
 .heph-rail-row[data-state="waiting"] .heph-rail-glyph {
   background: var(--accent-warn);
 }
+/* A checklist's states: finished (nominal), the one in hand (bright), and still ahead
+   (a hollow glyph and a dim title). */
+.heph-rail-row[data-state="done"] .heph-rail-glyph {
+  background: var(--accent-nominal);
+}
+.heph-rail-row[data-state="done"] .heph-rail-readout {
+  color: var(--accent-nominal);
+}
+.heph-rail-row[data-state="current"] .heph-rail-glyph {
+  background: var(--text-bright);
+}
+.heph-rail-row[data-state="pending"] {
+  color: var(--text-dim);
+}
+.heph-rail-row[data-state="pending"] .heph-rail-glyph {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--line-w) var(--text-dim);
+}
 .heph-rail-tag {
   padding: 3px 5px;
   background: var(--accent-warn);
