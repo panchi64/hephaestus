@@ -30,8 +30,11 @@
     "vite": "^8.3.5"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.7",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/babel__core": "^7.20.5",
     "@types/bun": "^1.4.4",
+    "babel-preset-solid": "^1.9.16",
     "eslint": "^10.13.0",
     "eslint-plugin-solid": "^0.18.1",
     "prettier": "^3.9.10",
