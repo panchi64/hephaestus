@@ -1,6 +1,6 @@
 /** Plugin windows: which ones the live plugins offer, and a session to show one. */
 import { createResource, type Resource } from "solid-js";
-import type { WindowSpec } from "~/app/plugin-windows/windowStore";
+import type { WindowSpec } from "~/lib/stores/pluginWindows";
 import { api } from "~/lib/api";
 import { apiUrl } from "~/lib/config";
 

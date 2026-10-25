@@ -44,7 +44,8 @@ class ConfirmBody(BaseModel):
 def _window(request: Request, token: str) -> WindowSession:
     window = deps.service(request, WindowSessions).bridge(token)
     if window is None:
-        raise NotFoundError("this window is closed; open it again")
+        # 410, not 404: the host reopens the window on it, and an unknown method is a 404.
+        raise HTTPException(status_code=410, detail="this window is closed; open it again")
     return window
 
 
@@ -87,6 +88,9 @@ async def confirm_call(
     request: Request, confirmation_id: str, body: ConfirmBody, token: WindowToken
 ) -> BridgeOutcome:
     """Run a call the operator allowed."""
+    # Whoever can open a window holds its bridge token, an API token included; only the
+    # operator's own session may answer for them.
+    deps.require_operator(request)
     window = _window(request, token)
     gate = deps.service(request, BridgeGate)
     pending = gate.take(window, confirmation_id)

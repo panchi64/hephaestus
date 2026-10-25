@@ -123,6 +123,25 @@ async def test_background_work_runs_only_while_switched_on():
     assert events == ["start", "stop", "start", "stop"]
 
 
+async def test_a_start_that_fails_stops_what_started_and_leaves_the_plugin_off():
+    async def fail() -> None:
+        raise RuntimeError("no socket")
+
+    async def nothing() -> None:
+        return None
+
+    store = _store()
+    plugins = BuiltinPlugins(store, [_plugin("lighthouse", default_enabled=False)])
+    await plugins.load()
+    beacon = Beacon("north")
+    await plugins.attach("lighthouse", (beacon, Background("socket", fail, nothing)))
+    with pytest.raises(RuntimeError):
+        await plugins.set_enabled("lighthouse", True)
+    assert beacon.lit == ["on:lighthouse", "off:lighthouse"]
+    assert not plugins.enabled("lighthouse")
+    assert await store.get("operator", "plugins.builtin.lighthouse.enabled") is None
+
+
 def test_an_item_of_no_registered_type_is_refused():
     with pytest.raises(TypeError):
         _ = CONTRIBUTIONS.kind_of(object())

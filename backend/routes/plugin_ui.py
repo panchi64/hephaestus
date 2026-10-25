@@ -3,8 +3,8 @@
 The token is the credential, so this prefix skips the cookie gate the way ``/previews``
 does; it stays behind the vault gate. Every response carries a sandboxing CSP without
 ``allow-same-origin``: the page runs in an opaque origin however it is opened, can load
-only the window's own files, and can reach no network. It talks to the app only through
-the message port the host hands its frame.
+only the window's own files, and cannot fetch or submit anything. CSP cannot stop the frame
+navigating itself; the host bridges only a session's first page load for that reason.
 """
 
 from __future__ import annotations

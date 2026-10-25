@@ -5,7 +5,6 @@
  *  this list. Whether a plugin is switched on is runtime state, read separately
  *  (`~/lib/stores/builtinPlugins`). */
 
-import type { NavItem } from "~/app/nav/types";
 import type { EnvelopeLabel } from "~/features/chat/envelopeLabels";
 import type { ToolEntry } from "~/features/chat/toolPresentation";
 import { declarePluginDefaults } from "~/lib/stores/builtinPlugins";
@@ -13,7 +12,11 @@ import type { IconName } from "~/ui";
 import { discordPlugin } from "./discord/plugin";
 import { mailPlugin } from "./mail/plugin";
 import { routinesPlugin } from "./routines/plugin";
-import type { BuiltinPluginUi, PluginSettingsSection } from "./types";
+import type {
+  BuiltinPluginUi,
+  PluginPage,
+  PluginSettingsSection,
+} from "./types";
 
 export const BUILTIN_PLUGINS: readonly BuiltinPluginUi[] = [
   mailPlugin,
@@ -43,7 +46,7 @@ export const PLUGIN_SETTINGS: readonly PluginSettingsEntry[] =
 /** A nav row and the plugin it belongs to. */
 export interface PluginNavItem {
   plugin: string;
-  item: NavItem;
+  item: PluginPage;
 }
 
 export const PLUGIN_NAV: readonly PluginNavItem[] = BUILTIN_PLUGINS.flatMap(

@@ -25,24 +25,46 @@ export interface BridgeHost {
   permissions: readonly string[];
   close: () => void;
   openChat: (prompt: string | undefined) => void;
+  /** The backend closed this window's session (the plugin changed or the app locked):
+   *  open a new one, which reloads the page. */
+  reopen: () => void;
 }
 
 type RemoteOutcome =
   | { outcome: "done"; result: unknown }
   | { outcome: "confirm"; confirmation_id: string; summary: string };
 
-type ClientMethod = (
-  params: Record<string, unknown>,
-  host: BridgeHost,
-) => unknown;
+interface ClientMethod {
+  /** The `permissions` entry the plugin must declare; none for its own window. */
+  permission?: string;
+  run: (params: Record<string, unknown>, host: BridgeHost) => unknown;
+}
 
 const CLIENT_METHODS: Readonly<Record<string, ClientMethod>> = {
-  "window.close": (_params, host) => host.close(),
-  "chat.open": (params, host) =>
-    host.openChat(
-      typeof params.prompt === "string" ? params.prompt : undefined,
-    ),
+  "window.close": { run: (_params, host) => host.close() },
+  "chat.open": {
+    permission: "chat.open",
+    run: (params, host) =>
+      host.openChat(
+        typeof params.prompt === "string" ? params.prompt : undefined,
+      ),
+  },
 };
+
+/** The status the bridge answers once the window's session is gone. */
+const SESSION_CLOSED = 410;
+
+async function callLocal(
+  method: ClientMethod,
+  params: Record<string, unknown>,
+  host: BridgeHost,
+): Promise<unknown> {
+  if (method.permission && !host.permissions.includes(method.permission))
+    throw new Error(
+      `this plugin does not declare the ${method.permission} permission`,
+    );
+  return method.run(params, host);
+}
 
 /** A window may keep this many calls open at once, and start this many per second. */
 const MAX_IN_FLIGHT = 64;
@@ -68,11 +90,15 @@ async function callRemote(
   host: BridgeHost,
 ): Promise<unknown> {
   const headers = { "X-Plugin-Window": host.bridgeToken };
-  const asked = await api.post<RemoteOutcome>(
-    `/plugins/bridge/${method}`,
-    params,
-    { headers },
-  );
+  let asked: RemoteOutcome;
+  try {
+    asked = await api.post<RemoteOutcome>(`/plugins/bridge/${method}`, params, {
+      headers,
+    });
+  } catch (err) {
+    if (isApiError(err) && err.status === SESSION_CLOSED) host.reopen();
+    throw err;
+  }
   if (asked.outcome === "done") return asked.result;
   const choice = await choose({
     title: `${host.title} wants to ${asked.summary}`,
@@ -123,9 +149,8 @@ export function connectBridge(
       return;
     }
     inFlight += 1;
-    const local = CLIENT_METHODS[request.method];
     const run = Object.hasOwn(CLIENT_METHODS, request.method)
-      ? Promise.resolve(local(request.params, host))
+      ? callLocal(CLIENT_METHODS[request.method], request.params, host)
       : callRemote(request.method, request.params, host);
     run
       .then((result) =>

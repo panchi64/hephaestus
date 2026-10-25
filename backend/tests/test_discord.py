@@ -5,11 +5,19 @@ Nothing here connects to Discord; with no token the channel idles.
 
 from __future__ import annotations
 
+import asyncio
+from typing import ClassVar
+
 import pytest
 
+from plugins.discord import channel as channel_module
 from plugins.discord.approvals import APPROVE, DENY, approval_text, custom_id, parse_custom_id
+from plugins.discord.channel import TOKEN_SERVICE, DiscordChannel
 from plugins.discord.chunking import chunk
+from routes import deps
+from routes.deps import OPERATOR_ID
 from services.channels import ApprovalRequest, PendingCall
+from services.credential_store import CredentialStore
 
 from ._helpers import client_app
 from ._json import json_body, json_list, obj, s
@@ -118,6 +126,16 @@ def test_the_approval_message_lists_each_call_and_flags_questions():
     assert len(text) <= 2000
 
 
+def test_calls_that_do_not_fit_are_counted_not_cut_mid_fence():
+    calls = tuple(PendingCall(str(n), "shell", f"run command {n}", "x" * 590) for n in range(5))
+    request = ApprovalRequest(run_id="r", conversation_id="c", calls=calls, token="t", questions=1)
+    text = approval_text(request)
+    assert len(text) <= 2000
+    assert _fence_balanced(text)
+    assert "more; see them in the app" in text
+    assert "answered in the app" in text
+
+
 async def test_switching_discord_on_exposes_its_routes_and_off_withdraws_them():
     async with client_app() as (client, _app):
         assert (await client.get("/discord/status")).status_code == 404
@@ -160,6 +178,46 @@ async def test_the_config_round_trips_and_rejects_non_numeric_ids():
                 "approvals_to_dm": False,
             }
             assert (await client.put("/discord/config", json=payload)).status_code == 422
+
+
+class FakeClient:
+    """Stands in for the bot: connects forever, and records whether it was closed."""
+
+    made: ClassVar[list[FakeClient]] = []
+
+    def __init__(self, owner: object) -> None:
+        del owner
+        self.closed: bool = False
+        FakeClient.made.append(self)
+
+    async def start(self, token: str) -> None:
+        del token
+        _ = await asyncio.Event().wait()
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def test_overlapping_token_changes_leave_one_bot_running(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    FakeClient.made.clear()
+    monkeypatch.setattr(channel_module, "_Client", FakeClient)
+    async with client_app() as (client, app):
+        credentials = deps.service(app, CredentialStore)
+        await credentials.set_key(OPERATOR_ID, TOKEN_SERVICE, "first")
+        _ = await client.put("/plugins/builtin/discord", json={"enabled": True})
+        channel = deps.service(app, DiscordChannel)
+
+        await credentials.set_key(OPERATOR_ID, TOKEN_SERVICE, "second")
+        _ = await asyncio.gather(
+            channel.restart_if_token_changed(), channel.restart_if_token_changed()
+        )
+
+        running = [c for c in FakeClient.made if not c.closed]
+        assert len(running) == 1
+        _ = await client.put("/plugins/builtin/discord", json={"enabled": False})
+        assert all(c.closed for c in FakeClient.made)
 
 
 async def test_the_bot_token_is_a_declared_service_key():

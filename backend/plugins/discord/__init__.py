@@ -38,6 +38,13 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         task.add_done_callback(reconnects.discard)
 
     credentials.on_change(on_credentials_changed)
+
+    async def connect_once_unlocked() -> None:
+        # A locked vault reads as no token, so a boot behind the login connects only here.
+        _ = await ctx.vault.unlocked_event.wait()
+        await channel.restart_if_token_changed()
+
+    _ = ctx.lifecycle.track("discord-unlock", connect_once_unlocked())
     return FeatureRuntime(
         services=(channel, config),
         contributions=(Messaging(hub, channel),),

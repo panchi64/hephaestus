@@ -9,6 +9,7 @@ is for any caller without the operator's session.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -32,6 +33,10 @@ class ChannelRefused(Exception):
     """The app could not take the message; the text says why, for the sender."""
 
 
+class ApprovalStale(Exception):
+    """The run was decided, or stopped waiting, between showing the buttons and the press."""
+
+
 @dataclass(frozen=True)
 class Decision:
     tool_call_id: str
@@ -41,7 +46,8 @@ class Decision:
 #: Start a turn with ``prompt`` in ``conversation_id`` (a new chat when None). Returns the
 #: conversation and whether it queued behind a running turn. Raises ``ChannelRefused``.
 type SendChat = Callable[[str, str | None], Awaitable[tuple[str, bool]]]
-#: Decide a parked run's pending calls. Raises ``PermissionDeniedError`` for a guarded one.
+#: Decide a parked run's pending calls. Raises ``PermissionDeniedError`` for a guarded one
+#: and ``ApprovalStale`` when the run no longer waits on exactly these.
 type AnswerApproval = Callable[[str, tuple[Decision, ...]], Awaitable[None]]
 #: The run's undecided approvals, or None when it is not parked on any.
 type PendingApprovals = Callable[[str], ApprovalRequest | None]
@@ -67,6 +73,7 @@ class ChannelHub:
         self._answer: AnswerApproval = answer
         self._pending: PendingApprovals = pending
         self._channels: dict[str, MessagingChannel] = {}
+        self._address_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     # --- channels -----------------------------------------------------------------
 
@@ -105,17 +112,20 @@ class ChannelHub:
         """A message the operator sent from ``address``: start or continue its turn."""
         if not await self.allowed(channel, sender):
             return Inbound("refused")
-        if text.strip().lower() == NEW_COMMAND:
-            await self.links.unlink(self.owner_id, channel, address)
-            return Inbound("fresh", reply="Started fresh. Your next message opens a new chat.")
-        linked = await self.links.conversation(self.owner_id, channel, address)
-        try:
-            conversation_id, queued = await self._send_chat(text, linked)
-        except ChannelRefused as exc:
-            return Inbound("failed", reply=str(exc))
-        if conversation_id != linked:
-            await self.links.link(self.owner_id, channel, address, conversation_id)
-        return Inbound("queued" if queued else "started", conversation_id=conversation_id)
+        # One address at a time: two quick first messages would otherwise each open a chat,
+        # and the link the second writes would orphan the first chat's answer.
+        async with self._address_locks.setdefault((channel, address), asyncio.Lock()):
+            if text.strip().lower() == NEW_COMMAND:
+                await self.links.unlink(self.owner_id, channel, address)
+                return Inbound("fresh", reply="Started fresh. Your next message opens a new chat.")
+            linked = await self.links.conversation(self.owner_id, channel, address)
+            try:
+                conversation_id, queued = await self._send_chat(text, linked)
+            except ChannelRefused as exc:
+                return Inbound("failed", reply=str(exc))
+            if conversation_id != linked:
+                await self.links.link(self.owner_id, channel, address, conversation_id)
+            return Inbound("queued" if queued else "started", conversation_id=conversation_id)
 
     # --- answers out ------------------------------------------------------------
 
@@ -165,8 +175,14 @@ class ChannelHub:
                     targets.append((key, fallback))
         for key, address in targets:
             channel = self._channels.get(key)
-            if channel is not None:
+            if channel is None:
+                continue
+            try:
                 await channel.request_approval(address, request)
+            except Exception:
+                logger.warning(
+                    "channels: could not ask %s to approve run %s", key, run_id, exc_info=True
+                )
 
     async def decide(
         self, channel: str, sender: str, run_id: str, token: str, *, approve: bool
@@ -184,6 +200,8 @@ class ChannelHub:
             await self._answer(run_id, decisions)
         except PermissionDeniedError:
             return Decided(False, "One of these calls can only be approved in the app.")
+        except ApprovalStale:
+            return Decided(False, "Already decided.")
         return Decided(True, "Approved." if approve else "Denied.")
 
 

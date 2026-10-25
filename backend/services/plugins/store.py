@@ -19,6 +19,7 @@ from sqlmodel import Session, col, select
 from core.db import in_session
 from core.exceptions import NotFoundError, PluginValidationError
 from core.vault import Vault
+from models.app_setting import AppSetting
 from models.plugin import Plugin, PluginSecret, PluginStorageEntry
 from services.agents.definition import AgentDefinition
 from services.revisions import Bundle, RevisionStore, decode_bundle, encode_bundle, records
@@ -107,15 +108,21 @@ class PluginStore:
         """Every published plugin with the files its tools run."""
 
         def work(session: Session) -> list[tuple[PluginView, Bundle]]:
-            rows = session.exec(
-                select(Plugin)
-                .where(Plugin.owner_id == owner_id)
-                .where(col(Plugin.published).is_(True))
-                .order_by(col(Plugin.name))
-            ).all()
             return [
                 (self._view(row), self._open(row.active_enc))
-                for row in rows
+                for row in _published_rows(session, owner_id)
+                if row.active_enc is not None
+            ]
+
+        return await in_session(self._engine, work)
+
+    async def live(self, owner_id: str) -> list[PluginView]:
+        """Every published plugin, without unsealing its files a second time."""
+
+        def work(session: Session) -> list[PluginView]:
+            return [
+                self._view(row)
+                for row in _published_rows(session, owner_id)
                 if row.active_enc is not None
             ]
 
@@ -127,7 +134,7 @@ class PluginStore:
         """One kind of contribution across every published plugin, with each one's plugin."""
         return [
             (view.name, item)
-            for view, _files in await self.published(owner_id)
+            for view in await self.live(owner_id)
             if view.active is not None
             for item in kind.of(view.active.contributions)
         ]
@@ -236,9 +243,12 @@ class PluginStore:
 
     async def publish_if_inert(self, owner_id: str, plugin_id: str) -> PluginView:
         """Publish the draft when it can only show the operator something; anything that
-        runs code or reaches out still waits for them."""
+        runs code or reaches out still waits for them. A plugin the operator switched off
+        stays off."""
         view = await self.get(owner_id, plugin_id)
         if view.draft is None or not view.draft.inert:
+            return view
+        if view.active is not None and not view.published:
             return view
         return await self.publish(owner_id, plugin_id)
 
@@ -325,10 +335,31 @@ class PluginStore:
         )
 
 
+def bridge_grants_key(plugin_id: str) -> str:
+    """The setting holding what the operator always allows a plugin's windows."""
+    return f"plugins.{plugin_id}.bridge_grants"
+
+
 def _delete(session: Session, row: Plugin) -> None:
     _ = session.exec(delete(PluginSecret).where(col(PluginSecret.plugin_id) == row.id))
     _ = session.exec(delete(PluginStorageEntry).where(col(PluginStorageEntry.plugin_id) == row.id))
+    _ = session.exec(
+        delete(AppSetting)
+        .where(col(AppSetting.owner_id) == row.owner_id)
+        .where(col(AppSetting.key) == bridge_grants_key(row.id))
+    )
     session.delete(row)
+
+
+def _published_rows(session: Session, owner_id: str) -> list[Plugin]:
+    return list(
+        session.exec(
+            select(Plugin)
+            .where(Plugin.owner_id == owner_id)
+            .where(col(Plugin.published).is_(True))
+            .order_by(col(Plugin.name))
+        ).all()
+    )
 
 
 def _require(session: Session, owner_id: str, plugin_id: str) -> Plugin:

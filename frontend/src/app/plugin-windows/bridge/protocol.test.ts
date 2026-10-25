@@ -32,4 +32,11 @@ describe("bridge requests", () => {
       parseRequest({ id: 1, method: "storage.set", params: { value: big } }),
     ).toBe("the request is too large");
   });
+
+  test("the limit counts bytes, not characters", () => {
+    const wide = "é".repeat(MAX_MESSAGE_BYTES / 2 + 1);
+    expect(
+      parseRequest({ id: 1, method: "storage.set", params: { value: wide } }),
+    ).toBe("the request is too large");
+  });
 });

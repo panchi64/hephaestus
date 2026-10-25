@@ -9,6 +9,7 @@ export const mailPlugin: BuiltinPluginUi = {
       icon: "mail",
       description: "Read and send email",
       connected: true,
+      lead: true,
     },
   ],
   toolCategory: {

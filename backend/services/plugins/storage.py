@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 from pydantic import JsonValue
 from sqlalchemy import Engine, delete, func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from core.db import in_session
@@ -35,7 +36,7 @@ class PluginStorage:
         """The value under ``key``, or None when there is none."""
 
         def work(session: Session) -> JsonValue:
-            row = _find(session, owner_id, plugin_id, _key(key))
+            row = find_entry(session, owner_id, plugin_id, _key(key))
             if row is None:
                 return None
             return parse_json(self._vault.decrypt_str(row.value_enc))
@@ -50,7 +51,7 @@ class PluginStorage:
             raise InvalidInputError(f"a stored value is at most {VALUE_MAX_BYTES // 1024} KB")
 
         def work(session: Session) -> None:
-            row = _find(session, owner_id, plugin_id, clean)
+            row = find_entry(session, owner_id, plugin_id, clean)
             count, total = session.exec(
                 select(func.count(), func.coalesce(func.sum(PluginStorageEntry.size_bytes), 0))
                 .where(PluginStorageEntry.owner_id == owner_id)
@@ -69,7 +70,11 @@ class PluginStorage:
             row.updated_at = datetime.now(UTC)
             session.add(row)
 
-        await in_session(self._engine, work)
+        try:
+            await in_session(self._engine, work)
+        except IntegrityError:
+            # Another set of the same new key inserted first; this one updates its row.
+            await in_session(self._engine, work)
 
     async def delete(self, owner_id: str, plugin_id: str, key: str) -> None:
         clean = _key(key)
@@ -104,7 +109,9 @@ def _key(raw: str) -> str:
     return raw
 
 
-def _find(session: Session, owner_id: str, plugin_id: str, key: str) -> PluginStorageEntry | None:
+def find_entry(
+    session: Session, owner_id: str, plugin_id: str, key: str
+) -> PluginStorageEntry | None:
     return session.exec(
         select(PluginStorageEntry)
         .where(PluginStorageEntry.owner_id == owner_id)

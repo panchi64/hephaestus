@@ -20,6 +20,12 @@ export interface PluginSettingsSection {
   component: Component<PluginSettingsProps>;
 }
 
+/** A page a plugin adds to the rail's COMMS area. */
+export interface PluginPage extends NavItem {
+  /** Listed ahead of the area's core pages rather than after them. */
+  lead?: boolean;
+}
+
 /** The UI a built-in plugin brings to the shell. Each field is one kind of
  *  contribution the shell knows how to render; a plugin fills in the ones it has. */
 export interface BuiltinPluginUi {
@@ -27,8 +33,7 @@ export interface BuiltinPluginUi {
   name: string;
   /** Mirrors the backend's `default_enabled`; assumed until the switches load. */
   defaultEnabled?: boolean;
-  /** Pages it adds to the rail's COMMS area. */
-  nav?: NavItem[];
+  nav?: PluginPage[];
   /** Its tool category's glyph and preparing phrase in the transcript. */
   toolCategory?: { name: string; icon: IconName; preparing: string };
   /** Transcript rows for its tools, by namespaced tool name. */

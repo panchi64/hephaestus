@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import discord
 
-from services.channels import ApprovalRequest
+from services.channels import ApprovalRequest, PendingCall
 
 APPROVE = "approve"
 DENY = "deny"
@@ -37,17 +37,33 @@ def parse_custom_id(raw: str) -> ButtonPress | None:
 
 
 def approval_text(request: ApprovalRequest) -> str:
-    lines = ["**The agent is waiting for approval:**"]
-    for call in request.calls:
-        lines.append(f"- {call.summary}")
-        if call.detail:
-            detail = call.detail.replace("```", "'''")
-            if len(detail) > _MAX_DETAIL:
-                detail = detail[:_MAX_DETAIL] + "…"
-            lines.append(f"```\n{detail}\n```")
-    if request.questions:
-        lines.append("It also asked a question, which has to be answered in the app.")
-    return "\n".join(lines)[:_MAX_CONTENT]
+    """Each call whole, as many as fit in one message; the rest are counted, never cut
+    mid-fence."""
+    head = "**The agent is waiting for approval:**"
+    tail = (
+        ["It also asked a question, which has to be answered in the app."]
+        if request.questions
+        else []
+    )
+    blocks = [_call_block(call) for call in request.calls]
+    shown: list[str] = []
+    for index, block in enumerate(blocks):
+        left = len(blocks) - index - 1
+        more = [f"…and {left} more; see them in the app."] if left else []
+        if len("\n".join([head, *shown, block, *more, *tail])) > _MAX_CONTENT:
+            shown.append(f"…and {len(blocks) - index} more; see them in the app.")
+            break
+        shown.append(block)
+    return "\n".join([head, *shown, *tail])
+
+
+def _call_block(call: PendingCall) -> str:
+    if not call.detail:
+        return f"- {call.summary}"
+    detail = call.detail.replace("```", "'''")
+    if len(detail) > _MAX_DETAIL:
+        detail = detail[:_MAX_DETAIL] + "…"
+    return f"- {call.summary}\n```\n{detail}\n```"
 
 
 def approval_view(request: ApprovalRequest) -> discord.ui.View:

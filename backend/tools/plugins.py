@@ -95,12 +95,13 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         `agents/<name>.md` and `skills/<name>/SKILL.md` add agents and skills.
 
         A window is a page under `ui/` (html, js, css, json, svg, images, fonts, audio),
-        sandboxed with no network at all: inline everything or ship it in `ui/`. It loads
+        sandboxed with no network at all: inline everything or ship it in `ui/`. It is one
+        page; navigating away from it stops the window. It loads
         `<script src="__bridge.js"></script>` for `window.odysseus`, which reaches only what
         `permissions` lists: `storage.get/set/delete/list` (`storage`), `tools.call(name,
         args)` for this plugin's own tools (`tools`), `on("agent.status" |
         "agent.turn_finished", fn)` (`chat.read`), `chat.post(prompt)` (`chat.post`, which
-        the operator confirms), plus `chat.open(prompt)` and `window.close()`.
+        the operator confirms), `chat.open(prompt)` (`chat.open`), plus `window.close()`.
 
         A plugin of only windows and permissions goes live at once (`status: enabled`);
         open it with `plugins_open_window`. Anything with tools, requirements, egress or

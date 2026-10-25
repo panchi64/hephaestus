@@ -1,4 +1,4 @@
-import { windowActions } from "~/app/plugin-windows";
+import { windowActions } from "~/lib/stores/pluginWindows";
 import { confirm, toast } from "~/ui";
 import {
   deletePlugin,

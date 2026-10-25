@@ -20,6 +20,7 @@ export const AREAS: NavArea[] = [
     icon: "mail",
     description: "Mail, schedule, and the agent's standing work",
     items: [
+      ...PLUGIN_NAV.filter((entry) => entry.item.lead).map((e) => e.item),
       {
         label: "Calendar",
         href: "/calendar",
@@ -27,7 +28,7 @@ export const AREAS: NavArea[] = [
         connected: true,
         description: "View and manage your schedule",
       },
-      ...PLUGIN_NAV.map((entry) => entry.item),
+      ...PLUGIN_NAV.filter((entry) => !entry.item.lead).map((e) => e.item),
     ],
   },
 ];

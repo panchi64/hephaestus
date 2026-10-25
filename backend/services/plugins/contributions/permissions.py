@@ -4,9 +4,8 @@
 permissions: [storage, chat.read]
 ```
 
-A window can call only the bridge methods whose permission its plugin lists. Each bridge
-capability declares the permission it needs into :data:`BRIDGE_PERMISSIONS`, so a new
-capability adds its own name.
+A window can call only the bridge methods whose permission its plugin lists. The names
+come from the bridge's capabilities, so a new capability adds its own.
 """
 
 from __future__ import annotations
@@ -14,14 +13,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import override
 
-from core.declarations import DeclaredSet
 from core.exceptions import PluginValidationError
 
+from ..bridge.registry import load_capabilities
 from ..fields import as_list
 from .base import BundleSource, Described, TypedContribution
 from .registry import CONTRIBUTIONS
-
-BRIDGE_PERMISSIONS: DeclaredSet[str] = DeclaredSet({"storage", "tools", "chat.read", "chat.post"})
 
 
 @dataclass(frozen=True)
@@ -33,7 +30,7 @@ class Permissions(TypedContribution[BridgePermission]):
     @override
     def parse(self, source: BundleSource) -> tuple[BridgePermission, ...]:
         names = [str(raw) for raw in as_list(source.raw, self.key)]
-        known = BRIDGE_PERMISSIONS.snapshot()
+        known = load_capabilities().permissions()
         for name in names:
             if name not in known:
                 raise PluginValidationError(

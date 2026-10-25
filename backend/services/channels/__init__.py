@@ -8,11 +8,12 @@ from .base import (
     MessagingChannel,
     PendingCall,
 )
-from .hub import ChannelHub, ChannelRefused, Decision
+from .hub import ApprovalStale, ChannelHub, ChannelRefused, Decision
 from .links import ChannelLinks, LinkView
 
 __all__ = [
     "ApprovalRequest",
+    "ApprovalStale",
     "ChannelHost",
     "ChannelHub",
     "ChannelLinks",

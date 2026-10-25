@@ -52,7 +52,7 @@ def window_out(plugin_id: str, plugin: str, window: PluginWindow) -> WindowOut:
 async def list_windows(request: Request) -> list[WindowOut]:
     return [
         window_out(view.id, view.name, window)
-        for view, _files in await deps.plugins(request).published(OPERATOR_ID)
+        for view in await deps.plugins(request).live(OPERATOR_ID)
         if view.active is not None
         for window in view.active.windows
     ]

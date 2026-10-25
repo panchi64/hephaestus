@@ -15,7 +15,7 @@ import {
   pluginWindows,
   windowActions,
   type PluginWindowState,
-} from "./windowStore";
+} from "~/lib/stores/pluginWindows";
 
 const STORAGE_KEY = "heph.pluginWindows";
 

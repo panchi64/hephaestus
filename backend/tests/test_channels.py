@@ -3,8 +3,10 @@ answers back, and approvals from a channel."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from typing import override
 
 import pytest
 from fastapi import FastAPI
@@ -15,6 +17,7 @@ from core.exceptions import PermissionDeniedError
 from routes import deps
 from services.channels import (
     ApprovalRequest,
+    ApprovalStale,
     ChannelHost,
     ChannelHub,
     ChannelLinks,
@@ -144,10 +147,13 @@ class Answers:
         default_factory=list[tuple[str, tuple[Decision, ...]]]
     )
     guarded: bool = False
+    stale: bool = False
 
     async def __call__(self, run_id: str, decisions: tuple[Decision, ...]) -> None:
         if self.guarded:
             raise PermissionDeniedError("guarded")
+        if self.stale:
+            raise ApprovalStale("run is not awaiting approval")
         self.decided.append((run_id, decisions))
 
 
@@ -196,6 +202,63 @@ async def test_a_guarded_call_points_to_the_app():
         hub = await _approval_hub(app, Answers(guarded=True), _request())
         said = await hub.decide("fake", OWNER_ID, "run-1", "tok", approve=True)
         assert not said.settled and "in the app" in said.message
+
+
+async def test_a_press_after_the_app_decided_says_so():
+    async with client_app() as (_client, app):
+        hub = await _approval_hub(app, Answers(stale=True), _request())
+        said = await hub.decide("fake", OWNER_ID, "run-1", "tok", approve=True)
+        assert said == Decided(False, "Already decided.")
+
+
+@dataclass
+class BrokenChannel(FakeChannel):
+    @override
+    async def request_approval(self, address: str, request: ApprovalRequest) -> None:
+        raise ConnectionError("Discord is not connected.")
+
+
+async def test_one_channel_failing_does_not_stop_the_others_asking():
+    async with client_app() as (_client, app):
+        hub = await _approval_hub(app, Answers(), _request())
+        broken = BrokenChannel(key="broken")
+        working = FakeChannel()
+        await hub.attach(broken)
+        await hub.attach(working)
+        await hub.links.link(hub.owner_id, "broken", "dm:1", "conv-1")
+        await hub.links.link(hub.owner_id, "fake", "dm:2", "conv-1")
+        await hub.request_approvals("run-1", "conv-1")
+        assert [address for address, _ in working.asked] == ["dm:2"]
+
+
+async def test_quick_first_messages_from_one_address_share_a_chat():
+    async with client_app() as (_client, app):
+        opened: list[str] = []
+
+        async def send(_prompt: str, conversation_id: str | None) -> tuple[str, bool]:
+            await asyncio.sleep(0.01)
+            if conversation_id is None:
+                opened.append(f"conv-{len(opened) + 1}")
+                return opened[-1], False
+            return conversation_id, True
+
+        hub = ChannelHub(
+            owner_id=deps.service(app, ChannelHub).owner_id,
+            links=deps.service(app, ChannelLinks),
+            settings=deps.settings_store(app),
+            conversations=deps.service(app, ConversationStore),
+            send_chat=send,
+            answer=Answers(),
+            pending=lambda _run_id: None,
+        )
+        await hub.set_allowed_senders("fake", [OWNER_ID])
+        first, second = await asyncio.gather(
+            hub.inbound("fake", OWNER_ID, "dm:1", "one"),
+            hub.inbound("fake", OWNER_ID, "dm:1", "two"),
+        )
+        assert opened == ["conv-1"]
+        assert (first.outcome, second.outcome) == ("started", "queued")
+        assert first.conversation_id == second.conversation_id == "conv-1"
 
 
 async def test_approvals_go_to_linked_addresses_or_the_fallback():

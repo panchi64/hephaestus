@@ -173,6 +173,22 @@ async def test_an_open_task_run_with_no_run_is_closed_as_failed_at_startup(
         assert parked["finishedAt"] is None and parked["runId"] == run_id
 
 
+async def test_a_parked_run_approved_after_routines_is_switched_off_still_finalizes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    install_sensitive_tool(monkeypatch)
+    async with client_app() as (client, app):
+        task_id, task_run_id, run_id, call_id = await park_a_fire(client, app)
+        off = await client.put("/plugins/builtin/routines", json={"enabled": False})
+        assert off.status_code == 200
+
+        await _decide(client, run_id, call_id, approved=True)
+        _ = await client.put("/plugins/builtin/routines", json={"enabled": True})
+        row = await await_task_run_finalized(client, task_id, task_run_id)
+        assert row["outcome"] == "ok"
+        assert row["runId"] == run_id
+
+
 async def test_stopping_with_a_parked_fire_does_not_hang(monkeypatch: pytest.MonkeyPatch):
     install_sensitive_tool(monkeypatch)
     async with asyncio.timeout(10), client_app() as (client, app):

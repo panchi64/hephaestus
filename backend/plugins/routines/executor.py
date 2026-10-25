@@ -65,11 +65,13 @@ class RunWaiters:
         return True
 
     def release_parked(self, runs: RunRegistry) -> None:
-        """A fire parked at shutdown is kept for the next process, so its waiting executor
-        is released (leaving the `TaskRun` open) rather than holding the scheduler's stop."""
+        """A fire parked when the scheduler stops is released (leaving the `TaskRun` open)
+        rather than holding the stop. Its waiter is dropped too, so if the run finishes in
+        this process it is settled as a restored run is."""
         for run_id, waiter in list(self._futures.items()):
             run = runs.get(run_id)
             if run is not None and run.is_parked and not waiter.done():
+                del self._futures[run_id]
                 waiter.set_result(run)
 
 

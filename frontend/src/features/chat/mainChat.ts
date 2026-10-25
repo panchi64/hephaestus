@@ -42,7 +42,7 @@ import { markConversationRead } from "~/lib/stores/notifications";
 import { moveDraft } from "~/ui";
 import { agentToSend } from "~/features/agents/model";
 import { toWindowSpec } from "~/features/plugins/windows";
-import { windowActions } from "~/app/plugin-windows";
+import { windowActions } from "~/lib/stores/pluginWindows";
 import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { refreshSessions } from "./data/sessions";
 import { createHistoryLoad, watchLateRuns } from "./historyLoad";

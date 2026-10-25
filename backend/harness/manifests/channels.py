@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from fastapi import FastAPI, HTTPException
 
 from agent.parking import ParkedTurn
-from core.exceptions import HephaestusError, PermissionDeniedError
+from core.exceptions import HephaestusError
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from routes import channels as channels_routes
 from routes.chat.operator_send import answer_approval, send_operator_message
@@ -22,6 +22,7 @@ from routes.runs import ApprovalDecision, ApprovalDecisions
 from runs import RunRegistry, RunStatus
 from services.channels import (
     ApprovalRequest,
+    ApprovalStale,
     ChannelHub,
     ChannelLinks,
     ChannelRefused,
@@ -67,8 +68,9 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         try:
             _ = await answer_approval(_app(ctx), run_id, body)
         except HTTPException as exc:
-            if exc.status_code == 403:
-                raise PermissionDeniedError(str(exc.detail)) from None
+            # 404, 409 and 400: the run finished, resumed, or parked again on other calls.
+            if exc.status_code in (400, 404, 409):
+                raise ApprovalStale(str(exc.detail)) from None
             raise
 
     def pending(run_id: str) -> ApprovalRequest | None:

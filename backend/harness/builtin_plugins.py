@@ -9,6 +9,7 @@ its kind parked before the switch must still be able to resume.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -24,6 +25,8 @@ from services.settings_store import SettingsStore
 from services.tool_policy import AvailabilityCheck
 from tools import InstructionProvider, PromptContextProvider, RunDeps
 from tools.deps import PromptContextRequest
+
+logger = logging.getLogger(__name__)
 
 
 def _key(name: str) -> str:
@@ -76,11 +79,12 @@ class BuiltinPlugins:
         if name not in self._info:
             raise KeyError(name)
         async with self._locks[name]:
-            await self._settings.set(OPERATOR_ID, _key(name), "true" if enabled else "false")
-            self._enabled[name] = enabled
+            # On only once everything started: a failed start leaves it off, and stored so.
             if enabled:
                 await self._activate(name)
-            else:
+            self._enabled[name] = enabled
+            await self._settings.set(OPERATOR_ID, _key(name), "true" if enabled else "false")
+            if not enabled:
                 await self.deactivate(name)
 
     async def deactivate(self, name: str) -> None:
@@ -93,8 +97,19 @@ class BuiltinPlugins:
     async def _activate(self, name: str) -> None:
         if name in self._active or name not in self._items:
             return
-        for kind, items in self._grouped(name):
-            await kind.activate(name, items)
+        started: list[tuple[ContributionType, tuple[object, ...]]] = []
+        try:
+            for kind, items in self._grouped(name):
+                await kind.activate(name, items)
+                started.append((kind, items))
+        except Exception:
+            # What already started is stopped again, or it would run with no way to stop it.
+            for kind, items in reversed(started):
+                try:
+                    await kind.deactivate(name, items)
+                except Exception:
+                    logger.exception("plugins: stopping %s's %s failed", name, kind.key)
+            raise
         self._active.add(name)
 
     def _grouped(self, name: str) -> list[tuple[ContributionType, tuple[object, ...]]]:

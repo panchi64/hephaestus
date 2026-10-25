@@ -376,7 +376,7 @@ async def _plugin_hits(ctx: RunContext[RunDeps], tokens: set[str]) -> list[Platf
         return []
     manifests = {
         view.name: view.active
-        for view, _files in await store.published(ctx.deps.owner_id)
+        for view in await store.live(ctx.deps.owner_id)
         if view.active is not None
     }
     ranked = rank_texts(

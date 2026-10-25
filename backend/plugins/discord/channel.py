@@ -64,24 +64,30 @@ class DiscordChannel:
         self._token: str | None = None
         self._error: str | None = None
         self._typing: dict[str, asyncio.Task[None]] = {}
+        self._lifecycle: asyncio.Lock = asyncio.Lock()
 
     # --- lifecycle ----------------------------------------------------------------
 
     async def start(self, hub: ChannelHost) -> None:
-        self._host = hub
-        await self._connect()
+        async with self._lifecycle:
+            self._host = hub
+            await self._connect()
 
     async def stop(self) -> None:
-        self._host = None
-        await self._disconnect()
+        async with self._lifecycle:
+            self._host = None
+            await self._disconnect()
 
     async def restart_if_token_changed(self) -> None:
         """Reconnect when the stored token is no longer the one in use; idle if it is gone."""
-        if self._host is None:
-            return
-        if await self._read_token() != self._token:
-            await self._disconnect()
-            await self._connect()
+        # Serialised with start and stop: overlapping restarts would each connect a client,
+        # and only the last one would be closed.
+        async with self._lifecycle:
+            if self._host is None:
+                return
+            if await self._read_token() != self._token:
+                await self._disconnect()
+                await self._connect()
 
     async def _read_token(self) -> str | None:
         return await self._credentials.get_secret(OPERATOR_ID, TOKEN_SERVICE) or None
@@ -198,6 +204,8 @@ class DiscordChannel:
             _ = await target.send(piece)
 
     async def request_approval(self, address: str, request: ApprovalRequest) -> None:
+        # The turn now waits on the operator, not the model.
+        self._stop_typing(address)
         target = await self._target(address)
         _ = await target.send(approval_text(request), view=approval_view(request))
 

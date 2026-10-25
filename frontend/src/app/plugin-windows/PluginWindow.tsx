@@ -2,20 +2,22 @@ import { useNavigate } from "@solidjs/router";
 import {
   createResource,
   createSignal,
+  Match,
   onCleanup,
   Show,
+  Switch,
   type JSX,
 } from "solid-js";
 import { SandboxedFrame } from "~/features/chat/components/SandboxedFrame";
 import { chatDraftKey } from "~/features/chat/data";
 import { openWindowSession } from "~/features/plugins/windows";
-import { Icon, LoadingText, Text, cx, saveDraft } from "~/ui";
+import { Button, Icon, LoadingText, Text, cx, saveDraft } from "~/ui";
 import { connectBridge } from "./bridge/broker";
 import {
   windowActions,
   type PluginWindowState,
   type Viewport,
-} from "./windowStore";
+} from "~/lib/stores/pluginWindows";
 
 function viewport(): Viewport {
   return { width: window.innerWidth, height: window.innerHeight };
@@ -68,11 +70,18 @@ export function PluginWindow(props: {
   );
   // While dragging, the frame would swallow the pointer; a shield over it keeps it here.
   const [dragging, setDragging] = createSignal(false);
+  // Set when the page navigated its frame away from the window's own page.
+  const [strayed, setStrayed] = createSignal(false);
   let disconnect: (() => void) | undefined;
+  let bridgedSrc: string | undefined;
   onCleanup(() => disconnect?.());
 
   const close = (): void => windowActions.close(props.win.key);
   const focus = (): void => windowActions.focus(props.win.key);
+  const reload = (): void => {
+    setStrayed(false);
+    setReloadKey((n) => n + 1);
+  };
   const settle = (): void => {
     setDragging(false);
     props.onSettled();
@@ -82,6 +91,14 @@ export function PluginWindow(props: {
     const current = session();
     if (!current) return;
     disconnect?.();
+    disconnect = undefined;
+    // A session's page loads once. A second load is the page navigating itself, maybe
+    // off-site, and the opaque frame can't show where: it gets no port, and the frame goes.
+    if (bridgedSrc === current.src) {
+      setStrayed(true);
+      return;
+    }
+    bridgedSrc = current.src;
     disconnect = connectBridge(frame, {
       plugin: props.win.plugin,
       window: props.win.window,
@@ -93,6 +110,7 @@ export function PluginWindow(props: {
         if (prompt) saveDraft(chatDraftKey(null), prompt);
         navigate("/chat");
       },
+      reopen: reload,
     });
   };
 
@@ -133,7 +151,7 @@ export function PluginWindow(props: {
             type="button"
             aria-label={`Reload ${props.win.title}`}
             class="p-1 text-dim hover:text-text"
-            onClick={() => setReloadKey((n) => n + 1)}
+            onClick={reload}
           >
             <Icon name="refresh" size={12} />
           </button>
@@ -148,29 +166,34 @@ export function PluginWindow(props: {
         </div>
       </header>
       <div class="relative min-h-0 flex-1">
-        <Show
-          when={session()}
-          fallback={
-            <Show
-              when={session.error}
-              fallback={<LoadingText label="Opening" />}
-            >
-              <Text variant="micro" tone="dim" class="p-3">
-                This window could not be opened. The plugin may have been
-                switched off or changed.
+        <Switch fallback={<LoadingText label="Opening" />}>
+          <Match when={strayed()}>
+            <div class="flex flex-col items-start gap-2 p-3">
+              <Text variant="micro" tone="dim">
+                This window's page tried to leave the plugin, so it was stopped.
               </Text>
-            </Show>
-          }
-        >
-          {(current) => (
-            <SandboxedFrame
-              src={current().src}
-              title={props.win.title}
-              policy="plugin"
-              onLoad={onFrameLoad}
-            />
-          )}
-        </Show>
+              <Button size="sm" onClick={reload}>
+                Reload
+              </Button>
+            </div>
+          </Match>
+          <Match when={session.error}>
+            <Text variant="micro" tone="dim" class="p-3">
+              This window could not be opened. The plugin may have been switched
+              off or changed.
+            </Text>
+          </Match>
+          <Match when={session()}>
+            {(current) => (
+              <SandboxedFrame
+                src={current().src}
+                title={props.win.title}
+                policy="plugin"
+                onLoad={onFrameLoad}
+              />
+            )}
+          </Match>
+        </Switch>
         <Show when={dragging()}>
           <div class="absolute inset-0" />
         </Show>

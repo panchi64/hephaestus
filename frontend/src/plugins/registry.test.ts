@@ -12,8 +12,7 @@ describe("built-in plugin UI", () => {
 
   test("a plugin's pages join COMMS and are traced back to it", () => {
     const hrefs = AREAS[0].items.map((item) => item.href);
-    expect(hrefs).toContain("/email");
-    expect(hrefs).toContain("/tasks");
+    expect(hrefs).toEqual(["/email", "/calendar", "/tasks"]);
     expect(pluginOfHref("/email")).toBe("mail");
     expect(pluginOfHref("/calendar")).toBeUndefined();
   });

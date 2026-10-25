@@ -32,6 +32,7 @@ export interface BridgeInit {
 }
 
 const METHOD = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/;
+const UTF8 = new TextEncoder();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -49,7 +50,7 @@ export function parseRequest(raw: unknown): BridgeRequest | string {
     return "params must be an object";
   let size: number;
   try {
-    size = JSON.stringify(raw).length;
+    size = UTF8.encode(JSON.stringify(raw)).byteLength;
   } catch {
     return "a request must be plain JSON";
   }

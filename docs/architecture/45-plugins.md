@@ -19,7 +19,7 @@ A type declares:
 
 - `key`, its `plugin.yaml` key and the label the Plugins screen groups items under;
 - `tiers`, whether sandboxed plugins may use it or only built-ins;
-- `trust`: `inert` types only show the operator something, `privileged` types can act. A sandboxed plugin whose every contribution is inert, with no requirements, egress or secrets, goes live as soon as it is written (`PluginStore.publish_if_inert`). Anything else waits for the operator to publish it;
+- `trust`: `inert` types only show the operator something, `privileged` types can act. A sandboxed plugin whose every contribution is inert, with no requirements, egress or secrets, goes live as soon as it is written (`PluginStore.publish_if_inert`), unless the operator switched it off. Anything else waits for the operator to publish it;
 - `parse` for sandboxed bundles, `describe` for the Plugins screen, and `start`/`stop` for what switching a built-in on and off does.
 
 | Key | Tiers | Trust | What it adds |
@@ -74,9 +74,9 @@ Opening a window (`POST /plugins/{id}/windows/{window}/sessions`) mints two toke
 - the **page token** is in the frame's URL and only serves that window's files from `/plugin-ui/{token}/…`. The plugin's code can read it, and it grants nothing else;
 - the **bridge token** stays with the host app, which sends it as `X-Plugin-Window` on each bridge call it makes for the window. The plugin never sees it.
 
-Both close when the plugin is changed, switched off or deleted, and when the vault locks.
+Both close when the plugin is changed, switched off or deleted, and when the vault locks. A bridge call on a closed session answers 410, and the host opens a new session, which reloads the page on the current version.
 
-Every page response carries `Content-Security-Policy: sandbox allow-scripts; … connect-src 'none'; frame-ancestors <app origins>`, `nosniff`, `no-referrer` and `no-store`. The page runs in an opaque origin wherever it is opened and has no network. `/plugin-ui` skips the cookie gate because the token is the credential, but stays behind the vault gate.
+Every page response carries `Content-Security-Policy: sandbox allow-scripts; … connect-src 'none'; frame-ancestors <app origins>`, `nosniff`, `no-referrer` and `no-store`. The page runs in an opaque origin wherever it is opened and cannot fetch, open sockets or submit forms. CSP cannot stop a frame navigating itself, so a page can still carry what it read away in a URL. The host bridges only a session's first page load: a second load is the page navigating, and the host drops the frame without handing it a port. `/plugin-ui` skips the cookie gate because the token is the credential, but stays behind the vault gate.
 
 The agent opens a window with `plugins_open_window`, which emits `plugin.window_open`. The client opens it only for the conversation on screen, and not on a replay. The header's launcher lists every live plugin's windows. Open windows and their geometry are kept in `localStorage`.
 
@@ -84,7 +84,7 @@ The agent opens a window with `plugins_open_window`, which emits `plugin.window_
 
 The page loads `__bridge.js` (`services/plugins/ui_bridge.js`), which defines `window.odysseus`. On each frame load the host hands the page one `MessagePort` and every call goes over it. The host broker (`frontend/src/app/plugin-windows/bridge/`) validates each request, rate-limits it, answers client-side methods itself (`window.close`, `chat.open`), and forwards the rest to `POST /plugins/bridge/{method}`.
 
-The route reads the plugin from the bridge token, checks that the plugin declared the method's permission, rate-limits per window and method, and asks the capability whether the operator must confirm. A confirmed call comes back as `outcome: confirm` with an id. Its parameters are parked server-side, so the operator confirms exactly what was asked, and the id is good once, for that window, for five minutes. "Always allow" is stored with the digest of the plugin version it was given to, so rewritten code asks again.
+The route reads the plugin from the bridge token, checks that the plugin declared the method's permission, rate-limits per plugin and method, and asks the capability whether the operator must confirm. A confirmed call comes back as `outcome: confirm` with an id. Its parameters are parked server-side, so the operator confirms exactly what was asked, and the id is good once, for that window, for five minutes. Answering it needs the operator's own session (`require_operator`): anyone who can open a window holds its bridge token, an API token included. "Always allow" is stored with the digest of the plugin version it was given to, so rewritten code asks again, and is deleted with the plugin.
 
 | Method | Permission | Confirms |
 |---|---|---|
@@ -92,6 +92,8 @@ The route reads the plugin from the bridge token, checks that the plugin declare
 | `tools.call` | `tools` | when the tool declares `external_effect` |
 | `chat.post` | `chat.post` | always |
 | events `agent.status`, `agent.turn_finished` | `chat.read` | (client-side) |
+| `chat.open` | `chat.open` | (client-side; fills a new chat's composer, sends nothing) |
+| `window.close` | none | (client-side) |
 
 Storage is sealed per plugin: a key is at most 128 characters, a value at most 64 KB of JSON, and a plugin may keep at most 500 keys and 1 MB in total. Its rows are deleted with the plugin and left out of exports. `tools.call` runs through the same VM path as the agent's call (`services/plugins/calls.py`), with the same egress and secrets.
 
@@ -99,7 +101,7 @@ Storage is sealed per plugin: a key is at most 128 characters, a value at most 6
 
 1. Add a module in `services/plugins/bridge/` whose handlers take a `BridgeCall` and return JSON, and register a `BridgeCapability(method, permission, handler, asks=…)`. A new permission name is declared by registering it.
 2. `asks` returns a `Confirmation(summary, grant)` when the operator must say yes. `summary` completes "<window> wants to …"; `grant` is what "always allow" remembers.
-3. A method the frontend answers itself goes in the broker's `CLIENT_METHODS` instead. Nothing on the frontend changes for a backend method.
+3. A method the frontend answers itself goes in the broker's `CLIENT_METHODS` instead, with its permission declared in `services/plugins/bridge/client.py` (`BRIDGE.declare_permission`). Nothing on the frontend changes for a backend method.
 4. Add the method to the `plugins_write` docstring so the agent knows it exists, and add a test in `tests/test_plugin_bridge.py`.
 
 ## Messaging channels

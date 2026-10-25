@@ -10,7 +10,7 @@ windows:
     resizable: true                       # optional
 ```
 
-A window's page runs in a sandboxed frame with no network, so the files under ``ui/`` are
+A window's page runs in a sandboxed frame that cannot fetch, so the files under ``ui/`` are
 everything it can load. They are checked here: only the listed asset types, text that is
 UTF-8, and images whose bytes are what their extension says.
 """

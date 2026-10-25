@@ -7,7 +7,6 @@ import importlib
 import pkgutil
 from pathlib import Path
 
-from ..contributions.permissions import BRIDGE_PERMISSIONS
 from .base import BridgeCapability
 
 _PACKAGE = __name__.rpartition(".")[0]
@@ -17,6 +16,7 @@ _INFRASTRUCTURE = frozenset({"base", "registry", "gate"})
 class BridgeRegistry:
     def __init__(self) -> None:
         self._methods: dict[str, BridgeCapability] = {}
+        self._permissions: set[str] = set()
 
     def register(self, *capabilities: BridgeCapability) -> None:
         for capability in capabilities:
@@ -24,13 +24,21 @@ class BridgeRegistry:
             if existing is not None and existing is not capability:
                 raise ValueError(f"bridge method {capability.method!r} is registered twice")
             self._methods[capability.method] = capability
-            BRIDGE_PERMISSIONS.declare(frozenset({capability.permission}))
+            self._permissions.add(capability.permission)
+
+    def declare_permission(self, name: str) -> None:
+        """A permission the host enforces itself, with no backend method behind it."""
+        self._permissions.add(name)
 
     def get(self, method: str) -> BridgeCapability | None:
         return self._methods.get(method)
 
     def methods(self) -> list[str]:
         return sorted(self._methods)
+
+    def permissions(self) -> frozenset[str]:
+        """Every name a plugin may list under ``permissions``."""
+        return frozenset(self._permissions)
 
 
 BRIDGE = BridgeRegistry()

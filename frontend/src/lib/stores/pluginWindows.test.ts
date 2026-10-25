@@ -5,7 +5,7 @@ import {
   openWindow,
   resizeWindow,
   type WindowSpec,
-} from "./windowStore";
+} from "./pluginWindows";
 
 const VIEW = { width: 1200, height: 800 };
 

@@ -2,7 +2,7 @@ import { createEffect, on, Show, type JSX } from "solid-js";
 import { usePluginWindows } from "~/features/plugins/windows";
 import { settled } from "~/lib/resource";
 import { Icon, Menu } from "~/ui";
-import { pluginWindows, windowActions } from "./windowStore";
+import { pluginWindows, windowActions } from "~/lib/stores/pluginWindows";
 
 /** The header's launcher for every window the live plugins offer. The list is read
  *  again whenever the menu is opened or a window opens, so a plugin written a moment

@@ -60,6 +60,21 @@ def test_a_window_plugin_reads_its_windows_and_permissions():
     assert manifest.described()["windows"] == [{"name": "main", "title": "Snake"}]
 
 
+def test_every_bridge_permission_comes_from_the_bridge():
+    every = SNAKE.replace(
+        "[storage, chat.read]", "[storage, tools, chat.read, chat.open, chat.post]"
+    )
+    assert validate_files(snake(every)).permissions == {
+        "storage",
+        "tools",
+        "chat.read",
+        "chat.open",
+        "chat.post",
+    }
+    with pytest.raises(PluginValidationError, match="is not a permission"):
+        _ = validate_files(snake(SNAKE.replace("chat.read", "files.write")))
+
+
 def test_a_ui_only_plugin_is_inert_and_a_tool_plugin_is_not():
     assert validate_files(snake()).inert
     assert not validate_files(bundle()).inert
@@ -111,6 +126,19 @@ async def test_code_added_to_a_live_ui_plugin_waits_for_the_operator(tmp_path: P
     after = await store.publish_if_inert(OWNER, edited.id)
     assert after.draft is not None
     assert after.active is not None and not after.active.tools
+
+
+async def test_an_edit_does_not_switch_back_on_a_plugin_the_operator_switched_off(
+    tmp_path: Path,
+):
+    store = await make_store(tmp_path)
+    view = await store.write_draft(OWNER, "snake", snake(), source="agent")
+    _ = await store.publish_if_inert(OWNER, view.id)
+    _ = await store.unpublish(OWNER, view.id)
+    restyled: dict[str, bytes | None] = {"ui/style.css": b"body { color: red; }"}
+    edited = await store.write_draft(OWNER, "snake", restyled, source="agent")
+    after = await store.publish_if_inert(OWNER, edited.id)
+    assert not after.published and after.draft is not None
 
 
 # --- the agent's tools ----------------------------------------------------------

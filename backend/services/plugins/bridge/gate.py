@@ -21,6 +21,7 @@ from core.ratelimit import RateLimiter
 from core.serde import parse_json
 from services.settings_store import SettingsStore
 
+from ..store import bridge_grants_key
 from ..windows import WindowSession
 from .base import Confirmation
 
@@ -47,8 +48,11 @@ class BridgeGate:
         self._pending: dict[str, PendingCall] = {}
 
     def spend(self, window: WindowSession, method: str) -> None:
-        """Raises ``RateLimitedError`` when the window is calling ``method`` too fast."""
-        self._limiter.check(f"{window.bridge_token}:{method}")
+        """Raises ``RateLimitedError`` when the plugin's windows call ``method`` too fast.
+
+        Keyed by plugin rather than window, so reopening windows neither resets the limit
+        nor grows the bucket table."""
+        self._limiter.check(f"{window.plugin_id}:{method}")
 
     def ask(
         self,
@@ -106,4 +110,4 @@ class BridgeGate:
 
 
 def _key(window: WindowSession) -> str:
-    return f"plugins.{window.plugin_id}.bridge_grants"
+    return bridge_grants_key(window.plugin_id)

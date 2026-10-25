@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import JsonValue
 
+from services.conversations import ConversationStore
+
 from .base import BridgeCall, BridgeCapability, Confirmation
 from .registry import BRIDGE
 
@@ -23,11 +25,25 @@ def _conversation(call: BridgeCall) -> str | None:
     return call.optional_text("conversation_id", max_chars=64)
 
 
+async def _where(call: BridgeCall) -> str:
+    conversation_id = _conversation(call)
+    if conversation_id is None:
+        return "a new chat"
+    titles = await call.services.get(ConversationStore).titles(
+        [conversation_id], call.window.owner_id
+    )
+    title = titles.get(conversation_id)
+    return f'the chat "{_clip(title)}"' if title else "an untitled chat"
+
+
+def _clip(text: str) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= _SUMMARY_CHARS else flat[: _SUMMARY_CHARS - 1] + "…"
+
+
 async def _asks(call: BridgeCall) -> Confirmation:
-    prompt = " ".join(_prompt(call).split())
-    shown = prompt if len(prompt) <= _SUMMARY_CHARS else prompt[: _SUMMARY_CHARS - 1] + "…"
-    where = "a new chat" if _conversation(call) is None else "a chat"
-    return Confirmation(summary=f'send "{shown}" to {where}', grant="chat.post")
+    shown = _clip(_prompt(call))
+    return Confirmation(summary=f'send "{shown}" to {await _where(call)}', grant="chat.post")
 
 
 async def _post(call: BridgeCall) -> JsonValue:
