@@ -4,8 +4,7 @@ import { Suspense } from "solid-js";
 import { ThemeProvider, Toaster, ConfirmHost, DitherField } from "~/ui";
 import { usePageTitle } from "~/app/usePageTitle";
 import { useFavicon } from "~/app/useFavicon";
-import { AppSplash } from "~/app/AppSplash";
-import { useSession } from "~/lib/stores/session";
+import { SplashHold, SplashHost } from "~/app/Splash";
 import {
   ambientAurora,
   ambientLoad,
@@ -18,9 +17,9 @@ import "./app.css";
  * behind every page (§11.1). Per-section chrome (app shell vs bare auth) is applied
  * by the route-group layout files in src/routes, not here.
  *
- * The root Suspense has a fallback because it is the boundary the rail's own cold
- * reads land on — the project switcher and the thread list sit outside AppShell's
- * inner boundary. Without one, the first paint after unlock is a blank frame.
+ * The root Suspense's fallback holds the splash because it is the boundary the rail's
+ * own cold reads land on — the project switcher and the thread list sit outside
+ * AppShell's inner boundary. Without it, the first paint after unlock is a blank frame.
  */
 export default function App() {
   return (
@@ -28,7 +27,6 @@ export default function App() {
       root={(props) => {
         usePageTitle();
         useFavicon();
-        const session = useSession();
         return (
           <ThemeProvider>
             <DitherField
@@ -36,14 +34,8 @@ export default function App() {
               aurora={ambientAurora}
               strikes={ambientStrikes}
             />
-            <Suspense
-              fallback={
-                // A cold load before unlock keeps boot's label: nothing is waking yet.
-                <AppSplash waking={session.isAuthenticated} />
-              }
-            >
-              {props.children}
-            </Suspense>
+            <Suspense fallback={<SplashHold />}>{props.children}</Suspense>
+            <SplashHost />
             <Toaster />
             <ConfirmHost />
           </ThemeProvider>

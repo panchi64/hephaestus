@@ -1,6 +1,6 @@
 import { Show, type JSX } from "solid-js";
 import { AuthLayout } from "~/app/AuthLayout";
-import { AppSplash } from "~/app/AppSplash";
+import { SplashHold } from "~/app/Splash";
 import { LoginScreen, SignupScreen } from "~/features/auth";
 import { OnboardingGate } from "~/features/onboarding";
 import { useSession } from "../stores/session";
@@ -24,7 +24,7 @@ import { useSession } from "../stores/session";
 export function RequireAuth(props: { children: JSX.Element }): JSX.Element {
   const session = useSession();
   return (
-    <Show when={session.status !== "loading"} fallback={<AppSplash />}>
+    <Show when={session.status !== "loading"} fallback={<SplashHold />}>
       <Show
         when={session.isAuthenticated}
         fallback={
