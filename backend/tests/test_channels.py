@@ -18,6 +18,7 @@ from services.channels import (
     ChannelHost,
     ChannelHub,
     ChannelLinks,
+    Decided,
     Decision,
     PendingCall,
 )
@@ -174,7 +175,7 @@ async def test_a_button_approves_everything_pending():
         answers = Answers()
         hub = await _approval_hub(app, answers, _request())
         said = await hub.decide("fake", OWNER_ID, "run-1", "tok", approve=True)
-        assert said == "Approved."
+        assert said == Decided(True, "Approved.")
         assert answers.decided == [("run-1", (Decision("call-1", True),))]
 
 
@@ -184,9 +185,9 @@ async def test_a_stale_or_foreign_button_decides_nothing():
         hub = await _approval_hub(app, answers, _request())
         stale = await hub.decide("fake", OWNER_ID, "run-1", "old", approve=True)
         foreign = await hub.decide("fake", OWNER_ID, "run-2", "tok", approve=True)
-        assert stale == foreign == "Already decided."
+        assert stale == foreign == Decided(False, "Already decided.")
         refused = await hub.decide("fake", "stranger", "run-1", "tok", approve=True)
-        assert "can't" in refused
+        assert not refused.settled and "can't" in refused.message
         assert answers.decided == []
 
 
@@ -194,7 +195,7 @@ async def test_a_guarded_call_points_to_the_app():
     async with client_app() as (_client, app):
         hub = await _approval_hub(app, Answers(guarded=True), _request())
         said = await hub.decide("fake", OWNER_ID, "run-1", "tok", approve=True)
-        assert "in the app" in said
+        assert not said.settled and "in the app" in said.message
 
 
 async def test_approvals_go_to_linked_addresses_or_the_fallback():

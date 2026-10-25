@@ -76,6 +76,7 @@ dependencies = [
     "tree-sitter-bash>=0.25.1",
     "pydantic-monty>=1.3.0",
     "jsonschema>=4.26.0",
+    "discord-py>=2.7.1",
 ]
 
 # Whole-DB SQLCipher was ruled out (no portable 3.14 wheels); at-rest

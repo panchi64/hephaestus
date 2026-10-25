@@ -42,6 +42,14 @@ class Inbound:
     conversation_id: str | None = None
 
 
+@dataclass(frozen=True)
+class Decided:
+    #: Whether the run's calls were actually decided by this press.
+    settled: bool
+    #: What to tell the sender.
+    message: str
+
+
 class ChannelHost(Protocol):
     """What a channel calls back into: the hub."""
 
@@ -51,8 +59,8 @@ class ChannelHost(Protocol):
 
     async def decide(
         self, channel: str, sender: str, run_id: str, token: str, *, approve: bool
-    ) -> str:
-        """Settle everything a run is parked on; returns what to tell the sender."""
+    ) -> Decided:
+        """Settle everything a run is parked on."""
         ...
 
 

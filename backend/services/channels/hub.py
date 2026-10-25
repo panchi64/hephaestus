@@ -20,7 +20,7 @@ from runs import Run, RunStatus, is_chat_turn
 from services.conversations import ConversationStore
 from services.settings_store import SettingsStore
 
-from .base import ApprovalRequest, Inbound, MessagingChannel
+from .base import ApprovalRequest, Decided, Inbound, MessagingChannel
 from .links import ChannelLinks
 
 logger = logging.getLogger(__name__)
@@ -170,22 +170,21 @@ class ChannelHub:
 
     async def decide(
         self, channel: str, sender: str, run_id: str, token: str, *, approve: bool
-    ) -> str:
-        """Approve or deny everything a run is parked on, from a channel's button. Returns
-        what to tell the sender."""
+    ) -> Decided:
+        """Approve or deny everything a run is parked on, from a channel's button."""
         if not await self.allowed(channel, sender):
-            return "You can't decide approvals from here."
+            return Decided(False, "You can't decide approvals from here.")
         request = self._pending(run_id)
         if request is None or request.token != token:
-            return "Already decided."
+            return Decided(False, "Already decided.")
         if request.questions:
-            return "This turn also asks you a question; answer it in the app."
+            return Decided(False, "This turn also asks you a question; answer it in the app.")
         decisions = tuple(Decision(call.tool_call_id, approve) for call in request.calls)
         try:
             await self._answer(run_id, decisions)
         except PermissionDeniedError:
-            return "One of these calls can only be approved in the app."
-        return "Approved." if approve else "Denied."
+            return Decided(False, "One of these calls can only be approved in the app.")
+        return Decided(True, "Approved." if approve else "Denied.")
 
 
 def _allow_key(channel: str) -> str:

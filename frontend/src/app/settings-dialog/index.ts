@@ -1,6 +1,7 @@
 export { SettingsDialog } from "./SettingsDialog";
 export {
   SETTINGS_GROUPS,
+  settingsGroups,
   allSections,
   allSectionIds,
   groupForSection,

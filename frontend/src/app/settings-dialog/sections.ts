@@ -1,3 +1,5 @@
+import { pluginEnabled } from "~/lib/stores/builtinPlugins";
+import { PLUGIN_SETTINGS } from "~/plugins/registry";
 import type { IconName } from "~/ui";
 
 /**
@@ -252,9 +254,24 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   },
 ];
 
+const PLUGIN_GROUP = "connections";
+
+/** The groups as the column shows them: the fixed ones, plus a section for each
+ *  built-in plugin that is switched on, appended to CONNECTIONS. Reactive, since
+ *  switching a plugin changes the list. */
+export function settingsGroups(): SettingsGroup[] {
+  const extra = PLUGIN_SETTINGS.filter((e) => pluginEnabled(e.plugin)).map(
+    (e) => e.section,
+  );
+  if (extra.length === 0) return SETTINGS_GROUPS;
+  return SETTINGS_GROUPS.map((g) =>
+    g.id === PLUGIN_GROUP ? { ...g, sections: [...g.sections, ...extra] } : g,
+  );
+}
+
 /** Every section, in column order. */
 export function allSections(): SettingsSection[] {
-  return SETTINGS_GROUPS.flatMap((g) => g.sections);
+  return settingsGroups().flatMap((g) => g.sections);
 }
 
 /** Every section id — what the renderer map is checked against. */
@@ -272,5 +289,5 @@ export function sectionById(id: string | undefined): SettingsSection {
 /** The group a section sits under — the breadcrumb the dialog shows, and the
  *  meta on a search result row. */
 export function groupForSection(id: string): SettingsGroup | undefined {
-  return SETTINGS_GROUPS.find((g) => g.sections.some((s) => s.id === id));
+  return settingsGroups().find((g) => g.sections.some((s) => s.id === id));
 }

@@ -8,15 +8,37 @@
 import type { NavItem } from "~/app/nav/types";
 import type { EnvelopeLabel } from "~/features/chat/envelopeLabels";
 import type { ToolEntry } from "~/features/chat/toolPresentation";
+import { declarePluginDefaults } from "~/lib/stores/builtinPlugins";
 import type { IconName } from "~/ui";
+import { discordPlugin } from "./discord/plugin";
 import { mailPlugin } from "./mail/plugin";
 import { routinesPlugin } from "./routines/plugin";
-import type { BuiltinPluginUi } from "./types";
+import type { BuiltinPluginUi, PluginSettingsSection } from "./types";
 
 export const BUILTIN_PLUGINS: readonly BuiltinPluginUi[] = [
   mailPlugin,
   routinesPlugin,
+  discordPlugin,
 ];
+
+declarePluginDefaults(
+  Object.fromEntries(
+    BUILTIN_PLUGINS.flatMap((p) =>
+      p.defaultEnabled === undefined ? [] : [[p.name, p.defaultEnabled]],
+    ),
+  ),
+);
+
+/** A settings section and the plugin it belongs to. */
+export interface PluginSettingsEntry {
+  plugin: string;
+  section: PluginSettingsSection;
+}
+
+export const PLUGIN_SETTINGS: readonly PluginSettingsEntry[] =
+  BUILTIN_PLUGINS.flatMap((plugin) =>
+    plugin.settings ? [{ plugin: plugin.name, section: plugin.settings }] : [],
+  );
 
 /** A nav row and the plugin it belongs to. */
 export interface PluginNavItem {

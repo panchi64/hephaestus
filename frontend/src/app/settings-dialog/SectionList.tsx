@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, on, Show, type JSX } from "solid-js";
 import { Disclosure, Icon, Input, ListRow, Text, Tooltip, cx } from "~/ui";
 import { readLS, writeLS } from "~/lib/storage";
-import { SETTINGS_GROUPS, type SettingsSection } from "./sections";
+import { settingsGroups, type SettingsSection } from "./sections";
 import { searchSettingsSections } from "./sections-search";
 
 /** Which groups the operator has folded away, at module scope so the column
@@ -90,7 +90,7 @@ export function SectionList(props: {
     on(
       () => props.active.id,
       (id) => {
-        const group = SETTINGS_GROUPS.find((g) =>
+        const group = settingsGroups().find((g) =>
           g.sections.some((s) => s.id === id),
         );
         if (group && collapsed().has(group.id)) toggleGroup(group.id);
@@ -141,7 +141,7 @@ export function SectionList(props: {
             <Icon name="search" size={16} />
           </button>
         </Tooltip>
-        <For each={SETTINGS_GROUPS}>
+        <For each={settingsGroups()}>
           {(group) => (
             <div class="flex flex-col gap-0.5 border-t border-line pt-2">
               <For each={group.sections}>
@@ -203,7 +203,7 @@ export function SectionList(props: {
           when={searching()}
           fallback={
             <div class="flex flex-col gap-2">
-              <For each={SETTINGS_GROUPS}>
+              <For each={settingsGroups()}>
                 {(group) => (
                   <Disclosure
                     label={group.label}
