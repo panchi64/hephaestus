@@ -9,7 +9,7 @@ import {
 import { Button, Frames, Row, Stack, StatusFlag, Text, toast } from "~/ui";
 import { isApiError } from "~/lib/api";
 import {
-  refreshEmbeddingHealth,
+  refreshCapabilityHealth,
   refreshReindexStatus,
   triggerReindex,
   useEmbeddingHealth,
@@ -35,7 +35,7 @@ export function EmbeddingRoleControls(
   // Seed both readouts once on mount (signals start empty — no Suspense).
   onMount(() => {
     void refreshReindexStatus();
-    void refreshEmbeddingHealth();
+    void refreshCapabilityHealth();
   });
 
   // Only re-subscribe when running actually toggles (a memo), not on every poll

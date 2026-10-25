@@ -119,10 +119,16 @@ export function ChatModelStep(props: {
   const needsWindow = (): boolean =>
     !!main() && !main()?.implicit && main()?.contextWindow === null;
 
+  const ready = (): boolean => chatReady(main(), endpoints());
+
   const saveWindow = async (): Promise<void> => {
     const n = Number(windowDraft().trim());
     const id = main()?.endpointIds[0];
-    if (!id || !Number.isInteger(n) || n <= 0) return;
+    if (!id) return;
+    if (!Number.isInteger(n) || n <= 0) {
+      toast.error("Enter the window as a whole number of tokens, like 32768.");
+      return;
+    }
     try {
       await updateEndpoint(id, { contextWindow: n });
       refreshRoles();
@@ -187,12 +193,11 @@ export function ChatModelStep(props: {
           onChange={(id) => void pick(id)}
           onSubmit={() => {
             if (needsWindow() && windowDraft().trim()) void saveWindow();
-            else if (chatReady(main())) props.onContinue();
+            else if (ready()) props.onContinue();
           }}
           submitLabel="Continue"
           submitDisabled={
-            busy() ||
-            (!chatReady(main()) && !(needsWindow() && windowDraft().trim()))
+            busy() || (!ready() && !(needsWindow() && windowDraft().trim()))
           }
           secondary={[{ label: "Back", onClick: props.onBack }]}
           disabled={busy()}

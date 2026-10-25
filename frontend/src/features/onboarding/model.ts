@@ -47,13 +47,28 @@ export function stepCounter(id: StepId): string {
   return `${pad(stepIndex(id) + 1)} / ${pad(STEPS.length)}`;
 }
 
-export function endpointReady(endpoints: ModelEndpoint[]): boolean {
-  return endpoints.some((e) => e.enabled && e.lastStatus === "ok");
+/** Enabled endpoints that passed their connection test. */
+export function workingEndpoints(endpoints: ModelEndpoint[]): ModelEndpoint[] {
+  return endpoints.filter((e) => e.enabled && e.lastStatus === "ok");
 }
 
-/** An explicit `main` with a window: the two things `POST /onboarding/complete` checks. */
-export function chatReady(main: RoleBinding | undefined): boolean {
-  return !!main && !main.implicit && main.contextWindow !== null;
+export function endpointReady(endpoints: ModelEndpoint[]): boolean {
+  return workingEndpoints(endpoints).length > 0;
+}
+
+/** An explicit `main` on a working endpoint, with a window: what
+ *  `POST /onboarding/complete` checks. */
+export function chatReady(
+  main: RoleBinding | undefined,
+  endpoints: ModelEndpoint[],
+): boolean {
+  const working = new Set(workingEndpoints(endpoints).map((e) => e.id));
+  return (
+    !!main &&
+    !main.implicit &&
+    main.contextWindow !== null &&
+    main.endpointIds.some((id) => working.has(id))
+  );
 }
 
 /** Where a reopened or reloaded walkthrough picks up: the first unmet requirement, else
@@ -63,7 +78,7 @@ export function resumeStep(
   main: RoleBinding | undefined,
 ): StepId {
   if (!endpointReady(endpoints)) return "endpoint";
-  if (!chatReady(main)) return "chat";
+  if (!chatReady(main, endpoints)) return "chat";
   return "roles";
 }
 
@@ -91,9 +106,7 @@ export function chatChoices(
   endpoints: ModelEndpoint[],
   servers: LocalServer[],
 ): ModelSelection[] {
-  const ok = new Map(
-    endpoints.filter((e) => e.lastStatus === "ok").map((e) => [e.id, e]),
-  );
+  const ok = new Map(workingEndpoints(endpoints).map((e) => [e.id, e]));
   return groups.flatMap((g) => {
     const ep = ok.get(g.endpointId);
     if (!ep) return [];
@@ -113,9 +126,7 @@ export function embeddingChoices(
   endpoints: ModelEndpoint[],
   servers: LocalServer[],
 ): ModelSelection[] {
-  const ok = new Map(
-    endpoints.filter((e) => e.lastStatus === "ok").map((e) => [e.id, e]),
-  );
+  const ok = new Map(workingEndpoints(endpoints).map((e) => [e.id, e]));
   const all = groups.flatMap((g) =>
     ok.has(g.endpointId)
       ? g.choices.map((c) => ({ endpointId: c.endpointId, model: c.model }))

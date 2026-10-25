@@ -3,6 +3,8 @@ local-server scan it opens with."""
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -11,6 +13,9 @@ from services import llm, onboarding
 from services.settings_store import SettingsStore
 from tests._helpers import client_app
 from tests._json import json_body, json_list, s
+
+_REAL_LIMITS = llm.discover_openai_limits
+_REAL_LIMITS_MANY = llm.discover_openai_limits_many
 
 
 async def _ok_probe(*_args: object, **_kwargs: object) -> None:
@@ -21,10 +26,17 @@ async def _no_limits(*_args: object, **_kwargs: object) -> tuple[int | None, int
     return None, None
 
 
+async def _no_limits_many(
+    *_args: object, **_kwargs: object
+) -> dict[str, tuple[int | None, int | None]]:
+    return {}
+
+
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(llm, "probe_openai_endpoint", _ok_probe)
     monkeypatch.setattr(llm, "discover_openai_limits", _no_limits)
+    monkeypatch.setattr(llm, "discover_openai_limits_many", _no_limits_many)
 
 
 async def _add_endpoint(client: httpx.AsyncClient, *, context_window: int | None) -> str:
@@ -96,6 +108,62 @@ async def test_a_disabled_endpoint_does_not_satisfy_the_endpoint_step():
         assert (await client.post("/onboarding/complete")).status_code == 409
 
 
+async def test_a_chat_model_on_an_untested_endpoint_is_refused():
+    async with client_app() as (client, _app):
+        tested = await _add_endpoint(client, context_window=32768)
+        _ = await client.post(f"/models/endpoints/{tested}/test")
+        untested = s(
+            json_body(
+                await client.post(
+                    "/models/endpoints",
+                    json={"name": "other", "base_url": "http://y/v1", "context_window": 32768},
+                )
+            )["id"]
+        )
+        _ = await client.put("/models/roles/main", json={"endpoint_ids": [untested], "model": "m"})
+        refused = await client.post("/onboarding/complete")
+        assert refused.status_code == 409
+        assert "chat model's endpoint" in s(json_body(refused)["detail"])
+
+
+async def test_a_slow_server_is_offered_without_its_details(monkeypatch: pytest.MonkeyPatch):
+    async def models(*_args: object, **_kwargs: object) -> list[str]:
+        return ["qwen3"]
+
+    async def stall(*_args: object, **_kwargs: object) -> dict[str, tuple[int, int]]:
+        await asyncio.sleep(5)
+        return {"qwen3": (65536, 4)}
+
+    monkeypatch.setattr(onboarding, "_DETAIL_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(llm, "discover_openai_models", models)
+    monkeypatch.setattr(llm, "discover_openai_limits_many", stall)
+    servers = await onboarding.detect_local(candidates=onboarding.LOCAL_CANDIDATES[:1])
+    assert [m.id for m in servers[0].models] == ["qwen3"]
+    assert servers[0].models[0].context_window is None
+
+
+async def test_batch_limits_agree_with_the_single_probe(monkeypatch: pytest.MonkeyPatch):
+    listings: dict[str, object] = {
+        "http://h/v1/models": {"data": [{"id": "a", "max_context_length": 8192}, {"id": "b"}]},
+        "http://h/api/v0/models": {"data": [{"id": "a", "loaded_context_length": 4096}]},
+    }
+
+    async def get_json(url: str, *_args: object, **_kwargs: object) -> object | None:
+        return listings.get(url)
+
+    async def no_props(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(llm, "_get_json", get_json)
+    monkeypatch.setattr(llm, "llama_cpp_props", no_props)
+    monkeypatch.setattr(llm, "discover_openai_limits", _REAL_LIMITS)
+    monkeypatch.setattr(llm, "discover_openai_limits_many", _REAL_LIMITS_MANY)
+    batch = await llm.discover_openai_limits_many("http://h/v1", ["a", "b"])
+    for model in ("a", "b"):
+        assert batch[model] == await llm.discover_openai_limits("http://h/v1", model)
+    assert batch["a"] == (4096, None)
+
+
 async def test_reopen_owes_the_walkthrough_again():
     async with client_app() as (client, _app):
         endpoint_id = await _add_endpoint(client, context_window=32768)
@@ -119,15 +187,13 @@ async def test_local_scan_reports_the_servers_that_answer(monkeypatch: pytest.Mo
     async def listing(*_args: object, **_kwargs: object) -> dict[str, dict[str, object]]:
         return {"qwen3": {"state": "loaded", "type": "llm"}, "nomic-embed": {"type": "embeddings"}}
 
-    async def limits(
-        _base: str, model: str, *_a: object, **_k: object
-    ) -> tuple[int | None, int | None]:
-        return (65536, 4) if model == "qwen3" else (None, None)
+    async def limits(*_a: object, **_k: object) -> dict[str, tuple[int | None, int | None]]:
+        return {"qwen3": (65536, 4), "nomic-embed": (None, None)}
 
     monkeypatch.setattr(llm, "probe_openai_endpoint", probe)
     monkeypatch.setattr(llm, "discover_openai_models", models)
     monkeypatch.setattr(llm, "lmstudio_listing", listing)
-    monkeypatch.setattr(llm, "discover_openai_limits", limits)
+    monkeypatch.setattr(llm, "discover_openai_limits_many", limits)
     async with client_app() as (client, _app):
         found = json_list(await client.get("/onboarding/local-endpoints"))
     assert found == [

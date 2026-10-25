@@ -1,14 +1,12 @@
 import { createSignal, onMount, Show, type JSX } from "solid-js";
-import { settled } from "~/lib/resource";
 import { isApiError } from "~/lib/api";
 import { Input, MetaAction, Text, toast, useTheme } from "~/ui";
 import {
   createSearchProvider,
-  refreshWebSearchHealth,
+  refreshCapabilityHealth,
   useSearchProviders,
-  useWebSearchHealth,
+  useWebSearchReadout,
 } from "~/features/settings/data";
-import { webSearchReadout } from "~/features/settings/model";
 import { workspaceBriefing } from "../briefings";
 import { ChoiceRow, DEFAULT_PICK } from "./ChoiceRow";
 import { StepShell } from "./StepShell";
@@ -16,17 +14,11 @@ import { StepShell } from "./StepShell";
 /** Web search as one row: the built-in SearXNG unless the operator gives an address of
  *  their own. The full provider list stays in Settings. */
 function SearchRow(): JSX.Element {
-  const providers = useSearchProviders();
-  const health = useWebSearchHealth();
+  const readout = useWebSearchReadout(useSearchProviders());
   const [open, setOpen] = createSignal(false);
   const [url, setUrl] = createSignal("");
   const [saving, setSaving] = createSignal(false);
-  const readout = () =>
-    webSearchReadout(
-      health(),
-      (settled(providers) ?? []).filter((p) => p.enabled).length,
-    );
-  onMount(() => void refreshWebSearchHealth());
+  onMount(() => void refreshCapabilityHealth());
 
   const add = async (): Promise<void> => {
     const baseUrl = url().trim();

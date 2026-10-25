@@ -1,6 +1,7 @@
 import { createResource, createSignal, type Resource } from "solid-js";
 import { api } from "~/lib/api";
 import type { ReindexStatusDTO } from "~/lib/api/models-types";
+import { settled } from "~/lib/resource";
 import {
   refreshEndpoints,
   setEndpointEnabled,
@@ -10,7 +11,9 @@ import {
   useEndpoints,
   useProviders,
   useRoles,
+  type ModelEndpoint,
 } from "~/lib/stores/models";
+import type { EndpointFormValues } from "./components/EndpointForm";
 import {
   toChatSettings,
   toChatSettingsBody,
@@ -26,7 +29,9 @@ import type {
   SearchProvider,
   SearchProviderInput,
   VmState,
+  WebSearchReadout,
 } from "./model";
+import { webSearchReadout } from "./model";
 import { toVmState, type VmStateDTO } from "./vmDto";
 import {
   openThreadCleared,
@@ -95,6 +100,42 @@ export async function updateEndpoint(
   refreshEndpoints();
 }
 
+/** Create `target`'s endpoint from form values, or update it; returns its id. */
+export async function saveEndpointForm(
+  target: ModelEndpoint | null,
+  f: EndpointFormValues,
+): Promise<string> {
+  const cw = f.contextWindow.trim();
+  const mcr = f.maxConcurrentRuns.trim();
+  const model = f.model.trim();
+  const fields = {
+    name: f.name.trim(),
+    baseUrl: f.baseUrl.trim(),
+    provider: f.provider,
+    contextWindow: cw ? Number(cw) : null,
+    nativeTools: f.nativeTools,
+    vision: f.vision,
+    thinking: f.thinking,
+  };
+  if (target) {
+    // Always send model so a cleared field unsets the default; the key is only sent
+    // when typed (blank = leave the stored key unchanged).
+    await updateEndpoint(target.id, {
+      ...fields,
+      maxConcurrentRuns: mcr ? Number(mcr) : 0,
+      model,
+      ...(f.apiKey ? { apiKey: f.apiKey } : {}),
+    });
+    return target.id;
+  }
+  return createEndpoint({
+    ...fields,
+    maxConcurrentRuns: mcr ? Number(mcr) : null,
+    model: model || undefined,
+    apiKey: f.apiKey || undefined,
+  });
+}
+
 export async function deleteEndpoint(id: string): Promise<void> {
   await api.del(`/models/endpoints/${id}`);
   refreshEndpoints();
@@ -116,7 +157,7 @@ export async function setRoleBinding(
   model: string | null = null,
 ): Promise<boolean> {
   await bindRole(role, endpointIds, model);
-  void refreshEmbeddingHealth(); // a bind can flip recall health
+  void refreshCapabilityHealth(); // a bind can flip recall health
   // A changed embedding endpoint/model strands existing vectors, so the backend
   // heals them with a background re-embed. Pull the just-started status so the
   // live readout (and its poller) reflect it; report whether one kicked off.
@@ -125,11 +166,9 @@ export async function setRoleBinding(
   return reindexStatus()?.state === "running";
 }
 
-/* ── Embedding health + re-embed (reindex) ───────────────────────────────────
-   These are LIVE-POLLED reads, so they must NOT go through `createResource` /
-   Suspense: a refetching resource re-enters its pending state and re-triggers the
-   route's `<Suspense>` fallback, flashing the whole page on every poll. Plain
-   signals update in place — the readout ticks over without disrupting the screen. */
+/* Capability health and re-embed status are live-polled, so they are plain signals,
+   not resources: a refetching resource re-triggers the route's `<Suspense>` fallback
+   and flashes the whole page on every poll. */
 
 interface CapabilityDTO {
   key: string;
@@ -137,49 +176,49 @@ interface CapabilityDTO {
   detail: string;
 }
 
-/** One capability's verdict off `/overview`, the home page's source of truth: the
- *  backend owns it and Settings only renders it. `undefined` means the read failed. */
-async function fetchCapability(
-  key: string,
-): Promise<CapabilityHealth | null | undefined> {
-  try {
-    const o = await api.get<{ capabilities: CapabilityDTO[] }>("/overview");
-    const cap = o.capabilities.find((c) => c.key === key);
-    return cap
-      ? {
-          status: cap.status as CapabilityHealth["status"],
-          detail: cap.detail,
-        }
-      : null;
-  } catch {
-    return undefined;
-  }
-}
-
 const [embeddingHealth, setEmbeddingHealth] =
+  createSignal<CapabilityHealth | null>(null);
+const [webSearchHealth, setWebSearchHealth] =
   createSignal<CapabilityHealth | null>(null);
 
 export function useEmbeddingHealth(): () => CapabilityHealth | null {
   return embeddingHealth;
 }
 
-export async function refreshEmbeddingHealth(): Promise<void> {
-  const health = await fetchCapability("embeddings");
-  // A failed read keeps the last known health rather than blanking the badge.
-  if (health !== undefined) setEmbeddingHealth(health);
+/** What web search runs on: the built-in SearXNG, or the operator's own when one of
+ *  `providers` is enabled. */
+export function useWebSearchReadout(
+  providers: Resource<SearchProvider[]>,
+): () => WebSearchReadout {
+  return () =>
+    webSearchReadout(
+      webSearchHealth(),
+      (settled(providers) ?? []).filter((p) => p.enabled).length,
+    );
 }
 
-const [webSearchHealth, setWebSearchHealth] =
-  createSignal<CapabilityHealth | null>(null);
-
-/** Whether web search works, through the built-in SearXNG or an operator's own. */
-export function useWebSearchHealth(): () => CapabilityHealth | null {
-  return webSearchHealth;
-}
-
-export async function refreshWebSearchHealth(): Promise<void> {
-  const health = await fetchCapability("web_search");
-  if (health !== undefined) setWebSearchHealth(health);
+/** Recall and web-search health off one `/overview` read, the home page's source of
+ *  truth: the backend owns the verdict and Settings only renders it. */
+export async function refreshCapabilityHealth(): Promise<void> {
+  let caps: CapabilityDTO[];
+  try {
+    caps = (await api.get<{ capabilities: CapabilityDTO[] }>("/overview"))
+      .capabilities;
+  } catch {
+    // A failed read keeps the last known health rather than blanking the badges.
+    return;
+  }
+  const health = (key: string): CapabilityHealth | null => {
+    const cap = caps.find((c) => c.key === key);
+    return cap
+      ? {
+          status: cap.status as CapabilityHealth["status"],
+          detail: cap.detail,
+        }
+      : null;
+  };
+  setEmbeddingHealth(health("embeddings"));
+  setWebSearchHealth(health("web_search"));
 }
 
 function toReindexStatus(d: ReindexStatusDTO): ReindexStatus {
@@ -269,7 +308,7 @@ const [providersTick, setProvidersTick] = createSignal(0);
 /** An enabled provider overrides the built-in instance, so a write can flip search health. */
 function providersChanged(): void {
   setProvidersTick((n) => n + 1);
-  void refreshWebSearchHealth();
+  void refreshCapabilityHealth();
 }
 
 async function fetchSearchProviders(): Promise<SearchProvider[]> {

@@ -19,6 +19,7 @@ import {
   resumeStep,
   STEPS,
   stepIndex,
+  workingEndpoints,
   type LocalServer,
   type StepId,
 } from "./model";
@@ -45,6 +46,8 @@ export function OnboardingScreen(): JSX.Element {
   const [step, setStep] = createSignal<StepId | null>(null);
   const [visited, setVisited] = createSignal<Set<StepId>>(new Set());
   const [briefing, setBriefing] = createSignal("");
+  /** A refused finish, waiting for fresh data to say which step to reopen. */
+  const [resyncing, setResyncing] = createSignal(false);
 
   createEffect(() => {
     const eps = settled(endpoints);
@@ -57,16 +60,13 @@ export function OnboardingScreen(): JSX.Element {
     if (s) setVisited((v) => new Set(v).add(s));
   });
 
-  const okEndpoints = () =>
-    (settled(endpoints) ?? []).filter(
-      (e) => e.enabled && e.lastStatus === "ok",
-    );
+  const okEndpoints = () => workingEndpoints(settled(endpoints) ?? []);
   const isDone = (id: StepId): boolean => {
     switch (id) {
       case "endpoint":
         return endpointReady(settled(endpoints) ?? []);
       case "chat":
-        return chatReady(settled(roles)?.main);
+        return chatReady(settled(roles)?.main, settled(endpoints) ?? []);
       case "ready":
         return false;
       default:
@@ -122,11 +122,17 @@ export function OnboardingScreen(): JSX.Element {
       toast.error(
         isApiError(e) ? e.detail : "Unable to finish the walkthrough.",
       );
+      // Refresh first so both resources are loading by the time the resync effect reads them.
       refreshEndpoints();
       refreshRoles();
-      setStep(resumeStep(settled(endpoints) ?? [], settled(roles)?.main));
+      setResyncing(true);
     }
   };
+  createEffect(() => {
+    if (!resyncing() || endpoints.loading || roles.loading) return;
+    setResyncing(false);
+    setStep(resumeStep(settled(endpoints) ?? [], settled(roles)?.main));
+  });
 
   return (
     <div class="flex h-screen overflow-hidden text-text">

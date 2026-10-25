@@ -126,20 +126,29 @@ describe("endpointReady", () => {
 });
 
 describe("chatReady", () => {
+  const eps = [endpoint()];
+
   test("a missing main binding is not ready", () => {
-    expect(chatReady(undefined)).toBe(false);
+    expect(chatReady(undefined, eps)).toBe(false);
   });
 
   test("an implicit binding is not ready, whatever its window", () => {
-    expect(chatReady(binding({ implicit: true }))).toBe(false);
+    expect(chatReady(binding({ implicit: true }), eps)).toBe(false);
   });
 
   test("an explicit binding without a context window is not ready", () => {
-    expect(chatReady(binding({ contextWindow: null }))).toBe(false);
+    expect(chatReady(binding({ contextWindow: null }), eps)).toBe(false);
   });
 
   test("an explicit binding with a window is ready", () => {
-    expect(chatReady(binding())).toBe(true);
+    expect(chatReady(binding(), eps)).toBe(true);
+  });
+
+  test("a binding whose chain has no working endpoint is not ready", () => {
+    expect(chatReady(binding(), [endpoint({ lastStatus: "error" })])).toBe(
+      false,
+    );
+    expect(chatReady(binding(), [endpoint({ enabled: false })])).toBe(false);
   });
 });
 

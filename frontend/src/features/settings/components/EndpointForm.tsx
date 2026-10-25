@@ -42,8 +42,6 @@ export interface EndpointFormProps {
   keyHint?: string;
   /** Show only Base URL and API key; the rest sits under a closed "Advanced". */
   essentials?: boolean;
-  /** Essentials mode only: render the provider select (when options are given). */
-  showProvider?: boolean;
 }
 
 /** The create/edit endpoint field set — name, how it is reached, and what it can do. */
@@ -161,7 +159,6 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
       }
     >
       <Stack gap={3}>
-        <Show when={props.showProvider}>{provider()}</Show>
         {baseUrl()}
         {apiKey()}
         <Disclosure label="Advanced">

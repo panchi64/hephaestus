@@ -4,7 +4,6 @@ import {
   ActionFrame,
   Reveal,
   Stack,
-  Text,
   type ActionButtonSpec,
 } from "~/ui";
 import { useBriefingSlot } from "./briefingSlot";
@@ -19,7 +18,6 @@ export function StepShell(props: {
   title: string;
   aside?: JSX.Element;
   buttons?: ActionButtonSpec[];
-  hint?: string;
   children: JSX.Element;
 }): JSX.Element {
   const setBriefing = useBriefingSlot();
@@ -34,10 +32,9 @@ export function StepShell(props: {
           <Show when={props.buttons}>
             {(buttons) => (
               <div class="heph-choice-foot border-t border-line">
-                <Text variant="micro" tone="dim">
-                  {props.hint ?? ""}
-                </Text>
-                <ActionButtons buttons={buttons()} />
+                <div class="ml-auto">
+                  <ActionButtons buttons={buttons()} />
+                </div>
               </div>
             )}
           </Show>

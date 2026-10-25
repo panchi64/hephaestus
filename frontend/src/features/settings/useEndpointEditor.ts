@@ -1,9 +1,8 @@
 import { createMemo, createSignal } from "solid-js";
 import { settled } from "~/lib/resource";
-import { type SelectOption, toast } from "~/ui";
-import { isApiError } from "~/lib/api";
+import type { SelectOption } from "~/ui";
 import type { ModelEndpoint, ModelProvider } from "~/lib/stores/models";
-import { createEndpoint, updateEndpoint, useProviders } from "./data";
+import { useProviders } from "./data";
 import type { EndpointFormValues } from "./components/EndpointForm";
 
 // "openai-compatible" is the wire default the backend applies when no provider
@@ -37,12 +36,11 @@ function formFor(ep: ModelEndpoint): EndpointFormValues {
   };
 }
 
-/** Field state and the create/update call behind an endpoint form. */
+/** Field state behind an endpoint form; `saveEndpointForm` writes it. */
 export function useEndpointEditor() {
   const providers = useProviders();
   const [values, setValues] = createSignal<EndpointFormValues>(BLANK_FORM);
   const [target, setTarget] = createSignal<ModelEndpoint | null>(null);
-  const [saving, setSaving] = createSignal(false);
 
   const setField = <K extends keyof EndpointFormValues>(
     key: K,
@@ -98,62 +96,14 @@ export function useEndpointEditor() {
     });
   };
 
-  const save = async (): Promise<string | null> => {
-    if (!valid() || saving()) return null;
-    setSaving(true);
-    const f = values();
-    const cw = f.contextWindow.trim();
-    const mcr = f.maxConcurrentRuns.trim();
-    const model = f.model.trim();
-    const fields = {
-      name: f.name.trim(),
-      baseUrl: f.baseUrl.trim(),
-      provider: f.provider,
-      contextWindow: cw ? Number(cw) : null,
-      nativeTools: f.nativeTools,
-      vision: f.vision,
-      thinking: f.thinking,
-    };
-    try {
-      const existing = target();
-      if (existing) {
-        // Always send model so a cleared field unsets the default; the key is
-        // only sent when typed (blank = leave the stored key unchanged).
-        await updateEndpoint(existing.id, {
-          ...fields,
-          maxConcurrentRuns: mcr ? Number(mcr) : 0,
-          model,
-          ...(f.apiKey ? { apiKey: f.apiKey } : {}),
-        });
-        toast.success("Endpoint updated");
-        return existing.id;
-      }
-      const id = await createEndpoint({
-        ...fields,
-        maxConcurrentRuns: mcr ? Number(mcr) : null,
-        model: model || undefined,
-        apiKey: f.apiKey || undefined,
-      });
-      toast.success("Endpoint added");
-      return id;
-    } catch (e) {
-      // A 422 (e.g. a key-requiring provider without a key) carries a
-      // plain-language detail from the backend — render it verbatim.
-      toast.error(isApiError(e) ? e.detail : "Unable to save the endpoint.");
-      return null;
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return {
     values,
+    /** The endpoint being edited, or null while creating. */
+    target,
     providerOptions,
     keyHint: () => providerById(values().provider)?.keyHint ?? undefined,
     onChange,
     valid,
-    saving,
     seed,
-    save,
   };
 }

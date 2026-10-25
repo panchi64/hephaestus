@@ -28,6 +28,7 @@ LOCAL_CANDIDATES: tuple[LocalCandidate, ...] = (
 )
 
 _PROBE_TIMEOUT_S = 3.0
+_DETAIL_TIMEOUT_S = 4.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,16 +83,20 @@ async def _probe(candidate: LocalCandidate, client: httpx.AsyncClient | None) ->
             ids = await llm.discover_openai_models(candidate.base_url, client=client)
     except TimeoutError, httpx.HTTPError, ValueError, DegradedCapabilityError:
         return None
-    rows = await llm.lmstudio_listing(candidate.base_url, client=client)
-    limits = await asyncio.gather(
-        *(
-            llm.discover_openai_limits(candidate.base_url, model_id, client=client)
-            for model_id in ids
-        )
-    )
+    # A server that answered but is slow to describe its models is still offered, bare.
+    rows: dict[str, Mapping[str, object]] = {}
+    limits: dict[str, tuple[int | None, int | None]] = {}
+    try:
+        async with asyncio.timeout(_DETAIL_TIMEOUT_S):
+            rows, limits = await asyncio.gather(
+                llm.lmstudio_listing(candidate.base_url, client=client),
+                llm.discover_openai_limits_many(candidate.base_url, ids, client=client),
+            )
+    except TimeoutError:
+        pass
     models = [
-        _local_model(model_id, limit, rows.get(model_id))
-        for model_id, limit in zip(ids, limits, strict=True)
+        _local_model(model_id, limits.get(model_id, (None, None)), rows.get(model_id))
+        for model_id in ids
     ]
     return LocalServer(candidate.label, candidate.base_url, models)
 

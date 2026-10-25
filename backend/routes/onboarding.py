@@ -70,6 +70,12 @@ async def complete(request: Request) -> OnboardingState:
     chain, _ = await registry.get_role_binding(OPERATOR_ID, "main")
     if not chain:
         raise HTTPException(status_code=409, detail="No chat model is picked.")
+    working = {e.id for e in endpoints if e.enabled and e.last_status == "ok"}
+    if not working.intersection(chain):
+        raise HTTPException(
+            status_code=409,
+            detail="The chat model's endpoint hasn't passed its connection test.",
+        )
     if await registry.role_context_window(OPERATOR_ID, "main") is None:
         raise HTTPException(
             status_code=409, detail="The chat model's endpoint reports no context window."

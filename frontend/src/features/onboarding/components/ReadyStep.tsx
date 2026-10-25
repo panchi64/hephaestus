@@ -4,7 +4,7 @@ import { MetaAction, Text } from "~/ui";
 import { effectiveSelection } from "~/lib/stores/models";
 import { useEndpoints, useRoles } from "~/features/settings/data";
 import { readyBriefing } from "../briefings";
-import { formatTokens, type StepId } from "../model";
+import { formatTokens, workingEndpoints, type StepId } from "../model";
 import { StepShell } from "./StepShell";
 
 interface SummaryRow {
@@ -35,9 +35,7 @@ export function ReadyStep(props: {
   };
 
   const rows = (): SummaryRow[] => {
-    const working = (settled(endpoints) ?? []).filter(
-      (e) => e.enabled && e.lastStatus === "ok",
-    );
+    const working = workingEndpoints(settled(endpoints) ?? []);
     const window = settled(roles)?.main?.contextWindow;
     return [
       {

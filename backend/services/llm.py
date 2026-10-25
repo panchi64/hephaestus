@@ -16,6 +16,7 @@ endpoint.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -252,30 +253,60 @@ async def discover_openai_limits(
     running is the ceiling the next turn hits. A maximum found early is held as the
     fallback while the remaining probes look for the loaded one.
     """
-    maximum: int | None = None
+    standard_row = _find_model_row(
+        await _get_json(base_url.rstrip("/") + "/models", api_key, client=client), model
+    )
     native_row: object | None = None
-    loaded: int | None = None
-    for url, is_native in (
-        (base_url.rstrip("/") + "/models", False),
-        (_native_listing_url(base_url), True),
-    ):
-        if url is None:
-            continue
-        row = _find_model_row(await _get_json(url, api_key, client=client), model)
-        if is_native:
-            native_row = row
-        loaded = _context_from_row(row, _LOADED_CONTEXT_KEYS)
-        if loaded is not None:
-            break
-        if maximum is None:
-            maximum = _context_from_row(row, _MAX_CONTEXT_KEYS)
+    native_url = _native_listing_url(base_url)
+    if native_url is not None and _context_from_row(standard_row, _LOADED_CONTEXT_KEYS) is None:
+        native_row = _find_model_row(await _get_json(native_url, api_key, client=client), model)
     # Diagnostic only, logged at debug: from llama.cpp's `/props` or the native row above.
     posture = await llama_cpp_props(base_url, api_key, client=client) or native_posture(native_row)
     if posture is not None:
         logger.debug("prompt cache posture base=%s %s", base_url, posture.summary())
+    return _resolve_limits(standard_row, native_row, posture)
+
+
+async def discover_openai_limits_many(
+    base_url: str,
+    models: Sequence[str],
+    api_key: str | None = None,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, tuple[int | None, int | None]]:
+    """:func:`discover_openai_limits` for every model a server lists, reading each listing
+    once rather than once per model. Never raises."""
+    native_url = _native_listing_url(base_url)
+    standard, native, props = await asyncio.gather(
+        _get_json(base_url.rstrip("/") + "/models", api_key, client=client),
+        _get_json(native_url, api_key, client=client) if native_url else _absent(),
+        llama_cpp_props(base_url, api_key, client=client),
+    )
+    limits: dict[str, tuple[int | None, int | None]] = {}
+    for model in models:
+        native_row = _find_model_row(native, model)
+        limits[model] = _resolve_limits(
+            _find_model_row(standard, model), native_row, props or native_posture(native_row)
+        )
+    return limits
+
+
+async def _absent() -> None:
+    return None
+
+
+def _resolve_limits(
+    standard_row: object | None, native_row: object | None, posture: PromptCachePosture | None
+) -> tuple[int | None, int | None]:
+    """A loaded window from either listing, else the posture's window, else a maximum."""
     slots = posture.total_slots if posture is not None else None
-    if loaded is not None:
-        return loaded, slots
+    maximum: int | None = None
+    for row in (standard_row, native_row):
+        loaded = _context_from_row(row, _LOADED_CONTEXT_KEYS)
+        if loaded is not None:
+            return loaded, slots
+        if maximum is None:
+            maximum = _context_from_row(row, _MAX_CONTEXT_KEYS)
     if posture is not None and posture.context_window is not None:
         return posture.context_window, slots
     return maximum, slots

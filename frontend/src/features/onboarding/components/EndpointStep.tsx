@@ -1,6 +1,7 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
-import { ChoiceList, MetaAction, type ChoiceOption } from "~/ui";
+import { isApiError } from "~/lib/api";
+import { ChoiceList, MetaAction, toast, type ChoiceOption } from "~/ui";
 import { modelGroups, type ModelEndpoint } from "~/lib/stores/models";
 import { endpointBriefing, providerReason } from "../briefings";
 import { OptionLabel } from "./OptionLabel";
@@ -11,6 +12,7 @@ import {
   useProviders,
 } from "~/features/settings/data";
 import { EndpointForm } from "~/features/settings/components/EndpointForm";
+import { saveEndpointWithToast } from "~/features/settings/components/saveEndpoint";
 import { useEndpointEditor } from "~/features/settings/useEndpointEditor";
 import {
   endpointReady,
@@ -49,6 +51,7 @@ export function EndpointStep(props: {
   const [form, setForm] = createSignal(false);
   const [testing, setTesting] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
   /** The endpoint the briefing talks about: the one last added, edited or tested. */
   const [latestId, setLatestId] = createSignal<string | null>(null);
 
@@ -87,22 +90,32 @@ export function EndpointStep(props: {
     setTesting(id);
     try {
       await testEndpoint(id);
+    } catch (e) {
+      toast.error(isApiError(e) ? e.detail : "Unable to test the endpoint.");
     } finally {
       setTesting(null);
     }
   };
 
   const connectLocal = async (server: LocalServer): Promise<void> => {
-    const id = await createEndpoint({
-      name: server.label,
-      baseUrl: server.baseUrl,
-      provider: "openai-compatible",
-      contextWindow: null,
-      maxConcurrentRuns: null,
-      nativeTools: true,
-      vision: false,
-      thinking: false,
-    });
+    let id: string;
+    try {
+      id = await createEndpoint({
+        name: server.label,
+        baseUrl: server.baseUrl,
+        provider: "openai-compatible",
+        contextWindow: null,
+        maxConcurrentRuns: null,
+        nativeTools: true,
+        vision: false,
+        thinking: false,
+      });
+    } catch (e) {
+      toast.error(
+        isApiError(e) ? e.detail : `Unable to connect ${server.label}.`,
+      );
+      return;
+    }
     await test(id);
   };
 
@@ -136,7 +149,14 @@ export function EndpointStep(props: {
   };
 
   const saveForm = async (): Promise<void> => {
-    const id = await editor.save();
+    if (!editor.valid() || saving()) return;
+    setSaving(true);
+    let id: string | null;
+    try {
+      id = await saveEndpointWithToast(editor.target(), editor.values());
+    } finally {
+      setSaving(false);
+    }
     if (id === null) return;
     setForm(false);
     await test(id);
@@ -231,10 +251,10 @@ export function EndpointStep(props: {
         buttons={[
           { label: "Back", kbd: "esc", onClick: () => setForm(false) },
           {
-            label: editor.saving() ? "Saving…" : "Save & test",
+            label: saving() ? "Saving…" : "Save & test",
             kbd: "↵",
             primary: true,
-            disabled: !editor.valid() || editor.saving(),
+            disabled: !editor.valid() || saving(),
             onClick: () => void saveForm(),
           },
         ]}

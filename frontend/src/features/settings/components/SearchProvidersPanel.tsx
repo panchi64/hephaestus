@@ -20,25 +20,20 @@ import {
 import {
   createSearchProvider,
   deleteSearchProvider,
-  refreshWebSearchHealth,
+  refreshCapabilityHealth,
   updateSearchProvider,
   useSearchProviders,
-  useWebSearchHealth,
+  useWebSearchReadout,
 } from "../data";
-import { webSearchReadout, type SearchProvider } from "../model";
+import type { SearchProvider } from "../model";
 
 /** Web search: the built-in SearXNG, and the operator's own instances that override it.
  *  Owns its catalog resource and its add/edit form so the Settings screen just composes
  *  it. Enabled/disabled reads by brightness, not hue; the API key is write-only. */
 export function SearchProvidersPanel(): JSX.Element {
   const providers = useSearchProviders();
-  const health = useWebSearchHealth();
-  const readout = () =>
-    webSearchReadout(
-      health(),
-      (settled(providers) ?? []).filter((p) => p.enabled).length,
-    );
-  onMount(() => void refreshWebSearchHealth());
+  const readout = useWebSearchReadout(providers);
+  onMount(() => void refreshCapabilityHealth());
 
   const [formOpen, setFormOpen] = createSignal(false);
   const [editing, setEditing] = createSignal<SearchProvider | null>(null);

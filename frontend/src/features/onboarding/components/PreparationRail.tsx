@@ -3,7 +3,8 @@ import { RailRow, StatusBar, Text, type RailRowState } from "~/ui";
 import { LockCell, RailFrame } from "~/app/sidebar";
 import { STEPS, stepCounter, type StepId } from "../model";
 
-const TOTAL = STEPS.length + 2;
+/** The two rows done unasked, plus every step but Review, which is left by entering. */
+const TOTAL = STEPS.filter((s) => s.id !== "ready").length + 2;
 
 export interface RailEntry {
   /** What the row reads at its right, in the machine voice. */
