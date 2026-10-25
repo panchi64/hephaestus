@@ -204,3 +204,9 @@
   flex-wrap: wrap;
   padding-left: var(--space-3);
 }
+/* The footer sits on the frame's bottom edge under a rule of its own, so a cell's own
+   top and bottom borders would draw each line twice. */
+.heph-choice-foot .heph-action-btn {
+  border-top-width: 0;
+  border-bottom-width: 0;
+}

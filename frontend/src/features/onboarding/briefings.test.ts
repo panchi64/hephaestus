@@ -5,7 +5,9 @@ import {
   loadedModel,
   modelReason,
   providerReason,
+  readyBriefing,
   rolesBriefing,
+  workspaceBriefing,
   type ChatBriefing,
   type EndpointBriefing,
 } from "./briefings";
@@ -14,11 +16,16 @@ import type { LocalModel, LocalServer } from "./model";
 /**
  * Talos's per-step briefings are assembled from optional state, so a missing branch
  * shows as a stray "undefined", a doubled blank line or a wrong plural on a screen the
- * operator reads once. These pin that each state selects the right paragraph and that
- * interpolation never leaks.
+ * operator reads once. These pin that each state selects the right finding, that the
+ * fixed purpose paragraph never changes, and that interpolation never leaks.
  */
 
-const OPENER = "Everything I do runs through a model";
+const ENDPOINT_PURPOSE = "An endpoint is where I reach a model";
+const CHAT_PURPOSE = "The chat model answers you";
+const ROLES_PURPOSE = "These are side jobs";
+
+const MAX_PARAGRAPHS = 2;
+const MAX_LENGTH = 320;
 
 function model(id: string, over: Partial<LocalModel> = {}): LocalModel {
   return {
@@ -44,7 +51,6 @@ function chatState(over: Partial<ChatBriefing> = {}): ChatBriefing {
     picked: "m1",
     pickedWindow: null,
     pickedLoaded: false,
-    choices: 1,
     needsWindow: false,
     ...over,
   };
@@ -54,6 +60,21 @@ function expectClean(text: string) {
   expect(text).not.toContain("\n\n\n");
   expect(text).not.toMatch(/undefined|null|false/);
   expect(text.trim()).toBe(text);
+}
+
+function expectShort(text: string) {
+  expect(text.split("\n\n").length).toBeLessThanOrEqual(MAX_PARAGRAPHS);
+  expect(text.length).toBeLessThanOrEqual(MAX_LENGTH);
+}
+
+function firstParagraph(text: string): string {
+  return text.split("\n\n")[0] ?? "";
+}
+
+function expectStablePurpose(texts: string[], purpose: string) {
+  const [head, ...rest] = texts.map(firstParagraph);
+  expect(head).toContain(purpose);
+  for (const other of rest) expect(other).toBe(head);
 }
 
 describe("loadedModel", () => {
@@ -73,36 +94,42 @@ describe("loadedModel", () => {
 });
 
 describe("endpointBriefing", () => {
+  const states: EndpointBriefing[] = [
+    endpointState({
+      form: {
+        provider: "anthropic",
+        displayName: "Anthropic",
+        requiresKey: true,
+      },
+    }),
+    endpointState({
+      form: { provider: "p", displayName: "P", requiresKey: false },
+    }),
+    endpointState({
+      latest: { name: "Local", ok: true, models: 1, detail: null },
+    }),
+    endpointState({
+      latest: { name: "Local", ok: false, models: 0, detail: "refused" },
+    }),
+    endpointState({ scanning: true }),
+    endpointState(),
+    endpointState({ available: [server([model("a", { loaded: true })])] }),
+    endpointState({ available: [server([model("a")])] }),
+  ];
+
   test("form with a key requirement names the provider and the key", () => {
-    const text = endpointBriefing(
-      endpointState({
-        form: {
-          provider: "anthropic",
-          displayName: "Anthropic",
-          requiresKey: true,
-        },
-      }),
-    );
-    expect(text).toContain(OPENER);
-    expect(text).toContain("Anthropic console");
-    expect(text).toContain("API key");
+    const text = endpointBriefing(states[0]!);
+    expect(text).toContain(ENDPOINT_PURPOSE);
+    expect(text).toContain("Paste your Anthropic API key");
+    expect(text).toContain("encrypted");
     expectClean(text);
   });
 
-  test("form without a key requirement asks for the base URL", () => {
-    const text = endpointBriefing(
-      endpointState({
-        form: {
-          provider: "openai-compatible",
-          displayName: "OpenAI-compatible",
-          requiresKey: false,
-        },
-      }),
-    );
-    expect(text).toContain(OPENER);
-    expect(text).toContain("base URL");
+  test("form without a key requirement asks for the address", () => {
+    const text = endpointBriefing(states[1]!);
+    expect(text).toContain("address");
     expect(text).toContain("`/v1`");
-    expect(text).not.toContain("console");
+    expect(text).not.toContain("API key");
     expectClean(text);
   });
 
@@ -117,15 +144,10 @@ describe("endpointBriefing", () => {
   });
 
   test("latest ok with one model is singular", () => {
-    const text = endpointBriefing(
-      endpointState({
-        latest: { name: "Local", ok: true, models: 1, detail: null },
-      }),
-    );
-    expect(text).toContain(OPENER);
-    expect(text).toContain("Local answered");
-    expect(text).toContain("1 model.");
+    const text = endpointBriefing(states[2]!);
+    expect(text).toContain("Local answered with 1 model.");
     expect(text).not.toContain("1 models");
+    expect(text).toContain("fallback");
     expectClean(text);
   });
 
@@ -140,19 +162,10 @@ describe("endpointBriefing", () => {
   });
 
   test("latest failed carries the detail", () => {
-    const text = endpointBriefing(
-      endpointState({
-        latest: {
-          name: "Local",
-          ok: false,
-          models: 0,
-          detail: "connection refused",
-        },
-      }),
-    );
-    expect(text).toContain(OPENER);
-    expect(text).toContain("Local didn't pass");
-    expect(text).toContain("connection refused");
+    const text = endpointBriefing(states[3]!);
+    expect(text).toContain("Local didn't answer.");
+    expect(text).toContain("refused");
+    expect(text).toContain("retest");
     expectClean(text);
   });
 
@@ -162,14 +175,8 @@ describe("endpointBriefing", () => {
         latest: { name: "Local", ok: false, models: 0, detail: null },
       }),
     );
-    expect(text).toContain("Local didn't pass");
-    expectClean(text);
-  });
-
-  test("scanning says it is checking this machine", () => {
-    const text = endpointBriefing(endpointState({ scanning: true }));
-    expect(text).toContain(OPENER);
-    expect(text).toContain("checking this machine");
+    expect(text).toContain("Local didn't answer. Check the server");
+    expect(text).not.toContain("  ");
     expectClean(text);
   });
 
@@ -183,15 +190,20 @@ describe("endpointBriefing", () => {
     expect(text).not.toContain("checking this machine");
   });
 
-  test("nothing available names the usual ports", () => {
-    const text = endpointBriefing(endpointState());
-    expect(text).toContain(OPENER);
-    expect(text).toContain("`1234`");
-    expect(text).toContain("`8080`");
+  test("scanning says it is checking this machine", () => {
+    const text = endpointBriefing(states[4]!);
+    expect(text).toContain("checking this machine");
     expectClean(text);
   });
 
-  test("an available server with a loaded model names it and its window", () => {
+  test("nothing available asks to be pointed at a server or provider", () => {
+    const text = endpointBriefing(states[5]!);
+    expect(text).toContain("Nothing is running on this machine");
+    expect(text).toContain("provider");
+    expectClean(text);
+  });
+
+  test("an available server with a loaded model names it", () => {
     const text = endpointBriefing(
       endpointState({
         available: [
@@ -202,36 +214,39 @@ describe("endpointBriefing", () => {
         ],
       }),
     );
-    expect(text).toContain(OPENER);
-    expect(text).toContain("LM Studio is running");
-    expect(text).toContain("2 models");
-    expect(text).toContain("`qwen` is already loaded");
-    expect(text).toContain("64K window");
+    expect(text).toContain("LM Studio is running here with `qwen` loaded");
+    expect(text).toContain("nothing you send leaves this machine");
+    expect(text).not.toContain("2 models");
     expectClean(text);
   });
 
-  test("a loaded model without a window omits the window clause", () => {
+  test("an available server with nothing loaded counts its models", () => {
     const text = endpointBriefing(
       endpointState({
-        available: [server([model("qwen", { loaded: true })])],
+        available: [server([model("qwen"), model("other")])],
       }),
     );
-    expect(text).toContain("1 model.");
-    expect(text).toContain("`qwen` is already loaded");
-    expect(text).not.toContain("window");
-    expectClean(text);
-  });
-
-  test("an available server with nothing loaded does not name a model", () => {
-    const text = endpointBriefing(
-      endpointState({
-        available: [server([model("qwen", { contextWindow: 65536 })])],
-      }),
-    );
-    expect(text).toContain("LM Studio is running");
+    expect(text).toContain("LM Studio is running here with 2 models");
     expect(text).not.toContain("`qwen`");
-    expect(text).not.toContain("already loaded");
     expectClean(text);
+  });
+
+  test("an available server with one model is singular", () => {
+    const text = endpointBriefing(
+      endpointState({ available: [server([model("qwen")])] }),
+    );
+    expect(text).toContain("with 1 model.");
+    expect(text).not.toContain("1 models");
+  });
+
+  test("a loaded embedding model does not count as loaded", () => {
+    const text = endpointBriefing(
+      endpointState({
+        available: [server([model("e", { loaded: true, kind: "embeddings" })])],
+      }),
+    );
+    expect(text).toContain("with 1 model.");
+    expect(text).not.toContain("loaded");
   });
 
   test("only the first available server is described", () => {
@@ -246,68 +261,129 @@ describe("endpointBriefing", () => {
     expect(text).toContain("First");
     expect(text).not.toContain("Second");
   });
+
+  test("every state opens with the same purpose and stays short", () => {
+    const texts = states.map(endpointBriefing);
+    expectStablePurpose(texts, ENDPOINT_PURPOSE);
+    for (const text of texts) {
+      expectShort(text);
+      expectClean(text);
+    }
+  });
 });
 
 describe("chatBriefing", () => {
-  const opener = "the model you'll talk to";
+  const states: ChatBriefing[] = [
+    chatState({ picked: undefined }),
+    chatState({ needsWindow: true }),
+    chatState({ pickedLoaded: true, pickedWindow: 131072 }),
+    chatState(),
+  ];
 
   test("no pick says no endpoint lists a model", () => {
-    const text = chatBriefing(chatState({ picked: undefined }));
-    expect(text).toContain(opener);
+    const text = chatBriefing(states[0]!);
+    expect(text).toContain(CHAT_PURPOSE);
     expect(text).toContain("No working endpoint lists a model");
     expectClean(text);
   });
 
   test("needing a window asks for it and names the pick", () => {
-    const text = chatBriefing(chatState({ needsWindow: true }));
-    expect(text).toContain(opener);
+    const text = chatBriefing(states[1]!);
     expect(text).toContain("`m1` doesn't report its context window");
-    expect(text).toContain("`-c`");
+    expect(text).toContain("Enter");
     expectClean(text);
   });
 
-  test("a loaded pick says why it was chosen and shows the window", () => {
+  test("needing a window outranks the loaded wording", () => {
     const text = chatBriefing(
-      chatState({ pickedLoaded: true, pickedWindow: 131072 }),
+      chatState({ needsWindow: true, pickedLoaded: true }),
     );
-    expect(text).toContain("`m1` because it's already loaded");
+    expect(text).not.toContain("already loaded");
+  });
+
+  test("a loaded pick says why it was chosen and shows the window", () => {
+    const text = chatBriefing(states[2]!);
+    expect(text).toContain("I picked `m1` because it's already loaded");
     expect(text).toContain("128K window");
     expectClean(text);
   });
 
+  test("a loaded pick without a window omits the window clause", () => {
+    const text = chatBriefing(chatState({ pickedLoaded: true }));
+    expect(text).toContain("because it's already loaded.");
+    expect(text).not.toContain("window");
+  });
+
+  test("an unloaded pick with a window shows it", () => {
+    const text = chatBriefing(chatState({ pickedWindow: 65536 }));
+    expect(text).toContain("I picked `m1`, with a 64K window.");
+    expect(text).not.toContain("already loaded");
+  });
+
   test("an unloaded pick without a window is just named", () => {
-    const text = chatBriefing(chatState());
-    expect(text).toContain("I've picked `m1`.");
+    const text = chatBriefing(states[3]!);
+    expect(text).toContain("I picked `m1`.");
     expect(text).not.toContain("already loaded");
     expect(text).not.toContain("window");
     expectClean(text);
   });
 
-  test("a single choice does not mention alternatives", () => {
-    expect(chatBriefing(chatState({ choices: 1 }))).not.toContain("the others");
-  });
-
-  test("multiple choices mention alternatives", () => {
-    const text = chatBriefing(chatState({ choices: 3 }));
-    expect(text).toContain("the others");
-    expectClean(text);
+  test("every state opens with the same purpose and stays short", () => {
+    const texts = states.map(chatBriefing);
+    expectStablePurpose(texts, CHAT_PURPOSE);
+    for (const text of texts) {
+      expectShort(text);
+      expectClean(text);
+    }
   });
 });
 
 describe("rolesBriefing", () => {
   test("with an embedder names the server and model", () => {
     const text = rolesBriefing({ server: "LM Studio", model: "nomic-embed" });
-    expect(text).toContain("Search & memory");
-    expect(text).toContain("LM Studio");
-    expect(text).toContain("`nomic-embed`");
+    expect(text).toContain(ROLES_PURPOSE);
+    expect(text).toContain("`nomic-embed` on LM Studio");
+    expect(text).toContain("recall by meaning");
     expectClean(text);
   });
 
-  test("without an embedder explains keyword recall", () => {
+  test("without an embedder leaves out the recommendation", () => {
     const text = rolesBriefing();
-    expect(text).toContain("Search & memory");
-    expect(text).toContain("keywords");
+    expect(text).toContain(ROLES_PURPOSE);
+    expect(text).toContain("Each default works");
     expect(text).not.toContain("`");
+    expect(text).not.toContain("\n\n");
+    expectClean(text);
+  });
+
+  test("both shapes open with the same purpose and stay short", () => {
+    const texts = [
+      rolesBriefing({ server: "LM Studio", model: "nomic-embed" }),
+      rolesBriefing(),
+    ];
+    for (const text of texts) expectShort(text);
+    expect(texts[0]!.startsWith(texts[1]!)).toBe(true);
+  });
+});
+
+describe("workspaceBriefing", () => {
+  test("is one clean paragraph naming both settings", () => {
+    const text = workspaceBriefing();
+    expect(text).toContain("web");
+    expect(text).toContain("Settings");
+    expectShort(text);
+    expect(text).not.toContain("\n\n");
+    expectClean(text);
+  });
+});
+
+describe("readyBriefing", () => {
+  test("is one clean paragraph pointing at the summary", () => {
+    const text = readyBriefing();
+    expect(text).toContain("That's everything");
+    expect(text).toContain("enter the workspace");
+    expectShort(text);
+    expect(text).not.toContain("\n\n");
     expectClean(text);
   });
 });

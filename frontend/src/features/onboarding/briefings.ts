@@ -1,14 +1,15 @@
 import { formatTokens, type LocalModel, type LocalServer } from "./model";
 
-/** Talos's briefing for each step, written as Markdown so model names and paths render
- *  in the machine voice. Each one says what the step is for, what Talos found or did,
- *  what it recommends and why, and what happens next — and is rewritten as the state
- *  changes, so it never describes a screen the operator is no longer looking at. */
+/** Talos's briefing for each step, written as Markdown so model names render in the
+ *  machine voice. Two short parts: what the section is for, which never changes, then
+ *  what Talos found or recommends, rewritten as the state changes. The fixed first part
+ *  is what keeps a rewrite from re-streaming the whole briefing. */
 
-const para = (...lines: (string | false | null | undefined)[]): string =>
-  lines.filter(Boolean).join(" ");
-const join = (...paragraphs: (string | false | null | undefined)[]): string =>
-  paragraphs.filter(Boolean).join("\n\n");
+const join = (...parts: (string | false | null | undefined)[]): string =>
+  parts.filter(Boolean).join("\n\n");
+
+const count = (n: number, noun: string): string =>
+  `${n} ${n === 1 ? noun : `${noun}s`}`;
 
 export function loadedModel(server: LocalServer): LocalModel | undefined {
   return server.models.find(
@@ -31,110 +32,67 @@ export interface EndpointBriefing {
   form?: { provider: string; displayName: string; requiresKey: boolean };
 }
 
-export function endpointBriefing(s: EndpointBriefing): string {
-  const opener =
-    "Everything I do runs through a model, so this is the one part of setup I can't do without you.";
+const ENDPOINT_PURPOSE =
+  "An endpoint is where I reach a model: a server on this machine or a hosted provider. I can't do anything until I have one.";
 
+function endpointFinding(s: EndpointBriefing): string {
   if (s.form)
-    return join(
-      opener,
-      s.form.requiresKey
-        ? para(
-            `Paste the API key from your ${s.form.displayName} console; the address is filled in for you.`,
-            "I store the key encrypted and never show it again, and I'll test the connection as soon as you save.",
-          )
-        : para(
-            "Give me the server's base URL, ending in `/v1`.",
-            "A key is only needed if the server asks for one. I'll test the connection as soon as you save.",
-          ),
-    );
-
+    return s.form.requiresKey
+      ? `Paste your ${s.form.displayName} API key; I keep it encrypted and test the connection when you save.`
+      : "Enter the server's address, ending in `/v1`; I'll test it when you save.";
   if (s.latest?.ok)
-    return join(
-      opener,
-      para(
-        `${s.latest.name} answered and lists ${s.latest.models} ${s.latest.models === 1 ? "model" : "models"}.`,
-        "That's all I need from you here.",
-      ),
-      "Add another endpoint if you want a fallback for when this one is down; otherwise, continue and pick the model you'll talk to.",
-    );
-
-  if (s.latest && !s.latest.ok)
-    return join(
-      opener,
-      para(
-        `${s.latest.name} didn't pass the connection test.`,
-        s.latest.detail ?? "",
-      ),
-      "Check that the server is running and the address is right, then retest. Or choose a different provider.",
-    );
-
-  if (s.scanning)
-    return join(
-      opener,
-      "I'm checking this machine for a model server first, so you don't have to type an address you already have running.",
-    );
-
+    return `${s.latest.name} answered with ${count(s.latest.models, "model")}. Continue, or add a second endpoint as a fallback.`;
+  if (s.latest)
+    return [
+      `${s.latest.name} didn't answer.`,
+      s.latest.detail,
+      "Check the server and retest, or pick another.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  if (s.scanning) return "I'm checking this machine for one now.";
   const [first] = s.available;
   if (!first)
-    return join(
-      opener,
-      para(
-        "Nothing is answering on this machine's usual ports: LM Studio on `1234`, llama-server on `8080`.",
-        "Start one and reopen this step, or point me at a server elsewhere or a hosted provider.",
-      ),
-      "Hosted providers need an API key and bill per token; a local server keeps everything on this machine.",
-    );
-
+    return "Nothing is running on this machine, so point me at a server or a provider.";
   const loaded = loadedModel(first);
-  return join(
-    opener,
-    para(
-      `${first.label} is running on this machine with ${first.models.length} ${first.models.length === 1 ? "model" : "models"}.`,
-      loaded
-        ? `\`${loaded.id}\` is already loaded${loaded.contextWindow ? ` with a ${formatTokens(loaded.contextWindow)} window` : ""}, so the first answer has no warm-up and nothing you send leaves this machine.`
-        : "Connecting it keeps everything you send on this machine.",
-    ),
-    "That's what I'd start with. If you'd rather use a hosted model, pick its provider and I'll ask for the key.",
-  );
+  return loaded
+    ? `${first.label} is running here with \`${loaded.id}\` loaded. I'd connect it: nothing you send leaves this machine.`
+    : `${first.label} is running here with ${count(first.models.length, "model")}. I'd connect it: nothing you send leaves this machine.`;
+}
+
+export function endpointBriefing(s: EndpointBriefing): string {
+  return join(ENDPOINT_PURPOSE, endpointFinding(s));
 }
 
 export interface ChatBriefing {
   picked?: string;
   pickedWindow: number | null;
   pickedLoaded: boolean;
-  choices: number;
   needsWindow: boolean;
 }
 
+const CHAT_PURPOSE =
+  "The chat model answers you, and it's the one I think and use tools with.";
+
 export function chatBriefing(s: ChatBriefing): string {
-  const opener =
-    "This is the model you'll talk to, and the one I reason and call tools with.";
   if (!s.picked)
     return join(
-      opener,
-      "No working endpoint lists a model yet. Go back and check the endpoint; I'll pick up whatever it serves.",
+      CHAT_PURPOSE,
+      "No working endpoint lists a model yet; go back and check it.",
     );
   if (s.needsWindow)
     return join(
-      opener,
-      para(
-        `\`${s.picked}\` doesn't report its context window, and I need it to know when a conversation is about to outgrow what the model can hold.`,
-        "Enter the window the server was started with — for llama-server, its `-c` value.",
-      ),
+      CHAT_PURPOSE,
+      `\`${s.picked}\` doesn't report its context window. Enter the one the server runs with, so I know when a conversation is getting too long.`,
     );
+  const window = s.pickedWindow
+    ? `, with a ${formatTokens(s.pickedWindow)} window`
+    : "";
   return join(
-    opener,
-    para(
-      s.pickedLoaded
-        ? `I've picked \`${s.picked}\` because it's already loaded, so there's no warm-up before the first answer.`
-        : `I've picked \`${s.picked}\`.`,
-      s.pickedWindow
-        ? `Its ${formatTokens(s.pickedWindow)} window is how much conversation and file content I can keep in view at once.`
-        : "",
-    ),
-    s.choices > 1 &&
-      "Any of the others work too: a larger window helps with long files, a smaller model answers faster. You can switch any time from the composer.",
+    CHAT_PURPOSE,
+    s.pickedLoaded
+      ? `I picked \`${s.picked}\` because it's already loaded${window}.`
+      : `I picked \`${s.picked}\`${window}.`,
   );
 }
 
@@ -143,25 +101,18 @@ export function rolesBriefing(embedder?: {
   model: string;
 }): string {
   return join(
-    "Each of these has a default that works. Keep it unless one matters to you now; all three live in Settings › Models.",
-    embedder
-      ? `The one I'd change is **Search & memory**: ${embedder.server} serves \`${embedder.model}\`, an embedding model, and with it I can recall past conversations by meaning rather than by keyword.`
-      : "Leaving **Search & memory** on keywords is fine to start; recall by meaning needs an embedding model, which none of your endpoints lists yet.",
+    "These are side jobs: background work like titles, a reviewer for Auto, and recall across past conversations. Each default works.",
+    embedder &&
+      `One is worth changing: \`${embedder.model}\` on ${embedder.server} lets me recall by meaning, not just keywords.`,
   );
 }
 
 export function workspaceBriefing(): string {
-  return join(
-    "Two preferences are worth setting now: how the workspace looks, and where I search the web. Both live in Settings, so you can change either later.",
-    "Web search needs a SearXNG instance. Without one, I work only from what you give me and the pages you link.",
-  );
+  return "How the workspace looks, and where I search the web. Both can change later in Settings.";
 }
 
 export function readyBriefing(): string {
-  return join(
-    "Everything I need is in place. This is what I'll be running on; anything you want to change is one click back.",
-    "Enter when you're ready; you'll land on the home screen.",
-  );
+  return "That's everything. Here's what I'll run on; edit any line, or enter the workspace.";
 }
 
 /** The one-line reason under a provider row. */

@@ -80,7 +80,6 @@ export function ChatModelStep(props: {
       picked: explicit?.model,
       pickedWindow: main()?.contextWindow ?? null,
       pickedLoaded: scanned?.loaded === true,
-      choices: choices().length,
       needsWindow: needsWindow(),
     });
   };
