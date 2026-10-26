@@ -650,6 +650,91 @@ async def test_download_error_routes_to_pdf_path(monkeypatch: pytest.MonkeyPatch
     assert '<untrusted id="' in page.content
 
 
+@final
+class _ErrorResponse(RenderResponse):
+    def __init__(self, status: int, body: str) -> None:
+        self._status: int = status
+        self._body: str = body
+
+    @property
+    @override
+    def status(self) -> int:
+        return self._status
+
+    @override
+    async def text(self) -> str:
+        return self._body
+
+
+@final
+class _ErrorStatusBrowser(RenderBrowser, RenderContext, RenderPage):
+    """available; its page's goto answers with a fixed error status and body."""
+
+    def __init__(self, status: int, body: str) -> None:
+        self._response: _ErrorResponse = _ErrorResponse(status, body)
+
+    @property
+    @override
+    def available(self) -> bool:
+        return True
+
+    @override
+    @asynccontextmanager
+    async def context(self, url: str | None = None) -> AsyncGenerator[_ErrorStatusBrowser]:
+        yield self
+
+    @override
+    async def new_page(self) -> _ErrorStatusBrowser:
+        return self
+
+    @override
+    async def apply_stealth(self, page: RenderPage) -> None:
+        return None
+
+    @property
+    @override
+    def url(self) -> str:
+        return "http://93.184.216.34/gone"
+
+    @override
+    async def wait_for_timeout(self, timeout: float) -> None:
+        raise AssertionError("unexpected call: wait_for_timeout")
+
+    @override
+    async def content(self) -> str:
+        raise AssertionError("unexpected call: content")
+
+    @override
+    async def evaluate(self, expression: str) -> str:
+        raise AssertionError("unexpected call: evaluate")
+
+    @override
+    async def goto(
+        self, url: str, *, wait_until: WaitUntil, timeout: float
+    ) -> RenderResponse | None:
+        return self._response
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "says_search"),
+    [
+        (404, "", True),
+        # Cloudflare fronting a hostname it no longer routes: the host itself is gone.
+        (409, "error code: 1001", True),
+        (530, "error code: 1016", True),
+        # A firewall block is a live host refusing us, not a missing page.
+        (403, "error code: 1020", False),
+        (409, "", False),
+    ],
+)
+async def test_error_status_hint(status: int, body: str, says_search: bool):
+    fetcher = BrowserFetcher(browser=_ErrorStatusBrowser(status, body))
+    with pytest.raises(WebFetchError) as raised:
+        _ = await fetcher.fetch(OWNER, "http://93.184.216.34/gone")
+    assert f"HTTP {status}" in str(raised.value)
+    assert ("web_search" in (raised.value.hint or "")) is says_search
+
+
 async def test_fetch_pdf_text_follows_redirect_recheck(monkeypatch: pytest.MonkeyPatch):
     from services.webfetch import pdf as pdf_mod
 

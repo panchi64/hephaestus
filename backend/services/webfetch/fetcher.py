@@ -46,6 +46,8 @@ class RenderResponse(Protocol):
     @property
     def status(self) -> int: ...
 
+    async def text(self) -> str: ...
+
 
 class SnapshotPage(Protocol):
     """The slice of a Playwright page a fetch waits on and snapshots."""
@@ -291,9 +293,13 @@ class BrowserFetcher:
                         raise _DownloadStarted from exc
                     raise WebFetchError(f"could not load {url!r}: {_reason(exc)}") from exc
                 if response is not None and response.status >= 400:
+                    try:
+                        body = await response.text()
+                    except PlaywrightError, UnicodeDecodeError:
+                        body = ""
                     raise WebFetchError(
                         f"{page.url!r} returned HTTP {response.status}",
-                        hint=status_hint(response.status),
+                        hint=status_hint(response.status, body),
                     )
                 final_url, html, text = await self.capture(url, page)
         except WebFetchError:
