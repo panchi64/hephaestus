@@ -20,6 +20,7 @@ from typing import cast, final, override
 
 import httpx
 import pytest
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page, Route
 from pydantic_ai import ModelResponse, TextPart
 from pydantic_ai.messages import ModelMessage
@@ -634,8 +635,6 @@ class _PdfDownloadBrowser(RenderBrowser, RenderContext, RenderPage):
     async def goto(
         self, url: str, *, wait_until: WaitUntil, timeout: float
     ) -> RenderResponse | None:
-        from playwright.async_api import Error as PlaywrightError
-
         raise PlaywrightError("Page.goto: net::ERR_ABORTED; Download is starting")
 
 
@@ -650,28 +649,53 @@ async def test_download_error_routes_to_pdf_path(monkeypatch: pytest.MonkeyPatch
     assert '<untrusted id="' in page.content
 
 
+_CLOUDFLARE = {"server": "cloudflare"}
+
+# The shape of Cloudflare's HTML error templates, old (cf-error-code) and new (bare span).
+_CF_HTML_1016 = (
+    "<!DOCTYPE html><html><head><title>Origin DNS error | x.example | Cloudflare</title>"
+    '</head><body><h1><span class="cf-error-type">Error</span> '
+    '<span class="cf-error-code">1016</span></h1></body></html>'
+)
+_CF_HTML_1018 = (
+    '<html><body><h1><span data-translate="error">Error</span><span>1018</span></h1></body></html>'
+)
+
+
 @final
 class _ErrorResponse(RenderResponse):
-    def __init__(self, status: int, body: str) -> None:
+    """An error response whose body reads as ``body``, raises it, or (None) never finishes."""
+
+    def __init__(self, status: int, body: str | Exception | None, headers: dict[str, str]) -> None:
         self._status: int = status
-        self._body: str = body
+        self._body: str | Exception | None = body
+        self._headers: dict[str, str] = headers
 
     @property
     @override
     def status(self) -> int:
         return self._status
 
+    @property
     @override
-    async def text(self) -> str:
-        return self._body
+    def headers(self) -> dict[str, str]:
+        return self._headers
+
+    @override
+    async def body(self) -> bytes:
+        if self._body is None:
+            _ = await asyncio.Event().wait()
+        if isinstance(self._body, Exception):
+            raise self._body
+        return (self._body or "").encode()
 
 
 @final
 class _ErrorStatusBrowser(RenderBrowser, RenderContext, RenderPage):
-    """available; its page's goto answers with a fixed error status and body."""
+    """available; its page's goto answers with a fixed error response."""
 
-    def __init__(self, status: int, body: str) -> None:
-        self._response: _ErrorResponse = _ErrorResponse(status, body)
+    def __init__(self, response: _ErrorResponse) -> None:
+        self._response: _ErrorResponse = response
 
     @property
     @override
@@ -716,23 +740,64 @@ class _ErrorStatusBrowser(RenderBrowser, RenderContext, RenderPage):
 
 
 @pytest.mark.parametrize(
-    ("status", "body", "says_search"),
+    ("status", "body", "headers", "says_search"),
     [
-        (404, "", True),
+        (404, "", {}, True),
         # Cloudflare fronting a hostname it no longer routes: the host itself is gone.
-        (409, "error code: 1001", True),
-        (530, "error code: 1016", True),
+        (409, "error code: 1001", _CLOUDFLARE, True),
+        (530, _CF_HTML_1016, _CLOUDFLARE, True),
+        (530, _CF_HTML_1018, _CLOUDFLARE, True),
         # A firewall block is a live host refusing us, not a missing page.
-        (403, "error code: 1020", False),
-        (409, "", False),
+        (403, "error code: 1020", _CLOUDFLARE, False),
+        # The same text from another server is that app's own error, not Cloudflare's.
+        (401, "error code: 1002", {"server": "nginx"}, False),
+        (409, "", _CLOUDFLARE, False),
+        (409, PlaywrightError("Response body is unavailable"), _CLOUDFLARE, False),
     ],
 )
-async def test_error_status_hint(status: int, body: str, says_search: bool):
-    fetcher = BrowserFetcher(browser=_ErrorStatusBrowser(status, body))
+async def test_error_status_hint(
+    status: int, body: str | Exception, headers: dict[str, str], says_search: bool
+):
+    response = _ErrorResponse(status, body, headers)
+    fetcher = BrowserFetcher(browser=_ErrorStatusBrowser(response))
     with pytest.raises(WebFetchError) as raised:
         _ = await fetcher.fetch(OWNER, "http://93.184.216.34/gone")
     assert f"HTTP {status}" in str(raised.value)
     assert ("web_search" in (raised.value.hint or "")) is says_search
+
+
+async def test_error_body_that_never_finishes_is_bounded():
+    response = _ErrorResponse(530, None, _CLOUDFLARE)
+    fetcher = BrowserFetcher(browser=_ErrorStatusBrowser(response), timeout_s=0.05)
+    with pytest.raises(WebFetchError) as raised:
+        _ = await asyncio.wait_for(fetcher.fetch(OWNER, "http://93.184.216.34/gone"), 5)
+    assert raised.value.hint is None
+
+
+async def test_fetch_pdf_text_reads_cloudflare_dead_host(monkeypatch: pytest.MonkeyPatch):
+    from services.webfetch import pdf as pdf_mod
+
+    async def _public(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(pdf_mod, "assert_public_url", _public)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, headers=_CLOUDFLARE, content=b"error code: 1001")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(WebFetchError) as raised:
+            _ = await pdf_mod.fetch_pdf_text(
+                "https://gone.example/a.pdf",
+                timeout_s=5,
+                max_bytes=1000,
+                max_pages=1,
+                client=client,
+            )
+    finally:
+        await client.aclose()
+    assert "web_search" in (raised.value.hint or "")
 
 
 async def test_fetch_pdf_text_follows_redirect_recheck(monkeypatch: pytest.MonkeyPatch):

@@ -23,7 +23,7 @@ from core.net import header
 from core.ssrf import assert_public_url
 from services.upload_extraction import scan_pdf
 
-from .status import status_hint
+from .status import ERROR_BODY_BYTES, served_by_cloudflare, status_hint
 
 _MAX_REDIRECTS = 5
 
@@ -89,9 +89,12 @@ async def _download(
                     current = str(httpx.URL(current).join(location))
                     continue
                 if resp.status_code >= 400:
+                    cloudflare_body = (
+                        await _error_head(resp) if served_by_cloudflare(resp.headers) else ""
+                    )
                     raise WebFetchError(
                         f"{url!r} returned HTTP {resp.status_code}",
-                        hint=status_hint(resp.status_code),
+                        hint=status_hint(resp.status_code, cloudflare_body=cloudflare_body),
                     )
                 declared = header(resp.headers, "content-length")
                 if declared is not None and declared.isdigit() and int(declared) > max_bytes:
@@ -111,3 +114,10 @@ async def _download(
         except httpx.HTTPError as exc:
             raise WebFetchError(f"could not fetch {url!r}: {exc}") from exc
     raise WebFetchError(f"too many redirects fetching {url!r}")
+
+
+async def _error_head(resp: httpx.Response) -> str:
+    """The first chunk of an error page, capped at ``ERROR_BODY_BYTES``."""
+    async for chunk in resp.aiter_bytes():
+        return chunk[:ERROR_BODY_BYTES].decode(errors="replace")
+    return ""

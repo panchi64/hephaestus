@@ -34,7 +34,7 @@ from core.untrusted import wrap_untrusted
 from .distill import WebDistiller
 from .extract import extract
 from .pdf import fetch_pdf_text
-from .status import status_hint
+from .status import ERROR_BODY_BYTES, served_by_cloudflare, status_hint
 from .throttle import DomainThrottle
 
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
@@ -46,7 +46,10 @@ class RenderResponse(Protocol):
     @property
     def status(self) -> int: ...
 
-    async def text(self) -> str: ...
+    @property
+    def headers(self) -> dict[str, str]: ...
+
+    async def body(self) -> bytes: ...
 
 
 class SnapshotPage(Protocol):
@@ -293,13 +296,12 @@ class BrowserFetcher:
                         raise _DownloadStarted from exc
                     raise WebFetchError(f"could not load {url!r}: {_reason(exc)}") from exc
                 if response is not None and response.status >= 400:
-                    try:
-                        body = await response.text()
-                    except PlaywrightError, UnicodeDecodeError:
-                        body = ""
                     raise WebFetchError(
                         f"{page.url!r} returned HTTP {response.status}",
-                        hint=status_hint(response.status, body),
+                        hint=status_hint(
+                            response.status,
+                            cloudflare_body=await self._cloudflare_body(response),
+                        ),
                     )
                 final_url, html, text = await self.capture(url, page)
         except WebFetchError:
@@ -314,6 +316,17 @@ class BrowserFetcher:
         # full page; this just keeps an outsized DOM
         # from ballooning the extractor's input. trafilatura/lxml recover from a mid-tag cut.
         return html[: self._max_bytes], (text or "")[: self._max_bytes], final_url
+
+    async def _cloudflare_body(self, response: RenderResponse) -> str:
+        """The head of a Cloudflare error page, or "" for another server or an unreadable body."""
+        if not served_by_cloudflare(response.headers):
+            return ""
+        try:
+            # body() waits for the whole response, which an unfinished error page never ends.
+            raw = await asyncio.wait_for(response.body(), timeout=self._timeout_ms / 1000)
+        except PlaywrightError, TimeoutError:
+            return ""
+        return raw[:ERROR_BODY_BYTES].decode(errors="replace")
 
     async def capture(self, url: str, page: SnapshotPage) -> tuple[str, str, str]:
         """Snapshot the page, and if it reads as a bot-wall interstitial, wait for it to
