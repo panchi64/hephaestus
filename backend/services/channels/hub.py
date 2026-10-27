@@ -110,11 +110,11 @@ class ChannelHub:
 
     async def inbound(self, channel: str, sender: str, address: str, text: str) -> Inbound:
         """A message the operator sent from ``address``: start or continue its turn."""
-        if not await self.allowed(channel, sender):
-            return Inbound("refused")
-        # One address at a time: two quick first messages would otherwise each open a chat,
-        # and the link the second writes would orphan the first chat's answer.
+        # One address at a time, in arrival order: the lock comes before the first await so a
+        # later message can't overtake an earlier one, and two quick first messages share a chat.
         async with self._address_locks.setdefault((channel, address), asyncio.Lock()):
+            if not await self.allowed(channel, sender):
+                return Inbound("refused")
             if text.strip().lower() == NEW_COMMAND:
                 await self.links.unlink(self.owner_id, channel, address)
                 return Inbound("fresh", reply="Started fresh. Your next message opens a new chat.")
