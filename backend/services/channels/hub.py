@@ -10,9 +10,11 @@ is for any caller without the operator's session.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections import Counter
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 
 from core.exceptions import PermissionDeniedError
@@ -21,7 +23,7 @@ from runs import Run, RunStatus, is_chat_turn
 from services.conversations import ConversationStore
 from services.settings_store import SettingsStore
 
-from .base import ApprovalRequest, Decided, Inbound, MessagingChannel
+from .base import Admit, ApprovalRequest, Decided, Inbound, MessagingChannel
 from .links import ChannelLinks
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,7 @@ class ChannelHub:
         self._pending: PendingApprovals = pending
         self._channels: dict[str, MessagingChannel] = {}
         self._address_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._address_users: Counter[tuple[str, str]] = Counter()
 
     # --- channels -----------------------------------------------------------------
 
@@ -108,12 +111,16 @@ class ChannelHub:
 
     # --- messages in ------------------------------------------------------------
 
-    async def inbound(self, channel: str, sender: str, address: str, text: str) -> Inbound:
+    async def inbound(
+        self, channel: str, sender: str, address: str, text: str, *, admit: Admit | None = None
+    ) -> Inbound:
         """A message the operator sent from ``address``: start or continue its turn."""
         # One address at a time, in arrival order: the lock comes before the first await so a
         # later message can't overtake an earlier one, and two quick first messages share a chat.
-        async with self._address_locks.setdefault((channel, address), asyncio.Lock()):
+        async with self._address_turn((channel, address)):
             if not await self.allowed(channel, sender):
+                return Inbound("refused")
+            if admit is not None and not await admit():
                 return Inbound("refused")
             if text.strip().lower() == NEW_COMMAND:
                 await self.links.unlink(self.owner_id, channel, address)
@@ -126,6 +133,25 @@ class ChannelHub:
             if conversation_id != linked:
                 await self.links.link(self.owner_id, channel, address, conversation_id)
             return Inbound("queued" if queued else "started", conversation_id=conversation_id)
+
+    @contextlib.asynccontextmanager
+    async def _address_turn(self, key: tuple[str, str]) -> AsyncGenerator[None]:
+        # Counts holders and waiters so an address's lock is dropped once nobody needs it;
+        # entering takes an uncontended lock without suspending, which keeps arrival order.
+        lock = self._address_locks.setdefault(key, asyncio.Lock())
+        self._address_users[key] += 1
+        try:
+            async with lock:
+                yield
+        finally:
+            self._address_users[key] -= 1
+            if not self._address_users[key]:
+                del self._address_users[key]
+                del self._address_locks[key]
+
+    def address_locks_held(self) -> int:
+        """How many addresses have a message in flight or waiting."""
+        return len(self._address_locks)
 
     # --- answers out ------------------------------------------------------------
 

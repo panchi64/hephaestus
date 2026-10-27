@@ -8,8 +8,12 @@ Telegram, Matrix) is one module that implements this protocol and calls the hub.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
+
+#: A channel's own admission check for one message, beyond the hub's sender allowlist.
+type Admit = Callable[[], Awaitable[bool]]
 
 
 @dataclass(frozen=True)
@@ -53,8 +57,14 @@ class Decided:
 class ChannelHost(Protocol):
     """What a channel calls back into: the hub."""
 
-    async def inbound(self, channel: str, sender: str, address: str, text: str) -> Inbound:
-        """A message the operator sent from ``address``: start or continue its turn."""
+    async def inbound(
+        self, channel: str, sender: str, address: str, text: str, *, admit: Admit | None = None
+    ) -> Inbound:
+        """A message the operator sent from ``address``: start or continue its turn.
+
+        ``admit`` is a channel's own check, run in arrival order with the sender check; a
+        channel must not await anything before calling this, or messages can swap places.
+        """
         ...
 
     async def decide(

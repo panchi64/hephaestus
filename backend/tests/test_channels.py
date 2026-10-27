@@ -231,34 +231,79 @@ async def test_one_channel_failing_does_not_stop_the_others_asking():
         assert [address for address, _ in working.asked] == ["dm:2"]
 
 
+async def _recording_hub(app: FastAPI, prompts: list[str]) -> ChannelHub:
+    """A hub whose chats open as ``conv-N`` after a short delay, recording each prompt."""
+    opened: list[str] = []
+
+    async def send(prompt: str, conversation_id: str | None) -> tuple[str, bool]:
+        prompts.append(prompt)
+        await asyncio.sleep(0.01)
+        if conversation_id is None:
+            opened.append(f"conv-{len(opened) + 1}")
+            return opened[-1], False
+        return conversation_id, True
+
+    hub = ChannelHub(
+        owner_id=deps.service(app, ChannelHub).owner_id,
+        links=deps.service(app, ChannelLinks),
+        settings=deps.settings_store(app),
+        conversations=deps.service(app, ConversationStore),
+        send_chat=send,
+        answer=Answers(),
+        pending=lambda _run_id: None,
+    )
+    await hub.set_allowed_senders("fake", [OWNER_ID])
+    return hub
+
+
 async def test_quick_first_messages_from_one_address_share_a_chat():
     async with client_app() as (_client, app):
-        opened: list[str] = []
-
-        async def send(_prompt: str, conversation_id: str | None) -> tuple[str, bool]:
-            await asyncio.sleep(0.01)
-            if conversation_id is None:
-                opened.append(f"conv-{len(opened) + 1}")
-                return opened[-1], False
-            return conversation_id, True
-
-        hub = ChannelHub(
-            owner_id=deps.service(app, ChannelHub).owner_id,
-            links=deps.service(app, ChannelLinks),
-            settings=deps.settings_store(app),
-            conversations=deps.service(app, ConversationStore),
-            send_chat=send,
-            answer=Answers(),
-            pending=lambda _run_id: None,
-        )
-        await hub.set_allowed_senders("fake", [OWNER_ID])
+        prompts: list[str] = []
+        hub = await _recording_hub(app, prompts)
         first, second = await asyncio.gather(
             hub.inbound("fake", OWNER_ID, "dm:1", "one"),
             hub.inbound("fake", OWNER_ID, "dm:1", "two"),
         )
-        assert opened == ["conv-1"]
+        assert prompts == ["one", "two"]
         assert (first.outcome, second.outcome) == ("started", "queued")
         assert first.conversation_id == second.conversation_id == "conv-1"
+
+
+async def test_a_slow_channel_check_does_not_let_a_later_message_overtake():
+    async with client_app() as (_client, app):
+        prompts: list[str] = []
+        hub = await _recording_hub(app, prompts)
+        delays = iter([0.02, 0.0])
+
+        async def admit() -> bool:
+            await asyncio.sleep(next(delays))
+            return True
+
+        first, second = await asyncio.gather(
+            hub.inbound("fake", OWNER_ID, "channel:9", "one", admit=admit),
+            hub.inbound("fake", OWNER_ID, "channel:9", "two", admit=admit),
+        )
+        assert prompts == ["one", "two"]
+        assert (first.outcome, second.outcome) == ("started", "queued")
+
+
+async def test_finished_and_refused_messages_leave_no_address_lock():
+    async with client_app() as (_client, app):
+        prompts: list[str] = []
+        hub = await _recording_hub(app, prompts)
+
+        async def deny() -> bool:
+            return False
+
+        outcomes = await asyncio.gather(
+            hub.inbound("fake", OWNER_ID, "dm:1", "one"),
+            hub.inbound("fake", OWNER_ID, "dm:1", "two"),
+            hub.inbound("fake", "someone-else", "dm:2", "hi"),
+            hub.inbound("fake", OWNER_ID, "channel:9", "hi", admit=deny),
+        )
+        assert [o.outcome for o in outcomes] == ["started", "queued", "refused", "refused"]
+        assert prompts == ["one", "two"]
+        assert hub.address_locks_held() == 0
 
 
 async def test_approvals_go_to_linked_addresses_or_the_fallback():

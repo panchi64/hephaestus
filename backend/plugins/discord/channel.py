@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 from dataclasses import dataclass
 
@@ -145,16 +146,23 @@ class DiscordChannel:
             return
         if message.author.bot or (client.user is not None and message.author.id == client.user.id):
             return
-        if message.guild is None:
-            address = f"dm:{message.author.id}"
-        elif str(message.channel.id) in await self._config.allowed_channels():
-            address = f"channel:{message.channel.id}"
-        else:
-            return
         if not message.content.strip():
             return
-        result = await host.inbound(KEY, str(message.author.id), address, message.content)
+        # The guild-channel allowlist is a settings read, so it runs inside the hub's
+        # arrival-ordered section rather than as an await before it.
+        admit = None
+        if message.guild is None:
+            address = f"dm:{message.author.id}"
+        else:
+            address = f"channel:{message.channel.id}"
+            admit = functools.partial(self._channel_allowed, str(message.channel.id))
+        result = await host.inbound(
+            KEY, str(message.author.id), address, message.content, admit=admit
+        )
         await self._acknowledge(message, address, result)
+
+    async def _channel_allowed(self, channel_id: str) -> bool:
+        return channel_id in await self._config.allowed_channels()
 
     async def _acknowledge(self, message: discord.Message, address: str, result: Inbound) -> None:
         match result.outcome:
