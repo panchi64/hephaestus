@@ -16,7 +16,7 @@
  * outcome is what it falls back to at rest.
  */
 
-import type { Status } from "~/ui";
+import { ACTION_TONES, type ActionTone, type Status } from "~/ui";
 import type { ChatActivity, ChatOutcome } from "./model";
 
 /** Either half of the pair, resolved to the one state a surface renders. */
@@ -63,9 +63,9 @@ const SPECS = {
     loud: true,
   },
   awaiting_input: {
-    readout: "AWAITING YOU",
-    spoken: "awaiting approval",
-    status: "warn",
+    readout: ACTION_TONES.approval.readout,
+    spoken: ACTION_TONES.approval.spoken,
+    status: ACTION_TONES.approval.status,
     live: true,
     loud: true,
   },
@@ -104,9 +104,21 @@ const SPECS = {
 } satisfies Record<RunState, RunStateSpec>;
 
 /** Total over the union by construction — there is no unknown arm to hide a missing
- *  row behind, because a value that isn't one of the seven never had this type. */
-export function runStateSpec(state: RunState): RunStateSpec {
-  return SPECS[state];
+ *  row behind, because a value that isn't one of the seven never had this type.
+ *  A run parked on the operator reports in its ask's tone; no kind reads as an approval. */
+export function runStateSpec(
+  state: RunState,
+  awaiting?: ActionTone,
+): RunStateSpec {
+  const spec = SPECS[state];
+  if (state !== "awaiting_input" || !awaiting) return spec;
+  const tone = ACTION_TONES[awaiting];
+  return {
+    ...spec,
+    readout: tone.readout,
+    spoken: tone.spoken,
+    status: tone.status,
+  };
 }
 
 /**

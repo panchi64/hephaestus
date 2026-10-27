@@ -1,5 +1,6 @@
 import { createSignal, For, type JSX } from "solid-js";
 import { Button, confirm, Panel, Stack, toast } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { clearData } from "../data";
 import { clearedMessage, type DataKind } from "../clearData";
 import { SettingRow } from "./SettingRow";
@@ -68,23 +69,26 @@ export function ClearDataSection(): JSX.Element {
   };
 
   return (
-    <Panel label="Clear data">
-      <Stack gap={3}>
-        <For each={ROWS}>
-          {(row) => (
-            <SettingRow label={row.label} description={row.description}>
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={busy() !== null}
-                onClick={() => void run(row)}
-              >
-                {busy() === row.kind ? "Deleting…" : "Delete all"}
-              </Button>
-            </SettingRow>
-          )}
-        </For>
-      </Stack>
-    </Panel>
+    <Stack gap={6}>
+      <SettingsPageHeader section="data" />
+      <Panel>
+        <Stack gap={3}>
+          <For each={ROWS}>
+            {(row) => (
+              <SettingRow label={row.label} description={row.description}>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={busy() !== null}
+                  onClick={() => void run(row)}
+                >
+                  {busy() === row.kind ? "Deleting…" : "Delete all"}
+                </Button>
+              </SettingRow>
+            )}
+          </For>
+        </Stack>
+      </Panel>
+    </Stack>
   );
 }

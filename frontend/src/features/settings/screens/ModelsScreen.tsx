@@ -1,5 +1,6 @@
 import { Show, type JSX } from "solid-js";
-import { Button, PageHeader, Stack, Tabs, toast } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
+import { Button, Stack, Tabs, toast } from "~/ui";
 import { isApiError } from "~/lib/api";
 import { useTabParam } from "~/lib/useTabParam";
 import { reopenOnboarding } from "~/features/onboarding/data";
@@ -34,11 +35,8 @@ export function ModelsScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Models"
-        subtitle="Which model does what. Set it here once — every surface follows."
-        assetId="HEPH-MDL-01.0"
+      <SettingsPageHeader
+        section="models"
         actions={
           <Button size="sm" onClick={() => void runWalkthrough()}>
             Run setup walkthrough

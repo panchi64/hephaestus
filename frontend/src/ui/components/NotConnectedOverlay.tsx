@@ -14,7 +14,7 @@ export function NotConnectedOverlay(): JSX.Element {
       <Text variant="display" tone="alert">
         Not connected
       </Text>
-      <Text variant="micro" tone="dim">
+      <Text variant="caption" tone="dim">
         Awaiting backend capability
       </Text>
     </div>

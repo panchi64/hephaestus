@@ -5,7 +5,6 @@ import {
   EmptyState,
   Input,
   ListRow,
-  PageHeader,
   PathInput,
   Resource,
   Row,
@@ -13,6 +12,7 @@ import {
   Text,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { usePathPicker } from "~/lib/hostPicker";
 import {
   activeProjectId,
@@ -85,11 +85,7 @@ export function ProjectsScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Projects"
-        subtitle="Directories you work in. The active one scopes what you see."
-      />
+      <SettingsPageHeader section="projects" />
 
       <Stack gap={3}>
         <Text variant="label" tone="dim">

@@ -62,7 +62,7 @@ function TranscriptBody(props: { subagent: Subagent }): JSX.Element {
           card nobody can read. */}
       <Switch>
         <Match when={transcript.error()}>
-          <Text variant="micro" tone="alert">
+          <Text variant="caption" tone="alert">
             That sub-agent's transcript could not be read.
           </Text>
         </Match>
@@ -110,7 +110,7 @@ function TranscriptBody(props: { subagent: Subagent }): JSX.Element {
       </Switch>
       {/* Live, the turn itself shows the progress. */}
       <Show when={!transcript.live && isLive(props.subagent)}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           Still working — this updates as it goes.
         </Text>
       </Show>

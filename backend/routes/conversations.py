@@ -18,6 +18,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from agent import AwaitingKind, awaiting_kind
 from agent.engine import fold_now
 from agent.naming import late_title_wait_s
 from agent.summarize import FoldFailed, NothingToFold, resolve_auto_compact_policy
@@ -69,6 +70,8 @@ class ConversationSummary(BaseModel):
     # idle. Registry-derived, not persisted. Lets the list mark working threads and keep the
     # rail's busy-vs-needs-you distinction (`awaiting_input` is parked on an approval).
     activity: str | None = None
+    # What an `awaiting_input` thread is parked on; None for any other activity.
+    awaiting_kind: AwaitingKind | None = None
     # How the most recent finished run ended (`done`, `error`, `blocked`, `cancelled`).
     # Separate from `activity` because both can hold (running now, errored last time); the
     # live value wins on screen and this is the row's resting state, so a failed thread
@@ -268,13 +271,12 @@ class PinUpdate(BaseModel):
     pinned: bool
 
 
-def _activity(request: Request, conversation_id: str) -> str | None:
-    """The status of the live run driving ``conversation_id``, or None when idle.
+def _live_run(request: Request, conversation_id: str) -> Run | None:
+    """The live run driving ``conversation_id``, or None when idle.
 
     An in-flight turn isn't in the store until it finishes, so only the registry can tell.
     """
-    run = deps.registry(request).active_run_for(conversation_id, OPERATOR_ID)
-    return run.status.value if run is not None else None
+    return deps.registry(request).active_run_for(conversation_id, OPERATOR_ID)
 
 
 def _outcomes(request: Request) -> dict[str, str]:
@@ -301,11 +303,12 @@ def _ended(run: Run) -> datetime:
 
 def _summary(
     view: ConversationSummaryView,
-    activity: str | None = None,
+    run: Run | None = None,
     workspaces: Mapping[str, str] | None = None,
     last_outcome: str | None = None,
 ) -> ConversationSummary:
-    """One listing row. ``workspaces`` maps project id → directory basename; none ⇒ no workspace."""
+    """One listing row. ``run`` is the live run, if any; ``workspaces`` maps project id →
+    directory basename, none ⇒ no workspace."""
     return ConversationSummary(
         id=view.id,
         title=view.title,
@@ -315,7 +318,8 @@ def _summary(
         preview=view.preview,
         work_summary=view.work_summary,
         model=view.model,
-        activity=activity,
+        activity=run.status.value if run is not None else None,
+        awaiting_kind=awaiting_kind(run) if run is not None else None,
         last_outcome=last_outcome,
         agent_name=view.agent_name,
         parent_id=view.parent_id,
@@ -448,7 +452,7 @@ async def _detail(
     by_id = {s.id: s for s in snapshots}
     base: dict[str, object] = _summary(
         summary,
-        activity=active_run.status if active_run else None,
+        run=run,
         workspaces=await deps.projects(request).workspace_names(OPERATOR_ID),
         last_outcome=_outcomes(request).get(conversation_id),
     ).model_dump()
@@ -491,7 +495,7 @@ async def list_conversations(request: Request) -> list[ConversationSummary]:
     return [
         _summary(
             v,
-            activity=_activity(request, v.id),
+            run=_live_run(request, v.id),
             workspaces=workspaces,
             last_outcome=outcomes.get(v.id),
         )
@@ -520,7 +524,7 @@ async def rename_conversation(
         raise HTTPException(status_code=404, detail="conversation not found")
     return _summary(
         summary,
-        activity=_activity(request, conversation_id),
+        run=_live_run(request, conversation_id),
         last_outcome=_outcomes(request).get(conversation_id),
     )
 
@@ -579,7 +583,7 @@ async def retitle_conversation(
         raise HTTPException(status_code=404, detail="conversation not found")
     return _summary(
         summary,
-        activity=_activity(request, conversation_id),
+        run=_live_run(request, conversation_id),
         last_outcome=_outcomes(request).get(conversation_id),
     )
 

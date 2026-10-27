@@ -1,10 +1,11 @@
 import { type JSX } from "solid-js";
+import type { AssetId } from "../assetIds";
 import { Text } from "../primitives/Text";
 import { ConstructionReveal } from "./ConstructionReveal";
 
 export interface PlateProps {
-  /** Diegetic id engraved at the plate's foot (e.g. "HEPH-ERR-404"). */
-  assetId: string;
+  /** Diegetic id engraved at the plate's foot. */
+  assetId: AssetId;
   /** Width glue for the plate. */
   class?: string;
   /** Layout of the content column, padding included. */

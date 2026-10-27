@@ -6,6 +6,7 @@ export {
   allSectionIds,
   groupForSection,
   sectionById,
+  sectionHeading,
   type SettingsGroup,
   type SettingsSection,
 } from "./sections";

@@ -3,7 +3,6 @@ import { settled } from "~/lib/resource";
 import {
   Button,
   LoadingText,
-  PageHeader,
   Panel,
   Row,
   Stack,
@@ -12,6 +11,7 @@ import {
   Toggle,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import {
   refreshDiscordStatus,
   saveDiscordConfig,
@@ -63,11 +63,7 @@ export function DiscordSection(props: PluginSettingsProps): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Discord"
-        subtitle="Talk to the agent from a Discord bot. Final answers are sent out through Discord."
-      />
+      <SettingsPageHeader section="discord" />
 
       <Show when={settled(status)} fallback={<LoadingText />}>
         {(current) => (
@@ -78,7 +74,7 @@ export function DiscordSection(props: PluginSettingsProps): JSX.Element {
                   <Text variant="label" tone="default">
                     Bot
                   </Text>
-                  <Text variant="micro" tone="dim">
+                  <Text variant="caption" tone="dim">
                     The bot token is a service key; set it under Service keys.
                   </Text>
                 </Stack>
@@ -118,7 +114,7 @@ export function DiscordSection(props: PluginSettingsProps): JSX.Element {
                     <Text variant="label" tone="default">
                       Send other approvals to my DMs
                     </Text>
-                    <Text variant="micro" tone="dim">
+                    <Text variant="caption" tone="dim">
                       Approval requests from chats not started on Discord arrive
                       as a direct message. Needs exactly one allowed user.
                     </Text>
@@ -150,7 +146,7 @@ export function DiscordSection(props: PluginSettingsProps): JSX.Element {
               each={rows()}
               fallback={
                 <div class="p-3">
-                  <Text variant="micro" tone="dim">
+                  <Text variant="caption" tone="dim">
                     No chats are linked yet. Message the bot to start one.
                   </Text>
                 </div>

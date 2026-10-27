@@ -47,7 +47,7 @@ export function ModelRoleCard(props: ModelRoleCardProps): JSX.Element {
   return (
     <Panel label={props.label}>
       <Stack gap={3}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           {props.description}
         </Text>
 

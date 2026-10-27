@@ -28,8 +28,7 @@ export function NotificationBell(): JSX.Element {
         >
           <Icon name="bell" size={14} />
           <Show when={notifications.unreadCount > 0}>
-            {/* Count pills take the full radius, not the control radius: at 16px a 3px corner is neither chamfer nor pill. */}
-            <span class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center bg-alert px-0.5 text-micro font-mono font-bold text-bg">
+            <span class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center bg-bright px-0.5 text-micro font-mono font-bold text-bg">
               {badge()}
             </span>
           </Show>

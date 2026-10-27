@@ -1,4 +1,5 @@
 import type { Accessor, JSX } from "solid-js";
+import type { ActionTone } from "../ActionFrame";
 import type { ComposerAttachment } from "../AttachmentChip";
 import type { ComposerMenuGroup, ComposerMenuItem } from "./ComposerMenu";
 import type { ComposerTrigger } from "./composerToken";
@@ -144,7 +145,7 @@ export interface ComposerProps {
   /** Something the thread is waiting on the operator for: the plate is replaced by the
    *  action tier's amber strip (`label`, e.g. "1 approval waiting") and `Jump ↑` takes
    *  them to the ask. Null when nothing is. */
-  waiting?: { label: string; onJump?: () => void } | null;
+  waiting?: { tone: ActionTone; onJump?: () => void } | null;
   autofocus?: boolean;
   /** Persists the unsent draft to localStorage under this key, reactively; switching
    *  keys loads that key's draft. */

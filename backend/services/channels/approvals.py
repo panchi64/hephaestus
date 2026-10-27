@@ -29,7 +29,7 @@ class ChannelApprovals:
             key=self.key,
             label=self.label,
             configured=bool(links),
-            status="nominal",
+            status="nominal" if links else "off",
             detail=f"{len(links)} linked" if links else "no linked chats",
         )
 

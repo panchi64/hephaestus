@@ -6,7 +6,6 @@ import {
   Input,
   LoadingText,
   Modal,
-  PageHeader,
   Panel,
   Row,
   Stack,
@@ -14,6 +13,7 @@ import {
   Text,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { clearCredential, setCredential, useCredentials } from "../data";
 import type { ServiceCredential } from "../model";
 
@@ -74,12 +74,7 @@ export function ApiTokensScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Service keys"
-        subtitle="Outbound — keys this system uses to reach third-party services. Stored encrypted at rest; never displayed."
-        assetId="HEPH-ADM-04.0 EDITION 02"
-      />
+      <SettingsPageHeader section="service-keys" />
 
       <Panel label="Service credentials" flush>
         <Show

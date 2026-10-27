@@ -180,7 +180,7 @@ async def test_overview_omits_notification_channel_rows_when_none_are_wired():
     assert "push" not in caps
 
 
-async def test_overview_reports_unconfigured_notification_channels_as_degraded():
+async def test_overview_reports_unconfigured_notification_channels_as_off():
     """Email and push are how an unattended approval request and a reminder reach the
     operator when the app isn't open, so whether they're configured is observable —
     and neither is critical, since losing one degrades to in-app only. Both are wired by
@@ -189,10 +189,10 @@ async def test_overview_reports_unconfigured_notification_channels_as_degraded()
         body = json_body(await client.get("/overview"))
 
     caps = _capabilities(body)
-    assert caps["email"]["status"] == "warn"
+    assert caps["email"]["status"] == "off"
     assert caps["email"]["detail"] == "no mail account — in-app only"
     assert caps["email"]["critical"] is False
     assert caps["email"]["remediation_label"] == "CONFIGURE"
-    assert caps["push"]["status"] == "warn"
+    assert caps["push"]["status"] == "off"
     assert caps["push"]["detail"] == "no endpoint — in-app only"
     assert caps["push"]["critical"] is False

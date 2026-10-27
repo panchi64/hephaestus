@@ -65,8 +65,10 @@
      two are separate anchors because they answer different questions: chrome is
      scanned at a glance, prose is read paragraph after paragraph, and one scale
      serving both means either cramped prose or bloated chrome. */
-  --type-micro-size: 10px; /* mono — ambient telemetry, fine print */
+  --type-micro-size: 10px; /* mono — ambient telemetry; machine values only */
   --type-micro-lh: 14px;
+  --type-caption-size: 11px; /* sans sentence case — hints, help text, fine print */
+  --type-caption-lh: 16px;
   /* mono UPPERCASE, widely tracked — an engraved panel legend. `plate` NAMES a
      region (a console group's header, a ledger's legend); `meta` below REPORTS
      a state. Same voice, one level down: the legend on the panel versus the

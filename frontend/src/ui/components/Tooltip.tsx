@@ -87,13 +87,29 @@ export function Tooltip(props: TooltipProps): JSX.Element {
   };
   onCleanup(() => window.clearTimeout(timer));
 
+  // A click focuses its target too; only keyboard focus may open the tip, or a
+  // clicked nav link re-arms it and the tip sits over the page it opened.
+  const openOnKeyboardFocus = (event: FocusEvent) => {
+    if (
+      event.target instanceof Element &&
+      event.target.matches(":focus-visible")
+    ) {
+      open();
+    }
+  };
+  const closeOnEscape = (event: KeyboardEvent) => {
+    if (event.key === "Escape") close();
+  };
+
   return (
     <span
       ref={ref}
       class={cx("relative inline-flex", local.class)}
       onMouseEnter={open}
       onMouseLeave={close}
-      onFocusIn={open}
+      onPointerDown={close}
+      onKeyDown={closeOnEscape}
+      onFocusIn={openOnKeyboardFocus}
       onFocusOut={close}
     >
       {local.children}

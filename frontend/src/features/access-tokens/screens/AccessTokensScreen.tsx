@@ -10,7 +10,6 @@ import {
   Input,
   LoadingText,
   Modal,
-  PageHeader,
   Panel,
   Row,
   Stack,
@@ -18,6 +17,7 @@ import {
   Text,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import {
   issueAccessToken,
   revokeAccessToken,
@@ -98,11 +98,8 @@ export function AccessTokensScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Access tokens"
-        subtitle="Scoped tokens that let your own clients call this API. Shown once at issue; only a one-way hash is kept."
-        assetId="HEPH-ADM-05.0 EDITION 01"
+      <SettingsPageHeader
+        section="access-tokens"
         actions={
           <Button variant="primary" size="sm" leading="key" onClick={openIssue}>
             Issue token
@@ -192,7 +189,7 @@ export function AccessTokensScreen(): JSX.Element {
             <Text variant="label" tone="bright">
               Scopes
             </Text>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               The token reaches only what you grant here. Anything outside its
               scopes is refused — including issuing tokens, the vault, backups,
               and the host shell, which no token can ever reach.
@@ -206,7 +203,7 @@ export function AccessTokensScreen(): JSX.Element {
                       checked={isChosen(scope.id)}
                       onChange={() => toggleScope(scope.id)}
                     />
-                    <Text variant="micro" tone="dim" class="pl-6">
+                    <Text variant="caption" tone="dim" class="pl-6">
                       {scope.description}
                     </Text>
                   </Stack>
@@ -236,7 +233,7 @@ export function AccessTokensScreen(): JSX.Element {
         class="max-w-lg"
       >
         <Stack gap={3}>
-          <Text variant="micro" tone="warn">
+          <Text variant="caption" tone="warn">
             This is the only time the token is shown. Close this dialog and it
             is gone — the server keeps only a one-way hash. If you lose it,
             issue a new one.
@@ -248,7 +245,7 @@ export function AccessTokensScreen(): JSX.Element {
           >
             {revealed()?.token}
           </Text>
-          <Text variant="micro" tone="dim">
+          <Text variant="caption" tone="dim">
             Send it as an Authorization header: Bearer &lt;token&gt;
           </Text>
           <div class="flex justify-end gap-2">

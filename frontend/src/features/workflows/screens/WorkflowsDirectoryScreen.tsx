@@ -9,7 +9,6 @@ import {
   ListToolbar,
   LoadingText,
   Menu,
-  PageHeader,
   Panel,
   Row,
   Stack,
@@ -18,6 +17,7 @@ import {
   confirm,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { createListView } from "~/lib/list";
 import { relativeTime } from "~/lib/format";
 import {
@@ -129,10 +129,8 @@ export function WorkflowsDirectoryScreen(props: {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Workflows"
-        subtitle="Prompts you invoke by name from the composer's / menu."
+      <SettingsPageHeader
+        section="workflows"
         actions={
           <Button
             variant="primary"
@@ -147,11 +145,7 @@ export function WorkflowsDirectoryScreen(props: {
       <InstrumentBand
         items={[
           { label: "Total", value: String(workflows().length) },
-          {
-            label: "In the menu",
-            value: String(enabledCount()),
-            tone: "nominal",
-          },
+          { label: "In the menu", value: String(enabledCount()) },
           {
             label: "Off",
             value: String(workflows().length - enabledCount()),

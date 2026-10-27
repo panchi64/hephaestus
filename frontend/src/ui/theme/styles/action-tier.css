@@ -13,19 +13,33 @@
    The frame imposes no padding on its body — a question card sits flush, an
    approval pads its own.
    ========================================================================== */
-.heph-action {
+/* The one place a kind of ask picks its accent: the frame and each echo of it (a
+   waiting rail row, the composer's strip) read `--action` from here. */
+:is(.heph-action, .heph-rail-row[data-state="waiting"], .heph-composer-wait) {
   --action: var(--accent-warn);
+}
+:is(
+  .heph-action,
+  .heph-rail-row[data-state="waiting"],
+  .heph-composer-wait
+)[data-tone="question"] {
+  --action: var(--accent-info);
+}
+:is(
+  .heph-action,
+  .heph-rail-row[data-state="waiting"],
+  .heph-composer-wait
+)[data-tone="alert"] {
+  --action: var(--accent-alert);
+}
+.heph-action {
   display: flex;
   flex-direction: column;
   border: var(--line-w) solid var(--action);
   background: color-mix(in srgb, var(--action) 7%, var(--bg));
 }
 .heph-action[data-tone="question"] {
-  --action: var(--accent-info);
   background: color-mix(in srgb, var(--action) 5%, var(--bg));
-}
-.heph-action[data-tone="alert"] {
-  --action: var(--accent-alert);
 }
 .heph-action-band {
   display: flex;

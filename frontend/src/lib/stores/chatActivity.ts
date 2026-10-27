@@ -8,7 +8,8 @@
  *  `runErrored` — true when the room's last run ended in `run.error`; cleared when the
  *  next run starts. Feeds the platform-status derivation that tints the favicon red.
  *
- *  `awaitingInput` — true while the room has a live, unanswered park: a sensitive tool
+ *  `awaitingKind` — the kind of ask (`approval`, `question`) while the room has a live,
+ *  unanswered park, else null; `awaitingInput` is its boolean. A park is a sensitive tool
  *  call awaiting the operator's decision, or a question awaiting their answer. Cleared the
  *  moment it's settled (approved/denied/answered/decided elsewhere) or the run stops being
  *  in flight (e.g. a cancel). Distinct from `chatBusy`: this is a stronger "needs YOU,
@@ -27,10 +28,12 @@
  *  `mainChat()` room (not the ephemeral compare panes), so they track the one
  *  conversation the operator would return to. */
 import { createSignal } from "solid-js";
+import type { ActionTone } from "~/ui";
 
 const [chatBusy, setChatBusy] = createSignal(false);
 const [runErrored, setRunErrored] = createSignal(false);
-const [awaitingInput, setAwaitingInput] = createSignal(false);
+const [awaitingKind, setAwaitingKind] = createSignal<ActionTone | null>(null);
+const awaitingInput = (): boolean => awaitingKind() !== null;
 const [chatThreadId, setChatThreadId] = createSignal<string | null>(null);
 
 export {
@@ -41,5 +44,6 @@ export {
   runErrored,
   setRunErrored,
   awaitingInput,
-  setAwaitingInput,
+  awaitingKind,
+  setAwaitingKind,
 };

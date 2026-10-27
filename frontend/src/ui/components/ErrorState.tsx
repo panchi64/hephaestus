@@ -37,7 +37,7 @@ export function ErrorState(props: ErrorStateProps): JSX.Element {
         {local.message ?? "Something went wrong"}
       </Text>
       <Show when={local.hint}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           {local.hint}
         </Text>
       </Show>

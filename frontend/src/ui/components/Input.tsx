@@ -13,6 +13,8 @@ export interface InputProps extends JSX.InputHTMLAttributes<HTMLInputElement> {
   hint?: string;
   /** Leading glyph rendered inside the control (e.g. `search`). */
   leading?: IconName;
+  /** Class for the wrapping label, which is the flex item; `class` targets the inner input. */
+  fieldClass?: string;
 }
 
 const fieldClass =
@@ -30,9 +32,10 @@ export function Input(props: InputProps): JSX.Element {
     "hint",
     "leading",
     "class",
+    "fieldClass",
   ]);
   return (
-    <label class="flex flex-col gap-1">
+    <label class={cx("flex flex-col gap-1", local.fieldClass)}>
       <Show when={local.label}>
         <Text variant="label" tone="dim">
           {local.label}
@@ -58,7 +61,7 @@ export function Input(props: InputProps): JSX.Element {
         />
       </div>
       <Show when={local.hint}>
-        <Text variant="micro" tone={local.invalid ? "alert" : "dim"}>
+        <Text variant="caption" tone={local.invalid ? "alert" : "dim"}>
           {local.hint}
         </Text>
       </Show>

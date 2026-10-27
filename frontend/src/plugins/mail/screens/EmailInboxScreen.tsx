@@ -8,6 +8,7 @@ import {
   type JSX,
 } from "solid-js";
 import {
+  ASSET_IDS,
   Button,
   Drawer,
   EmptyState,
@@ -289,7 +290,7 @@ export function EmailInboxScreen(): JSX.Element {
       <PageHeader
         title="Email"
         subtitle="Multi-account inbox with AI triage."
-        assetId="COMM-MAIL-01.0"
+        assetId={ASSET_IDS.mail}
         actions={
           <Row gap={2}>
             {/* Mobile: trigger to open the accounts/folders sidebar in a Drawer */}
@@ -352,12 +353,12 @@ export function EmailInboxScreen(): JSX.Element {
             {
               label: "High urgency",
               value: String(highUrgencyCount()),
-              tone: highUrgencyCount() > 0 ? "alert" : "dim",
+              tone: highUrgencyCount() > 0 ? "bright" : "dim",
             },
             {
               label: "Spam flagged",
               value: String(spamCount() ?? 0),
-              tone: (spamCount() ?? 0) > 0 ? "warn" : "dim",
+              tone: (spamCount() ?? 0) > 0 ? "bright" : "dim",
             },
             {
               label: "Account",

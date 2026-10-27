@@ -75,7 +75,7 @@ export function NewSkillDialog(props: {
       }
     >
       <Stack gap={3}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           The agent matches on DESCRIPTION — say what the skill does and when to
           reach for it. A new skill starts as a draft.
         </Text>
@@ -90,7 +90,7 @@ export function NewSkillDialog(props: {
         />
         {/* A rejection that named no field — shown verbatim, same as the rest. */}
         <Show when={formError()}>
-          <Text variant="micro" tone="alert">
+          <Text variant="caption" tone="alert">
             {formError()}
           </Text>
         </Show>

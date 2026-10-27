@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic_ai import (
     DeferredToolRequests,
@@ -39,7 +39,7 @@ from pydantic_ai.models.fallback import FallbackModel
 
 from core.config import get_settings
 from core.text import clip
-from runs import ApprovalRequired, EventBody, QuestionAsked, Run
+from runs import ApprovalRequired, EventBody, QuestionAsked, Run, RunStatus
 from services.answers import questions_of
 from services.conversations import ConversationBinding, ConversationStore
 from services.notification_view import NotificationView
@@ -134,6 +134,25 @@ class ParkedTurn:
     requests_used: int = 0
     # Where a spawned agent's file changes are filed (`RunDeps.ledger_prompt_message_id`).
     ledger_prompt_message_id: str | None = None
+
+
+#: What a parked run is waiting for. A conflict or stop park has no producer yet, so the
+#: client's third tone (``alert``) is never sent.
+AwaitingKind = Literal["approval", "question"]
+
+
+def awaiting_kind(run: Run) -> AwaitingKind | None:
+    """The kind of ask a run is parked on, None when it isn't parked.
+
+    A park holding any deferred call is a question, the same rule ``park_events`` announces
+    them by; every other park (including one whose payload was lost) is an approval.
+    """
+    if run.status is not RunStatus.awaiting_input:
+        return None
+    parked = run.parked_payload
+    if isinstance(parked, ParkedTurn) and parked.requests.calls:
+        return "question"
+    return "approval"
 
 
 def primary_model_name(agent: TurnAgent) -> str | None:

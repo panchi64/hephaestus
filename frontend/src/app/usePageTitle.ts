@@ -7,8 +7,10 @@ const BRAND = "Hephaestus";
 /** Routes that aren't in the sidebar nav. */
 const STATIC_TITLES: Record<string, string> = {
   "/": "Overview",
-  "/login": "Sign In",
-  "/signup": "Sign Up",
+  "/login": "Sign in",
+  "/signup": "Sign up",
+  "/bench": "Bench",
+  "/dev/onboarding": "Onboarding bench",
 };
 
 function titleFor(pathname: string): string {

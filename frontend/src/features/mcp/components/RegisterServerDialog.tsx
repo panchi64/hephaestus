@@ -126,7 +126,7 @@ export function RegisterServerDialog(
             placeholder="e.g. npx -y @modelcontextprotocol/server-name"
           />
         </Show>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           Registering connects to the server and discovers its tools. Each tool
           arrives switched on but untrusted, so it will ask before it runs. For
           auth-required servers, use CONFIGURE AUTH on the server card.

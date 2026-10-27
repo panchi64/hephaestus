@@ -27,7 +27,8 @@
 
 import { createMemo, createSignal, type Accessor } from "solid-js";
 import { api, isApiError } from "~/lib/api";
-import { toast } from "~/ui";
+import { toast, type ActionTone } from "~/ui";
+import { awaitingKindOf } from "./awaitingKind";
 import { bumpGrantsRevision } from "../data/conversations";
 import type { ApprovalOutcomeDTO } from "../data/wire";
 import { isAnswered } from "../model";
@@ -121,8 +122,8 @@ const emptyDraft = (): ParkDraft => ({
 });
 
 export interface ApprovalOps {
-  /** True while the room has a live, unanswered park — an approval or a question. */
-  awaitingInput: Accessor<boolean>;
+  /** The kind of the room's live, unanswered park, or null. */
+  awaitingKind: Accessor<ActionTone | null>;
   /** What the operator has entered into the dock but not yet submitted. */
   parkDraft: Accessor<ParkDraft>;
   patchParkDraft: (next: Partial<ParkDraft>) => void;
@@ -253,22 +254,24 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
   // The host-command terminal keeps its own pending phase on the rail — it is a running
   // terminal, not a prompt, and only its first moment is a decision. It still counts as
   // the run waiting on the operator.
-  const awaitingInput = createMemo(() => {
+  const awaitingKind = createMemo(() => {
     // A *stale* park doesn't need them: the run already resumed elsewhere, so the
     // attention echo should clear even though the dock stays up to say so.
     const p = park();
-    if (p) return !p.stale;
-    if (!deps.sending()) return false;
+    if (p || !deps.sending()) return awaitingKindOf(p, false);
     // Keyed to the run for the same reason the park is: a terminal awaiting its first
     // decision does not stop waiting because a steering message split the flow under it.
     const runId = liveRunIdOf(deps);
-    return deps.messages.some(
-      (m) =>
-        inLiveRun(runId)(m) &&
-        (m.blocks?.some(
-          (b) => b.kind === "host_command" && b.command.phase === "pending",
-        ) ??
-          false),
+    return awaitingKindOf(
+      null,
+      deps.messages.some(
+        (m) =>
+          inLiveRun(runId)(m) &&
+          (m.blocks?.some(
+            (b) => b.kind === "host_command" && b.command.phase === "pending",
+          ) ??
+            false),
+      ),
     );
   });
 
@@ -339,7 +342,7 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
   }
 
   return {
-    awaitingInput,
+    awaitingKind,
     park,
     parkDraft: draft,
     patchParkDraft,

@@ -1,5 +1,6 @@
 import { createSignal, For, onMount, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import {
   Button,
   EmptyState,
@@ -164,166 +165,174 @@ export function SearchProvidersPanel(): JSX.Element {
   };
 
   return (
-    <Panel
-      label="Web search"
-      meta={
-        <Button variant="primary" size="sm" leading="plus" onClick={openCreate}>
-          Add provider
-        </Button>
-      }
-    >
-      <Stack gap={4}>
-        <Text variant="micro" tone="dim">
-          Web search runs on a built-in SearXNG instance. Add your own to use it
-          instead: the first enabled one is used, and the rest stay as
-          alternates. Your instance needs JSON output enabled.
-        </Text>
-        <Row align="center" justify="between" gap={3} class="py-2">
-          <Stack gap={1} class="min-w-0">
-            <Text
-              variant="label"
-              tone={readout().source === "built-in" ? "bright" : "dim"}
-            >
-              Built-in SearXNG
-            </Text>
-            <Text variant="micro" tone="dim">
-              {readout().source === "built-in"
-                ? "In use."
-                : "Standing by while your instance is enabled."}
-            </Text>
-          </Stack>
-          <Text
-            variant="micro"
-            tone={readout().source === "built-in" ? readout().tone : "dim"}
-            class="shrink-0 font-mono uppercase"
+    <Stack gap={6}>
+      <SettingsPageHeader
+        section="web-search"
+        actions={
+          <Button
+            variant="primary"
+            size="sm"
+            leading="plus"
+            onClick={openCreate}
           >
-            {readout().source === "built-in" ? readout().label : "Standby"}
+            Add provider
+          </Button>
+        }
+      />
+      <Panel>
+        <Stack gap={4}>
+          <Text variant="caption" tone="dim">
+            Web search runs on a built-in SearXNG instance. Add your own to use
+            it instead: the first enabled one is used, and the rest stay as
+            alternates. Your instance needs JSON output enabled.
           </Text>
-        </Row>
-        <Show when={settled(providers)} fallback={<LoadingText />}>
-          <Show
-            when={(settled(providers) ?? []).length}
-            fallback={
-              <EmptyState
-                icon="search"
-                message="No instance of your own"
-                hint="Add a SearXNG instance to search through it instead of the built-in one."
-              />
-            }
-          >
-            <Stack gap={0}>
-              <For each={settled(providers) ?? []}>
-                {(p) => (
-                  <Row align="center" justify="between" gap={3} class="py-2">
-                    <Stack gap={1} class="min-w-0">
-                      <Row gap={2} align="center">
-                        <Text
-                          variant="label"
-                          tone={p.enabled ? "bright" : "dim"}
-                        >
-                          {p.name}
-                        </Text>
-                        <Show when={p.hasApiKey}>
-                          <StatusFlag status="nominal">Key</StatusFlag>
-                        </Show>
-                      </Row>
-                      <Text variant="micro" tone="dim" class="truncate">
-                        {p.engines.length
-                          ? `${p.baseUrl} · ${p.engines.join(", ")}`
-                          : p.baseUrl}
-                      </Text>
-                    </Stack>
-                    <span class="flex shrink-0 items-center gap-2">
-                      <Toggle
-                        checked={p.enabled}
-                        onChange={() => void toggleEnabled(p)}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        leading="edit"
-                        onClick={() => openEdit(p)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        leading="trash"
-                        onClick={() => remove(p)}
-                      >
-                        Delete
-                      </Button>
-                    </span>
-                  </Row>
-                )}
-              </For>
+          <Row align="center" justify="between" gap={3} class="py-2">
+            <Stack gap={1} class="min-w-0">
+              <Text
+                variant="label"
+                tone={readout().source === "built-in" ? "bright" : "dim"}
+              >
+                Built-in SearXNG
+              </Text>
+              <Text variant="caption" tone="dim">
+                {readout().source === "built-in"
+                  ? "In use."
+                  : "Standing by while your instance is enabled."}
+              </Text>
             </Stack>
-          </Show>
-        </Show>
-      </Stack>
-
-      <Modal
-        open={formOpen()}
-        onClose={() => setFormOpen(false)}
-        title={editing() ? "Edit provider" : "Add provider"}
-        class="max-w-lg"
-      >
-        <Stack gap={3}>
-          <Input
-            label="Name"
-            value={name()}
-            onInput={(e) => setName(e.currentTarget.value)}
-            placeholder="e.g. searxng"
-          />
-          <Input
-            label="Base URL"
-            value={baseUrl()}
-            onInput={(e) => setBaseUrl(e.currentTarget.value)}
-            placeholder="http://localhost:8080"
-          />
-          <Input
-            label="ENGINES (optional, comma-separated)"
-            value={engines()}
-            onInput={(e) => setEngines(e.currentTarget.value)}
-            placeholder="google, duckduckgo"
-            hint="Limit which SearXNG engines answer. Blank = the instance default."
-          />
-          <Input
-            label={
-              editing() ? "API KEY (blank = unchanged)" : "API KEY (optional)"
-            }
-            type="password"
-            value={apiKey()}
-            onInput={(e) => setApiKey(e.currentTarget.value)}
-            placeholder="••••••••"
-            hint="Only for a guarded instance; most SearXNG setups need none."
-          />
-          <Textarea
-            label="ADVANCED PARAMS (optional, JSON)"
-            value={params()}
-            onInput={(e) => setParams(e.currentTarget.value)}
-            placeholder={'{ "language": "en" }'}
-            rows={3}
-          />
-          <Row gap={4} align="center" justify="between">
-            <Field label="Enabled" orientation="row" value="" />
-            <Toggle checked={enabled()} onChange={setEnabled} />
-          </Row>
-          <div class="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setFormOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              disabled={!valid() || saving()}
-              onClick={save}
+            <Text
+              variant="micro"
+              tone={readout().source === "built-in" ? readout().tone : "dim"}
+              class="shrink-0 font-mono uppercase"
             >
-              {saving() ? "Saving…" : "Save"}
-            </Button>
-          </div>
+              {readout().source === "built-in" ? readout().label : "Standby"}
+            </Text>
+          </Row>
+          <Show when={settled(providers)} fallback={<LoadingText />}>
+            <Show
+              when={(settled(providers) ?? []).length}
+              fallback={
+                <EmptyState
+                  icon="search"
+                  message="No instance of your own"
+                  hint="Add a SearXNG instance to search through it instead of the built-in one."
+                />
+              }
+            >
+              <Stack gap={0}>
+                <For each={settled(providers) ?? []}>
+                  {(p) => (
+                    <Row align="center" justify="between" gap={3} class="py-2">
+                      <Stack gap={1} class="min-w-0">
+                        <Row gap={2} align="center">
+                          <Text
+                            variant="label"
+                            tone={p.enabled ? "bright" : "dim"}
+                          >
+                            {p.name}
+                          </Text>
+                          <Show when={p.hasApiKey}>
+                            <StatusFlag status="nominal">Key</StatusFlag>
+                          </Show>
+                        </Row>
+                        <Text variant="micro" tone="dim" class="truncate">
+                          {p.engines.length
+                            ? `${p.baseUrl} · ${p.engines.join(", ")}`
+                            : p.baseUrl}
+                        </Text>
+                      </Stack>
+                      <span class="flex shrink-0 items-center gap-2">
+                        <Toggle
+                          checked={p.enabled}
+                          onChange={() => void toggleEnabled(p)}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          leading="edit"
+                          onClick={() => openEdit(p)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          leading="trash"
+                          onClick={() => remove(p)}
+                        >
+                          Delete
+                        </Button>
+                      </span>
+                    </Row>
+                  )}
+                </For>
+              </Stack>
+            </Show>
+          </Show>
         </Stack>
-      </Modal>
-    </Panel>
+
+        <Modal
+          open={formOpen()}
+          onClose={() => setFormOpen(false)}
+          title={editing() ? "Edit provider" : "Add provider"}
+          class="max-w-lg"
+        >
+          <Stack gap={3}>
+            <Input
+              label="Name"
+              value={name()}
+              onInput={(e) => setName(e.currentTarget.value)}
+              placeholder="e.g. searxng"
+            />
+            <Input
+              label="Base URL"
+              value={baseUrl()}
+              onInput={(e) => setBaseUrl(e.currentTarget.value)}
+              placeholder="http://localhost:8080"
+            />
+            <Input
+              label="ENGINES (optional, comma-separated)"
+              value={engines()}
+              onInput={(e) => setEngines(e.currentTarget.value)}
+              placeholder="google, duckduckgo"
+              hint="Limit which SearXNG engines answer. Blank = the instance default."
+            />
+            <Input
+              label={
+                editing() ? "API KEY (blank = unchanged)" : "API KEY (optional)"
+              }
+              type="password"
+              value={apiKey()}
+              onInput={(e) => setApiKey(e.currentTarget.value)}
+              placeholder="••••••••"
+              hint="Only for a guarded instance; most SearXNG setups need none."
+            />
+            <Textarea
+              label="ADVANCED PARAMS (optional, JSON)"
+              value={params()}
+              onInput={(e) => setParams(e.currentTarget.value)}
+              placeholder={'{ "language": "en" }'}
+              rows={3}
+            />
+            <Row gap={4} align="center" justify="between">
+              <Field label="Enabled" orientation="row" value="" />
+              <Toggle checked={enabled()} onChange={setEnabled} />
+            </Row>
+            <div class="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setFormOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!valid() || saving()}
+                onClick={save}
+              >
+                {saving() ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </Stack>
+        </Modal>
+      </Panel>
+    </Stack>
   );
 }

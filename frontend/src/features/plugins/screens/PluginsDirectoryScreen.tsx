@@ -41,9 +41,7 @@ export function PluginsDirectoryScreen(props: {
 
   return (
     <LibraryDirectory
-      title="Plugins"
-      subtitle="Tools, agents, skills and small apps that agents write. Python tools run in a VM once you review and publish them; a plugin of windows alone goes live as written."
-      assetId="HEPH-PLG-01.0"
+      section="plugins"
       noun="plugin"
       nouns="plugins"
       icon="plug"
@@ -62,8 +60,8 @@ export function PluginsDirectoryScreen(props: {
           tone: awaiting() > 0 ? "bright" : "dim",
         },
       ]}
-      draftHint="Nothing in a draft is used. Publishing is what lets agents use it — review the hosts, secrets, tools, agents and skills it adds first."
       importHint="Accepts a plugin zip. It lands as a draft so you can read it before publishing."
+      draftHint="Nothing in a draft is used. Publishing is what lets agents use it — review the hosts, secrets, tools, agents and skills it adds first."
       importAccept=".zip"
       importing={importing()}
       onImport={(file) => void handleImport(file)}

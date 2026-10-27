@@ -11,7 +11,6 @@ import {
   LoadingText,
   Menu,
   Modal,
-  PageHeader,
   Panel,
   Row,
   Stack,
@@ -22,6 +21,7 @@ import {
   confirm,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { createListView } from "~/lib/list";
 import { num, relativeTime } from "~/lib/format";
 import {
@@ -195,11 +195,8 @@ export function MemoryTimelineScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Memory"
-        subtitle="Persistent facts, preferences, and context the system has learned."
-        assetId="HEPH-MEM-01.0"
+      <SettingsPageHeader
+        section="memory"
         actions={
           <Row gap={2}>
             <Button
@@ -226,12 +223,8 @@ export function MemoryTimelineScreen(): JSX.Element {
       <InstrumentBand
         items={[
           { label: "Total", value: String(counts().total) },
-          { label: "Pinned", value: String(counts().pinned), tone: "nominal" },
-          {
-            label: "Embedded",
-            value: String(counts().embedded),
-            tone: "info",
-          },
+          { label: "Pinned", value: String(counts().pinned) },
+          { label: "Embedded", value: String(counts().embedded) },
         ]}
       />
 

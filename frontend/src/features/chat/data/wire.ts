@@ -5,6 +5,7 @@
  * Not exported past `data/`; the rest of the app sees the seam types in `../model`.
  */
 
+import type { ActionTone } from "~/ui";
 import type {
   ContentPartWire,
   ContextWindow,
@@ -38,6 +39,8 @@ export interface ConversationSummaryDTO {
   /** The live run's status for this thread (`running`, `queued`, `awaiting_input`), or
    *  null when idle. Registry-derived, so the list needs no per-conversation open. */
   activity?: ChatActivity | null;
+  /** What an `awaiting_input` thread is parked on, or null. */
+  awaiting_kind?: ActionTone | null;
   /** How the most recent terminal run ended, or null when unknown. Null is not "it never
    *  ran": the run registry is in memory and bounded. Both can be set; `activity` wins
    *  while it is. */

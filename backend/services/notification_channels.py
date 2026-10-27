@@ -30,6 +30,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from core.declarations import DeclaredSet
+from core.health import HealthStatus
 from core.vault import Vault
 from services.notification_view import NotificationView
 from services.settings_store import SettingsStore
@@ -65,7 +66,7 @@ class ChannelHealth:
     key: str
     label: str
     configured: bool
-    status: str  # "nominal" | "warn" | "alert"
+    status: HealthStatus
     detail: str
 
 
@@ -120,13 +121,13 @@ class PushChannel:
     async def health(self, owner_id: str) -> ChannelHealth:
         try:
             endpoint = await self._endpoint(owner_id)
-        except Exception:  # health never raises
+        except Exception:  # health never raises; a broken read is a state
             logger.warning("notifications: could not read the push endpoint", exc_info=True)
-            endpoint = None
+            return ChannelHealth(self.key, self.label, False, "warn", "push endpoint unreadable")
         if endpoint is None:
-            return ChannelHealth(self.key, self.label, False, "warn", "no endpoint — in-app only")
+            return ChannelHealth(self.key, self.label, False, "off", "no endpoint — in-app only")
         if not await self._enabled(owner_id):
-            return ChannelHealth(self.key, self.label, False, "warn", "turned off")
+            return ChannelHealth(self.key, self.label, False, "off", "turned off")
         # The host, never the path — a push endpoint's path is usually its credential.
         host = urlsplit(endpoint).hostname or "configured"
         return ChannelHealth(self.key, self.label, True, "nominal", f"to {host}")

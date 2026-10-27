@@ -224,7 +224,7 @@ export function McpServerCard(props: McpServerCardProps): JSX.Element {
                   <ExpandableText
                     text={tool.description}
                     limit={120}
-                    variant="micro"
+                    variant="caption"
                     tone="dim"
                     class="max-w-xs"
                   />

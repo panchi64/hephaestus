@@ -7,6 +7,7 @@ export type TextVariant =
   | "plate"
   | "meta"
   | "code"
+  | "caption"
   | "label"
   | "body"
   | "reading"
@@ -61,6 +62,9 @@ const variantClass: Record<TextVariant, string> = {
   // and the sans `body` that gives up the machine voice entirely.
   code: "text-code font-mono transition-none",
   // ---- interface voice ----
+  // The small step for a sentence a person wrote: a hint, help text, an empty
+  // state's explanation. `micro` is its machine twin and holds only emitted values.
+  caption: "text-caption font-sans",
   label: "text-label font-sans font-medium",
   body: "text-body font-sans",
   reading: "text-prose font-sans",

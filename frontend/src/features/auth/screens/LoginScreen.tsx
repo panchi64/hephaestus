@@ -94,7 +94,7 @@ export function LoginScreen(): JSX.Element {
           <StatusFlag status="idle" dot>
             Workspace locked
           </StatusFlag>
-          <Text variant="micro" tone="dim">
+          <Text variant="caption" tone="dim">
             Enter the operator password to unlock encrypted storage.
           </Text>
         </Stack>
@@ -107,7 +107,7 @@ export function LoginScreen(): JSX.Element {
             <StatusFlag status="warn" dot>
               Database missing
             </StatusFlag>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               The workspace database is gone, but its encryption key is still
               here. Unlock with your existing password to carry on in an empty
               workspace, or start fresh to delete the key and everything sealed
@@ -118,7 +118,7 @@ export function LoginScreen(): JSX.Element {
 
         <Show when={session.probeError}>
           {(detail) => (
-            <Text variant="micro" tone="alert">
+            <Text variant="caption" tone="alert">
               The backend answered with an error: {detail()}
             </Text>
           )}
@@ -137,7 +137,7 @@ export function LoginScreen(): JSX.Element {
         />
         <Show when={error()}>
           <Reveal>
-            <Text variant="micro" tone="alert">
+            <Text variant="caption" tone="alert">
               {error()}
             </Text>
           </Reveal>

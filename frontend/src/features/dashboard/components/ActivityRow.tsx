@@ -22,7 +22,9 @@ export function ActivityRow(props: {
   // Relative times only need to age by the minute, on the ticker the page shares.
   const now = useNow(60_000);
   const spec = () =>
-    props.item.state ? runStateSpec(props.item.state) : undefined;
+    props.item.state
+      ? runStateSpec(props.item.state, props.item.awaitingKind)
+      : undefined;
   const loud = () => spec()?.loud ?? false;
   const ticking = () =>
     props.item.state === "running" && props.item.startedAt !== undefined;

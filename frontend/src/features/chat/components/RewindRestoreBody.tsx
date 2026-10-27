@@ -15,7 +15,7 @@ export function RewindRestoreBody(props: {
   return (
     <Stack gap={3}>
       <Show when={props.changed}>
-        <Text variant="micro" tone="warn">
+        <Text variant="caption" tone="warn">
           Files changed since the last check. This is the current list.
         </Text>
       </Show>
@@ -47,7 +47,7 @@ export function RewindRestoreBody(props: {
           </For>
         </ul>
       </ConsoleGroup>
-      <Text variant="micro" tone="dim">
+      <Text variant="caption" tone="dim">
         Covered: file-tool writes, VM shell changes brought back to a project,
         and sub-agent edits. Not covered: host-reach shell commands, files over
         4 MiB, and VM scratch changes made only by the shell.

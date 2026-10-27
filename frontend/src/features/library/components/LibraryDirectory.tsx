@@ -1,6 +1,7 @@
 import { For, Index, Show, Suspense, type JSX } from "solid-js";
 import { createListView, type SortDef, type SortDir } from "~/lib/list";
 import { useTabParam } from "~/lib/useTabParam";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import {
   Button,
   EmptyState,
@@ -11,12 +12,12 @@ import {
   ListToolbar,
   LoadingText,
   Menu,
-  PageHeader,
   Panel,
   Row,
   Stack,
   Tabs,
   Text,
+  Tooltip,
   useFileDrop,
   type BandCell,
   type IconName,
@@ -33,9 +34,8 @@ import {
 } from "../model";
 
 export interface LibraryDirectoryProps<T extends LibraryEntry> {
-  title: string;
-  subtitle: string;
-  assetId: string;
+  /** The settings section this directory is the pane of; it titles the header. */
+  section: string;
   /** Singular and plural nouns for the empty states and the New button. */
   noun: string;
   nouns: string;
@@ -47,8 +47,9 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
   initialDir: SortDir;
   /** Cells after the shared Total / Published / Draft. */
   bandExtra?: BandCell[];
-  /** Text of the two info hints beside the tabs. */
+  /** Text of the info hint beside the tabs. */
   draftHint: string;
+  /** What Import accepts, shown on the button's tooltip. */
   importHint: string;
   importAccept: string;
   importing: boolean;
@@ -134,11 +135,8 @@ export function LibraryDirectory<T extends LibraryEntry>(
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title={props.title}
-        subtitle={props.subtitle}
-        assetId={props.assetId}
+      <SettingsPageHeader
+        section={props.section}
         actions={
           <Row gap={2}>
             <input
@@ -148,14 +146,16 @@ export function LibraryDirectory<T extends LibraryEntry>(
               accept={props.importAccept}
               {...picker.inputHandlers}
             />
-            <Button
-              variant="default"
-              leading="upload"
-              disabled={props.importing}
-              onClick={picker.openPicker}
-            >
-              {props.importing ? "Importing…" : "Import"}
-            </Button>
+            <Tooltip label={props.importHint} side="bottom">
+              <Button
+                variant="default"
+                leading="upload"
+                disabled={props.importing}
+                onClick={picker.openPicker}
+              >
+                {props.importing ? "Importing…" : "Import"}
+              </Button>
+            </Tooltip>
             <Show when={props.onNew}>
               {(onNew) => (
                 <Button variant="primary" leading="plus" onClick={onNew()}>
@@ -170,11 +170,7 @@ export function LibraryDirectory<T extends LibraryEntry>(
       <InstrumentBand
         items={[
           { label: "Total", value: String(props.items.length) },
-          {
-            label: "Published",
-            value: String(publishedCount()),
-            tone: "nominal",
-          },
+          { label: "Published", value: String(publishedCount()) },
           { label: "Draft", value: String(draftCount()), tone: "dim" },
           ...(props.bandExtra ?? []),
         ]}
@@ -193,12 +189,6 @@ export function LibraryDirectory<T extends LibraryEntry>(
                 Draft
               </Text>
               <InfoHint label={props.draftHint} />
-            </Row>
-            <Row align="center" gap={1}>
-              <Text variant="micro" tone="dim">
-                Import
-              </Text>
-              <InfoHint label={props.importHint} />
             </Row>
           </Row>
         </div>

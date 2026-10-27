@@ -60,7 +60,7 @@ export function ColorField(props: ColorFieldProps): JSX.Element {
             {props.label}
           </Text>
           <Show when={props.description}>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               {props.description}
             </Text>
           </Show>
@@ -98,7 +98,7 @@ export function ColorField(props: ColorFieldProps): JSX.Element {
       </div>
 
       <Show when={ratio() !== null && !passes()}>
-        <Text variant="micro" tone="warn">
+        <Text variant="caption" tone="warn">
           {ratio()}:1 on the background — below the {ACCENT_CONTRAST_FLOOR}:1
           floor. Text and icons in this colour will be hard to read.
         </Text>

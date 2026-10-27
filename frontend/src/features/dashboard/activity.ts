@@ -4,6 +4,7 @@
 import type { ChatSummary } from "~/features/chat/model";
 import { resolveRunState, type RunState } from "~/features/chat/runState";
 import { parseInstant } from "~/lib/format";
+import type { ActionTone } from "~/ui";
 import type { ActiveRun, CapabilityHealth } from "./model";
 
 export interface ActivityItem {
@@ -15,6 +16,8 @@ export interface ActivityItem {
   workspace?: string;
   model?: string;
   state?: RunState;
+  /** What a run waiting on the operator is waiting for. */
+  awaitingKind?: ActionTone;
   /** The live run's start, for its clock. */
   startedAt?: string;
   /** What the live run is doing or waiting on, in the backend's words. */
@@ -83,6 +86,7 @@ export function buildActivity(
       workspace: s.workspace,
       model: s.model,
       state: resolveRunState(s.activity, s.lastOutcome),
+      awaitingKind: s.awaitingKind ?? run?.awaitingKind,
       startedAt: run?.startedAt,
       detail: run?.detail || undefined,
       updatedAt: s.updatedAt,
@@ -94,6 +98,7 @@ export function buildActivity(
       key: `run:${r.id}`,
       title: r.label,
       state: r.status,
+      awaitingKind: r.awaitingKind,
       startedAt: r.startedAt,
       detail: r.detail || undefined,
     }));
@@ -122,6 +127,13 @@ export function degraded(
     ...caps.filter((c) => c.status === "alert"),
     ...caps.filter((c) => c.status === "warn"),
   ];
+}
+
+/** Capabilities the operator has not set up or has switched off. */
+export function unconfigured(
+  caps: readonly CapabilityHealth[],
+): CapabilityHealth[] {
+  return caps.filter((c) => c.status === "off");
 }
 
 const WORDS = [

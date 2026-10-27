@@ -67,7 +67,11 @@ function ops(messages: ChatMessage[], sending = true) {
       activeRunId: () => "run-1",
       reconcileStaleDecision: async () => {},
     });
-    const answer = { park: built.park(), waiting: built.awaitingInput() };
+    const answer = {
+      park: built.park(),
+      waiting: built.awaitingKind() !== null,
+      kind: built.awaitingKind(),
+    };
     dispose();
     return answer;
   });
@@ -75,10 +79,11 @@ function ops(messages: ChatMessage[], sending = true) {
 
 describe("what the dock is handed", () => {
   test("an unanswered question is a park, and the run is waiting", () => {
-    const { park, waiting } = ops([
+    const { park, waiting, kind } = ops([
       ask({ streaming: true, runId: "run-1" }, question()),
     ]);
     expect(waiting).toBe(true);
+    expect(kind).toBe("question");
     expect(park?.questions).toHaveLength(1);
     expect(park?.questions[0].questions[0].question).toBe("Which database?");
   });

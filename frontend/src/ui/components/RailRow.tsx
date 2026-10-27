@@ -1,6 +1,7 @@
 import { Show, type JSX } from "solid-js";
 import { cx } from "../cx";
 import { Icon } from "../primitives/Icon";
+import type { ActionTone } from "./ActionFrame";
 
 /** What a rail row's glyph column says. `waiting` is the action tier's echo: the run is
  *  parked on the operator. `done`, `current` and `pending` are a checklist's states. */
@@ -16,6 +17,8 @@ export type RailRowState =
 
 export interface RailRowProps {
   state?: RailRowState;
+  /** The kind of ask a `waiting` row echoes; absent reads as an approval. */
+  tone?: ActionTone;
   selected?: boolean;
   /** Something happened here the operator has not seen: a bright square, a bright title. */
   unread?: boolean;
@@ -54,6 +57,7 @@ export function RailRow(props: RailRowProps): JSX.Element {
       data-state={
         props.state && props.state !== "idle" ? props.state : undefined
       }
+      data-tone={props.state === "waiting" ? props.tone : undefined}
       data-selected={props.selected ? "" : undefined}
       data-unread={props.unread ? "" : undefined}
       data-menu-open={props.menuOpen ? "" : undefined}

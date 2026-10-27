@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
-import { Collapse, Icon, Text, cx } from "~/ui";
+import { ACTION_TONES, Collapse, Icon, Text, cx } from "~/ui";
 import { useSessionArrivals } from "../data";
 import type { ChatSummary } from "../model";
 import { useArrival } from "./arrival";
@@ -93,7 +93,7 @@ function ThreadBranch(props: {
   const arrival = useArrival();
   const tone = () =>
     props.thread.activity === "awaiting_input"
-      ? "text-warn"
+      ? ACTION_TONES[props.thread.awaitingKind ?? "approval"].text
       : props.thread.activity
         ? "text-info"
         : "text-dim";

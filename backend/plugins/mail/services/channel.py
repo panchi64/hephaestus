@@ -62,15 +62,15 @@ class EmailChannel:
 
     async def health(self, owner_id: str) -> ChannelHealth:
         if not await self._enabled(owner_id):
-            return ChannelHealth(self.key, self.label, False, "warn", "turned off")
+            return ChannelHealth(self.key, self.label, False, "off", "turned off")
         try:
             target = await self._target(owner_id)
         except Exception:  # health never raises; a broken read is a state
             logger.warning("notifications: could not read the email channel target", exc_info=True)
-            target = None
+            return ChannelHealth(self.key, self.label, False, "warn", "mail account unreadable")
         if target is None:
             return ChannelHealth(
-                self.key, self.label, False, "warn", "no mail account — in-app only"
+                self.key, self.label, False, "off", "no mail account — in-app only"
             )
         _account_id, address = target
         return ChannelHealth(self.key, self.label, True, "nominal", f"to {address}")

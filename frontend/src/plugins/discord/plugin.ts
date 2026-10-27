@@ -8,7 +8,8 @@ export const discordPlugin: BuiltinPluginUi = {
     id: "discord",
     label: "Discord",
     icon: "chat",
-    description: "Talk to the agent from a Discord bot",
+    description:
+      "Talk to the agent from a Discord bot. Final answers are sent out through Discord.",
     keywords: ["bot", "dm", "channel", "chat", "message", "token"],
     component: DiscordSection,
   },

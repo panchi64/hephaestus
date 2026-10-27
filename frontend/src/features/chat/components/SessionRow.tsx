@@ -1,11 +1,13 @@
 import { Show, createMemo, type JSX } from "solid-js";
 import {
+  ACTION_TONES,
   Frames,
   Icon,
   MetClock,
   RailRow,
   RailTag,
   TypewriterText,
+  type ActionTone,
   type ContextMenuTriggerProps,
   type RailRowProps,
   type RailRowState,
@@ -25,6 +27,7 @@ export interface SessionRowProps {
   reveal?: string;
   retitling?: boolean;
   activity?: ChatActivity;
+  awaitingKind?: ActionTone;
   lastOutcome?: ChatOutcome;
   updatedAt?: string;
   onOpen: () => void;
@@ -61,7 +64,8 @@ const FAILURE_WORD: Partial<Record<RunState, string>> = {
  * - **unread** — a bright square and a bright title;
  * - **queued** — the queue square, still, and `queued` in the queue tone;
  * - **running** — the accent square blinking and the elapsed clock;
- * - **waiting** — the action tier's echo: an amber inset edge, a tint, `WAITING`;
+ * - **waiting** — the action tier's echo: an inset edge and a tint in the ask's tone,
+ *   tagged `Waiting`, `Question` or `Decision`;
  * - **failed / limit** — a red square and the word in red.
  *
  * Under the pointer the age gives way to the row's `···` menu, in the same slot.
@@ -72,7 +76,7 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
   );
   const spec = createMemo(() => {
     const s = state();
-    return s ? runStateSpec(s) : undefined;
+    return s ? runStateSpec(s, props.awaitingKind) : undefined;
   });
   const rowState = (): RailRowState => {
     const s = state();
@@ -111,7 +115,7 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
         <span class="sr-only">naming this thread</span>
       </Show>
       <Show when={rowState() === "waiting"}>
-        <RailTag>Waiting</RailTag>
+        <RailTag>{ACTION_TONES[props.awaitingKind ?? "approval"].tag}</RailTag>
       </Show>
       <Show when={rowState() === "queued"}>
         <span>queued</span>
@@ -137,6 +141,7 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
   return (
     <RailRow
       state={rowState()}
+      tone={props.awaitingKind}
       selected={props.selected}
       unread={props.unread && !props.selected}
       title={title}

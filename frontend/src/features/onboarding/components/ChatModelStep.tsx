@@ -181,7 +181,7 @@ export function ChatModelStep(props: {
       <Show
         when={options().length > 0}
         fallback={
-          <Text variant="micro" tone="dim" class="block p-3">
+          <Text variant="caption" tone="dim" class="block p-3">
             No working endpoint lists any models yet. Go back and check the
             endpoint.
           </Text>

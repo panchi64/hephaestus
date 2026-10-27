@@ -152,7 +152,7 @@ async def test_no_mail_account_degrades_to_in_app_only(tmp_path: Path):
     service, _mail, email, _push, _settings = await _wired(tmp_path, mail=mail)
     health = await email.health(OWNER)
     await service.stop()
-    assert (health.configured, health.status) == (False, "warn")
+    assert (health.configured, health.status) == (False, "off")
     assert "in-app only" in health.detail
 
 
@@ -249,7 +249,7 @@ async def test_push_is_silent_until_an_endpoint_is_configured(tmp_path: Path):
     await service.flush_deliveries()
     await service.stop()
     assert seen == []
-    assert (health.configured, health.status) == (False, "warn")
+    assert (health.configured, health.status) == (False, "off")
 
 
 async def test_push_health_names_the_host_but_never_the_path(tmp_path: Path):

@@ -85,7 +85,7 @@ export function NewWorkflowDialog(props: {
       }
     >
       <Stack gap={3}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           Typing /NAME in the composer puts this template in front of the model
           for that turn. Only you can reach it — the agent is never shown the
           list.
@@ -116,7 +116,7 @@ export function NewWorkflowDialog(props: {
         />
         {/* A rejection that named no field — shown verbatim, same as the rest. */}
         <Show when={formError()}>
-          <Text variant="micro" tone="alert">
+          <Text variant="caption" tone="alert">
             {formError()}
           </Text>
         </Show>

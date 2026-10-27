@@ -1,5 +1,5 @@
 import { For, type JSX } from "solid-js";
-import { RailRow, StatusBar, Text, type RailRowState } from "~/ui";
+import { ASSET_IDS, RailRow, StatusBar, Text, type RailRowState } from "~/ui";
 import { LockCell, RailFrame } from "~/app/sidebar";
 import { STEPS, stepCounter, type StepId } from "../model";
 
@@ -33,7 +33,7 @@ export function PreparationRail(props: {
 
   return (
     <RailFrame
-      assetId="heph-setup-01.0"
+      assetId={ASSET_IDS.setupRail}
       footer={
         <StatusBar
           variant="recede"

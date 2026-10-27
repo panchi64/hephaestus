@@ -109,7 +109,7 @@ export function NewAgentDialog(props: {
       }
     >
       <Stack gap={3}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           A new agent starts as a draft. Publish it once its instructions and
           limits read right.
         </Text>
@@ -137,7 +137,7 @@ export function NewAgentDialog(props: {
           disabled={busy()}
         />
         <Show when={formError()}>
-          <Text variant="micro" tone="alert">
+          <Text variant="caption" tone="alert">
             {formError()}
           </Text>
         </Show>

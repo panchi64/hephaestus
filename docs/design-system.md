@@ -155,7 +155,8 @@ looked at*, so they differ in scale.
 
 | Token | Size/LH | Family | Weight | Case | Use |
 |---|---|---|---|---|---|
-| `micro` | 10 / 14 | Mono | 400 | as-is | Ambient telemetry, fine print, precision coordinates |
+| `micro` | 10 / 14 | Mono | 400 | as-is | Ambient telemetry, precision coordinates. Emitted values only |
+| `caption` | 11 / 16 | Sans | 400 | Sentence | A sentence a person wrote, at fine-print size: hints, help text, an empty state's explanation, a form error |
 | `plate` | 10 / 14 | Mono | 500 | UPPER, +0.16em | **Engraved panel label.** Names a region: a console group's header, a ledger's legend |
 | `meta` | 11 / 16 | Mono | 500 | UPPER, +0.08em | Machine labels & state: `RUN-0341`, `LIVE`, `QUEUED` |
 | `label` | 12 / 16 | Sans | 500 | Sentence | Field labels, column headers, section eyebrows |
@@ -312,6 +313,7 @@ The base is pure neutral. Both modes are built on true black and true white — 
 3. **Brightness separates active from inactive**, not hue (`text-bright` vs `text` vs `text-dim`).
 4. **At most two accents visible in a region.** Three reads as decoration.
 5. **`accent` marks primary focus, and there is at most one per screen** — the primary action, the live run, the awaiting-approval card. It is the only place an accent-tinted shadow is permitted (§6).
+6. **A count is never coloured unless it counts faults.** "6 published" and "4 embedded" are bright, not green; "2 alerts" is red only while it is above zero. An accent is not a palette either: a calendar tells its calendars apart by a mark's shape, not by borrowing `nominal` or `info`.
 
 ---
 
@@ -606,6 +608,8 @@ Stop and Open thread are icon buttons laid over the readout. They appear only on
 
 Square, hairline border, `space-2`/`space-3` padding, sans label. Focus is `shadow-focus`, always neutral. A **primary** button — one per view — is the sole carrier of `shadow-accent`.
 
+**On is luminance, not hue.** A checked toggle or checkbox is a `text-bright` edge and knob, the way a selected segmented cell is inverted. A switch reports a setting the operator chose, not a health state, so a page of enabled switches stays grayscale.
+
 ### 10.9 Live edge — a coloured rule, not light
 
 *The LED edge light (`LedEdge`, `.heph-led*`) is removed.* It was a hairline with a four-layer directional glow reaching ~90px past it; the console register says the same thing without light.
@@ -713,7 +717,7 @@ This is the one shell that is allowed to be a box (§7), and the reason it exist
 
 ### 10.15 Caution & warning
 
-Capability health is read by looking for what is wrong, so **only what is wrong is drawn.** The launchpad's footer (`SystemFooter`) carries a count in words, `5 OF 7 NOMINAL`, and under it one entry per degraded capability: a state square, the name in `micro` mono uppercase, the reason on hover, and the remediation on click. A healthy installation shows the count and nothing else, so the region is grayscale at rest (§5).
+Capability health is read by looking for what is wrong, so **only what is wrong is drawn.** The launchpad's footer (`SystemFooter`) carries a count in words, `5 OF 7 NOMINAL`, and under it one entry per degraded capability: a state square, the name in `micro` mono uppercase, the reason on hover, and the remediation on click. A capability the operator hasn't set up or has switched off (an optional alert channel) reports `off`: it is listed dim, with no state square and its remediation link, and left out of the count, since it is a choice rather than a fault. A healthy installation shows the count and those dim entries, so the region is grayscale at rest (§5).
 
 **Caution is amber; alert is red, and alerts come first.** The name keeps the accent (§10.5's exception for `warn` and `alert`), and the square repeats it, so the severity is never hue on a word alone (§12): the count says how many, the order says which is worse.
 
@@ -747,7 +751,7 @@ A coloured border alone is too quiet for the one moment the run cannot continue 
 - **`ActionButtons`** — a wrapping row of square cells with **joined borders** (each cell after the first drops its left rule): mono `meta` uppercase, `line-strong` outlines, and **one filled primary** (`text-bright` on the ground — luminance, not hue). A cell may print its key (`kbd`: `↵`, `esc`) after the label at reduced opacity; binding the key is the consumer's.
 - Focus inside the tier is a **2px outline in the tone**, not the halo — a halo is clipped by the neighbouring rows (§6 rule 1).
 
-**The echo.** An ask is visible from anywhere, not only where it was raised: the composer's plate is replaced by an amber strip ("N waiting · Jump ↑"), and the thread's rail row takes an inset bar and a `WAITING` tag. (Specified here; landing with the composer and rail restyle.)
+**The echo.** An ask is visible from anywhere, not only where it was raised: the composer's plate is replaced by a strip ("N waiting · Jump ↑"), the thread's rail row takes an inset bar and a tag, and the launchpad's activity row says what is asked. Every echo takes **the ask's own tone**: amber for an approval, blue for a question, red for a decision (`ACTION_TONES` in `ActionFrame.tsx`; nothing parks on a decision yet, so the backend's `AwaitingKind` holds only the first two). The backend reports the kind (`awaiting_kind` on runs and conversations), so a thread that isn't open echoes the same tone as one that is.
 
 **The question card** — `ActionFrame tone="question"` around `ChoiceList` (`ui/components/ChoiceList.tsx`), and the shape of **any** multi-choice ask:
 
@@ -807,7 +811,7 @@ Keep:
 - **Asset & version IDs** — `RUN-0341-A7`, `IDX-v3.2.1`
 - **Precision values** — coordinates, byte counts, token counts, latencies to the millisecond
 - **Plausible telemetry** — uplink latency, queue depth, cache hit rate
-- **Consistent naming** — pick a scheme (`[DOMAIN]-[SUBSYSTEM]-[SEQ]`) and hold to it
+- **Consistent naming** — one scheme, `HEPH-<SUBSYSTEM>-<SEQ>` (`HEPH-RAG-01`). Every id the interface prints is declared in `frontend/src/ui/assetIds.ts`; `PageHeader`, `Plate` and `RailFrame` accept only those. A section header (a settings page) prints none
 
 **The budget:** at most one diegetic detail per panel, and it lives at the panel's edge — a footer line, a header's right slot — never between a label and its value. Terminal-HUD's mistake was letting atmosphere sit in the reading path. Set at `micro`/`meta` in `text-dim`, it becomes texture the eye skips until it wants it, which is exactly the intent.
 
@@ -863,6 +867,7 @@ Everything above is texture the eye skips. The field behind every page is textur
 
   /* ---- type scale ---- */
   --type-micro-size: 10px;      --type-micro-lh: 14px;
+  --type-caption-size: 11px;    --type-caption-lh: 16px;
   --type-plate-size: 10px;      --type-plate-lh: 14px;
   --type-meta-size: 11px;       --type-meta-lh: 16px;
   --type-label-size: 12px;      --type-label-lh: 16px;

@@ -77,6 +77,16 @@ describe("diffActivity", () => {
     ]);
   });
 
+  test("a thread parked on a question strikes in the question's tone", () => {
+    const { snapshot } = diffActivity(undefined, [
+      row("ask", { activity: "running" }),
+    ]);
+    const { strikes } = diffActivity(snapshot, [
+      row("ask", { activity: "awaiting_input", awaitingKind: "question" }),
+    ]);
+    expect(strikes).toEqual([{ threadId: "ask", tone: "info" }]);
+  });
+
   test("an unchanged row fires nothing, and neither does a resumed one", () => {
     const { snapshot } = diffActivity(undefined, [
       row("a", { activity: "running" }),

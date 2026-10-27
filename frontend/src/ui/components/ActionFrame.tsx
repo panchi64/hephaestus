@@ -7,6 +7,49 @@ import { Text } from "../primitives/Text";
  *  a conflict or a stop that needs a decision). */
 export type ActionTone = "approval" | "question" | "alert";
 
+export interface ActionToneSpec {
+  /** The accent the kind is reported in. */
+  status: "warn" | "info" | "alert";
+  /** The same accent as a text colour class. */
+  text: "text-warn" | "text-info" | "text-alert";
+  /** The one machine-voice label for a run parked on this kind of ask. */
+  readout: string;
+  /** The rail row's short tag. */
+  tag: string;
+  /** The composer's waiting strip. */
+  strip: string;
+  /** What a screen reader hears. */
+  spoken: string;
+}
+
+/** Every echo of an ask outside its own thread reads its words and accent from here. */
+export const ACTION_TONES: Record<ActionTone, ActionToneSpec> = {
+  approval: {
+    status: "warn",
+    text: "text-warn",
+    readout: "NEEDS APPROVAL",
+    tag: "Waiting",
+    strip: "Waiting on you",
+    spoken: "awaiting approval",
+  },
+  question: {
+    status: "info",
+    text: "text-info",
+    readout: "QUESTION",
+    tag: "Question",
+    strip: "Question for you",
+    spoken: "asking a question",
+  },
+  alert: {
+    status: "alert",
+    text: "text-alert",
+    readout: "NEEDS DECISION",
+    tag: "Decision",
+    strip: "Decision needed",
+    spoken: "needs a decision",
+  },
+};
+
 export interface ActionFrameProps {
   tone: ActionTone;
   /** The band's legend — what is being asked, in a few words. Set in the band's

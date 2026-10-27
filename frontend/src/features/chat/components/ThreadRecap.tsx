@@ -104,8 +104,12 @@ export function ThreadRecap(props: {
               {(st) => (
                 <Cell
                   label="Last run"
-                  value={runStateSpec(st()).readout}
-                  mark={<StatusDot status={runStateSpec(st()).status} />}
+                  value={runStateSpec(st(), s().awaitingKind).readout}
+                  mark={
+                    <StatusDot
+                      status={runStateSpec(st(), s().awaitingKind).status}
+                    />
+                  }
                 />
               )}
             </Show>

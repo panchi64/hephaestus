@@ -17,6 +17,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from core.config import get_settings
+from core.health import HealthStatus
 from routes import deps
 from routes.deps import OPERATOR_ID
 from services.searxng import SearxngState
@@ -58,7 +59,7 @@ class Capability(BaseModel):
     # "web_fetch", or a notification channel's key.
     key: str
     label: str
-    status: str  # "nominal" | "warn" | "alert"
+    status: HealthStatus
     detail: str
     critical: bool = False
     remediation_href: str | None = None

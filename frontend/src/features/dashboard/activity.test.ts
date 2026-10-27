@@ -6,6 +6,7 @@ import {
   buildActivity,
   degraded,
   homeDigest,
+  unconfigured,
 } from "./activity";
 
 const NOW = Date.parse("2026-10-18T13:00:00Z");
@@ -175,6 +176,12 @@ describe("degraded", () => {
       cap({ key: "c", status: "alert" }),
     ]);
     expect(got.map((c) => c.key)).toEqual(["c", "a"]);
+  });
+
+  it("does not count an off capability as degraded", () => {
+    const caps = [cap({ key: "a", status: "off" }), cap({ key: "b" })];
+    expect(degraded(caps)).toEqual([]);
+    expect(unconfigured(caps).map((c) => c.key)).toEqual(["a"]);
   });
 });
 

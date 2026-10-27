@@ -26,7 +26,7 @@ export function IdListField(props: {
         <Text variant="label" tone="default">
           {props.label}
         </Text>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           {props.hint}
         </Text>
       </Stack>
@@ -34,7 +34,7 @@ export function IdListField(props: {
         <For
           each={props.ids}
           fallback={
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               None yet.
             </Text>
           }

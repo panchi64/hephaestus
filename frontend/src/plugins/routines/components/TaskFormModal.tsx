@@ -341,7 +341,7 @@ export function TaskFormModal(props: {
             placeholder="Descriptive routine title"
           />
           <Show when={form.titleError}>
-            <Text variant="micro" tone="alert">
+            <Text variant="caption" tone="alert">
               {form.titleError}
             </Text>
           </Show>
@@ -371,7 +371,7 @@ export function TaskFormModal(props: {
           <Row gap={2} align="end">
             <Input
               label="Describe the schedule"
-              class="flex-1"
+              fieldClass="flex-1 min-w-0"
               value={form.phrase}
               onInput={(e) => {
                 setForm("phrase", e.currentTarget.value);
@@ -394,7 +394,7 @@ export function TaskFormModal(props: {
             </Button>
           </Row>
           <Show when={form.parseError}>
-            <Text variant="micro" tone="alert">
+            <Text variant="caption" tone="alert">
               {form.parseError}
             </Text>
           </Show>
@@ -427,7 +427,7 @@ export function TaskFormModal(props: {
               }}
             />
             <Show when={form.scheduleError}>
-              <Text variant="micro" tone="alert">
+              <Text variant="caption" tone="alert">
                 {form.scheduleError}
               </Text>
             </Show>
@@ -439,8 +439,8 @@ export function TaskFormModal(props: {
             <Input
               type="number"
               min="1"
-              label="EVERY *"
-              class="w-24"
+              label="Every *"
+              fieldClass="w-24"
               value={form.intervalValue}
               onInput={(e) => {
                 setForm("intervalValue", e.currentTarget.value);
@@ -459,7 +459,7 @@ export function TaskFormModal(props: {
             />
           </Row>
           <Show when={form.scheduleError}>
-            <Text variant="micro" tone="alert">
+            <Text variant="caption" tone="alert">
               {form.scheduleError}
             </Text>
           </Show>
@@ -478,7 +478,7 @@ export function TaskFormModal(props: {
               hint="Five space-separated fields: minute hour day-of-month month day-of-week."
             />
             <Show when={form.scheduleError}>
-              <Text variant="micro" tone="alert">
+              <Text variant="caption" tone="alert">
                 {form.scheduleError}
               </Text>
             </Show>
@@ -511,7 +511,7 @@ export function TaskFormModal(props: {
         </Show>
 
         <Show when={form.scheduleType === "webhook"}>
-          <Text variant="micro" tone="dim">
+          <Text variant="caption" tone="dim">
             Fires only when its webhook URL is called — no time-based schedule.
             The URL is generated once this routine is saved.
           </Text>
@@ -535,7 +535,7 @@ export function TaskFormModal(props: {
             <Text variant="label" tone="dim">
               Pre-authorized
             </Text>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               Sensitive tool calls in this scope run unattended; anything else
               still parks for approval.
             </Text>
@@ -548,14 +548,14 @@ export function TaskFormModal(props: {
                       checked={form.scopes.has(scope.name)}
                       onChange={(checked) => toggleScope(scope.name, checked)}
                     />
-                    <Text variant="micro" tone="dim" class="pl-6">
+                    <Text variant="caption" tone="dim" class="pl-6">
                       {scope.description}
                     </Text>
                   </Stack>
                 )}
               </For>
               <Show when={scopes()?.length === 0}>
-                <Text variant="micro" tone="dim">
+                <Text variant="caption" tone="dim">
                   No tools in this workspace pause for approval.
                 </Text>
               </Show>

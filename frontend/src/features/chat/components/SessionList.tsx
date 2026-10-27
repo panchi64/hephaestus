@@ -267,6 +267,7 @@ function SessionRows(props: {
                   reveal={titleReveals[id]}
                   retitling={isRetitling(id)}
                   activity={s().activity}
+                  awaitingKind={s().awaitingKind}
                   lastOutcome={s().lastOutcome}
                   updatedAt={s().updatedAt}
                   onOpen={() => props.onSelect(id)}

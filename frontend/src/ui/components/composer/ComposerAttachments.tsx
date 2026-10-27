@@ -105,7 +105,7 @@ export function UploadNote(props: {
   return (
     <Show when={props.failed}>
       <div role="alert" class={cx("pb-2", props.lg ? "px-4" : "px-3")}>
-        <Text variant="micro" tone="alert">
+        <Text variant="caption" tone="alert">
           An upload failed — retry or remove it
         </Text>
       </div>

@@ -1,14 +1,15 @@
 import { Show, type JSX } from "solid-js";
-import { StatusDot, Text, type Status } from "~/ui";
-import { awaitingInput, chatBusy } from "~/lib/stores/chatActivity";
+import { ACTION_TONES, StatusDot, Text, type Status } from "~/ui";
+import { awaitingKind, chatBusy } from "~/lib/stores/chatActivity";
 import type { NavArea, NavItem } from "../nav";
 
 /** The item's indicator, with live chat state overlaid on the Chat row. A run
- *  parked on an approval decision is a stronger signal than plain activity, so
- *  it wins with its own warn tone rather than folding into the busy dot. */
+ *  parked on the operator is a stronger signal than plain activity, so it wins
+ *  with its ask's tone rather than folding into the busy dot. */
 export function itemIndicator(item: NavItem): Status | undefined {
   if (item.href === "/chat") {
-    if (awaitingInput()) return "warn";
+    const kind = awaitingKind();
+    if (kind) return ACTION_TONES[kind].status;
     if (chatBusy()) return "info";
   }
   return item.indicator;

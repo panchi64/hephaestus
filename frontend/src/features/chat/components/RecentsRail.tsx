@@ -104,12 +104,15 @@ export function RecentsRail(props: {
     // so keyed on the seat its row stayed dark for the whole of that turn.
     const id = openId();
     if (!list || !id || !stream.sending()) return list;
-    const echo: ChatActivity = stream.awaitingInput()
+    const awaitingKind = stream.awaitingKind() ?? undefined;
+    const echo: ChatActivity = awaitingKind
       ? "awaiting_input"
       : stream.runQueue()
         ? "queued"
         : "running";
-    return list.map((s) => (s.id === id ? { ...s, activity: echo } : s));
+    return list.map((s) =>
+      s.id === id ? { ...s, activity: echo, awaitingKind } : s,
+    );
   });
 
   /** The projects threads file under, or undefined while the listing is in flight — the

@@ -1,4 +1,4 @@
-import { Button, Plate, Text } from "~/ui";
+import { ASSET_IDS, Button, Plate, Text } from "~/ui";
 
 /** A path with no route. The surfaces that became settings sections used to
  *  forward through here into `?settings=…`; nothing is deployed anywhere that
@@ -8,7 +8,7 @@ export default function NotFound() {
     // No fill: the ambient field (§11.1) is this screen's ground.
     <div class="relative flex h-screen items-center justify-center overflow-hidden text-text">
       <Plate
-        assetId="HEPH-ERR-404"
+        assetId={ASSET_IDS.notFound}
         class="w-full max-w-md"
         contentClass="flex flex-col items-center gap-3 p-8 text-center"
       >

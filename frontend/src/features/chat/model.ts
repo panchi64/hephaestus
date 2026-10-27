@@ -1,6 +1,7 @@
 /** Chat feature data contracts. Screens depend on these types; the mappers under
  *  `data/` translate backend responses and events into them. */
 
+import type { ActionTone } from "~/ui";
 import type {
   CompactionReason,
   ContextInjected,
@@ -672,6 +673,8 @@ export interface ChatSummary {
   model?: string;
   /** Set while a run drives this thread. */
   activity?: ChatActivity;
+  /** What an `awaiting_input` thread is parked on; absent for any other activity. */
+  awaitingKind?: ActionTone;
   /** How the last terminal run ended, when remembered. Read only at rest: `activity`
    *  takes precedence and both can be set (a finished thread sent to again). */
   lastOutcome?: ChatOutcome;

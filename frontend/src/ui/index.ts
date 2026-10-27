@@ -13,6 +13,7 @@
 export { cx, type ClassValue } from "./cx";
 export { copyToClipboard } from "./clipboard";
 export { REVEAL_BASE, REVEAL_ON_GROUP_HOVER } from "./reveal";
+export { ASSET_IDS, type AssetId } from "./assetIds";
 
 // theme
 export {
@@ -122,8 +123,10 @@ export {
 export {
   ActionFrame,
   ActionButtons,
+  ACTION_TONES,
   type ActionFrameProps,
   type ActionTone,
+  type ActionToneSpec,
   type ActionButtonsProps,
   type ActionButtonSpec,
 } from "./components/ActionFrame";
@@ -242,6 +245,10 @@ export {
   ExpandableText,
   type ExpandableTextProps,
 } from "./components/ExpandableText";
+export {
+  CodeSpanText,
+  type CodeSpanTextProps,
+} from "./components/CodeSpanText";
 export { ColorField, type ColorFieldProps } from "./components/ColorField";
 export {
   ConstructionReveal,

@@ -201,24 +201,24 @@
 .heph-rail-row[data-state="failed"] .heph-rail-readout {
   color: var(--accent-alert);
 }
+/* `--action` (the ask's accent) comes from action-tier.css. */
 .heph-rail-row[data-state="waiting"] {
-  background: color-mix(in srgb, var(--accent-warn) 7%, transparent);
-  box-shadow: inset 3px 0 0 var(--accent-warn);
+  background: color-mix(in srgb, var(--action) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--action);
   color: var(--text-bright);
 }
-/* Hover on a waiting row raises the fill under the amber tint, so the tint keeps
-   its meaning and the row still answers the pointer. */
+/* Hover on a waiting row raises the fill under the tint, so the tint keeps its
+   meaning and the row still answers the pointer. */
 .heph-rail-row[data-state="waiting"]:hover {
-  background: color-mix(in srgb, var(--accent-warn) 7%, var(--surface-raised));
+  background: color-mix(in srgb, var(--action) 7%, var(--surface-raised));
 }
 .heph-rail-row[data-state="waiting"][data-selected] {
   box-shadow:
-    inset 3px 0 0 var(--accent-warn),
-    inset 0 0 0 var(--line-w)
-      color-mix(in srgb, var(--accent-warn) 35%, transparent);
+    inset 3px 0 0 var(--action),
+    inset 0 0 0 var(--line-w) color-mix(in srgb, var(--action) 35%, transparent);
 }
 .heph-rail-row[data-state="waiting"] .heph-rail-glyph {
-  background: var(--accent-warn);
+  background: var(--action);
 }
 /* A checklist's states: finished (nominal), the one in hand (bright), and still ahead
    (a hollow glyph and a dim title). */
@@ -240,7 +240,7 @@
 }
 .heph-rail-tag {
   padding: 3px 5px;
-  background: var(--accent-warn);
+  background: var(--action, var(--accent-warn));
   color: var(--bg);
   font-family: var(--font-mono);
   font-size: 9px;

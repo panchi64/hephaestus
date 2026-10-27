@@ -1,4 +1,4 @@
-import type { StrikeTone } from "~/ui";
+import { ACTION_TONES, type StrikeTone } from "~/ui";
 import type {
   ChatActivity,
   ChatOutcome,
@@ -60,7 +60,8 @@ export function diffActivity(
     const now = s.activity;
     if (now === was) continue;
     let tone: StrikeTone | undefined;
-    if (now === "awaiting_input") tone = "warn";
+    if (now === "awaiting_input")
+      tone = ACTION_TONES[s.awaitingKind ?? "approval"].status;
     else if (now && !was) tone = "info";
     else if (!now && was)
       tone = s.lastOutcome ? OUTCOME_TONE[s.lastOutcome] : "neutral";

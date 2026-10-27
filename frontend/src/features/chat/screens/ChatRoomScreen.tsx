@@ -587,6 +587,7 @@ export function ChatRoomScreen(): JSX.Element {
                       runClock={stream.runClock}
                       runQueue={stream.runQueue}
                       activity={() => currentSummary()?.activity}
+                      awaitingKind={() => currentSummary()?.awaitingKind}
                       lastOutcome={() => currentSummary()?.lastOutcome}
                     />
                   }
@@ -605,7 +606,10 @@ export function ChatRoomScreen(): JSX.Element {
                   waiting={
                     !stream.park() &&
                     currentSummary()?.activity === "awaiting_input"
-                      ? { label: "Waiting on you", onJump: jumpToAsk }
+                      ? {
+                          tone: currentSummary()?.awaitingKind ?? "approval",
+                          onJump: jumpToAsk,
+                        }
                       : null
                   }
                   controls={

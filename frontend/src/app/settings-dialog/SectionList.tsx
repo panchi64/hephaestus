@@ -223,7 +223,7 @@ export function SectionList(props: {
             when={hits().length}
             fallback={
               <div class="px-3 py-2">
-                <Text variant="micro" tone="dim">
+                <Text variant="caption" tone="dim">
                   Nothing matches “{query().trim()}”.
                 </Text>
               </div>

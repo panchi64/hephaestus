@@ -1,5 +1,5 @@
 import { Show, type JSX } from "solid-js";
-import { Text } from "~/ui";
+import { Text, type AssetId } from "~/ui";
 
 /** The rail's chrome: frosted column, the wordmark plate on top, a body that owns the
  *  scroll, and a footer ruled off below. The app sidebar and the onboarding checklist
@@ -9,7 +9,7 @@ export function RailFrame(props: {
   /** Makes the wordmark a link; omitted where there is nowhere to go yet. */
   brandHref?: string;
   /** The dim id beside the wordmark. */
-  assetId: string;
+  assetId: AssetId;
   children: JSX.Element;
   footer?: JSX.Element;
 }): JSX.Element {

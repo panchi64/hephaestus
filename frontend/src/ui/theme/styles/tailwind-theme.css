@@ -48,6 +48,8 @@
   /* ---- type scale -> text-micro / text-meta / text-label / ... ---- */
   --text-micro: var(--type-micro-size);
   --text-micro--line-height: var(--type-micro-lh);
+  --text-caption: var(--type-caption-size);
+  --text-caption--line-height: var(--type-caption-lh);
   --text-plate: var(--type-plate-size);
   --text-plate--line-height: var(--type-plate-lh);
   --text-meta: var(--type-meta-size);

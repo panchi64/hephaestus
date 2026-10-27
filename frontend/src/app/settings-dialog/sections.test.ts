@@ -5,6 +5,7 @@ import {
   allSections,
   groupForSection,
   sectionById,
+  sectionHeading,
 } from "./sections";
 import { searchSettingsSections } from "./sections-search";
 
@@ -46,6 +47,15 @@ describe("the section model", () => {
     expect(sectionById(undefined).id).toBe(allSections()[0].id);
     expect(sectionById("no-such-section").id).toBe(allSections()[0].id);
     expect(sectionById("models").id).toBe("models");
+  });
+
+  test("a heading is the nav row's label and description, and never falls back", () => {
+    const models = sectionById("models");
+    expect(sectionHeading("models")).toEqual({
+      label: models.label,
+      description: models.description,
+    });
+    expect(sectionHeading("no-such-section")).toBeUndefined();
   });
 });
 

@@ -37,7 +37,7 @@ export function EmptyState(props: EmptyStateProps): JSX.Element {
         {local.message ?? "No data"}
       </Text>
       <Show when={local.hint}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           {local.hint}
         </Text>
       </Show>

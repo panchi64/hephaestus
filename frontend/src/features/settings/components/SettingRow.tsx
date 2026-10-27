@@ -14,7 +14,7 @@ export function SettingRow(props: {
         <Text variant="label" tone="default">
           {props.label}
         </Text>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           {props.description}
         </Text>
       </Stack>

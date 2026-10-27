@@ -81,6 +81,7 @@ export function toSummary(dto: ConversationSummaryDTO): ChatSummary {
     workSummary: dto.work_summary ?? undefined,
     model: dto.model ?? undefined,
     activity: dto.activity ?? undefined,
+    awaitingKind: dto.awaiting_kind ?? undefined,
     lastOutcome: dto.last_outcome ?? undefined,
     workspace: dto.workspace ?? undefined,
     projectId: dto.project_id ?? undefined,

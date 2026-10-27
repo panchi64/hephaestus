@@ -64,7 +64,7 @@ export const CHAT: NavItem = {
 };
 
 export const KNOWLEDGE_BASE: NavItem = {
-  label: "Knowledge Base",
+  label: "Knowledge base",
   href: "/rag",
   icon: "library",
   connected: true,

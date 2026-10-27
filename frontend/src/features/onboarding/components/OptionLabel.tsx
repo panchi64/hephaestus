@@ -10,7 +10,7 @@ export function OptionLabel(props: {
   return (
     <span class="flex min-w-0 flex-col gap-0.5">
       <span>{props.title}</span>
-      <Text variant="micro" tone="dim" class="font-sans normal-case">
+      <Text variant="caption" tone="dim">
         {props.reason}
       </Text>
     </span>

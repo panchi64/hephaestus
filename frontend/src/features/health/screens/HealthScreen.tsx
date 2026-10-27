@@ -19,7 +19,6 @@ import {
   Menu,
   type MenuItem,
   NotConnectedOverlay,
-  PageHeader,
   Panel,
   Row,
   Stack,
@@ -28,6 +27,7 @@ import {
   toast,
   type Status,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { timestamp } from "~/lib/format";
 import { useServiceStatuses, useOverallHealth } from "../data";
 import type { HealthStatus, ServiceStatus } from "../model";
@@ -51,9 +51,9 @@ const healthFlagStatus: Record<HealthStatus, Status> = {
 /** Maps HealthStatus to the nearest TextTone for InstrumentBand cells. */
 const healthTextTone: Record<
   HealthStatus,
-  "nominal" | "warn" | "alert" | "info" | "dim"
+  "bright" | "warn" | "alert" | "info" | "dim"
 > = {
-  nominal: "nominal",
+  nominal: "bright",
   warn: "warn",
   alert: "alert",
   timeout: "warn",
@@ -190,7 +190,7 @@ function ServiceDrawer(props: {
                   getServiceActions(svc(), handleAction).length <= 1
                 }
               >
-                <Text variant="micro" tone="dim">
+                <Text variant="caption" tone="dim">
                   No recovery actions needed — service is healthy.
                 </Text>
               </Show>
@@ -304,32 +304,29 @@ export function HealthScreen(): JSX.Element {
        status history — none of which it does today. */
     <Stack gap={6} class="relative">
       <NotConnectedOverlay />
-      <PageHeader
-        variant="section"
-        title="Health dashboard"
-        subtitle="Live service diagnostics and degradation tracking."
-        assetId="SYS-HLT-07.1"
+      <SettingsPageHeader
+        section="health"
+        status={
+          <Show when={overall()}>
+            {(o) => (
+              <StatusFlag
+                status={healthFlagStatus[o().status]}
+                dot={o().status !== "nominal"}
+              >
+                {o().status.toUpperCase()}
+              </StatusFlag>
+            )}
+          </Show>
+        }
         actions={
-          <Row gap={2} align="center">
-            <Show when={overall()}>
-              {(o) => (
-                <StatusFlag
-                  status={healthFlagStatus[o().status]}
-                  dot={o().status !== "nominal"}
-                >
-                  {o().status.toUpperCase()}
-                </StatusFlag>
-              )}
-            </Show>
-            <Button
-              variant="ghost"
-              leading="refresh"
-              onClick={refresh}
-              disabled={refreshing()}
-            >
-              {refreshing() ? "Checking…" : "Refresh"}
-            </Button>
-          </Row>
+          <Button
+            variant="ghost"
+            leading="refresh"
+            onClick={refresh}
+            disabled={refreshing()}
+          >
+            {refreshing() ? "Checking…" : "Refresh"}
+          </Button>
         }
       />
 
@@ -346,7 +343,6 @@ export function HealthScreen(): JSX.Element {
                 {
                   label: "Up",
                   value: `${o().servicesUp} / ${o().servicesTotal}`,
-                  tone: "nominal",
                 },
                 {
                   label: "Alerts",

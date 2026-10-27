@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import {
+  ASSET_IDS,
   Button,
   Chip,
   Field,
@@ -15,6 +16,7 @@ import {
   Text,
   Toggle,
   confirm,
+  cx,
   copyToClipboard,
   toast,
 } from "~/ui";
@@ -177,7 +179,7 @@ export function TasksScreen(): JSX.Element {
       <PageHeader
         title="Routines"
         subtitle="Scheduled agent runs and reminders, each run on time in its own thread."
-        assetId="AUTO-TSK-01.0"
+        assetId={ASSET_IDS.routines}
         actions={
           <Button variant="primary" leading="plus" onClick={openNew}>
             New routine
@@ -191,13 +193,13 @@ export function TasksScreen(): JSX.Element {
           {
             label: "Drafts",
             value: String(draftCount()),
-            tone: draftCount() > 0 ? "warn" : "dim",
+            tone: draftCount() > 0 ? "bright" : "dim",
           },
-          { label: "Enabled", value: String(enabledCount()), tone: "nominal" },
+          { label: "Enabled", value: String(enabledCount()) },
           {
             label: "Disabled",
             value: String(disabledCount()),
-            tone: disabledCount() > 0 ? "warn" : "dim",
+            tone: disabledCount() > 0 ? "bright" : "dim",
           },
           { label: "Webhooks", value: String(webhookCount()) },
         ]}
@@ -243,7 +245,7 @@ export function TasksScreen(): JSX.Element {
         }
       >
         {(loadedTasks) => (
-          <Panel flush>
+          <Panel flush class="@container">
             <For each={loadedTasks()}>
               {(task) => {
                 const expanded = () => expandedId() === task.id;
@@ -258,29 +260,23 @@ export function TasksScreen(): JSX.Element {
                         <Icon
                           name={KIND_ICON[task.kind]}
                           size={14}
-                          class={task.enabled ? "text-bright" : "text-dim"}
+                          class={cx(
+                            "shrink-0",
+                            task.enabled ? "text-bright" : "text-dim",
+                          )}
                         />
-                        <StatusFlag
-                          status={
-                            isDraft(task)
-                              ? "warn"
-                              : task.enabled
-                                ? "nominal"
-                                : "idle"
-                          }
-                          dot={task.enabled && !isDraft(task)}
-                        >
+                        <StatusFlag class="shrink-0">
                           {isDraft(task) ? "DRAFT" : task.kind.toUpperCase()}
                         </StatusFlag>
                         <Text
                           variant="label"
                           tone={task.enabled ? "bright" : "dim"}
-                          class="truncate"
+                          class="min-w-[8ch] truncate"
                         >
                           {task.title}
                         </Text>
                       </div>
-                      <div class="hidden items-center gap-4 md:flex">
+                      <div class="hidden items-center gap-4 @3xl:flex">
                         <Text variant="micro" tone="dim" class="font-mono">
                           {humanizeSchedule(task.schedule)}
                         </Text>

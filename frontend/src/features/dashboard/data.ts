@@ -8,6 +8,7 @@ import {
 import { api } from "~/lib/api";
 import { num } from "~/lib/format";
 import { useNotifications } from "~/lib/stores/notifications";
+import type { ActionTone } from "~/ui";
 import type {
   ActiveRun,
   CapabilityHealth,
@@ -47,6 +48,7 @@ interface RunDTO {
   ended_at?: string | null;
   conversationId?: string | null;
   conversationTitle?: string | null;
+  awaiting_kind?: ActionTone | null;
 }
 
 /* ── Mappers (snake_case DTO → seam type) ──────────────────────────────────── */
@@ -77,7 +79,9 @@ function toOverview(dto: OverviewDTO): Overview {
 const RUN_STATUS_LABEL: Record<string, string> = {
   running: "RUNNING",
   queued: "QUEUED",
-  awaiting_input: "NEEDS APPROVAL",
+  // The ask's own label rides the readout (`runStateSpec`); a second one here would
+  // print the same wait twice.
+  awaiting_input: "",
 };
 
 function toActiveRun(dto: RunDTO): ActiveRun {
@@ -91,6 +95,7 @@ function toActiveRun(dto: RunDTO): ActiveRun {
     label: dto.conversationTitle ?? `${dto.kind} run`,
     status,
     detail: RUN_STATUS_LABEL[dto.status] ?? dto.status.toUpperCase(),
+    awaitingKind: dto.awaiting_kind ?? undefined,
     // A queued run has been created but not started; its clock reads `--:--:--`
     // until it does, which is the honest reading. Falling back to `created_at`
     // here would show queue time as though it were run time.

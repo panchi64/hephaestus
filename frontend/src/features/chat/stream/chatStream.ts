@@ -533,8 +533,8 @@ export function createChatStream(
      *  manual/automatic re-attach rather than being over. */
     detached: drive.detached,
     /** True while the run is parked on a decision or question. The main room mirrors it
-     *  to the global `awaitingInput` echo (nav rail warn tone, favicon tint). */
-    awaitingInput: approvals.awaitingInput,
+     *  to the global `awaitingKind` echo (nav rail, favicon tint). */
+    awaitingKind: approvals.awaitingKind,
     /** What the live turn is parked on, or null; rendered by the dock. */
     park: approvals.park,
     titlePending,

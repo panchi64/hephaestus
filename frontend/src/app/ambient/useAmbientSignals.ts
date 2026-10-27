@@ -1,5 +1,5 @@
 import { createEffect, on, onCleanup } from "solid-js";
-import { strikePoint, type StrikeTone } from "~/ui";
+import { ACTION_TONES, strikePoint, type StrikeTone } from "~/ui";
 import { useChatSessions } from "~/features/chat/data";
 import {
   pushStrike,
@@ -8,6 +8,7 @@ import {
 } from "~/lib/stores/ambient";
 import {
   awaitingInput,
+  awaitingKind,
   chatBusy,
   chatThreadId,
 } from "~/lib/stores/chatActivity";
@@ -62,7 +63,7 @@ export function useAmbientSignals(): void {
     on(chatBusy, (busy) => busy && strikeOwn("info"), { defer: true }),
   );
   createEffect(
-    on(awaitingInput, (waiting) => waiting && strikeOwn("warn"), {
+    on(awaitingKind, (kind) => kind && strikeOwn(ACTION_TONES[kind].status), {
       defer: true,
     }),
   );

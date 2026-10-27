@@ -96,7 +96,7 @@ export function ComposerMenu(props: ComposerMenuProps): JSX.Element {
             when={!empty()}
             fallback={
               <div class="px-3 py-2">
-                <Text variant="micro" tone="dim">
+                <Text variant="caption" tone="dim">
                   {props.loading
                     ? "Loading…"
                     : (props.emptyHint ?? "No matches")}

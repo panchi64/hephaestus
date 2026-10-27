@@ -155,7 +155,7 @@ export function ListRow(props: ListRowProps): JSX.Element {
             {local.label}
           </Text>
           <Show when={local.description}>
-            <Text variant="micro" tone="dim" class="truncate">
+            <Text variant="caption" tone="dim" class="truncate">
               {local.description}
             </Text>
           </Show>

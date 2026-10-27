@@ -33,7 +33,7 @@ import {
   type Accessor,
 } from "solid-js";
 import {
-  setAwaitingInput,
+  setAwaitingKind,
   setChatBusy,
   setChatThreadId,
   setRunErrored,
@@ -287,7 +287,7 @@ export function mainChat(): MainChat {
     createEffect(() => setRunErrored(stream.errored()));
     // Same mirror for the awaiting-approval echo, so the nav rail and favicon can flag
     // a parked run needing a decision from any screen, not just while on /chat.
-    createEffect(() => setAwaitingInput(stream.awaitingInput()));
+    createEffect(() => setAwaitingKind(stream.awaitingKind()));
     // The one place a thread selection lands, whether from the RECENTS rail, the chat
     // screen's warm-resume or a notification's deep-link, so every caller gets it.
     const openId = () => currentId() ?? stream.conversationId();

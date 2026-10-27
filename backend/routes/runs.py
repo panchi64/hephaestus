@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import ToolApproved, ToolDenied
 from pydantic_ai.messages import ToolCallPart
 
-from agent import ParkedTurn, build_resume_orchestrator
+from agent import AwaitingKind, ParkedTurn, awaiting_kind, build_resume_orchestrator
 from agent.approval_guards import guarded_approvals
 from agent.gating import GrantApproved
 from agent.recompose import RecomposeError, recompose
@@ -78,6 +78,7 @@ class RunView(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     last_seq: int
+    awaiting_kind: AwaitingKind | None = None
     conversation_id: str | None = Field(default=None, serialization_alias="conversationId")
     conversation_title: str | None = Field(default=None, serialization_alias="conversationTitle")
 
@@ -95,6 +96,7 @@ def _view(run: Run, title: str | None) -> RunView:
         started_at=run.started_at,
         ended_at=run.ended_at,
         last_seq=run.stream.last_seq,
+        awaiting_kind=awaiting_kind(run),
         conversation_id=run.conversation_id,
         conversation_title=title,
     )

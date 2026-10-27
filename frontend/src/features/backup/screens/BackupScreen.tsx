@@ -10,7 +10,6 @@ import {
   Input,
   LoadingText,
   Modal,
-  PageHeader,
   Panel,
   Row,
   Stack,
@@ -18,6 +17,7 @@ import {
   Text,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { isApiError } from "~/lib/api";
 import { bytes, timestamp, relativeTime } from "~/lib/format";
 import {
@@ -148,12 +148,9 @@ export function BackupScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Backup / restore"
-        subtitle="Export an encrypted archive of your workspace, or merge one back in."
-        assetId="HEPH-ADM-06.0 EDITION 01"
-        actions={
+      <SettingsPageHeader
+        section="backup"
+        status={
           <Suspense fallback={<LoadingText />}>
             <Show when={lastBackup()}>
               {(b) => (
@@ -321,7 +318,7 @@ export function BackupScreen(): JSX.Element {
                     <Text variant="label" tone="dim">
                       Drop backup file here
                     </Text>
-                    <Text variant="micro" tone="dim">
+                    <Text variant="caption" tone="dim">
                       or select below
                     </Text>
                   </Stack>
@@ -394,7 +391,7 @@ export function BackupScreen(): JSX.Element {
                       <StatusFlag status="warn" dot>
                         Partial
                       </StatusFlag>
-                      <Text variant="micro" tone="dim">
+                      <Text variant="caption" tone="dim">
                         {`No place in this build for: ${r().unknown.join(", ")} — the archive is from a newer version.`}
                       </Text>
                     </Row>
@@ -446,7 +443,7 @@ export function BackupScreen(): JSX.Element {
             into this workspace. Records it carries that you already have are
             skipped; nothing existing is overwritten or removed.
           </Text>
-          <Text variant="micro" tone="dim">
+          <Text variant="caption" tone="dim">
             Imported records become yours on this host. A wrong passphrase is
             rejected outright — nothing is written.
           </Text>

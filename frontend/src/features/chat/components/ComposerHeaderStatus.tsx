@@ -1,5 +1,5 @@
 import { Match, Show, Switch, createMemo, type JSX } from "solid-js";
-import { MetClock, type Status } from "~/ui";
+import { MetClock, type ActionTone, type Status } from "~/ui";
 import type { ChatActivity, ChatOutcome } from "../model";
 import type { RunClock, RunQueue } from "../stream/fold";
 import { resolveRunState, runStateSpec } from "../runState";
@@ -19,6 +19,8 @@ export interface ComposerHeaderStatusProps {
   runQueue: () => RunQueue | null;
   /** The backend's status for this thread's live run, when it has one. */
   activity: () => ChatActivity | undefined;
+  /** What an `awaiting_input` run is parked on. */
+  awaitingKind: () => ActionTone | undefined;
   /** How this thread's last terminal run ended, when the backend still remembers. */
   lastOutcome: () => ChatOutcome | undefined;
 }
@@ -58,7 +60,9 @@ export function ComposerHeaderStatus(
 ): JSX.Element {
   const atRest = createMemo(() => {
     const s = resolveRunState(props.activity(), props.lastOutcome());
-    return s && s !== "done" ? runStateSpec(s) : undefined;
+    return s && s !== "done"
+      ? runStateSpec(s, props.awaitingKind())
+      : undefined;
   });
   const name = () => props.title() ?? "New thread";
 

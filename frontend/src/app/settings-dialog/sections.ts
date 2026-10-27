@@ -9,11 +9,8 @@ import type { IconName } from "~/ui";
  * `id` is what the URL carries (`?settings=<id>`), so it is a slug and not a
  * label — a deep link names it, and a renderer keys off it.
  *
- * The **title** of the pane is not here. Every section component already carries
- * its own `PageHeader variant="section"` or `Panel label`, and a second copy in
- * this file would be the one that goes stale — `label` is the row's name in the
- * column, and `description` is what the row's tooltip and the search field match
- * against.
+ * `label` and `description` are also the pane's title and subtitle: every pane
+ * opens with `SettingsPageHeader`, which reads them from here.
  */
 export interface SettingsSection {
   id: string;
@@ -120,7 +117,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "agents",
         label: "Agents",
         icon: "cpu",
-        description: "Named agents a thread can run as, with their own limits",
+        description:
+          "Named agents a thread can run as, with their own instructions, tools and limits",
         keywords: ["custom", "persona", "subagent", "delegate", "instructions"],
       },
       {
@@ -128,7 +126,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         label: "Plugins",
         icon: "plug",
         description:
-          "Python tools agents write, which run in the conversation's VM once you publish them",
+          "Tools, agents, skills and small apps that agents write. Python tools run in a VM once you review and publish them; a plugin of windows alone goes live as written.",
         keywords: ["tool", "python", "extension", "egress", "secret", "draft"],
       },
       {
@@ -179,7 +177,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "integrations",
         label: "Integrations",
         icon: "link",
-        description: "Third-party connectors the agent can act through",
+        description:
+          "HTTP service connectors the agent can act through. Credentials are encrypted at rest.",
         keywords: ["connector", "service", "webhook", "oauth"],
       },
       {
@@ -199,21 +198,24 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "vault",
         label: "Secrets vault",
         icon: "lock",
-        description: "Encrypted secrets this workspace holds",
+        description:
+          "Encrypted credential store. Agent reads require explicit approval.",
         keywords: ["password", "secret", "encryption", "unlock"],
       },
       {
         id: "service-keys",
         label: "Service keys",
         icon: "key",
-        description: "Outbound keys for the third-party services you use",
+        description:
+          "Outbound keys this system uses to reach third-party services. Stored encrypted at rest; never displayed.",
         keywords: ["api key", "credential", "token", "outbound"],
       },
       {
         id: "access-tokens",
         label: "Access tokens",
         icon: "terminal",
-        description: "Inbound scoped tokens for reaching this workspace",
+        description:
+          "Scoped tokens that let your own clients call this API. Shown once at issue; only a one-way hash is kept.",
         keywords: ["api", "bearer", "scope", "inbound", "cli"],
       },
     ],
@@ -226,7 +228,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "backup",
         label: "Backup",
         icon: "archive",
-        description: "Snapshots of this workspace, and restoring from one",
+        description:
+          "Export an encrypted archive of your workspace, or merge one back in",
         keywords: ["export", "import", "restore", "snapshot"],
       },
       {
@@ -247,7 +250,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "health",
         label: "Health",
         icon: "activity",
-        description: "The state of the machine and its services",
+        description: "Live service diagnostics and degradation tracking",
         keywords: ["status", "diagnostics", "latency", "uptime"],
       },
     ],
@@ -290,4 +293,14 @@ export function sectionById(id: string | undefined): SettingsSection {
  *  meta on a search result row. */
 export function groupForSection(id: string): SettingsGroup | undefined {
   return settingsGroups().find((g) => g.sections.some((s) => s.id === id));
+}
+
+/** The name and one-line purpose a pane titles itself with, or undefined for an
+ *  id no section carries. Unlike `sectionById` it never falls back, so a typo
+ *  can't title one pane with another's name. */
+export function sectionHeading(
+  id: string,
+): Pick<SettingsSection, "label" | "description"> | undefined {
+  const section = allSections().find((s) => s.id === id);
+  return section && { label: section.label, description: section.description };
 }

@@ -2,7 +2,7 @@ import { createSignal, For, type JSX } from "solid-js";
 import { useLocation } from "@solidjs/router";
 import { pluginEnabled } from "~/lib/stores/builtinPlugins";
 import { pluginOfHref } from "~/plugins/registry";
-import { Icon, ListRow, StatusBar, StatusCell, Tooltip } from "~/ui";
+import { ASSET_IDS, Icon, ListRow, StatusBar, StatusCell, Tooltip } from "~/ui";
 import { useSettingsRoute } from "~/app/settings-dialog";
 import { RecentsRail } from "~/features/chat/components/RecentsRail";
 import {
@@ -68,7 +68,7 @@ export function Sidebar(): JSX.Element {
   return (
     <RailFrame
       brandHref="/"
-      assetId="heph-workspace-02.1"
+      assetId={ASSET_IDS.workspaceRail}
       footer={
         <>
           {/* The corpus and the compare bench sit here for the same reason as COMMS:
