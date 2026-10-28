@@ -267,6 +267,32 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       });
       return true;
     }
+    case "approval.decided":
+      // Mirrors the optimistic settle in `approvals.ts`. Searched across the transcript
+      // like `question.answered`: a `message.injected` boundary may have moved the fold.
+      setMessages(
+        produce((list) => {
+          for (const m of list) {
+            const host = findHost(m, ev.tool_call_id);
+            if (host) {
+              if (host.command.phase === "pending")
+                host.command.phase = ev.approved ? "running" : "denied";
+              return;
+            }
+            if (
+              m.blocks?.some(
+                (b) =>
+                  b.kind === "approval" &&
+                  b.approval.toolCallId === ev.tool_call_id,
+              )
+            ) {
+              clearPark(m, ev.tool_call_id);
+              return;
+            }
+          }
+        }),
+      );
+      return true;
     case "question.asked":
       // `questions` is defaulted once here, like `args` above.
       patchById(assistantId, (m) => {

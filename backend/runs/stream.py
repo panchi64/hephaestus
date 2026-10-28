@@ -25,12 +25,34 @@ from collections.abc import AsyncIterator, Callable
 
 from core.shutdown import STOPPED, get_unless_shutdown, is_shutting_down
 
-from .events import Event, EventBody, now_utc
+from .events import AnswerDelta, Event, EventBody, ThinkingDelta, now_utc
 
 logger = logging.getLogger(__name__)
 
 # Backlog past which a subscriber is treated as wedged and dropped.
 SUBSCRIBER_QUEUE_MAX = 1024
+
+
+def coalesce_deltas(events: list[Event]) -> list[Event]:
+    """Merge each run of adjacent same-type text deltas into one event at the run's last seq.
+
+    A long run's backlog is mostly deltas, and a reattaching client folds each one into its
+    transcript. The merged frame keeps the last seq so ``Last-Event-ID`` resumes correctly.
+    """
+    out: list[Event] = []
+    for event in events:
+        body = event.body
+        prev = out[-1].body if out else None
+        merged: EventBody | None = None
+        if isinstance(body, AnswerDelta) and isinstance(prev, AnswerDelta):
+            merged = AnswerDelta(text=prev.text + body.text)
+        elif isinstance(body, ThinkingDelta) and isinstance(prev, ThinkingDelta):
+            merged = ThinkingDelta(text=prev.text + body.text)
+        if merged is None:
+            out.append(event)
+        else:
+            out[-1] = Event(seq=event.seq, ts=event.ts, body=merged)
+    return out
 
 
 class RunStream:
@@ -129,7 +151,7 @@ class RunStream:
         self._subscribers.add(queue)
         if watching:
             self._watchers.add(queue)
-        backlog = self.replay(after_seq)
+        backlog = coalesce_deltas(self.replay(after_seq))
         already_closed = self._closed
         # ----------------------------------------------------------
         try:

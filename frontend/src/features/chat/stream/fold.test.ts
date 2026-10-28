@@ -892,6 +892,35 @@ describe("a parked approval's cautions and replay", () => {
     h.fold(asked("mail_send", { tool_call_id: "t2" }));
     expect(blocks(h.messages, "approval")).toHaveLength(2);
   });
+
+  const decided = (approved: boolean, toolCallId = "t1"): RunEvent => ({
+    type: "approval.decided",
+    seq: ++seq,
+    ts: "",
+    tool_call_id: toolCallId,
+    approved,
+  });
+
+  test("a replay of a decided call that is still running reopens no card", () => {
+    const h = harness(turn());
+    h.fold(asked("mail_send"));
+    h.fold(asked("mail_send", { tool_call_id: "t2" }));
+    h.fold(decided(true));
+    const left = blocks(h.messages, "approval") ?? [];
+    expect(
+      left.map((b) => b.kind === "approval" && b.approval.toolCallId),
+    ).toEqual(["t2"]);
+  });
+
+  test("a decided terminal leaves pending for the operator's verdict", () => {
+    const h = harness(turn());
+    h.fold(asked("shell_run_command"));
+    h.fold(decided(false));
+    const block = blocks(h.messages, "host_command")?.[0];
+    expect(block?.kind === "host_command" && block.command.phase).toBe(
+      "denied",
+    );
+  });
 });
 
 describe("the turn-limit notice", () => {

@@ -11,6 +11,7 @@ Producers build a typed body (e.g. ``AnswerDelta(text=...)``); the Run stamps
 
 from .approvals import (
     AnsweredQuestionOut,
+    ApprovalDecided,
     ApprovalRequired,
     QuestionAnswered,
     QuestionAsked,
@@ -103,6 +104,7 @@ __all__ = [
     "AnswerDelta",
     "AnswerRetracted",
     "AnsweredQuestionOut",
+    "ApprovalDecided",
     "ApprovalRequired",
     "BrowserOpened",
     "PluginWindowOpened",

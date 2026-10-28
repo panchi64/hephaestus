@@ -455,6 +455,13 @@ export interface ApprovalRequired extends Base {
   /** Set on a host command about to run with no fence in force, saying why. */
   unconfined?: string | null;
 }
+/** The operator settled a parked approval. A replay carries the card's `approval.required`
+ *  but not the click, so this is what retires the card when the call is still running. */
+export interface ApprovalDecided extends Base {
+  type: "approval.decided";
+  tool_call_id: string;
+  approved: boolean;
+}
 /** One answer offered for a question. */
 export interface QuestionOption {
   label: string;
@@ -704,6 +711,7 @@ export type RunEvent =
   | ContextInjected
   | CitationAdded
   | ApprovalRequired
+  | ApprovalDecided
   | QuestionAsked
   | QuestionAnswered
   | ReviewStarted

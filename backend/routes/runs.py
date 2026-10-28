@@ -7,9 +7,10 @@ Creating a Run is a feature concern (the chat and agent routes call
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NoReturn
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -25,6 +26,7 @@ from core.config import get_settings
 from routes import deps
 from runs import (
     AnsweredQuestionOut,
+    ApprovalDecided,
     QuestionAnswered,
     Run,
     RunStatus,
@@ -45,6 +47,7 @@ from services.settings_store import get_inactivity_timeout, get_wall_clock_timeo
 from services.subagents import SubtreeStopper
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+logger = logging.getLogger(__name__)
 
 
 def refusal_message(intent: str, written: str | None) -> str:
@@ -258,6 +261,12 @@ def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[
     return width == "tool" if settled.needs_whole_tool else width != "none"
 
 
+def _refuse_decision(run_id: str, detail: str, *, cause: Exception | None = None) -> NoReturn:
+    """Log and raise the 409 for a decision the run can no longer take."""
+    logger.info("approval for run %s refused: %s", run_id, detail)
+    raise HTTPException(status_code=409, detail=detail) from cause
+
+
 @router.post("/{run_id}/approve", status_code=202)
 async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) -> ApprovalOutcome:
     """Settle everything a parked run awaits, permissions and answers, then resume it.
@@ -270,7 +279,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     if run.status is not RunStatus.awaiting_input or not isinstance(run.parked_payload, ParkedTurn):
-        raise HTTPException(status_code=409, detail=f"run is not awaiting approval ({run.status})")
+        _refuse_decision(run_id, f"run is not awaiting approval ({run.status.value})")
 
     parked: ParkedTurn = run.parked_payload
     # The operator decides only calls not already settled by an active grant or by the
@@ -438,7 +447,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             + "so its pending calls were denied."
         )
         _ = await registry.block_parked(run_id, reason)
-        raise HTTPException(status_code=409, detail=reason) from exc
+        _refuse_decision(run_id, reason, cause=exc)
 
     # The park's deps hold the agent's own withheld tools; nothing else here re-derives them.
     restored_disabled: frozenset[str] = (
@@ -494,7 +503,11 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             for tool_name, scope, _ in to_grant:
                 if (tool_name, scope) not in already:
                     await grants.revoke(deps.OPERATOR_ID, conv_id, tool_name, scope)
-        raise HTTPException(status_code=409, detail="run could not be resumed")
+        _refuse_decision(run_id, "run could not be resumed")
+    # Emitted after `resume` returns and before anything awaits, so these frames precede
+    # every event the resumed turn produces; a refused resume announces nothing.
+    for d in body.decisions:
+        _ = run.emit(ApprovalDecided(tool_call_id=d.tool_call_id, approved=d.approved))
     if conv_id is not None:
         await deps.approval_ledger(request).record(
             deps.OPERATOR_ID,

@@ -10,6 +10,7 @@ from typing import Annotated
 from pydantic import Field
 
 from .approvals import (
+    ApprovalDecided,
     ApprovalRequired,
     QuestionAnswered,
     QuestionAsked,
@@ -90,6 +91,7 @@ EventBody = Annotated[
     | ConversationCompacted
     | ContextInjected
     | ApprovalRequired
+    | ApprovalDecided
     | QuestionAsked
     | QuestionAnswered
     | ReviewStarted

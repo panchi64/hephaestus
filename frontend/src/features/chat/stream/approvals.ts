@@ -328,8 +328,12 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
               b.command.phase = "stale";
           }
         });
-        toast.error("This was already answered elsewhere.");
-        void deps.reconcileStaleDecision();
+        toast.error(`This was already answered elsewhere: ${err.detail}`);
+        deps.reconcileStaleDecision().catch(() => {
+          toast.error(
+            "Couldn't reload this chat. Switch away and back to refresh it.",
+          );
+        });
         return;
       }
       // A transient failure (network blip, 5xx): the decision may not have

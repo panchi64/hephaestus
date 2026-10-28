@@ -28,6 +28,19 @@ class ApprovalRequired(Body):
     unconfined: str | None = None
 
 
+class ApprovalDecided(Body):
+    """The operator settled a parked approval.
+
+    A replay holds the ``approval.required`` that opened the card but nothing of the click,
+    and the call's own result arrives only once it finishes, so without this a reattach
+    while an approved call runs would reopen a prompt the run has already moved past.
+    Additive to v1."""
+
+    type: Literal["approval.decided"] = "approval.decided"
+    tool_call_id: str
+    approved: bool
+
+
 class QuestionOption(Body):
     """One answer offered for a question."""
 

@@ -26,7 +26,7 @@
  * events and the answer streams in blank.
  */
 
-import { createSignal, onCleanup, type Accessor } from "solid-js";
+import { batch, createSignal, onCleanup, type Accessor } from "solid-js";
 import { produce, type SetStoreFunction } from "solid-js/store";
 import { StreamDetachedError, streamRun, type RunEvent } from "~/lib/stream";
 import { toast } from "~/ui";
@@ -206,28 +206,51 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     });
     let connected = false;
     let detachedNow = false;
+    // A reattach's backlog, held until it is complete: folded one frame at a time, every
+    // frame of a long run re-renders the transcript, so it lands in one batch instead.
+    let backlog: RunEvent[] = [];
+    const flushBacklog = () => {
+      const held = backlog;
+      backlog = [];
+      if (myGen !== driveGen || !held.length) return;
+      batch(() => {
+        for (const ev of held) deps.foldEvent(assistantId, ev, myGen);
+      });
+    };
     try {
       controller = new AbortController();
-      await streamRun(runId, {
-        signal: controller.signal,
-        fromSeq,
-        onEvent: (ev: RunEvent) => {
-          // Superseded between the read and here: the bubble and the fold belong to
-          // whatever took over.
-          if (myGen !== driveGen) return;
-          // First event = the transport is live again; let a reattach drop its
-          // "RESYNCING…" badge here, so it shows only across the reconnect latency.
-          // It's also the queued→streaming transition: the backend only starts
-          // emitting once the run actually clears the concurrency semaphore, so
-          // the first frame (of any kind) is what tells us it's no longer queued.
-          if (!connected) {
-            connected = true;
-            deps.patchById(assistantId, (m) => (m.queued = false));
-            onConnected?.();
-          }
-          deps.foldEvent(assistantId, ev, myGen);
-        },
-      });
+      try {
+        await streamRun(runId, {
+          signal: controller.signal,
+          fromSeq,
+          onEvent: (ev: RunEvent) => {
+            // Superseded between the read and here: the bubble and the fold belong to
+            // whatever took over.
+            if (myGen !== driveGen) return;
+            // First event = the transport is live again; let a reattach drop its
+            // "RESYNCING…" badge here, so it shows only across the reconnect latency.
+            // It's also the queued→streaming transition: the backend only starts
+            // emitting once the run actually clears the concurrency semaphore, so
+            // the first frame (of any kind) is what tells us it's no longer queued.
+            if (!connected) {
+              connected = true;
+              deps.patchById(assistantId, (m) => (m.queued = false));
+              onConnected?.();
+            }
+            if (ev.seq < replayThrough) {
+              backlog.push(ev);
+              return;
+            }
+            if (backlog.length) {
+              backlog.push(ev);
+              flushBacklog();
+            } else deps.foldEvent(assistantId, ev, myGen);
+          },
+        });
+      } finally {
+        // The stream can end or drop before the backlog's last frame arrives.
+        flushBacklog();
+      }
     } catch (err) {
       if (myGen !== driveGen) {
         // superseded — nothing to surface
@@ -363,8 +386,10 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     }
     // `driveRun` re-anchors `maxFoldedSeq` to the `fromSeq` passed below, so the
     // resume replays only the gap after the last folded event.
-    deps.setSending(true);
+    // Reattaching first: the transcript reads it on the `sending` edge to tell a resumed
+    // run from a send, which would let go of the thread's opening follow.
     setReattaching(true);
+    deps.setSending(true);
     try {
       // Clears RESYNCING on the first folded event; the finally is the safety net
       // for a reattach that never connects (e.g. an immediate 404).
