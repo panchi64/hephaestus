@@ -33,6 +33,7 @@ import { toast } from "~/ui";
 import type { ActiveRun, ChatMessage } from "../model";
 import { FOLD_RUN_KIND, type FoldState } from "./fold";
 import { nextId, type PatchById } from "./patch";
+import { createReplayGate } from "./replayGate";
 
 /** What the drive is allowed to touch. Passed in rather than closed over, so the run
  *  lifecycle can be reasoned about without the store, the seam and the composer's
@@ -45,7 +46,8 @@ export interface RunDriveDeps {
   state: FoldState;
   /** `epoch` is the drive's own; the fold drops an event whose epoch is not current. */
   foldEvent: (assistantId: string, ev: RunEvent, epoch: number) => void;
-  setSending: (value: boolean) => void;
+  /** `resumed` marks a turn picked up rather than sent; see `ReattachOptions.seat`. */
+  setSending: (value: boolean, resumed?: boolean) => void;
   setErrored: (value: boolean) => void;
   titlePending: Accessor<boolean>;
   setTitlePending: (value: boolean) => void;
@@ -83,6 +85,9 @@ export interface ReattachOptions {
   /** The persisted row the run is answering. A reattach that has no streaming bubble of
    *  its own seats a fresh one directly after this row. */
   promptMessageId?: string | null;
+  /** The run answers the operator's own message (a queued send the backend started), so
+   *  the transcript seats it as it would a send. Otherwise the turn counts as resumed. */
+  seat?: boolean;
 }
 
 /** How to attach to a run the persisted detail reports as active: replay its whole
@@ -205,18 +210,20 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
       m.detached = false; // a fresh drive/reattach supersedes any prior detach
     });
     let connected = false;
+    let shown = false;
     let detachedNow = false;
-    // A reattach's backlog, held until it is complete: folded one frame at a time, every
-    // frame of a long run re-renders the transcript, so it lands in one batch instead.
-    let backlog: RunEvent[] = [];
-    const flushBacklog = () => {
-      const held = backlog;
-      backlog = [];
-      if (myGen !== driveGen || !held.length) return;
+    const gate = createReplayGate(replayThrough, (events) => {
+      if (myGen !== driveGen) return;
       batch(() => {
-        for (const ev of held) deps.foldEvent(assistantId, ev, myGen);
+        for (const ev of events) deps.foldEvent(assistantId, ev, myGen);
       });
-    };
+      // A reattach's "RESYNCING…" badge drops once what it caught up on is on screen,
+      // not when the backlog starts arriving.
+      if (!shown) {
+        shown = true;
+        onConnected?.();
+      }
+    });
     try {
       controller = new AbortController();
       try {
@@ -227,29 +234,17 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
             // Superseded between the read and here: the bubble and the fold belong to
             // whatever took over.
             if (myGen !== driveGen) return;
-            // First event = the transport is live again; let a reattach drop its
-            // "RESYNCING…" badge here, so it shows only across the reconnect latency.
-            // It's also the queued→streaming transition: the backend only starts
-            // emitting once the run actually clears the concurrency semaphore, so
-            // the first frame (of any kind) is what tells us it's no longer queued.
+            // The first frame (of any kind) is the queued→streaming transition: the
+            // backend only starts emitting once the run clears the concurrency semaphore.
             if (!connected) {
               connected = true;
               deps.patchById(assistantId, (m) => (m.queued = false));
-              onConnected?.();
             }
-            if (ev.seq < replayThrough) {
-              backlog.push(ev);
-              return;
-            }
-            if (backlog.length) {
-              backlog.push(ev);
-              flushBacklog();
-            } else deps.foldEvent(assistantId, ev, myGen);
+            gate.push(ev);
           },
         });
       } finally {
-        // The stream can end or drop before the backlog's last frame arrives.
-        flushBacklog();
+        gate.flush();
       }
     } catch (err) {
       if (myGen !== driveGen) {
@@ -386,10 +381,8 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     }
     // `driveRun` re-anchors `maxFoldedSeq` to the `fromSeq` passed below, so the
     // resume replays only the gap after the last folded event.
-    // Reattaching first: the transcript reads it on the `sending` edge to tell a resumed
-    // run from a send, which would let go of the thread's opening follow.
+    deps.setSending(true, !opts.seat);
     setReattaching(true);
-    deps.setSending(true);
     try {
       // Clears RESYNCING on the first folded event; the finally is the safety net
       // for a reattach that never connects (e.g. an immediate 404).

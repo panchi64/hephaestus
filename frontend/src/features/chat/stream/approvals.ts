@@ -25,7 +25,7 @@
  * the same question, and the one that goes stale is always the flag.
  */
 
-import { createMemo, createSignal, type Accessor } from "solid-js";
+import { createMemo, createSignal, untrack, type Accessor } from "solid-js";
 import { api, isApiError } from "~/lib/api";
 import { toast, type ActionTone } from "~/ui";
 import { awaitingKindOf } from "./awaitingKind";
@@ -36,12 +36,11 @@ import type {
   Approval,
   ApprovalDecision,
   ChatMessage,
-  HostCommandBlock,
   QuestionAnswer,
   QuestionBlock,
   QuestionReply,
 } from "../model";
-import type { PatchById } from "./patch";
+import { settleDecision, type PatchById } from "./patch";
 
 export interface ApprovalDeps {
   messages: ChatMessage[];
@@ -195,12 +194,34 @@ const parkedIn =
       m.blocks?.some((b) => b.kind === "approval" || b.kind === "question"),
     );
 
+/** The calls a park waits on, which stay the same across the remounts a draft outlives. */
+const parkKey = (p: Park | null): string | null =>
+  p
+    ? [
+        ...p.approvals.map((a) => a.toolCallId),
+        ...p.questions.map((q) => q.toolCallId),
+      ].join(" ")
+    : null;
+
+const NO_DRAFT: ParkDraft = emptyDraft();
+
 export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
   const [draft, setDraft] = createSignal<ParkDraft>(emptyDraft());
+  // The park the draft was collected for. A park settled anywhere but this dock (another
+  // tab, a channel) never clears the draft, and the cards only publish on change, so a
+  // draft read against the next park would offer its submit with the last one's verdicts.
+  const [draftFor, setDraftFor] = createSignal<string | null>(null);
   const patchParkDraft = (next: Partial<ParkDraft>): void => {
-    setDraft((current) => ({ ...current, ...next }));
+    const key = parkKey(untrack(park));
+    if (key === untrack(draftFor))
+      setDraft((current) => ({ ...current, ...next }));
+    else {
+      setDraftFor(key);
+      setDraft({ ...emptyDraft(), ...next });
+    }
   };
   const clearParkDraft = (): void => {
+    setDraftFor(null);
     setDraft(emptyDraft());
   };
 
@@ -328,7 +349,7 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
               b.command.phase = "stale";
           }
         });
-        toast.error(`This was already answered elsewhere: ${err.detail}`);
+        toast.error(err.detail);
         deps.reconcileStaleDecision().catch(() => {
           toast.error(
             "Couldn't reload this chat. Switch away and back to refresh it.",
@@ -348,7 +369,10 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
   return {
     awaitingKind,
     park,
-    parkDraft: draft,
+    parkDraft: () => {
+      const key = parkKey(park());
+      return key !== null && key === draftFor() ? draft() : NO_DRAFT;
+    },
     patchParkDraft,
     clearParkDraft,
     resolvePark: (messageId, settlement) =>
@@ -384,14 +408,8 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
       }),
     resolveHostCommands: (messageId, decisions) =>
       submitDecisions(messageId, { decisions }, (m) => {
-        for (const d of decisions) {
-          const b = m.blocks?.find(
-            (x): x is HostCommandBlock =>
-              x.kind === "host_command" &&
-              x.command.toolCallId === d.tool_call_id,
-          );
-          if (b) b.command.phase = d.approved ? "running" : "denied";
-        }
+        for (const d of decisions)
+          settleDecision(m, d.tool_call_id, d.approved);
       }),
   };
 }

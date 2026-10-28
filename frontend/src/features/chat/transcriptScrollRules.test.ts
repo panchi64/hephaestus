@@ -133,6 +133,12 @@ describe("nextFollow", () => {
     expect(nextFollow(following, "send")).toEqual(following);
   });
 
+  test("picking up a run mid-way keeps the follow that came with opening", () => {
+    expect(nextFollow(opened, "resume")).toEqual(opened);
+    const reading = { pinned: false, chosen: false };
+    expect(nextFollow(reading, "resume")).toEqual(reading);
+  });
+
   test("the jump control chooses the follow", () => {
     expect(nextFollow({ pinned: false, chosen: false }, "follow")).toEqual(
       following,

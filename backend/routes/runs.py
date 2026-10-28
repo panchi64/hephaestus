@@ -262,7 +262,8 @@ def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[
 
 
 def _refuse_decision(run_id: str, detail: str, *, cause: Exception | None = None) -> NoReturn:
-    """Log and raise the 409 for a decision the run can no longer take."""
+    """Log and raise the 409 for a decision the run can no longer take; the client shows
+    ``detail`` to the operator as written."""
     logger.info("approval for run %s refused: %s", run_id, detail)
     raise HTTPException(status_code=409, detail=detail) from cause
 
@@ -279,7 +280,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     if run.status is not RunStatus.awaiting_input or not isinstance(run.parked_payload, ParkedTurn):
-        _refuse_decision(run_id, f"run is not awaiting approval ({run.status.value})")
+        _refuse_decision(run_id, f"Already decided: the run is {run.status.value} now.")
 
     parked: ParkedTurn = run.parked_payload
     # The operator decides only calls not already settled by an active grant or by the
@@ -503,7 +504,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             for tool_name, scope, _ in to_grant:
                 if (tool_name, scope) not in already:
                     await grants.revoke(deps.OPERATOR_ID, conv_id, tool_name, scope)
-        _refuse_decision(run_id, "run could not be resumed")
+        _refuse_decision(run_id, "Already decided: the run could not be resumed.")
     # Emitted after `resume` returns and before anything awaits, so these frames precede
     # every event the resumed turn produces; a refused resume announces nothing.
     for d in body.decisions:

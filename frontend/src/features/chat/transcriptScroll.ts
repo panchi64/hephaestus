@@ -73,8 +73,9 @@ export interface TranscriptFollow {
 
 export function createTranscriptFollow(source: {
   sending: () => boolean;
-  /** Whether the stream is picking up a run it did not start this session. */
-  reattaching: () => boolean;
+  /** Whether the turn in flight was picked up (a thread opened mid-run, a reload) rather
+   *  than sent; read with `sending`, which is set in the same batch. */
+  resumed: () => boolean;
   /** The open thread; a switch re-attaches and jumps to the latest message. */
   conversationId: () => string | null;
   /** The thread the stream is bound to, which tells a new thread being named after its
@@ -382,11 +383,10 @@ export function createTranscriptFollow(source: {
   let wasSending = false;
   createEffect(() => {
     const sending = source.sending();
-    // A reattach resumes a run already under way (opening a thread mid-run, a reload);
-    // only the operator's own send seats their message.
-    if (sending && !wasSending && !untrack(source.reattaching)) {
-      apply("send");
-      if (!chosen) seatTurn();
+    if (sending && !wasSending) {
+      const event = untrack(source.resumed) ? "resume" : "send";
+      apply(event);
+      if (event === "send" && !chosen) seatTurn();
     }
     wasSending = sending;
   });

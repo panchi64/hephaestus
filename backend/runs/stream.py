@@ -36,22 +36,34 @@ SUBSCRIBER_QUEUE_MAX = 1024
 def coalesce_deltas(events: list[Event]) -> list[Event]:
     """Merge each run of adjacent same-type text deltas into one event at the run's last seq.
 
-    A long run's backlog is mostly deltas, and a reattaching client folds each one into its
-    transcript. The merged frame keeps the last seq so ``Last-Event-ID`` resumes correctly.
+    A long run's backlog is mostly deltas, each folded separately by a reattaching client.
+    Keeping the last seq keeps ``Last-Event-ID`` resumption exact.
     """
     out: list[Event] = []
+    # Joined once per run of deltas: concatenating per delta is quadratic in a long answer.
+    kind: type[AnswerDelta] | type[ThinkingDelta] | None = None
+    parts: list[str] = []
+    last: Event | None = None
+
+    def close_run() -> None:
+        if kind is None or last is None:
+            return
+        body = last.body if len(parts) == 1 else kind(text="".join(parts))
+        out.append(Event(seq=last.seq, ts=last.ts, body=body))
+
     for event in events:
         body = event.body
-        prev = out[-1].body if out else None
-        merged: EventBody | None = None
-        if isinstance(body, AnswerDelta) and isinstance(prev, AnswerDelta):
-            merged = AnswerDelta(text=prev.text + body.text)
-        elif isinstance(body, ThinkingDelta) and isinstance(prev, ThinkingDelta):
-            merged = ThinkingDelta(text=prev.text + body.text)
-        if merged is None:
-            out.append(event)
-        else:
-            out[-1] = Event(seq=event.seq, ts=event.ts, body=merged)
+        if isinstance(body, AnswerDelta | ThinkingDelta):
+            if type(body) is not kind:
+                close_run()
+                kind, parts = type(body), []
+            parts.append(body.text)
+            last = event
+            continue
+        close_run()
+        kind, parts, last = None, [], None
+        out.append(event)
+    close_run()
     return out
 
 
@@ -136,7 +148,8 @@ class RunStream:
         return [e for e in self._buffer if e.seq > after_seq]
 
     async def subscribe(self, after_seq: int = 0, *, watching: bool = True) -> AsyncIterator[Event]:
-        """Replay missed events (``seq > after_seq``) then stream live ones.
+        """Replay missed events (``seq > after_seq``, adjacent text deltas merged by
+        :func:`coalesce_deltas`) then stream live ones, one frame per event.
 
         Ends when the stream is closed (the run reached a terminal state) or the app
         begins shutting down — a run parked on an approval has no terminal state coming,

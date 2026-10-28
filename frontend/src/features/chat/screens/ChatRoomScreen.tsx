@@ -120,7 +120,7 @@ export function ChatRoomScreen(): JSX.Element {
   // See `transcriptScroll.ts` for the seating behaviour.
   const transcript = createTranscriptFollow({
     sending: stream.sending,
-    reattaching: stream.reattaching,
+    resumed: stream.resumed,
     conversationId: currentId,
     boundId: stream.conversationId,
     anchorTurnId: () =>

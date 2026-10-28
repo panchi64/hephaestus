@@ -30,6 +30,7 @@ import {
   findHost,
   findReview,
   findTool,
+  settleDecision,
   upsertHost,
 } from "../patch";
 import type { FoldContext } from "./types";
@@ -268,28 +269,12 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       return true;
     }
     case "approval.decided":
-      // Mirrors the optimistic settle in `approvals.ts`. Searched across the transcript
-      // like `question.answered`: a `message.injected` boundary may have moved the fold.
+      // Searched across the transcript like `question.answered`: a `message.injected`
+      // boundary may have moved the fold.
       setMessages(
         produce((list) => {
-          for (const m of list) {
-            const host = findHost(m, ev.tool_call_id);
-            if (host) {
-              if (host.command.phase === "pending")
-                host.command.phase = ev.approved ? "running" : "denied";
-              return;
-            }
-            if (
-              m.blocks?.some(
-                (b) =>
-                  b.kind === "approval" &&
-                  b.approval.toolCallId === ev.tool_call_id,
-              )
-            ) {
-              clearPark(m, ev.tool_call_id);
-              return;
-            }
-          }
+          for (const m of list)
+            if (settleDecision(m, ev.tool_call_id, ev.approved)) return;
         }),
       );
       return true;
