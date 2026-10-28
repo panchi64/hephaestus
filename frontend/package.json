@@ -21,7 +21,7 @@
     "@solidjs/start": "^2.1.0",
     "highlight.js": "^11.12.0",
     "katex": "^0.19.1",
-    "marked": "^18.1.1",
+    "marked": "^18.1.2",
     "marked-highlight": "^2.2.4",
     "mermaid": "^12.2.0",
     "nitro": "^3.0.260903-beta",
@@ -40,7 +40,7 @@
     "prettier": "^3.9.10",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.72.0"
+    "typescript-eslint": "^8.72.1"
   },
   "engines": {
     "node": ">=22"
