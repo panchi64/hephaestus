@@ -7,7 +7,7 @@ from collections.abc import Sequence
 
 from core.shutdown import begin_shutdown, reset_shutdown
 from runs import Event, RunStream
-from runs.events import AnswerDelta
+from runs.events import AnswerDelta, StepCompleted, ThinkingDelta
 
 from ._helpers import leave_stream, watch_stream
 
@@ -34,7 +34,7 @@ async def test_subscribe_after_close_replays_backlog_then_ends():
     _ = stream.emit(AnswerDelta(text="b"))
     stream.close()
     got = [e async for e in stream.subscribe()]
-    assert _texts(got) == ["a", "b"]
+    assert _texts(got) == ["ab"]
 
 
 async def test_resume_filters_by_after_seq():
@@ -43,8 +43,48 @@ async def test_resume_filters_by_after_seq():
         _ = stream.emit(AnswerDelta(text=t))
     stream.close()
     got = [e async for e in stream.subscribe(after_seq=1)]
-    assert _texts(got) == ["b", "c"]
-    assert [e.seq for e in got] == [2, 3]
+    assert _texts(got) == ["bc"]
+    assert [e.seq for e in got] == [3]
+
+
+async def test_backlog_coalesces_only_adjacent_same_type_deltas():
+    stream = RunStream()
+    for body in (
+        ThinkingDelta(text="t1"),
+        ThinkingDelta(text="t2"),
+        AnswerDelta(text="a1"),
+        AnswerDelta(text="a2"),
+        StepCompleted(index=0),
+        AnswerDelta(text="a3"),
+    ):
+        _ = stream.emit(body)
+    stream.close()
+    got = [e async for e in stream.subscribe()]
+    assert [(e.seq, e.body) for e in got] == [
+        (2, ThinkingDelta(text="t1t2")),
+        (4, AnswerDelta(text="a1a2")),
+        (5, StepCompleted(index=0)),
+        (6, AnswerDelta(text="a3")),
+    ]
+    # The buffer itself keeps every frame.
+    assert len(stream.replay()) == 6
+
+
+async def test_live_events_are_not_coalesced():
+    stream = RunStream()
+    received: list[Event] = []
+
+    async def consume() -> None:
+        async for e in stream.subscribe():
+            received.append(e)
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0)
+    _ = stream.emit(AnswerDelta(text="a"))
+    _ = stream.emit(AnswerDelta(text="b"))
+    stream.close()
+    await task
+    assert _texts(received) == ["a", "b"]
 
 
 async def test_live_subscriber_receives_emitted():

@@ -52,8 +52,10 @@ export interface FollowState {
  * - `follow`: the operator took the jump control.
  * - `letGo`: the operator scrolled up, or the view was sent to one turn.
  * - `send`: a run started.
+ * - `resume`: a run already under way was picked up; the follow stays as it was.
  */
-export type FollowEvent = "open" | "jump" | "follow" | "letGo" | "send";
+export type FollowEvent =
+  "open" | "jump" | "follow" | "letGo" | "send" | "resume";
 
 export function nextFollow(
   state: FollowState,
@@ -70,6 +72,8 @@ export function nextFollow(
       return { pinned: false, chosen: false };
     case "send":
       return state.chosen ? state : { pinned: false, chosen: false };
+    case "resume":
+      return state;
   }
 }
 

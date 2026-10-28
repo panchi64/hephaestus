@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import type { RunEvent } from "./events";
 import { streamRun } from "./runStream";
 
@@ -103,5 +103,85 @@ describe("a run stream on a page that hides", () => {
     abort.abort();
     await done;
     expect(connections).toHaveLength(0);
+  });
+});
+
+describe("a run stream over a flaky transport", () => {
+  const realFetch = globalThis.fetch;
+  /** Settles every promise chain the transport has queued without moving the clock. */
+  const drain = async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  };
+  /** One frame, then the body errors: the connection dropped mid-stream. */
+  const dropsAfter = (body: string) => {
+    let sent = false;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        // Errored on the next pull: an error raised alongside the enqueue discards it.
+        pull(controller) {
+          if (sent) controller.error(new Error("reset"));
+          else controller.enqueue(encoder.encode(body));
+          sent = true;
+        },
+      }),
+      { status: 200 },
+    );
+  };
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    globalThis.fetch = realFetch;
+  });
+
+  test("a connect that never answers is abandoned and retried", async () => {
+    let attempts = 0;
+    globalThis.fetch = ((_url: unknown, init?: RequestInit) => {
+      attempts += 1;
+      if (attempts > 1)
+        return Promise.resolve(dropsAfter(frame(1, "run.ended")));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        );
+      });
+    }) as typeof fetch;
+
+    const done = streamRun("r1", { onEvent: () => {} });
+    await drain();
+    expect(attempts).toBe(1);
+    jest.advanceTimersByTime(30_000);
+    await drain();
+    jest.advanceTimersByTime(500);
+    await drain();
+    expect(attempts).toBe(2);
+    await done;
+  });
+
+  test("outages separated by real frames never add up to a detach", async () => {
+    // Each outage alone waits ~25s; ten of them would pass the 120s budget if it
+    // counted the run's whole lifetime instead of one outage.
+    let call = 0;
+    let seq = 0;
+    globalThis.fetch = ((_url: unknown) => {
+      call += 1;
+      if (call > 60)
+        return Promise.resolve(dropsAfter(frame(++seq, "run.ended")));
+      if (call % 6 === 1)
+        return Promise.resolve(dropsAfter(frame(++seq, "answer.delta")));
+      return Promise.reject(new TypeError("network down"));
+    }) as typeof fetch;
+
+    const result: { outcome: "ended" | "detached" | null } = { outcome: null };
+    const done = streamRun("r1", { onEvent: () => {} }).then(
+      () => (result.outcome = "ended"),
+      () => (result.outcome = "detached"),
+    );
+    for (let i = 0; i < 200 && result.outcome === null; i++) {
+      jest.advanceTimersByTime(10_000);
+      await drain();
+    }
+    await done;
+    expect(result.outcome).toBe("ended");
   });
 });

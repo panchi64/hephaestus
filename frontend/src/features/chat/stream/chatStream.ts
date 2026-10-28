@@ -103,7 +103,15 @@ export function createChatStream(
   const [messages, setMessages] = createStore<ChatMessage[]>([]);
   // Conversation-scoped, so they sit beside the messages rather than on message blocks.
   const [snapshots, setSnapshots] = createSignal<ViewSnapshotRef[]>([]);
-  const [sending, setSending] = createSignal(false);
+  const [sending, setSendingSignal] = createSignal(false);
+  // Whether the turn in flight was picked up (a thread opened mid-run, a reload) rather
+  // than sent. Set with `sending` in one batch, so a reader of the edge sees both.
+  const [resumed, setResumed] = createSignal(false);
+  const setSending = (value: boolean, resumedRun = false): void =>
+    batch(() => {
+      setResumed(value && resumedRun);
+      setSendingSignal(value);
+    });
   // True when the last run ended in `run.error`; the main room mirrors it to the global
   // `runErrored` echo for the favicon, compare panes keep it local.
   const [errored, setErrored] = createSignal(false);
@@ -444,7 +452,8 @@ export function createChatStream(
     const read = await steering.settle();
     if (read === null || sending()) return;
     if (read.run_id === null && (!due || read.waiting_for_operator)) return;
-    await resume.reconcileStaleDecision();
+    // The run answers the operator's own queued message, so it is seated like a send.
+    await resume.reconcileStaleDecision({ seat: true });
     // A turn that ended before it was found has no drive to report it.
     options.onTurnComplete?.();
   }
@@ -527,6 +536,8 @@ export function createChatStream(
     snapshots,
     toggleSnapshotKeeper: branching.toggleSnapshotKeeper,
     sending,
+    /** Whether the turn in flight was picked up rather than sent from this room. */
+    resumed,
     errored,
     /** True while the live run's transport is detached (reconnect budget
      *  exhausted) — the run may still be alive server-side, awaiting a

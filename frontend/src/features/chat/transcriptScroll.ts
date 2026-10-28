@@ -73,6 +73,9 @@ export interface TranscriptFollow {
 
 export function createTranscriptFollow(source: {
   sending: () => boolean;
+  /** Whether the turn in flight was picked up (a thread opened mid-run, a reload) rather
+   *  than sent; read with `sending`, which is set in the same batch. */
+  resumed: () => boolean;
   /** The open thread; a switch re-attaches and jumps to the latest message. */
   conversationId: () => string | null;
   /** The thread the stream is bound to, which tells a new thread being named after its
@@ -381,8 +384,9 @@ export function createTranscriptFollow(source: {
   createEffect(() => {
     const sending = source.sending();
     if (sending && !wasSending) {
-      apply("send");
-      if (!chosen) seatTurn();
+      const event = untrack(source.resumed) ? "resume" : "send";
+      apply(event);
+      if (event === "send" && !chosen) seatTurn();
     }
     wasSending = sending;
   });

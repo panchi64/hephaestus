@@ -115,17 +115,24 @@ export async function streamRun(
       continue;
     }
     const hides = visibility(true, signal);
+    // Its own controller so a connect that never answers can be abandoned; the caller's
+    // abort still reaches it.
+    const attempt = new AbortController();
+    const forwardAbort = () => attempt.abort();
+    signal?.addEventListener("abort", forwardAbort);
+    let endedCleanly = false;
     try {
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       const token = getToken();
       if (token) headers["Authorization"] = `Bearer ${token}`;
       if (lastSeq != null) headers["Last-Event-ID"] = String(lastSeq);
 
+      const connectTimer = setTimeout(() => attempt.abort(), READ_TIMEOUT_MS);
       const res = await fetch(`${API_BASE}/runs/${runId}/events`, {
         headers,
         credentials: "omit",
-        signal,
-      });
+        signal: attempt.signal,
+      }).finally(() => clearTimeout(connectTimer));
       if (res.status === 401 || res.status === 423) {
         // Session expiry / vault re-lock, not a transport hiccup — retrying
         // would just burn the reconnect budget on a request that can never
@@ -157,7 +164,10 @@ export async function streamRun(
           break;
         }
         const { value, done } = result;
-        if (done) break;
+        if (done) {
+          endedCleanly = true;
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         let sep: number;
         while ((sep = buffer.indexOf("\n\n")) >= 0) {
@@ -168,7 +178,9 @@ export async function streamRun(
           if (signal?.aborted) return;
           const event = parseFrame(frame);
           if (!event) continue;
-          failures = 0; // a real frame resets the reconnect budget
+          // A real frame ends the outage: the budget bounds one, not the run's lifetime.
+          failures = 0;
+          totalDelayMs = 0;
           lastSeq = event.seq;
           onEvent(event);
           if (isTerminal(event)) return;
@@ -178,10 +190,7 @@ export async function streamRun(
       // from lastSeq to replay anything missed.
     } catch {
       if (signal?.aborted) return;
-      const backoff = Math.min(
-        RECONNECT_BASE_DELAY_MS * 2 ** failures,
-        RECONNECT_MAX_DELAY_MS,
-      );
+      const backoff = backoffFor(failures);
       failures += 1;
       totalDelayMs += backoff;
       if (totalDelayMs > RECONNECT_MAX_TOTAL_DELAY_MS) {
@@ -191,6 +200,16 @@ export async function streamRun(
       await delay(backoff, signal);
     } finally {
       hides.stop();
+      signal?.removeEventListener("abort", forwardAbort);
+    }
+    // A server that keeps accepting and closing would otherwise be reconnected in a
+    // tight loop. Not charged to the budget: the backend answered.
+    if (endedCleanly) {
+      await delay(backoffFor(failures), signal);
+      failures += 1;
     }
   }
 }
+
+const backoffFor = (failures: number): number =>
+  Math.min(RECONNECT_BASE_DELAY_MS * 2 ** failures, RECONNECT_MAX_DELAY_MS);

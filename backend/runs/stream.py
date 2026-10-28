@@ -25,12 +25,46 @@ from collections.abc import AsyncIterator, Callable
 
 from core.shutdown import STOPPED, get_unless_shutdown, is_shutting_down
 
-from .events import Event, EventBody, now_utc
+from .events import AnswerDelta, Event, EventBody, ThinkingDelta, now_utc
 
 logger = logging.getLogger(__name__)
 
 # Backlog past which a subscriber is treated as wedged and dropped.
 SUBSCRIBER_QUEUE_MAX = 1024
+
+
+def coalesce_deltas(events: list[Event]) -> list[Event]:
+    """Merge each run of adjacent same-type text deltas into one event at the run's last seq.
+
+    A long run's backlog is mostly deltas, each folded separately by a reattaching client.
+    Keeping the last seq keeps ``Last-Event-ID`` resumption exact.
+    """
+    out: list[Event] = []
+    # Joined once per run of deltas: concatenating per delta is quadratic in a long answer.
+    kind: type[AnswerDelta] | type[ThinkingDelta] | None = None
+    parts: list[str] = []
+    last: Event | None = None
+
+    def close_run() -> None:
+        if kind is None or last is None:
+            return
+        body = last.body if len(parts) == 1 else kind(text="".join(parts))
+        out.append(Event(seq=last.seq, ts=last.ts, body=body))
+
+    for event in events:
+        body = event.body
+        if isinstance(body, AnswerDelta | ThinkingDelta):
+            if type(body) is not kind:
+                close_run()
+                kind, parts = type(body), []
+            parts.append(body.text)
+            last = event
+            continue
+        close_run()
+        kind, parts, last = None, [], None
+        out.append(event)
+    close_run()
+    return out
 
 
 class RunStream:
@@ -114,7 +148,8 @@ class RunStream:
         return [e for e in self._buffer if e.seq > after_seq]
 
     async def subscribe(self, after_seq: int = 0, *, watching: bool = True) -> AsyncIterator[Event]:
-        """Replay missed events (``seq > after_seq``) then stream live ones.
+        """Replay missed events (``seq > after_seq``, adjacent text deltas merged by
+        :func:`coalesce_deltas`) then stream live ones, one frame per event.
 
         Ends when the stream is closed (the run reached a terminal state) or the app
         begins shutting down — a run parked on an approval has no terminal state coming,
@@ -129,7 +164,7 @@ class RunStream:
         self._subscribers.add(queue)
         if watching:
             self._watchers.add(queue)
-        backlog = self.replay(after_seq)
+        backlog = coalesce_deltas(self.replay(after_seq))
         already_closed = self._closed
         # ----------------------------------------------------------
         try:

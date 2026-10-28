@@ -50,7 +50,9 @@ export interface ResumeDeps {
 export interface ResumeOps {
   reseatAfterRun: () => Promise<void>;
   reattachToLiveRun: (conversationId: string) => Promise<void>;
-  reconcileStaleDecision: () => Promise<void>;
+  reconcileStaleDecision: (
+    opts?: Pick<ReattachOptions, "seat">,
+  ) => Promise<void>;
   recoverLostRun: () => Promise<void>;
   /** Re-read the thread and return the run (if it is still live) that is answering. */
   refetchRun: (runId: string) => Promise<ActiveRun | null>;
@@ -111,11 +113,13 @@ export function createResumeOps(deps: ResumeDeps): ResumeOps {
    *  run if it's still in flight. Unlike `reattachToLiveRun`, this always reseats —
    *  the winning decision may have already finished the run entirely, not just still
    *  be running. */
-  async function reconcileStaleDecision(): Promise<void> {
+  async function reconcileStaleDecision(
+    opts: Pick<ReattachOptions, "seat"> = {},
+  ): Promise<void> {
     await withFreshDetail(deps.conversationId(), async (detail) => {
       deps.reseat(detail);
       const ar = toActiveRun(detail.active_run);
-      if (ar) await deps.reattachRun(ar.id, attachOptions(ar));
+      if (ar) await deps.reattachRun(ar.id, { ...attachOptions(ar), ...opts });
     });
   }
 
