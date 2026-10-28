@@ -160,9 +160,8 @@ export function latestReason(groups: BlockGroup[]): string | undefined {
 
 /** The shape of a run of work groups — the latest step and the fold's size.
  *
- *  There is no failure count here on purpose: `isCollapsible` pins a failed call
- *  inline, so a failure cannot be inside a fold, and a field that is structurally
- *  always zero is a field that will eventually be believed. */
+ *  There is no failure count on purpose: ordinary failures are routine, and a count
+ *  on the shut log would surface exactly what the fold keeps quiet. */
 export function workShape(groups: BlockGroup[]): WorkShape {
   const last = lastOf(groups, stepOf);
   return last

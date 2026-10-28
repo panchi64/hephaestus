@@ -213,16 +213,52 @@ describe("a call that came back with a picture keeps its run inline", () => {
   });
 });
 
-describe("a failed call keeps its run inline", () => {
-  // The defect these cover: the card auto-expands on error, but the work log
-  // folded shut around it — so the one event that should interrupt was the one
-  // event buried, and a swallowed tool failure is how a contaminated answer gets
-  // trusted. Each fixture puts the failure MID-RUN with enough collapsible
-  // groups around it that dropping the guard really does fold over it.
-  test("a settled turn with a failure keeps it pinned open", () => {
-    // The case that matters most: nothing is streaming, so `planTurnLayout`'s
-    // trailing-group guard is not running and only the failure rule is holding
-    // this open.
+describe("only a platform failure keeps its run inline", () => {
+  /** A call that failed through the platform's own fault. */
+  function broken(id: string): AssistantBlock {
+    return {
+      kind: "tool",
+      id,
+      tool: {
+        id,
+        name: "files_read_file",
+        args: "",
+        status: "error",
+        platform: true,
+      },
+    };
+  }
+
+  // Each fixture puts the failure MID-RUN with enough collapsible groups around it
+  // that dropping the guard really does fold over it.
+  test("a settled turn with a platform failure keeps it pinned open", () => {
+    // Nothing is streaming, so `planTurnLayout`'s trailing-group guard is not
+    // running and only the failure rule is holding this open.
+    expect(
+      rows(
+        [
+          tool("a", "web_search", "ok"),
+          broken("b"),
+          tool("c", "web_search", "ok"),
+          tool("d", "web_search", "ok"),
+        ],
+        false,
+      ),
+    ).toEqual(["a", "b!", "c", "d"]);
+  });
+
+  test("a platform failure mid-stream does not cut the log in two", () => {
+    const blocks = [
+      tool("a", "web_search", "ok"),
+      broken("b"),
+      tool("c", "web_search", "ok"),
+      text("t"),
+    ];
+    expect(plan(blocks)).toEqual(["worklog", "t"]);
+    expect(rows(blocks)).toEqual(["a", "b!", "c"]);
+  });
+
+  test("an ordinary tool failure folds with the rest of the work", () => {
     expect(
       rows(
         [
@@ -233,40 +269,10 @@ describe("a failed call keeps its run inline", () => {
         ],
         false,
       ),
-    ).toEqual(["a", "b!", "c", "d"]);
-  });
-
-  test("a failure mid-stream does not cut the log in two", () => {
-    // The regression this is here for: staying visible used to mean *ending* the
-    // log, so one failed call rendered as log · failure · log — three items the
-    // operator had to read back together as one sequence.
-    const blocks = [
-      tool("a", "web_search", "ok"),
-      tool("b", "files_read_file", "error"),
-      tool("c", "web_search", "ok"),
-      text("t"),
-    ];
-    expect(plan(blocks)).toEqual(["worklog", "t"]);
-    expect(rows(blocks)).toEqual(["a", "b!", "c"]);
-  });
-
-  test("a settled turn with no failure pins nothing", () => {
-    // The counterpart that proves the rule is doing the work above, rather than
-    // settled turns simply never folding.
-    expect(
-      rows(
-        [
-          tool("a", "web_search", "ok"),
-          tool("b", "files_read_file", "ok"),
-          tool("c", "web_search", "ok"),
-          tool("d", "web_search", "ok"),
-        ],
-        false,
-      ),
     ).toEqual(["a", "b", "c", "d"]);
   });
 
-  test("a failed host command is pinned like a failed tool", () => {
+  test("a failed host command folds like an ordinary failure", () => {
     expect(
       rows(
         [
@@ -277,7 +283,7 @@ describe("a failed call keeps its run inline", () => {
         ],
         false,
       ),
-    ).toEqual(["a", "b!", "c", "d"]);
+    ).toEqual(["a", "b", "c", "d"]);
   });
 
   test("a denied host command is a decision, not a failure, and folds", () => {

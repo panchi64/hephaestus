@@ -55,8 +55,8 @@ export function hasReasoning(blocks: AssistantBlock[] | undefined): boolean {
  *
  *  This is what the work log is a log *of*, and drawing the line by kind rather than by
  *  whether a particular row happens to be foldable is what keeps one turn to one log.
- *  A failed call and a running one are still work; they are work that has to stay
- *  visible, which is a different question (`pinsRunInline`). */
+ *  A running call is still work; it is work that has to stay visible, which is a
+ *  different question (`pinsRunInline`). */
 const WORK: ReadonlySet<BlockKind> = new Set([
   "thinking",
   "tool",
@@ -250,14 +250,12 @@ function hasLiveTool(group: BlockGroup): boolean {
   );
 }
 
-/** A call that failed — the tool returned an error, or a host command came back
- *  non-zero. A denied host command is not this: that is a decision the operator
- *  already made, and it may fold away like any other settled terminal. */
-function hasFailure(group: BlockGroup): boolean {
+/** A call that failed through the platform's own fault. An ordinary failure — a
+ *  missing file, a bad selector, a non-zero exit — is routine work the model recovers
+ *  from, and pinning every one stacks up red cards that misrepresent the turn. */
+function hasPlatformFailure(group: BlockGroup): boolean {
   return group.blocks.some(
-    (b) =>
-      (b.kind === "tool" && b.tool.status === "error") ||
-      (b.kind === "host_command" && b.command.phase === "error"),
+    (b) => b.kind === "tool" && b.tool.status === "error" && !!b.tool.platform,
   );
 }
 
@@ -276,17 +274,13 @@ function hasRefusal(group: BlockGroup): boolean {
 }
 
 /** Work that must stay on screen whatever else folds: still in flight, waiting on
- *  a decision, failed, or carrying something to look at.
+ *  a decision, failed through the platform's fault, or carrying something to look at.
  *
- *  Failure is here and deliberately NOT in `hasLiveTool`, because the two mean
- *  different things and only one of them lights the rail. `liveToolGroupIds`
+ *  Platform failure is here and deliberately NOT in `hasLiveTool`, because the two
+ *  mean different things and only one of them lights the rail. `liveToolGroupIds`
  *  drives the trunk's `info` mark, whose whole claim is "this is running *now*" —
  *  marking it for a call that failed a minute ago would be a lie in the one place
  *  the interface speaks in a stroke rather than words.
- *
- *  Without this, a failure was the single most hidden thing in a turn: the card
- *  auto-expands on error, but the work log folded shut around it, so the one
- *  event that should interrupt was the one event buried.
  *
  *  Images are here for the same reason and it bites hardest in the case that
  *  produced them: an agent that screenshots repeatedly makes a run of settled
@@ -298,20 +292,20 @@ function pinsRunInline(group: BlockGroup): boolean {
   return (
     hasLiveTool(group) ||
     hasLiveHost(group) ||
-    hasFailure(group) ||
+    hasPlatformFailure(group) ||
     hasImages(group)
   );
 }
 
 /** Collapsible = process the operator doesn't have to read or act on inline:
- *  reasoning, tool calls that finished cleanly, and host terminals that are
- *  settled and not failed.
+ *  reasoning, settled tool calls including ordinary failures, and settled host
+ *  terminals.
  *
  *  Three things break a work log run: answer `text` (the model writing *to the
  *  operator* — the one thing that should segment the log), a View chip, and
  *  anything `pinsRunInline` claims — a call in flight, a host command awaiting a
- *  decision, or a failure. The operator is watching it happen, or needs to know it
- *  went wrong. Everything else folds into one continuously growing log.
+ *  decision, or a platform failure. The operator is watching it happen, or needs to
+ *  know the platform broke. Everything else folds into one continuously growing log.
  *
  *  **The View chips used to fold and no longer do.** They are the only kind here
  *  that renders full-width rather than on the rail, because they are a result and
@@ -378,12 +372,9 @@ export function runningTools(
 
    **What breaks a log is the answer, not a state.** Membership is decided by kind
    (`WORK`) and visibility separately (`pinsRunInline` via `isCollapsible`), which
-   are two questions that used to be one. Deciding them together meant a failure, a
-   live call, a screenshot or a refusal *ended* the log it belonged to and started
-   another with the same name under it, so an ordinary turn with one failed call
-   rendered as three items the operator had to read as one sequence. Now such a row
-   sits inside the log, pinned open; the log is still forbidden from hiding it, and
-   the turn still has one account of itself.
+   are two questions. A platform failure, a live call, a screenshot or a refusal sits
+   inside the log, pinned open: the log may not hide it, and the turn still has one
+   account of itself rather than log · row · log.
 
    A blank passage is neither answer nor work, and is skipped outright rather than
    counted as an answer — see `isBlankText`. */
@@ -391,8 +382,8 @@ export function runningTools(
 /** A row inside a work log, and whether the fold is allowed to hide it. */
 export interface WorkLogEntry {
   group: BlockGroup;
-  /** Shown whether the log is open or shut — a call in flight, a failure, a picture,
-   *  a refusal, or the live tail. See `pinsRunInline`. */
+  /** Shown whether the log is open or shut — a call in flight, a platform failure, a
+   *  picture, a refusal, or the live tail. See `pinsRunInline`. */
   pinned: boolean;
 }
 
@@ -463,15 +454,8 @@ export function planTurnLayout(
       items.push({ type: "group", group });
       return;
     }
-    // Every work group joins the log, including the ones the log may not hide.
-    //
-    // This used to flush the run at anything non-collapsible, which meant a single
-    // failed call mid-turn produced *three* items — a log, the failure, then a second
-    // log with the same name — and an operator reading down the turn had to stitch one
-    // sequence back together out of them. The fold's promise is only that a live call,
-    // a failure, a picture and a refusal stay visible; it was never that they should
-    // cut the account of the turn in half. So they stay visible **in place**, and the
-    // turn keeps one log.
+    // Every work group joins the log, including the ones the log may not hide: those
+    // stay visible in place rather than cutting the turn's account into two logs.
     run.push({ group, pinned: active || !isCollapsible(group) });
   });
   flush();

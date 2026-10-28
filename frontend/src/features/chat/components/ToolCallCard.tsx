@@ -62,7 +62,7 @@ const ELAPSED_WIDTH = "min-w-[6ch]";
  *  the alert-toned glyph.
  *
  *  `open` makes expand/collapse controlled (expand-all/collapse-all); when
- *  undefined the card keeps its default behavior (auto-open on error).
+ *  undefined the card keeps its default behavior (auto-open on a platform error).
  *
  *  **A script's calls are this same row, nested.** A `run_code` card lists the calls
  *  its script made under its own row, each with the anatomy every call has — only the
@@ -76,10 +76,10 @@ export function ToolCallCard(props: {
   variant?: "card" | "nested";
 }): JSX.Element {
   const nested = (): boolean => props.variant === "nested";
-  // Auto-expand error cards so the reason is immediately visible.
+  // Only a platform failure opens itself; ordinary failures are routine and stay shut.
   const { open, toggle } = createAdoptedOpen(
     props,
-    props.tool.status === "error",
+    props.tool.status === "error" && !!props.tool.platform,
   );
   const shown = createMemo(() => toolEntry(props.tool.name));
   const preparing = (): boolean => props.tool.status === "preparing";
