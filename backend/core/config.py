@@ -333,8 +333,8 @@ class Settings(BaseSettings):
     # Goal-aware distillation: with a `goal` and a body over the output cap, the utility
     # model distills goal-relevant content (verbatim figures/tables kept) instead of
     # truncating. `window_tokens` is the per-call excerpt size; `max_windows` caps coverage
-    # (8×12k ≈ 96k tokens); `timeout_s` bounds the whole run, after which it falls back to
-    # truncation and offset paging.
+    # (8×12k ≈ 96k tokens); `timeout_s` bounds the whole run, which then returns the
+    # windows already distilled, or falls back to truncation if none had relevant content.
     web_fetch_distill_enabled: bool = True
     web_fetch_distill_window_tokens: int = 12000
     web_fetch_distill_max_windows: int = 8

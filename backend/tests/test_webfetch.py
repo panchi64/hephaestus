@@ -518,6 +518,46 @@ async def test_distiller_windows_and_drops_irrelevant():
     assert "covered the first 24 of 36 characters" in out2
 
 
+def _stalling_distiller(*, answer_first: bool) -> WebDistiller:
+    """A distiller over 3 windows whose model answers the "A" window (if ``answer_first``)
+    and hangs on every other until the 0.2 s deadline."""
+
+    async def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        contents = (
+            cast(object, getattr(part, "content", None)) for m in messages for part in m.parts
+        )
+        text = " ".join(content for content in contents if isinstance(content, str))
+        if answer_first and "A" * 12 in text:
+            return ModelResponse(parts=[TextPart(content="KEPT-A")])
+        _ = await asyncio.Event().wait()
+        raise AssertionError("unreachable: the deadline cancels the hang")
+
+    async def _resolve() -> tuple[Model, ModelSettings | None]:
+        return FunctionModel(_respond), None
+
+    return WebDistiller(
+        resolve_model=_resolve, instructions="x", window_tokens=3, max_windows=8, timeout_s=0.2
+    )
+
+
+async def test_distiller_timeout_keeps_finished_windows(caplog: pytest.LogCaptureFixture):
+    body = "A" * 12 + "B" * 12 + "C" * 12
+    out = await _stalling_distiller(answer_first=True).distill(body, goal="g", url="http://x/")
+    assert out is not None
+    assert out.startswith("KEPT-A")
+    assert "covered the first 12 of 36 characters" in out
+    timeouts = [r for r in caplog.records if "timed out" in r.getMessage()]
+    assert len(timeouts) == 1
+    assert "1 of 3 windows done" in timeouts[0].getMessage()
+    assert timeouts[0].exc_info is None  # an expected timeout logs no traceback
+
+
+async def test_distiller_timeout_before_any_window_falls_back():
+    body = "A" * 12 + "B" * 12 + "C" * 12
+    out = await _stalling_distiller(answer_first=False).distill(body, goal="g", url="http://x/")
+    assert out is None
+
+
 # --- adaptive settle loop (no browser) -------------------------------------
 
 

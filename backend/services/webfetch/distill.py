@@ -4,8 +4,10 @@ When a page's body exceeds the fetch output cap, blind truncation keeps only the
 the model usually knows what it's looking for. Given a ``goal``, :class:`WebDistiller` walks
 the page in windows and asks the utility model to keep only the goal-relevant passages
 (verbatim figures/tables preserved), so the capped result is the *relevant* part of a long
-page rather than its first N characters. Truncation + offset paging remains the fallback:
-any timeout, model error, or all-empty result returns ``None`` and the caller truncates.
+page rather than its first N characters. A timeout keeps the windows already distilled and
+notes how much of the page they cover. Truncation + offset paging remains the fallback: a
+model error, or no relevant content before the deadline, returns ``None`` and the caller
+truncates.
 
 The distiller builds a bare ``pydantic_ai.Agent`` directly — services must not import the
 engine layer — over a model resolved by an injected callable (a closure over the registry's
@@ -53,27 +55,42 @@ class WebDistiller:
 
     async def distill(self, body: str, *, goal: str, url: str) -> str | None:
         """Return the goal-relevant distillation of ``body``, or ``None`` to signal the
-        caller to fall back to truncation. Never raises — a timeout, model error, or
-        all-irrelevant result is a ``None``, logged once at warning."""
+        caller to fall back to truncation. Never raises. A timeout keeps the windows that
+        finished; a model error or an all-irrelevant result is a ``None``."""
         try:
-            return await asyncio.wait_for(self._distill(body, goal=goal), self._timeout_s)
-        except Exception:  # timeout/model error ⇒ degrade, never raise
+            return await self._distill(body, goal=goal, url=url)
+        except Exception:  # model error ⇒ degrade, never raise
             logger.warning(
                 "web distillation failed for %r; falling back to truncation", url, exc_info=True
             )
             return None
 
-    async def _distill(self, body: str, *, goal: str) -> str | None:
-        model, settings = await self._resolve_model()
-        agent = Agent(model, output_type=str, instructions=self._instructions)
-        windows, covered = self._windows(body)
+    async def _distill(self, body: str, *, goal: str, url: str) -> str | None:
+        windows = self._windows(body)
         pieces: list[str] = []
-        for window in windows:  # sequential: a local utility model serves one request well
-            result = await agent.run(f"GOAL: {goal}\n\nEXCERPT:\n{window}", model_settings=settings)
-            text = (result.output or "").strip()
-            if not text or text.rstrip(".").strip().upper() == _NO_CONTENT:
-                continue
-            pieces.append(text)
+        covered = 0
+        done = 0
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                model, settings = await self._resolve_model()
+                agent = Agent(model, output_type=str, instructions=self._instructions)
+                for window in windows:  # sequential: a local utility model serves one request well
+                    result = await agent.run(
+                        f"GOAL: {goal}\n\nEXCERPT:\n{window}", model_settings=settings
+                    )
+                    covered += len(window)
+                    done += 1
+                    text = (result.output or "").strip()
+                    if text and text.rstrip(".").strip().upper() != _NO_CONTENT:
+                        pieces.append(text)
+        except TimeoutError:
+            logger.warning(
+                "web distillation of %r timed out after %ss with %d of %d windows done",
+                url,
+                self._timeout_s,
+                done,
+                len(windows),
+            )
         if not pieces:
             return None
         digest = "\n\n".join(pieces)
@@ -84,9 +101,9 @@ class WebDistiller:
             )
         return digest
 
-    def _windows(self, body: str) -> tuple[list[str], int]:
+    def _windows(self, body: str) -> list[str]:
         """Split ``body`` into up to ``max_windows`` consecutive windows on clean word
-        boundaries. Returns the windows and the number of characters actually covered."""
+        boundaries."""
         window_chars = tokens_to_chars(self._window_tokens)
         windows: list[str] = []
         pos = 0
@@ -96,4 +113,4 @@ class WebDistiller:
                 break
             windows.append(chunk)
             pos += len(chunk)
-        return windows, pos
+        return windows
