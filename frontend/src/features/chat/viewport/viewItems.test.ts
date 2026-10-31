@@ -14,5 +14,6 @@ describe("detectContentKind", () => {
 
   test("a version titled without an extension falls back to its preview kind", () => {
     expect(detectContentKind("Research report", "text")).toBe("text");
+    expect(detectContentKind("Research report", "markdown")).toBe("markdown");
   });
 });

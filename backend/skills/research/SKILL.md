@@ -20,9 +20,9 @@ Split the question into topics that don't overlap and together cover all of it. 
 | 1 | A single factual question | "Who won the 2024 Super Bowl?" |
 | 3 | A focused topic with a few angles. This is the default. | Salmon migration and temperature: (1) biological mechanisms, (2) observed population data, (3) climate projections |
 | 4–5 | Distinct facets or evaluation criteria, or several independent entities or regions | CRM platforms for small businesses: (1) pricing, (2) features, (3) integrations, (4) user sentiment |
-| 6+ | A large enumerable set that needs systematic coverage | EV adoption by US state, one researcher per regional cluster |
+| 6–8 | A large enumerable set that needs systematic coverage | EV adoption by US state, one researcher per regional cluster |
 
-Only three researchers run at once. The rest queue, so going wider mostly adds wall-clock time.
+A delegation tree holds at most eight working agents unless the operator changed the limit, and a launch past it is refused. For a larger set, group the items into clusters rather than giving each its own researcher. Only a few researchers run at once and the rest queue, so going wider mostly adds wall-clock time.
 
 Enter plan mode and submit the topics as the plan, so the operator rules on what will be read before any reading starts. If you are extending earlier research (step 5), plan only what this request adds or needs re-checked.
 
@@ -73,13 +73,13 @@ Constraints:
 
 ## 4. Take stock
 
-When a report wakes you, call `agents_list` first and treat any researcher still working as reading you haven't seen.
+A researcher's report waking you means you are past asking and planning: don't repeat steps 1 and 2. Call `agents_list` first. If any researcher is still working, end your turn without writing anything, since its report will wake you when it lands.
 
-Once every researcher has reported, check for gaps that would leave the answer incomplete. You may run **one** more round of researchers to close them, and only for gaps that serious, because every round delays the report. After that round, go to step 5 whatever comes back.
+Once every researcher has reported, check for gaps that would leave the answer incomplete. You may run **one** more round of researchers to close them, and only for gaps that serious, because every round delays the report. Submit that round's topics through plan mode like the first, so the operator approves the extra reading too. After that round, go to step 5 whatever comes back.
 
 ## 5. Title it and write it
 
-Name the report: a short, specific title in the operator's language and in sentence case. It is 3–6 words and under 50 characters, made of letters, numbers and single spaces only. Keep accented and non-Latin letters as written. Use no hyphens, apostrophes or other punctuation. For example: "EU AI Act startup obligations".
+Name the report file: a short, specific title in the operator's language and in sentence case. It is 3–6 words and under 50 characters, made of letters, numbers and single spaces only. Keep accented and non-Latin letters as written. Use no hyphens, apostrophes or other punctuation. For example: "EU AI Act startup obligations".
 
 List `~/scratch/reports/` first, and recall any report you have already delivered in this conversation. Then:
 
@@ -89,8 +89,8 @@ List `~/scratch/reports/` first, and recall any report you have already delivere
 
 The title must differ from every existing report. Never overwrite or edit an earlier one.
 
-Write the report to `~/scratch/reports/{title}.md` in the format `references/report-format.md` sets out. Read that file before you start writing. Writing a file doesn't create its folder, so on the first report create `reports/` with `files_create_directory`.
+Write the report to `~/scratch/reports/{title}.md` in the format `references/report-format.md` sets out. Read that file before you start writing. Writing a file doesn't create its folder, so if `reports/` doesn't exist yet, create it with `files_create_directory`.
 
 ## 6. Deliver it
 
-Call `view_show` with `file="reports/{title}.md"` and no `title`. The View picks the renderer from the file's `.md` name, and a `title` would replace that name. Then reply in three to five sentences: the key finding, what stays uncertain, and that the full report is open in the View.
+Call `view_show` with `file="reports/{title}.md"` and `title` set to the report's title. Then reply in three to five sentences: the key finding, what stays uncertain, and that the full report is open in the View.

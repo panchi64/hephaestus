@@ -18,6 +18,7 @@ export {
   type PluginWindowOpened,
   type RunEvent,
   type SummarySection,
+  type ViewPreviewKind,
   type TaskItem,
   type RunMetrics,
 } from "./events";

@@ -26,7 +26,7 @@ Plan the section headers first, then write the whole report and save it.
 
 ## Title
 
-About six words. Concise and interesting enough to draw the reader in. Use an active verb when you can.
+The `#` heading is a headline, separate from the file title, which names the topic and follows the skill's own rules. About six words. Concise and interesting enough to draw the reader in. Use an active verb when you can.
 
 ## BLUF paragraph
 

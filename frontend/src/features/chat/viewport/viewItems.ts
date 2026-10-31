@@ -105,7 +105,7 @@ export function detectContentKind(
   if (previewKind === "image") return "image";
   if (ext === "csv") return "csv";
   if (ext === "json") return "json";
-  if (ext === "md") return "markdown";
+  if (ext === "md" || previewKind === "markdown") return "markdown";
   if (ext === "pdf") return "pdf";
   if (ext && AUDIO_EXTENSIONS.has(ext)) return "audio";
   if (ext && VIDEO_EXTENSIONS.has(ext)) return "video";

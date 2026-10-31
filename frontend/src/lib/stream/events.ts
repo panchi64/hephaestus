@@ -296,6 +296,7 @@ export interface ViewLiveStopped extends Base {
 // `/views/snapshots/{id}/…`. `preview_artifact_id` + `preview_kind` point at the captured
 // bytes of a `show(file=…)` (`/views/{preview_artifact_id}/content`), or are both null
 // for a live/auto preview.
+export type ViewPreviewKind = "html" | "image" | "text" | "markdown" | "other";
 export interface ViewSnapshot extends Base {
   type: "view.snapshot";
   conversation_id: string;
@@ -304,7 +305,7 @@ export interface ViewSnapshot extends Base {
   created_at: string;
   files_changed: number;
   summary: string;
-  preview_kind: "html" | "image" | "text" | "other" | null;
+  preview_kind: ViewPreviewKind | null;
   preview_artifact_id: string | null;
 }
 
