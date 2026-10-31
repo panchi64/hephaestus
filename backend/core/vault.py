@@ -106,8 +106,8 @@ class Vault:
         self._cipher: AESGCM | None = None
         self._subkeys: dict[SubkeyPurpose, bytearray] = {}
         self._unlocked: asyncio.Event = asyncio.Event()  # lets lock-aware workers wait on unlock
-        # Lets services (the operator shell, say) react to a lock without this class
-        # knowing who they are.
+        # Lets services (plugin windows, the recall index) drop decrypted state on lock
+        # without this class knowing who they are.
         self._on_lock: list[Callable[[], None]] = []
 
     @property
