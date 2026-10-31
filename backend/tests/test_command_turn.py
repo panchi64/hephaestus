@@ -16,7 +16,7 @@ from pydantic import JsonValue
 from pydantic_ai import ModelRequest, UserPromptPart
 
 from routes.deps import app_state
-from services.conversation_view import operator_content
+from services.chassis_tail import operator_content
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, obj, s

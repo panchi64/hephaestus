@@ -366,7 +366,7 @@ async def test_the_history_surgeries_leave_a_reveal_where_it_was():
     assert revealed_tools(split) == ("browse_open_page", "browse_delete_page")
 
     # A checkpoint's carried delta merged into the turn that follows it stays on the
-    # history's side of the boundary: `parts` counts the turn's own from the end.
+    # history's side of the boundary: `history_parts` counts the history's from the front.
     merged = merge_consecutive_requests(
         [
             ModelRequest(parts=[delta, UserPromptPart(content="SUMMARY")]),
@@ -374,7 +374,7 @@ async def test_the_history_surgeries_leave_a_reveal_where_it_was():
         ]
     )
     assert len(merged) == 1
-    assert _texts(TurnStart(0, 1).slice(merged)) == ["next"]
+    assert _texts(TurnStart(0, 2).slice(merged)) == ["next"]
     assert revealed_tools(merged) == ("browse_delete_page",)
 
 

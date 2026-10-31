@@ -4,7 +4,7 @@
 persists and what the transcript renders; what this module builds is appended to the
 *tail* of the same turn's user prompt, announced as a context injection, and persisted
 there as sent, marked as chassis text (``agent/prelude``,
-``services/conversation_view.operator_content``). Three consequences worth holding on to:
+``services/chassis_tail``). Three consequences worth holding on to:
 
 * A command body persists as the copy that turn was sent with; a regenerate re-derives it
   in place of the old one, so editing a skill changes what the next invocation does.

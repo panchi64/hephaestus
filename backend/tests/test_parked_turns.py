@@ -385,7 +385,7 @@ def test_a_park_round_trips_through_its_json():
         },
         conversation_id="conv",
         persist_from=3,
-        persist_from_parts=1,
+        persist_from_history_parts=1,
         clean_drop=(4, 5),
         prompt_message_id="m1",
         binding=binding,
@@ -411,7 +411,11 @@ def test_a_park_round_trips_through_its_json():
     assert back.requests.metadata == {"c1": {"explanation": "e"}}
     assert back.binding == binding
     assert back.announced == {"c1"} and back.clean_drop == (4, 5)
-    assert (back.persist_from, back.persist_from_parts, back.prompt_message_id) == (3, 1, "m1")
+    assert (back.persist_from, back.persist_from_history_parts, back.prompt_message_id) == (
+        3,
+        1,
+        "m1",
+    )
     assert (back.endpoint_id, back.model, back.workspace_key, back.vision) == (
         "e1",
         "m",

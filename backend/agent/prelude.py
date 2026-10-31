@@ -34,6 +34,7 @@ from pydantic_ai.settings import ModelSettings
 from core.config import Settings
 from core.container import ServiceContainer
 from runs import STOP_NOTICE, Run
+from services.chassis_tail import prompt_index
 from services.commands.spec import Invocation
 from services.conversation_view import estimate_tokens
 from services.conversations import ConversationBinding, ConversationStore
@@ -51,6 +52,7 @@ from .folding import incoming_request, maybe_compact
 from .history import (
     TurnStart,
     drop_dangling_tool_calls,
+    history_part_count,
     merge_consecutive_requests,
     with_tail_context,
 )
@@ -405,6 +407,18 @@ async def prepare_turn(
     # Mutated in place, never replaced: the flush hooks armed before this ran hold this
     # very object, and so does everything the turn hands it to.
     setup.turn_start.index = len(history) if history else 0
+    if (
+        prompt is None
+        and history
+        and isinstance(re_answered := history[-1], ModelRequest)
+        and (at := prompt_index(re_answered)) is not None
+        and run.prompt_message_id is not None
+    ):
+        # A regenerate opens on the stored prompt, like a turn that recorded its own:
+        # `finalize` writes back the prompt as sent and the parts the library adds to it.
+        setup.turn_start.index = len(history) - 1
+        setup.turn_start.history_parts = history_part_count(re_answered.parts[:at])
+        setup.turn_start.prompt_message_id = run.prompt_message_id
     if folded:
         # Every response left in the replay reported its prompt size against the
         # history that was just folded away, so none of them describes the thread as it
@@ -416,9 +430,7 @@ async def prepare_turn(
     # What the model replays — `history` plus, on a regenerate, the per-turn prompt
     # context. `history` itself stays the persistence baseline.
     setup.model_history = history
-    if context_texts and prompt is None and history:
-        # A regenerate has no fresh prompt — the context rides on the trailing
-        # user request in the *model's* view only (`history` itself stays
-        # pristine for the verifier's `last_user_text`, and everything before
-        # `turn_start` is never re-persisted).
+    if prompt is None and history:
+        # A regenerate replaces the stored prompt's old tail even with nothing fresh to
+        # add, so a stale stop notice or task list isn't sent again.
         setup.model_history = with_tail_context(history, context_texts)

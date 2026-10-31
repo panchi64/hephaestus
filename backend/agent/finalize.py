@@ -56,7 +56,7 @@ def finalize(
         if conversation_id is not None and isinstance(run.parked_payload, ParkedTurn):
             run.parked_payload.conversation_id = conversation_id
             run.parked_payload.persist_from = context.start.index
-            run.parked_payload.persist_from_parts = context.start.parts
+            run.parked_payload.persist_from_history_parts = context.start.history_parts
             run.parked_payload.prompt_message_id = context.start.prompt_message_id
             if context.clean_drop is not None:  # re-park: carry the drop range forward
                 run.parked_payload.clean_drop = context.clean_drop
@@ -73,8 +73,9 @@ def finalize(
         recorded = context.start.prompt_message_id
         turn_messages = context.start.slice(messages)
         if recorded is not None:
-            amend, turn_messages = split_recorded_opening(turn_messages)
-            store.amend_request(conversation_id, recorded, amend)
+            sent, turn_messages = split_recorded_opening(turn_messages)
+            if sent is not None:
+                store.amend_request(conversation_id, recorded, sent)
         # `blocked_reason` stamps the branch node so a reload shows the live stop marker; with
         # nothing after the prompt (a stop before the first token) the prompt carries it.
         _ = store.record(
@@ -184,4 +185,6 @@ def parked_context(parked: ParkedTurn, turn_start: TurnStart | None = None) -> P
 
 def parked_start(parked: ParkedTurn) -> TurnStart:
     """The boundary a parked turn parked with: where it begins and its recorded prompt node."""
-    return TurnStart(parked.persist_from, parked.persist_from_parts, parked.prompt_message_id)
+    return TurnStart(
+        parked.persist_from, parked.persist_from_history_parts, parked.prompt_message_id
+    )

@@ -201,6 +201,7 @@ class TestTheRequestIsTheTurns:
         async def streamed(messages: list[ModelMessage], info: AgentInfo):
             seen.append((messages, info))
             if len(seen) == 1:
+                yield "Let me look first. "
                 yield {0: DeltaToolCall(name="touch", json_args="{}", tool_call_id="t1")}
             else:
                 yield "the story"
@@ -212,8 +213,14 @@ class TestTheRequestIsTheTurns:
             ran.append("touched")
             return "ok"
 
-        summary = await summarize_history(agent, _deps(), _turn("hi", "hello"))
+        live: list[str] = []
+
+        def on_delta(text: str, *, restart: bool = False) -> None:
+            live[:] = [*([] if restart else live), text]
+
+        summary = await summarize_history(agent, _deps(), _turn("hi", "hello"), on_delta=on_delta)
         assert _briefing(summary) == "the story"
+        assert "".join(live) == "the story"
         assert ran == []
         retry = seen[1][1].model_settings
         assert retry is not None and retry.get("tool_choice") == FOLD_SETTINGS.get("tool_choice")

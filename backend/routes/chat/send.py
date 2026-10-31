@@ -254,9 +254,9 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
     again with no new prompt, recording a new version beside the old. A model override
     regenerates with a different model.
 
-    A slash-command turn is re-answered with the command resolved again: the replayed
-    history has only the literal `/reviewer …` (the expansion was tail context), so
-    otherwise the second answer would be to a different question."""
+    A slash-command turn is re-answered with the command expanded again against what its
+    name resolves to now; the fresh expansion replaces the stored one in the prompt's
+    chassis tail (``agent.history.with_tail_context``)."""
     store = deps.store(request)
     if not await store.exists(body.conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")

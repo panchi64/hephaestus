@@ -4,13 +4,17 @@ and an instruction head that a changing block doesn't rewrite."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from pydantic_ai import (
+    AgentInstructionSource,
     InstructionBaselinePart,
     InstructionDeltaPart,
+    InstructionId,
+    InstructionPart,
     ModelRequest,
     ModelResponse,
     ModelSettingsDeltaPart,
@@ -19,13 +23,15 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import CompactionPart, InstructionDigest, ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 import services.providers.anthropic as anthropic_provider
 from agent import build_chat_orchestrator, stream_agent_run
 from agent.factory import build_agent
+from agent.prefix_watch import digest_request
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
@@ -150,6 +156,44 @@ class TestAppendModeHead:
         assert [delta.content for delta in deltas] == ["memories: a, b"]
 
 
+class TestTheWatchReadsTheHeadTheLibrarySends:
+    """The prefix watch's reading follows the library's instruction window."""
+
+    _MEMORY: InstructionPart = InstructionPart(
+        content="memories: a",
+        id=InstructionId(AgentInstructionSource(), name="memory"),
+        on_change="append",
+    )
+    _RULES: InstructionPart = InstructionPart(content="rules v1")
+
+    def _history(self) -> list[ModelMessage]:
+        baseline = InstructionBaselinePart(
+            instructions=[self._MEMORY, InstructionDigest.of(self._RULES)]
+        )
+        return [
+            ModelRequest(parts=[UserPromptPart("go"), baseline]),
+            ModelResponse(parts=[TextPart("ok")]),
+        ]
+
+    def _head(self, parts: list[InstructionPart], messages: list[ModelMessage]) -> str:
+        return digest_request(parts, [], messages).instructions
+
+    def test_a_changed_append_block_keeps_the_windows_head(self):
+        changed = replace(self._MEMORY, content="memories: a, b")
+        assert self._head([changed, self._RULES], self._history()) == self._head(
+            [self._MEMORY, self._RULES], []
+        )
+
+    def test_a_changed_rewrite_block_opens_a_new_window(self):
+        current = [replace(self._MEMORY, content="memories: a, b"), InstructionPart("rules v2")]
+        assert self._head(current, self._history()) == self._head(current, [])
+
+    def test_a_compaction_ends_the_window(self):
+        current = [replace(self._MEMORY, content="memories: a, b"), self._RULES]
+        folded = [*self._history(), ModelResponse(parts=[CompactionPart(content="summary")])]
+        assert self._head(current, folded) == self._head(current, [])
+
+
 class TestReplayMatchesWhatWasSent:
     async def test_the_next_turn_replays_the_prompt_and_head_it_was_sent(self, tmp_path: Path):
         """The tail context and the instruction baseline both survive the save, so turn 2's
@@ -227,6 +271,15 @@ class TestCostAndDiagnostics:
         assert cost.total_usd == pytest.approx(0.96)
         assert cost.saved_usd == pytest.approx(3.04)
 
+    def test_a_remembered_price_follows_a_change_to_the_usage(self):
+        response = _response(RequestUsage(input_tokens=1_000_000))
+        first = response_cost(response)
+        assert response_cost(response) == first
+        response.usage = RequestUsage(input_tokens=2_000_000)
+        second = response_cost(response)
+        assert first is not None and second is not None
+        assert second.total_usd == pytest.approx(2 * first.total_usd)
+
     def test_an_unknown_endpoint_is_never_priced(self):
         """A local server serving a model under a hosted name must not be billed for it."""
         usage = RequestUsage(input_tokens=1_000, output_tokens=10)
@@ -255,12 +308,21 @@ def _recording_resolution(
         seen.append(info)
         yield "ok"
 
-    async def resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object):
+    def build(settings: ModelSettings | None = None) -> FunctionModel:
         # A profile that thinks, as Claude's does; the library drops `thinking` otherwise.
-        model = FunctionModel(
-            stream_function=stream_fn, profile=ModelProfile(supports_thinking=True)
+        return FunctionModel(
+            stream_function=stream_fn,
+            profile=ModelProfile(supports_thinking=True),
+            settings=settings,
         )
-        return await stub_resolution(self, model, uses_effort=uses_effort)
+
+    def with_effort(effort: ThinkingEffort) -> FunctionModel:
+        return build({"thinking": effort})
+
+    async def resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object):
+        return await stub_resolution(
+            self, build(), with_effort=with_effort if uses_effort else None
+        )
 
     register_stub_provider(monkeypatch)
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", resolve_detailed)

@@ -1,25 +1,50 @@
 import { describe, expect, it } from "bun:test";
 import { effortOptions } from "~/lib/effort";
-import { effortToSend, seatEffort } from "./effortSeat";
+import { effortToSend, seatEffort, type EffortSeat } from "./effortSeat";
 
 describe("seatEffort", () => {
-  it("seats an opened thread from its stored level", () => {
-    expect(seatEffort({ currentId: "b", owner: "a", stored: "max" })).toBe(
-      "max",
-    );
+  it("seats an opened thread from its stored level, which then owns the control", () => {
+    expect(seatEffort({ currentId: "b", owner: "a", stored: "max" })).toEqual({
+      value: "max",
+      owner: "b",
+    });
   });
 
-  it("seats Default while the thread loads or stores none", () => {
-    expect(seatEffort({ currentId: "b", owner: "a", stored: undefined })).toBe(
-      "",
-    );
-    expect(seatEffort({ currentId: "b", owner: "a", stored: "" })).toBe("");
+  it("seats Default while the thread loads, still waiting for its level", () => {
+    expect(
+      seatEffort({ currentId: "b", owner: "a", stored: undefined }),
+    ).toEqual({ value: "", owner: "a" });
+    expect(seatEffort({ currentId: "b", owner: "a", stored: "" })).toEqual({
+      value: "",
+      owner: "b",
+    });
   });
 
   it("leaves the operator's pick for the thread on screen alone", () => {
     expect(
       seatEffort({ currentId: "a", owner: "a", stored: "low" }),
     ).toBeNull();
+  });
+
+  it("re-seats a thread the operator comes back to with its own level", () => {
+    // Picked max on A, then opened B (stored low), then came back to A (stored max).
+    let owner: string | null = "a";
+    let value = "max";
+    const visit = (currentId: string, stored: string | undefined): void => {
+      const seat: EffortSeat | null = seatEffort({ currentId, owner, stored });
+      if (seat === null) return;
+      owner = seat.owner;
+      value = seat.value;
+    };
+    visit("b", undefined);
+    visit("b", "low");
+    visit("a", undefined);
+    expect(
+      effortToSend({ choice: value, owner, currentId: "a" }),
+    ).toBeUndefined();
+    visit("a", "max");
+    expect(value).toBe("max");
+    expect(effortToSend({ choice: value, owner, currentId: "a" })).toBe("max");
   });
 });
 

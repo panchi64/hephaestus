@@ -35,15 +35,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import cast, override
 
-from pydantic_ai import (
-    InstructionBaselinePart,
-    InstructionDeltaPart,
-    InstructionPart,
-    ModelSettingsDeltaPart,
-    RunContext,
-)
+from pydantic_ai import InstructionBaselinePart, InstructionPart, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import CompactionPart, InstructionDigest, ModelMessage
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
 
@@ -53,6 +47,7 @@ from tools import RunDeps
 
 from .assembled import declared_function_tools
 from .emit import PrefixWatched, is_side_run
+from .history import RECORDED_ON_SEND
 
 #: Width of every fingerprint here, in bytes. This decides whether a *diagnostic* reports a
 #: change, never whether anything is trusted or authorized, and 128 bits will not collide
@@ -124,18 +119,15 @@ def _absorb(digest: hashlib.blake2b, value: object) -> None:
                 _absorb(digest, repr(value))
 
 
-#: Parts the library records on a request after this hook has read it. A baseline is never
-#: sent and a delta only ever extends the history, so neither can move an earlier prefix, and
-#: hashing them would report the request this hook saw as changed on the next one.
-_RECORDED_AFTER_HOOKS = (InstructionBaselinePart, InstructionDeltaPart, ModelSettingsDeltaPart)
-
-
 def _message_digest(message: ModelMessage) -> str:
-    """One message's fingerprint: its type, then each part's type and payload, in order."""
+    """One message's fingerprint: its type, then each part's type and payload, in order.
+
+    Parts the library records after this hook read the request are skipped: none can move
+    an earlier prefix, and hashing them would report the request seen here as changed."""
     digest = _hasher()
     digest.update(type(message).__name__.encode())
     for part in message.parts:
-        if isinstance(part, _RECORDED_AFTER_HOOKS):
+        if isinstance(part, RECORDED_ON_SEND):
             continue
         digest.update(_FIELD)
         digest.update(type(part).__name__.encode())
@@ -198,34 +190,39 @@ def digest_request(
     )
 
 
+# Mirrors the private `pydantic_ai._instructions` (`instruction_window`, `continues_window`,
+# `window_prefix`); keep the two in step when the library changes.
 def _as_sent(parts: list[InstructionPart], messages: list[ModelMessage]) -> list[InstructionPart]:
-    """``parts`` with each append-mode block at the value its window opened with.
-
-    This hook reads the current values; the library then sends the latest
-    ``InstructionBaselinePart``'s values in the head and delivers the change as a delta.
-    """
-    baseline = next(
-        (
-            part
-            for message in reversed(messages)
-            for part in reversed(message.parts)
-            if isinstance(part, InstructionBaselinePart)
-        ),
-        None,
-    )
-    if baseline is None:
-        return parts
-    opened = {
-        recorded.id: recorded.content
-        for recorded in baseline.instructions
-        if isinstance(recorded, InstructionPart) and recorded.id is not None
-    }
-    return [
-        replace(part, content=opened[part.id])
-        if part.on_change == "append" and part.id is not None and part.id in opened
-        else part
+    """The head the library sends for ``parts`` after ``messages``."""
+    window: InstructionBaselinePart | None = None
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, InstructionBaselinePart):
+                window = part
+            elif isinstance(part, CompactionPart):
+                window = None
+    current = [
+        replace(part, content=part.content.strip()) if part.on_change == "append" else part
         for part in parts
     ]
+    rewritten = [part for part in current if part.on_change != "append"]
+    if window is None or not _continues(window, rewritten):
+        return [part for part in current if part.on_change != "append" or part.content]
+    pending = iter(rewritten)
+    return [
+        block if isinstance(block, InstructionPart) else next(pending)
+        for block in window.instructions
+        if not isinstance(block, InstructionPart) or block.content
+    ]
+
+
+def _continues(window: InstructionBaselinePart, rewritten: list[InstructionPart]) -> bool:
+    if any(isinstance(b, InstructionPart) and b.id is None for b in window.instructions):
+        return False
+    digests = [b for b in window.instructions if isinstance(b, InstructionDigest)]
+    return len(digests) == len(rewritten) and all(
+        map(InstructionDigest.matches, digests, rewritten, strict=True)
+    )
 
 
 def _block_digest(content: str) -> str:

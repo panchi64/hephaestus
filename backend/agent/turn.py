@@ -129,7 +129,6 @@ def turn_deps(
         checkout_read_only=binding.checkout_read_only,
         # The toolset stack marks tools reaching past it, enforcing the level before a call runs.
         permission=binding.permission,
-        effort=binding.effort,
         # Which tools the thread's agent is offered at all, before anything else withholds.
         tool_access=binding.tools,
         permission_ceiling=binding.permission_ceiling,

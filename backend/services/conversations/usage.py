@@ -4,15 +4,17 @@ and the active-path totals.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 
 from genai_prices import calc_price
 from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.usage import RequestUsage
 
 from runs.events import LastRequestUsage
 from runs.overhead import TurnOverhead
 from services.conversation_view import estimate_footprint
-from services.shapes import as_dict
+from services.shapes import as_dict, as_int, as_str
 
 from .paths import is_user_prompt
 
@@ -105,13 +107,32 @@ class Cost:
     saved_usd: float
 
 
+#: Recently priced responses: the totals re-sum the whole path after every response.
+#: Each entry holds its response, so an id is never matched to a newer object.
+_PRICED: OrderedDict[int, tuple[ModelResponse, RequestUsage, Cost | None]] = OrderedDict()
+_PRICED_MAX = 4096
+
+
 def response_cost(response: ModelResponse) -> Cost | None:
-    """``response``'s price from the bundled genai-prices snapshot, or None when it can't
-    be priced: no usage, or a provider URL the snapshot doesn't know.
+    """``response``'s price from the bundled genai-prices snapshot, as it stood when the
+    response ran, or None when it can't be priced: no usage, or a provider URL the
+    snapshot doesn't know.
 
     Matched by URL only, never by provider name: an OpenAI-compatible local server reports
     the provider ``openai``, and a model it serves under a hosted model's name would
     otherwise be billed at that model's price."""
+    held = _PRICED.get(id(response))
+    if held is not None and held[0] is response and held[1] == response.usage:
+        _PRICED.move_to_end(id(response))
+        return held[2]
+    cost = _price(response)
+    _PRICED[id(response)] = (response, replace(response.usage), cost)
+    if len(_PRICED) > _PRICED_MAX:
+        _ = _PRICED.popitem(last=False)
+    return cost
+
+
+def _price(response: ModelResponse) -> Cost | None:
     usage = response.usage
     if not response.model_name or not response.provider_url or not usage.input_tokens:
         return None
@@ -119,8 +140,15 @@ def response_cost(response: ModelResponse) -> Cost | None:
         return None
     uncached = replace(usage, cache_read_tokens=0, cache_write_tokens=0, cache_write_1h_tokens=0)
     try:
-        actual = calc_price(usage, response.model_name, provider_api_url=response.provider_url)
-        baseline = calc_price(uncached, response.model_name, provider_api_url=response.provider_url)
+        actual, baseline = (
+            calc_price(
+                each,
+                response.model_name,
+                provider_api_url=response.provider_url,
+                genai_request_timestamp=response.timestamp,
+            )
+            for each in (usage, uncached)
+        )
     except LookupError, ValueError:
         return None
     return Cost(
@@ -130,19 +158,13 @@ def response_cost(response: ModelResponse) -> Cost | None:
 
 
 def _cache_miss(response: ModelResponse) -> tuple[str | None, int | None]:
-    """Anthropic's cache-diagnostics verdict on ``response``: where its prompt diverged
-    from the previous request's, and roughly how many tokens that cost the cache."""
-    details = as_dict(response.provider_details)
-    diagnostics = as_dict(details.get("cache_diagnostics")) if details is not None else None
-    reason = as_dict(diagnostics.get("cache_miss_reason")) if diagnostics is not None else None
+    """Anthropic's cache-diagnostics verdict: where the prompt diverged, and the tokens missed."""
+    details = as_dict(response.provider_details) or {}
+    diagnostics = as_dict(details.get("cache_diagnostics")) or {}
+    reason = as_dict(diagnostics.get("cache_miss_reason"))
     if reason is None:
         return None, None
-    kind = reason.get("type")
-    missed = reason.get("cache_missed_input_tokens")
-    return (
-        kind if isinstance(kind, str) else None,
-        missed if isinstance(missed, int) and not isinstance(missed, bool) else None,
-    )
+    return as_str(reason.get("type")), as_int(reason.get("cache_missed_input_tokens"))
 
 
 @dataclass(frozen=True, slots=True)

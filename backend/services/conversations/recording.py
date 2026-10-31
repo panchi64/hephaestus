@@ -4,15 +4,14 @@ stop markers and pins on recorded nodes.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import replace
 
-from pydantic_ai import ModelMessage, ModelRequest, ModelResponse
-from pydantic_ai.messages import ModelRequestPart
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 
 from runs.timings import ResponseTiming
+from services.chassis_tail import chassis_tails, prompt_index, tail_stamp, with_tails
 from services.commands.spec import Invocation
-from services.conversation_view import CHASSIS_TAIL_KEY, COMMAND_KEY, FILE_REFS_KEY
+from services.conversation_view import COMMAND_KEY, FILE_REFS_KEY
 
 from .core import StoreCore
 from .paths import active_path_model
@@ -49,7 +48,7 @@ class RecordingMixin(StoreCore):
         ``attachment_ids``/``file_refs``/``command``/``chassis_tail`` belong to the turn's
         first user request, which is stored exactly as sent. The ids are stamped on its node
         and row (chips); ``chassis_tail`` counts the trailing items the chassis added, so
-        readers can tell them from the operator's words (``conversation_view.operator_content``).
+        readers can tell them from the operator's words (``services.chassis_tail``).
 
         ``blocked_reason``, when the turn ended blocked (a usage, loop, context or time
         bound), stamps the first response, the node ``project_tree`` keys the view by, so a
@@ -93,7 +92,7 @@ class RecordingMixin(StoreCore):
                 # its expansion, so a regenerate re-expands the current template.
                 stamp = {
                     **({FILE_REFS_KEY: list(file_refs)} if file_refs else {}),
-                    **({CHASSIS_TAIL_KEY: chassis_tail} if chassis_tail else {}),
+                    **tail_stamp(node.message.parts, chassis_tail),
                     **(
                         {COMMAND_KEY: {"name": command.name, "argument": command.argument}}
                         if command is not None
@@ -178,25 +177,38 @@ class RecordingMixin(StoreCore):
         """The active leaf — on a regenerate, the request about to be re-answered."""
         return (await self.tree(conversation_id)).active_leaf_id
 
-    def amend_request(
-        self, conversation_id: str, node_id: str, parts: Sequence[ModelRequestPart]
-    ) -> None:
-        """Append ``parts`` to a recorded request, durably, skipping any it already holds
-        (a resumed turn amends the same prompt again). A no-op for an unknown node or a
-        response."""
-        if not parts:
-            return
+    def amend_request(self, conversation_id: str, node_id: str, sent: ModelRequest) -> None:
+        """Bring a recorded prompt up to ``sent``, the prompt as it went out, durably.
+
+        ``sent`` opens on the prompt part. Where its content differs (a regenerate swapped
+        the tail), its content and tail record replace the stored ones; the parts after it
+        are appended, skipping any already held (a resumed turn amends the same prompt
+        again). The stored stamps stay. A no-op for an unknown node, a response, or a
+        request without a user part."""
         tree = self._cache.get(conversation_id)
         if tree is None:
             tree = self.hydrate_blocking(conversation_id)
         node = tree.nodes.get(node_id)
-        if node is None or not isinstance(node.message, ModelRequest):
+        if node is None or not isinstance(node.message, ModelRequest) or not sent.parts:
             return
-        held = node.message.parts
-        new = [part for part in parts if part not in held]
-        if not new:
+        stored = node.message
+        at = prompt_index(stored)
+        if at is None:
             return
-        node.message = replace(node.message, parts=[*held, *new])
+        prompt, later, old = sent.parts[0], sent.parts[1:], stored.parts[at]
+        if not isinstance(prompt, UserPromptPart) or not isinstance(old, UserPromptPart):
+            return
+        held = list(stored.parts)
+        tails = chassis_tails(stored)
+        if prompt.content != old.content:
+            # The library's own prompt carries no tail record; only a swapped one does.
+            held[at] = replace(old, content=prompt.content)
+            tails[at] = chassis_tails(sent).get(0, 0)
+        held += [part for part in later if part not in held]
+        amended = with_tails(replace(stored, parts=held), tails)
+        if amended == stored:
+            return
+        node.message = amended
         self._submit(
             PersistJob(
                 kind="amend",

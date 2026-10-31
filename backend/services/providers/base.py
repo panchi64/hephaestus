@@ -165,8 +165,8 @@ class Provider(Protocol):
         ...
 
     def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
-        """The settings that stop this provider's model from spending tokens on
-        thinking for background work — ``{}`` when there is nothing to turn off."""
+        """The settings background work merges over its own caps: thinking off where
+        the model allows it, or a moderate level plus the caps that level needs."""
         ...
 
     def model_settings(self, descriptor: ModelDescriptor) -> ModelSettings:

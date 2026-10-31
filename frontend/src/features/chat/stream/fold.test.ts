@@ -106,13 +106,14 @@ function live(messages: ChatMessage[]): CompactionProgress[] {
     .map((m) => m.compaction!);
 }
 
-const delta = (text: string): RunEvent =>
+const delta = (text: string, restart = false): RunEvent =>
   ({
     type: "compaction.delta",
     seq: ++seq,
     ts: "",
     conversation_id: "c1",
     text,
+    restart,
   }) as RunEvent;
 
 describe("a fold in flight is a turn in the transcript", () => {
@@ -136,6 +137,15 @@ describe("a fold in flight is a turn in the transcript", () => {
     h.fold(started("threshold"));
     h.fold(delta("what "));
     h.fold(delta("happened"));
+    expect(live(h.messages)[0].summary).toBe("what happened");
+  });
+
+  test("a summarizer that starts over drops what it streamed first", () => {
+    const h = harness(turn());
+    h.fold(started("threshold"));
+    h.fold(delta("Let me look at the file first"));
+    h.fold(delta("", true));
+    h.fold(delta("what happened"));
     expect(live(h.messages)[0].summary).toBe("what happened");
   });
 

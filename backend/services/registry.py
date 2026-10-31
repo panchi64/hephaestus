@@ -17,12 +17,14 @@ and opened on resolve. Resolution validates that tool-driving roles
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 
 import httpx
 from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
@@ -58,9 +60,8 @@ def _same_server(one: str, two: str) -> bool:
 
 @dataclass(frozen=True)
 class ResolvedModel:
-    """A resolved role: the model to run, plus the settings that disable its
-    reasoning (empty when the model isn't a recognized thinking model). Background
-    callers that want a fast, no-reasoning pass (titling) read ``reasoning_off``.
+    """A resolved role: the model to run, plus ``reasoning_off``, the settings
+    background callers (titling) merge over their caps (see ``Provider.reasoning_off``).
     ``context_window`` is the primary endpoint's window (None when undeclared) —
     the chat layer forwards it so the run can report context fullness. ``vision`` is
     true only when **every** endpoint in the resolved fallback chain can see — the chat
@@ -73,8 +74,9 @@ class ResolvedModel:
     vision: bool = False
     #: The primary endpoint, as the run gate leases it.
     endpoint: Endpoint | None = None
-    #: Whether the primary endpoint's adapter reads an effort level.
-    uses_effort: bool = False
+    #: The chain rebuilt with a thread's effort on each link whose adapter reads one, so
+    #: a fallback link never gets a level it can't take. None when the primary reads none.
+    with_effort: Callable[[ThinkingEffort], Model] | None = None
 
 
 @dataclass(frozen=True)
@@ -598,7 +600,22 @@ class ModelRegistry:
             # handed image bytes it can't interpret. AND across the chain, not the head.
             vision=all(spec.vision for spec in specs),
             endpoint=primary.gate_endpoint(),
-            uses_effort=get_provider(primary.provider).preset.uses_effort,
+            with_effort=(
+                partial(self._chain_with_effort, specs)
+                if get_provider(primary.provider).preset.uses_effort
+                else None
+            ),
+        )
+
+    def _chain_with_effort(self, specs: Sequence[EndpointSpec], effort: ThinkingEffort) -> Model:
+        return llm.build_chain(
+            [
+                replace(spec, effort=effort)
+                if get_provider(spec.provider).preset.uses_effort
+                else spec
+                for spec in specs
+            ],
+            self._gate,
         )
 
     async def resolve_background(

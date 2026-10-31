@@ -361,6 +361,8 @@ export interface CompactionDelta extends Base {
   type: "compaction.delta";
   conversation_id: string;
   text: string;
+  /** The summarizer started over; the text streamed so far is discarded first. */
+  restart?: boolean;
 }
 
 /** A fold that started and did not land (the summarizer failed or wrote nothing usable);

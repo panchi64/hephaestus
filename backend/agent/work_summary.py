@@ -52,6 +52,7 @@ from pydantic_ai.settings import ModelSettings
 from core.text import strip_think_blocks, truncate_on_boundary
 from core.untrusted import new_nonce, untrusted_fence, untrusted_preamble
 from prompts.utility import WORK_SUMMARY_INSTRUCTIONS
+from services.chassis_tail import operator_content
 from services.conversation_view import flatten_content
 from tools.describe import NARRATION_ARG
 
@@ -102,7 +103,7 @@ def _turn_lines(message: ModelMessage) -> tuple[list[str], list[str]]:
     if isinstance(message, ModelRequest):
         for part in message.parts:
             if isinstance(part, UserPromptPart):
-                text = flatten_content(part.content).strip()
+                text = flatten_content(operator_content(message, part)).strip()
                 if text:
                     trusted.append(f"OPERATOR: {text}")
     else:

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from pydantic import TypeAdapter
-from pydantic_ai import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai import ModelMessage
 
-from services.conversation_view import operator_content
+from services.chassis_tail import part_content
 from services.shapes import as_list
 
 MESSAGE = TypeAdapter(ModelMessage)
@@ -31,11 +31,7 @@ def project(message: ModelMessage) -> tuple[str, str]:
     A user prompt contributes only the operator's own content, never the chassis tail."""
     kind = message.kind
     pieces = (
-        _part_text(
-            operator_content(message, part)
-            if isinstance(message, ModelRequest) and isinstance(part, UserPromptPart)
-            else getattr(part, "content", None)
-        )
+        _part_text(part_content(message, part))
         for part in message.parts
         if type(part).__name__ in _TEXT_PARTS
     )

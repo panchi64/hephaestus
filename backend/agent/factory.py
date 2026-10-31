@@ -71,15 +71,8 @@ type TurnAgent = Agent[RunDeps, DeferredToolRequests | str]
 
 
 def _turn_settings(ctx: RunContext[RunDeps]) -> ModelSettings:
-    """Parallel tool calls, the providers' settings for whoever waits on this run (an
-    attended turn caches for an hour), and the thread's own effort when it set one."""
-    settings: ModelSettings = {
-        **TOOL_CALL_SETTINGS,
-        **run_settings(attended=is_attended(ctx.deps.run.kind)),
-    }
-    if ctx.deps.effort is not None:
-        settings["thinking"] = ctx.deps.effort
-    return settings
+    """Parallel tool calls, plus the providers' settings for whoever waits on this run."""
+    return {**TOOL_CALL_SETTINGS, **run_settings(attended=is_attended(ctx.deps.run.kind))}
 
 
 def build_agent(
@@ -190,13 +183,11 @@ def build_agent(
         ],
     )
 
-    # Every dynamic block below is `on_change="append"`: the head keeps the value a
-    # conversation opened with, and a later change arrives as a mid-conversation system
-    # message after the history, so no change rewrites the cached prefix. Each resolves
-    # "" when it has nothing to say, which is why registration is unconditional.
+    # Append mode: a changed block goes out as a message after the history, never in the
+    # cached head. Each resolves "" when it has nothing to say, hence no condition here.
     #
-    # `name=` gives each block the id appending needs, and is what `agent/overhead.py`
-    # and `agent/injections.py` read each block off the assembled request by.
+    # `name=` is the id appending needs; `agent/overhead.py` and `agent/injections.py`
+    # read each block off the assembled request by it.
     for provider in instruction_providers:
         _ = agent.instructions(name=contributor_id(provider), on_change="append")(provider)
 

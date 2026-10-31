@@ -31,6 +31,9 @@ _FIRST_PARTY_HOST = "api.anthropic.com"
 # Pinned rather than left to the model, whose default varies by model (Opus 5.5: medium).
 _DEFAULT_EFFORT: ThinkingEffort = "high"
 _BACKGROUND_EFFORT: ThinkingEffort = "medium"
+# Medium's 10,000-token budget on budget-thinking models plus room for the answer, kept
+# under the SDK's 21,333 non-streaming limit.
+_BACKGROUND_MAX_TOKENS = 16_384
 # The Messages API demands a pinned version header on every request.
 _API_VERSION = "2023-06-01"
 _TIMEOUT = httpx.Timeout(8.0, connect=3.0)
@@ -174,9 +177,13 @@ class AnthropicNativeProvider(Provider):
 
     @override
     def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
-        # Background work (titles, judges, distillation) at medium: lower costs too much
-        # quality, and chat effort is more than it needs.
-        return {"thinking": _BACKGROUND_EFFORT}
+        # Background work runs at medium: lower costs too much quality. With thinking on,
+        # the API rejects a temperature other than 1 and a max_tokens under the budget.
+        return {
+            "thinking": _BACKGROUND_EFFORT,
+            "temperature": 1.0,
+            "max_tokens": _BACKGROUND_MAX_TOKENS,
+        }
 
     @override
     def model_settings(self, descriptor: ModelDescriptor) -> AnthropicModelSettings:

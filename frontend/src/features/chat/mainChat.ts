@@ -169,6 +169,7 @@ export function mainChat(): MainChat {
           // thread whose level is unknown and drop the control to the default,
           // mid-turn, on the very thread that was created with it.
           permissionOwner = id;
+          effortOwner = id;
           agentOwner = id;
           // So does whatever the operator typed while the first turn ran. The
           // composer's draft is keyed by thread, and the seat below re-keys it: left
@@ -233,7 +234,9 @@ export function mainChat(): MainChat {
         owner: effortOwner,
         stored: loaded()?.effort,
       });
-      if (seat !== null) setEffortValue(seat);
+      if (seat === null) return;
+      effortOwner = seat.owner;
+      setEffortValue(seat.value);
     });
     createEffect(() => {
       const id = currentId();

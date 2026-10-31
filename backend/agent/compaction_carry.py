@@ -44,11 +44,8 @@ from prompts.compaction import (
     COMPACT_OPERATOR_SECTION,
     COMPACT_OPERATOR_TAG,
 )
-from services.conversation_view import (
-    flatten_content,
-    operator_content,
-    strip_chassis_markers,
-)
+from services.chassis_tail import operator_content
+from services.conversation_view import flatten_content, strip_chassis_markers
 from services.notices import ENVELOPE_TAGS, notice_body
 
 _MESSAGE_TAG = COMPACT_OPERATOR_TAG

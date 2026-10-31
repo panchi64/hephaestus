@@ -38,7 +38,7 @@ in verbatim lives in :mod:`agent.compaction_carry`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Protocol
 
 from pydantic_ai import (
     Agent,
@@ -71,10 +71,14 @@ from .emit import SIDE_RUN
 from .factory import TurnAgent
 from .history import drop_dangling_tool_calls, merge_consecutive_requests
 
-#: Where a fold's summary text goes while it is being written. Synchronous and
-#: fire-and-forget: it is a progress signal, so it must not be able to fail a fold or slow
-#: the model call down, and the caller that supplies one is the caller that owns a stream.
-type DeltaSink = Callable[[str], None]
+
+class DeltaSink(Protocol):
+    """Where a fold's summary text goes while it is being written. Synchronous and
+    fire-and-forget: it is a progress signal, so it must not be able to fail a fold or slow
+    the model call down. ``restart`` discards the text sent so far."""
+
+    def __call__(self, text: str, *, restart: bool = False) -> None: ...
+
 
 #: The settings a summary is retried under when the first answer called a tool. Only the
 #: tool choice, and no ``max_tokens``: the endpoint's own ceiling is the only one.
@@ -148,6 +152,8 @@ async def write_summary(
     try:
         return await _write_once(agent, deps, history, settings=None, on_delta=on_delta)
     except SummaryCalledTool:
+        if on_delta is not None:
+            on_delta("", restart=True)
         return await _write_once(agent, deps, history, settings=FOLD_SETTINGS, on_delta=on_delta)
 
 

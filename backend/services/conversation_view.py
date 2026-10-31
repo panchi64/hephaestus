@@ -30,7 +30,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequestPart,
     ModelResponsePart,
-    UserContent,
 )
 
 from core.compaction_sections import SummarySection, summary_sections
@@ -40,6 +39,7 @@ from core.serde import jsonable
 from core.text import chars_to_tokens
 from core.untrusted import strip_envelope_note
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
+from services.chassis_tail import operator_content
 from services.commands.spec import Invocation
 from services.notices import notice_body
 from services.shapes import as_dict, as_list
@@ -86,24 +86,7 @@ ATTACHMENTS_MARKER_OPEN = "[Attached file(s):"
 #: names). Read by ``ConversationStore.turn_stamps``.
 COMMAND_KEY = "command"
 
-#: Request-metadata key: how many trailing items of the request's first user part the
-#: chassis added after the operator's own content (stop notice, per-turn context). They
-#: persist as sent, so the replayed history is the prefix the provider cached; every
-#: reader of the operator's words slices them off.
-CHASSIS_TAIL_KEY = "chassis_tail"
-
 _NO_IDS: frozenset[str] = frozenset()
-
-
-def operator_content(message: ModelRequest, part: UserPromptPart) -> str | Sequence[UserContent]:
-    """``part``'s content without the items the chassis appended to the operator's own."""
-    content = part.content
-    first = next((p for p in message.parts if isinstance(p, UserPromptPart)), None)
-    metadata = as_dict(message.metadata)
-    tail = metadata.get(CHASSIS_TAIL_KEY) if metadata is not None else None
-    if isinstance(content, str) or first is not part or not isinstance(tail, int) or tail <= 0:
-        return content
-    return list(content[: len(content) - tail])
 
 
 @dataclass

@@ -68,12 +68,14 @@ export function LastRequestPanel(props: { request: LastRequest }): JSX.Element {
                 </Text>
               )}
             </For>
-            <Show when={props.request.costUsd}>
-              {(cost) => (
-                <Text variant="micro" tone="dim">
-                  Cost <span class="tabular-nums text-text">{usd(cost())}</span>
-                </Text>
-              )}
+            {/* Null, not falsy: a free model is priced at $0, which is worth saying. */}
+            <Show when={props.request.costUsd !== null}>
+              <Text variant="micro" tone="dim">
+                Cost{" "}
+                <span class="tabular-nums text-text">
+                  {usd(props.request.costUsd!)}
+                </span>
+              </Text>
             </Show>
           </div>
         </Show>

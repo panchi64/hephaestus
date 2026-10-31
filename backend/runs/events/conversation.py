@@ -68,6 +68,9 @@ class CompactionDelta(Body):
     type: Literal["compaction.delta"] = "compaction.delta"
     conversation_id: str
     text: str
+    #: The summarizer started over (its first reply called a tool), so the text streamed so
+    #: far is discarded before this one.
+    restart: bool = False
 
 
 class CompactionFailed(Body):

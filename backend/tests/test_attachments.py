@@ -41,11 +41,10 @@ from core.vault import Vault
 from models.corpus import CorpusChunk
 from models.upload import Upload, UploadStatus
 from runs import Run, RunRegistry, RunStatus, RunStream
+from services.chassis_tail import operator_content, tail_stamp
 from services.conversation_view import (
     ATTACHMENTS_MARKER_OPEN,
-    CHASSIS_TAIL_KEY,
     FILE_REFS_MARKER_OPEN,
-    operator_content,
     strip_chassis_markers,
 )
 from services.conversations import ConversationStore
@@ -368,7 +367,7 @@ async def test_resolution_order_follows_the_request_not_the_database():
 def _with_tail() -> tuple[ModelRequest, UserPromptPart]:
     image = BinaryContent(data=b"x", media_type="image/png")
     part = UserPromptPart(content=["summarize this", image, "<tasks>open: 1</tasks>"])
-    return ModelRequest(parts=[part], metadata={CHASSIS_TAIL_KEY: 1}), part
+    return ModelRequest(parts=[part], metadata=tail_stamp([part], 1)), part
 
 
 def test_operator_content_drops_only_the_chassis_tail():
