@@ -13,7 +13,6 @@ import asyncio
 import logging
 import shutil
 import tempfile
-from enum import StrEnum
 from pathlib import Path
 
 import httpx
@@ -21,11 +20,12 @@ from fastapi import FastAPI
 
 import core.db
 from core.config import Settings
-from core.exceptions import HephaestusError
 from core.shutdown import begin_shutdown, reset_shutdown
 from core.vault import Vault
 from core.volume import EncryptedVolume, close_volume, open_volume
+from core.workspace import WorkspaceOpenError, WorkspaceStatus
 from harness import LifecycleRegistry
+from harness.workspace_migration import migrate_legacy_plaintext
 from harness.workspace_wiring import wire_workspace
 from routes.deps import app_state
 from services.vm import Platform
@@ -33,18 +33,9 @@ from services.vm import Platform
 logger = logging.getLogger(__name__)
 
 
-class WorkspaceOpenError(HephaestusError):
-    """The workspace did not open; the message is the reason shown on the unlock screen."""
-
-
-class WorkspaceStatus(StrEnum):
-    CLOSED = "closed"
-    OPENING = "opening"
-    OPEN = "open"
-    FAILED = "failed"
-
-
 class WorkspaceSession:
+    """The `core.workspace.Workspace` the routes and gate hold."""
+
     def __init__(
         self,
         app: FastAPI,
@@ -106,6 +97,9 @@ class WorkspaceSession:
         lifecycle.on_stop("volume", lambda: close_volume(self._volume))
         _use_volume_tmp(settings.volume_tmp_dir)
         lifecycle.on_stop("volume-tmp", _restore_tmp)
+        # Needs the volume mounted (files move into it) and runs before the engine
+        # holds the database file open.
+        await asyncio.to_thread(migrate_legacy_plaintext, settings, self._vault.subkey("db"))
 
         url = self.database_url()
         in_memory = ":memory:" in url

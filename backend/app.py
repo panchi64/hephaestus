@@ -25,6 +25,7 @@ from core.devserver import UNGUARDED_RELOAD_WARNING, reload_watches_runtime_stat
 from core.http_errors import install_error_handlers
 from core.shutdown import begin_shutdown, reset_shutdown
 from core.vault import Vault
+from core.workspace import WorkspaceOpenError
 from harness import LifecycleRegistry
 from harness.builtin_plugins import (
     gate_availability,
@@ -34,7 +35,7 @@ from harness.builtin_plugins import (
 )
 from harness.discovery import discover_manifests
 from harness.manifest import DormantCategory
-from harness.workspace import WorkspaceOpenError, WorkspaceSession
+from harness.workspace import WorkspaceSession
 from routes import (
     api_tokens,
     auth,

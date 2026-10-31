@@ -22,6 +22,7 @@ from core.container import ServiceContainer
 from core.exceptions import DegradedCapabilityError, NotFoundError, PermissionDeniedError
 from core.ratelimit import RateLimiter
 from core.vault import Vault
+from core.workspace import Workspace
 from runs import ConversationBusyError, InboxDispatch, RunRegistry
 from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
@@ -69,7 +70,6 @@ from services.workspace_history import WorkspaceHistoryStore
 
 if TYPE_CHECKING:
     from harness.manifest import DormantCategory, FeatureManifest
-    from harness.workspace import WorkspaceSession
     from tools import InstructionProvider, PromptContextProvider, RunDeps
 
 logger = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ class AppState(State):
         self.settings_store: SettingsStore
         self.credentials: CredentialStore
         self.vault: Vault
-        self.workspace: WorkspaceSession
+        self.workspace: Workspace
         self.auth_manager: AuthManager
         self.workspace_db_intact: bool
         self.db_engine: Engine
@@ -567,7 +567,7 @@ def vault(request: Request) -> Vault:
     return app_state(request).vault
 
 
-def workspace(request: Request) -> WorkspaceSession:
+def workspace(request: Request) -> Workspace:
     return app_state(request).workspace
 
 

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from core.auth import SESSION_COOKIE, auth_attempt_limiter, client_key, token_from_headers
 from core.exceptions import RateLimitedError
-from harness.workspace import WorkspaceOpenError
+from core.workspace import WorkspaceOpenError
 from routes import deps
 from routes.deps import OPERATOR_ID
 from services import onboarding
