@@ -3,7 +3,7 @@ import { ActionButtons, ActionFrame, Row, Stack, Text } from "~/ui";
 import { duration } from "~/lib/format";
 import { grantKey, type GrantWidth } from "../commandScope";
 import type { ApprovalDecision, HostCommand, HostCommandPhase } from "../model";
-import { CautionsAndGrant } from "./ApprovalCautions";
+import { AutoReason, CautionsAndGrant } from "./ApprovalCautions";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
 import { createGrantToggle } from "./ConversationGrantToggle";
 import { createAdoptedOpen } from "./ProcessRow";
@@ -170,13 +170,7 @@ function Terminal(props: {
             {c().explanation}
           </Text>
         </Show>
-        <Show when={c().autoReason}>
-          {(reason) => (
-            <Text variant="micro" tone="dim" class="break-words">
-              Auto asked because it {reason()}.
-            </Text>
-          )}
-        </Show>
+        <AutoReason reason={c().autoReason} />
         <Show
           when={!decidedPending()}
           fallback={

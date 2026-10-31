@@ -47,17 +47,22 @@ async def auto_env(deps: RunDeps, *, egress_requested: bool = False) -> AutoEnv:
     commands run."""
     machines = deps.caps.get_optional(ConversationMachines)
     policy = deps.caps.get_optional(EgressPolicy)
+    offline = deps.caps.get_optional(OfflineModeService)
     try:
         home = await resolve_run_home(deps)
     except WorktreeBusyError:
         home = None
+    # Offline or without a policy the VM has no network at all, so grants don't matter.
+    is_offline = offline is not None and offline.state().effective_offline
     granted = (
-        await policy.granted_for(deps.scratch_key) if policy is not None else frozenset[str]()
+        await policy.granted_for(deps.scratch_key)
+        if policy is not None and not is_offline
+        else frozenset[str]()
     )
     return AutoEnv(
         vm_up=machines is not None and machines.platform.available,
-        default_hosts_only=not egress_requested
-        and (await allowed_hosts(deps) is None or not granted),
+        default_hosts_only=not egress_requested and not granted,
+        home_known=home is not None,
         writable_checkout=home is not None
         and any(m.writable and m.place.kind == "projects" for m in home.mounts),
     )
@@ -65,16 +70,14 @@ async def auto_env(deps: RunDeps, *, egress_requested: bool = False) -> AutoEnv:
 
 #: What the model is told when a call Auto cleared meets a VM that has changed since.
 ENV_CHANGED = (
-    "This command was not run: the conversation's VM changed (it gained network access or "
-    "became unavailable) after Auto cleared it. Run it again to have it ruled on afresh."
+    "This command was not run: the conversation's VM changed after Auto cleared it (it "
+    "became unavailable, gained hosts beyond its defaults, or mounted a writable checkout). "
+    "Run it again to have it ruled on afresh."
 )
 
 
-async def env_still_clears(deps: RunDeps | None, tool: str) -> bool:
-    """Whether the VM still bounds a call Auto cleared for running in it. False
-    when the run's deps are gone, since then nothing can say."""
-    if deps is None:
-        return False
+async def env_still_clears(deps: RunDeps, tool: str) -> bool:
+    """Whether the VM still bounds a call Auto cleared for running in it."""
     cleared, _ = environment_clears(tool, await auto_env(deps))
     return cleared
 

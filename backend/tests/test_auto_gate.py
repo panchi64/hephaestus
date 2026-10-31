@@ -29,6 +29,7 @@ from services.permissions import (
     auto_decision,
     environment_clears,
 )
+from services.projects.worktree import WorktreeBusyError
 from services.vm import ConversationMachines, GuestImage, Platform
 from tools import RunDeps
 from tools.home_workspace import env_still_clears, still_bounded
@@ -39,50 +40,58 @@ from .vm_support import install_fake_smol, ready_platform
 OWNER = "operator"
 CONV = "conv-1"
 
-OFFLINE = AutoEnv(vm_up=True, default_hosts_only=True, writable_checkout=False)
+
+def _env(
+    *,
+    vm_up: bool = True,
+    default_hosts_only: bool = True,
+    home_known: bool = True,
+    writable_checkout: bool = False,
+) -> AutoEnv:
+    return AutoEnv(
+        vm_up=vm_up,
+        default_hosts_only=default_hosts_only,
+        home_known=home_known,
+        writable_checkout=writable_checkout,
+    )
+
+
+OFFLINE = _env()
 
 
 class TestTheRule:
     @pytest.mark.parametrize("tool", ["shell_run_command", "shell_start_command", "code_execute"])
     def test_vm_work_clears_while_the_vm_is_up_contained_and_holds_no_checkout(self, tool: str):
-        assert environment_clears(tool, OFFLINE) == (True, "runs in the VM")
+        assert environment_clears(tool, OFFLINE) == (True, "it runs in the VM")
 
     @pytest.mark.parametrize(
         ("env", "reason"),
         [
-            (
-                AutoEnv(vm_up=False, default_hosts_only=True, writable_checkout=False),
-                "the VM is unavailable",
-            ),
-            (
-                AutoEnv(vm_up=True, default_hosts_only=False, writable_checkout=False),
-                "the VM can reach hosts beyond its defaults",
-            ),
-            (
-                AutoEnv(vm_up=True, default_hosts_only=True, writable_checkout=True),
-                "this thread's own checkout is writable",
-            ),
+            (_env(vm_up=False), "the VM is unavailable"),
+            (_env(default_hosts_only=False), "the VM can reach hosts beyond its defaults"),
+            (_env(home_known=False), "this thread's workspace is busy or missing"),
+            (_env(writable_checkout=True), "this thread's own checkout is writable"),
         ],
     )
     def test_vm_work_parks_when_the_vm_is_no_fence(self, env: AutoEnv, reason: str):
         assert environment_clears("shell_run_command", env) == (False, reason)
 
     def test_the_host_and_everything_outside_the_vm_park(self):
-        assert environment_clears("shell_run_on_host", OFFLINE) == (False, "runs on the host")
-        assert environment_clears("mail_send", OFFLINE) == (False, "acts outside the VM")
+        assert environment_clears("shell_run_on_host", OFFLINE) == (False, "it runs on the host")
+        assert environment_clears("mail_send", OFFLINE) == (False, "it acts outside the VM")
         # An unknown name resolves to the class that reaches furthest, never to a read.
-        assert environment_clears("external_x_read", OFFLINE) == (False, "acts outside the VM")
+        assert environment_clears("external_x_read", OFFLINE) == (False, "it acts outside the VM")
 
     def test_a_classified_read_clears_wherever_the_vm_stands(self):
-        down = AutoEnv(vm_up=False, default_hosts_only=False, writable_checkout=True)
-        assert environment_clears("browse_navigate", down) == (True, "only reads")
+        down = _env(vm_up=False, default_hosts_only=False, writable_checkout=True)
+        assert environment_clears("browse_navigate", down) == (True, "it only reads")
 
     def test_a_grant_clears_what_the_environment_does_not(self):
         outcome = auto_decision("shell_run_on_host", env=OFFLINE, granted=True)
         assert outcome.decision is Decision.ALLOW and outcome.by_grant
         assert not outcome.by_environment
         parked = auto_decision("shell_run_on_host", env=OFFLINE, granted=False)
-        assert parked.decision is Decision.ASK and parked.reason == "runs on the host"
+        assert parked.decision is Decision.ASK and parked.reason == "it runs on the host"
 
     def test_only_vm_work_is_marked_for_the_execution_check(self):
         assert auto_decision("shell_run_command", env=OFFLINE, granted=False).by_environment
@@ -233,12 +242,12 @@ class TestTheGate:
         grants = _grants()
         _ = await grants.grant(OWNER, CONV, "shell_run_on_host", ("uv", "run", "pytest"))
         deps = _deps(None, None, grants)
-        granted = _call("shell_run_on_host", "uv run pytest -q", "c1")
+        granted = _call("shell_run_on_host", "uv run pytest tests/a.py", "c1")
         other = _call("shell_run_on_host", "uv run ruff check", "c2")
         settled, manual, metadata = await _settle(deps, [granted, other])
         assert isinstance(settled["c1"], GrantApproved)
         assert manual == [other]
-        assert metadata["c2"][AUTO_KEY] == "runs on the host"
+        assert metadata["c2"][AUTO_KEY] == "it runs on the host"
         assert deps.env_cleared == set()
 
     async def test_a_whole_tool_grant_clears_every_call_to_it(
@@ -277,5 +286,14 @@ class TestTheExecutionCheck:
         deps = _deps(None, None)
         assert await still_bounded(_ctx(deps, "c9"), "shell_run_command")
 
-    async def test_with_the_run_gone_nothing_can_say_the_vm_still_bounds_it(self):
-        assert not await env_still_clears(None, "shell_run_command")
+    async def test_a_workspace_that_cannot_be_read_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        _ = install_fake_smol(monkeypatch)
+
+        async def busy(_deps: RunDeps) -> RunHome:
+            raise WorktreeBusyError("held by another thread")
+
+        monkeypatch.setattr(home_workspace, "resolve_run_home", busy)
+        deps = _deps(_machines(await ready_platform(tmp_path)), egress_policy(()))
+        assert not await env_still_clears(deps, "shell_run_command")

@@ -19,6 +19,7 @@ from agent import AwaitingKind, ParkedTurn, awaiting_kind, build_resume_orchestr
 from agent.approval_guards import guarded_approvals
 from agent.gating import EnvApproved, GrantApproved
 from agent.recompose import RecomposeError, recompose
+from agent.turn import turn_deps
 from core.auth import via_api_token
 from routes import deps
 from runs import (
@@ -327,9 +328,10 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         _ = run.emit(frame)
 
     grants = deps.approval_grants(request)
-    # Re-validate what a grant or the offline VM pre-approved: a grant revoked or lapsed
-    # while parked, or a VM that gained network, must not still auto-run its call. Every
-    # other settled call (a level's refusal, a Yolo allow) left nothing to re-check.
+    # Re-validate what a grant or the VM cleared: a grant revoked or lapsed while parked,
+    # or a VM that went down, gained hosts or a writable checkout, must not still auto-run
+    # its call. Every other settled call (a level's refusal, a Yolo allow) left nothing to
+    # re-check.
     settled = parked.settled
     active = (
         await grants.list(deps.OPERATOR_ID, parked.conversation_id)
@@ -337,7 +339,15 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         and any(isinstance(o, GrantApproved) for o in settled.values())
         else []
     )
-    parked_deps = parked.compaction.deps if parked.compaction is not None else None
+    # Built from the park's own facts, as the resumed turn builds its deps: a park restored
+    # after a restart, or a stateless run, carries no deps of its own.
+    parked_deps = turn_deps(
+        run,
+        caps=deps.capabilities(request),
+        conversation_id=parked.conversation_id,
+        binding=parked.binding,
+        workspace_key=parked.workspace_key,
+    )
     decisions: dict[str, ToolApproved | ToolDenied] = {}
     for call_id, outcome in settled.items():
         call = call_by_id.get(call_id)
@@ -456,10 +466,10 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     # see them or a tool re-called in that turn would re-prompt. If the resume is refused,
     # the new grants are rolled back so a dead run leaves no standing auto-approval.
     #
-    # Only new ones are rolled back, hence reading existing scopes first: a thread can hold
-    # a live grant and still park on the act it names (a guarded call), and approving
-    # refreshes that row, so a blanket rollback would delete a grant held before this card
-    # opened.
+    # Only new ones are rolled back, hence reading existing scopes first: a call can park
+    # with one stage a held grant already covers (`ls | rm x` under a grant on `ls`), and
+    # approving refreshes that row, so a blanket rollback would delete a grant held before
+    # this card opened.
     conv_id = parked.conversation_id
     already: set[tuple[str, tuple[str, ...]]] = set()
     if to_grant and conv_id is not None:

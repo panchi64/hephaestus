@@ -26,8 +26,8 @@ class ApprovalRequired(Body):
     # Why a host command is about to run with no fence in force (disabled by the operator
     # or unbuildable). Additive to v1.
     unconfined: str | None = None
-    # Why the Auto level parked this call rather than running it ("runs on the host", "the
-    # VM can reach the network"). Additive to v1.
+    # Why the Auto level parked this call, as a clause ("it runs on the host", "the VM is
+    # unavailable"). Additive to v1.
     auto_reason: str | None = None
 
 

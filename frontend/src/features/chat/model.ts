@@ -156,7 +156,7 @@ export interface Approval extends ApprovalCautions {
   summary: string;
   /** Longer plain-language explanation, when the tool provides one. */
   explanation?: string;
-  /** Why the Auto level parked this call ("runs on the host"). Absent at other levels. */
+  /** Why the Auto level parked this call ("it runs on the host"). Absent at other levels. */
   autoReason?: string;
   /** True once a decision for this approval 409'd: the run had already resumed elsewhere
    *  (a second tab, a retried request). Non-interactive; a refetch reconciles the

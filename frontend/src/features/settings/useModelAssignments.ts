@@ -17,7 +17,7 @@ import {
   useRoles,
 } from "./data";
 
-/** The four jobs a model can be given, by the backend's role id. */
+/** The jobs a model can be given, by the backend's role id. */
 export type AssignableRole = "main" | "utility" | "embedding";
 
 /** An unbound `utility` is not a broken state: the backend degrades background work onto

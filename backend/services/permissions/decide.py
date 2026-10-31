@@ -91,8 +91,12 @@ def blocked_message(level: str, tool: str) -> str:
     )
 
 
-#: The tools whose work runs in the conversation's VM, which bounds it.
-VM_TOOLS = frozenset({"shell_run_command", "shell_start_command", "code_execute"})
+#: The shell tools that start a command in the conversation's VM. Literals because
+#: ``services/`` sits below ``tools/``, which derives its own names from these.
+VM_SHELL_TOOLS = frozenset({"shell_run_command", "shell_start_command"})
+#: The tools whose work runs in the conversation's VM, which bounds it. Each re-checks
+#: the VM before running a call Auto cleared (``tools/home_workspace.still_bounded``).
+VM_TOOLS = VM_SHELL_TOOLS | {"code_execute"}
 HOST_TOOLS = frozenset({"shell_run_on_host"})
 #: The request to open the VM's network to more hosts.
 EGRESS_TOOL = "code_request_egress"
@@ -111,6 +115,8 @@ class AutoEnv:
     #: for none. Those defaults can carry an upload (a push to GitHub); the operator chose
     #: to accept that so ordinary installs and clones run at Auto.
     default_hosts_only: bool
+    #: The thread's home could be read; without it nothing says what the VM mounts.
+    home_known: bool
     #: The home mounts an operator's own checkout writable. Root in the guest can rewrite
     #: its `.git`, which their next host commit runs, so the VM is no fence there.
     writable_checkout: bool
@@ -141,7 +147,8 @@ def auto_decision(tool: str, *, env: AutoEnv, granted: bool) -> AutoOutcome:
 
 
 def environment_clears(tool: str, env: AutoEnv) -> tuple[bool, str]:
-    """Whether the environment alone bounds a call to ``tool``, and why or why not.
+    """Whether the environment alone bounds a call to ``tool``, and why or why not. The
+    reason is a clause the operator's card reads after "Auto asked because".
 
     A classified read changes nothing. VM work is bounded by the VM's mounts and its
     network, so it clears exactly when the VM is up, reaches only the default hosts, and
@@ -149,15 +156,17 @@ def environment_clears(tool: str, env: AutoEnv) -> tuple[bool, str]:
     resolves to the class that reaches furthest (``tool_sensitivity``).
     """
     if classified(tool) and sensitivity_of(tool) is Sensitivity.READ:
-        return True, "only reads"
+        return True, "it only reads"
     if tool in HOST_TOOLS:
-        return False, "runs on the host"
+        return False, "it runs on the host"
     if tool not in VM_TOOLS:
-        return False, "acts outside the VM"
+        return False, "it acts outside the VM"
     if not env.vm_up:
         return False, "the VM is unavailable"
     if not env.default_hosts_only:
         return False, "the VM can reach hosts beyond its defaults"
+    if not env.home_known:
+        return False, "this thread's workspace is busy or missing"
     if env.writable_checkout:
         return False, "this thread's own checkout is writable"
-    return True, "runs in the VM"
+    return True, "it runs in the VM"

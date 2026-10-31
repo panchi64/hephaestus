@@ -390,7 +390,6 @@ class TestACommandScopedGrant:
         [
             "uv run pytest",
             "uv run pytest tests/test_a.py",  # the same act on a different target
-            "uv run pytest -k thing",
         ],
     )
     def test_it_covers_the_act_it_was_granted_for(self, command: str):
@@ -400,6 +399,8 @@ class TestACommandScopedGrant:
         "command",
         [
             "uv run ruff check .",  # a sibling mode of the same program
+            "uv run pytest -k thing",  # a flag is part of the act
+            "uv run pytest > src/main.py",  # so is a redirect inside the worktree
             "rm -rf build",
             "uv",  # shorter than the scope: nothing says which act this is
             "cat $TARGET",  # unreadable, so nothing may be inferred
@@ -508,7 +509,7 @@ class TestTheScopeAnApprovalRecords:
         assert grant_scopes("mail_send", {"to": "a@b.c"}) == [()]
 
     def test_a_command_tool_records_the_words_the_command_leads_with(self):
-        assert grant_scopes("shell_run_command", {"command": "uv run pytest -k x"}) == [
+        assert grant_scopes("shell_run_command", {"command": "uv run pytest tests/a.py"}) == [
             ("uv", "run", "pytest")
         ]
 

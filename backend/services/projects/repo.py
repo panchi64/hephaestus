@@ -60,18 +60,39 @@ def linked_git_dir(root: Path, tree: Path) -> Path | None:
     Found from the root's side: a worktree's own `.git` file is writable by whatever runs in
     the worktree, and a redirected one would hand git a config its author wrote.
     """
-    admin = root / ".git" / "worktrees"
-    if not admin.is_dir():
+    common = _common_dir(root)
+    admin = common / "worktrees" if common is not None else None
+    if admin is None or not admin.is_dir():
         return None
-    want = tree.resolve() / ".git"
+    want = (tree.resolve() / ".git").resolve()
     for entry in admin.iterdir():
         try:
-            points_at = Path((entry / "gitdir").read_text().strip())
+            points_at = (entry / "gitdir").read_text().strip()
         except OSError:
             continue
-        if points_at == want:
+        # `worktree.useRelativePaths` writes the path relative to the admin entry.
+        if (entry / points_at).resolve() == want:
             return entry
     return None
+
+
+def _common_dir(root: Path) -> Path | None:
+    """The git directory ``root``'s worktrees register under: its own `.git`, or, when the
+    operator's project is itself a linked worktree or a submodule, the one it links to."""
+    dot = root / ".git"
+    if dot.is_dir():
+        return dot
+    try:
+        text = dot.read_text().strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    git_dir = (root / text.removeprefix("gitdir:").strip()).resolve()
+    try:
+        return (git_dir / (git_dir / "commondir").read_text().strip()).resolve()
+    except OSError:
+        return git_dir
 
 
 def _location(tree: Path, root: Path | None) -> tuple[str, ...] | None:
@@ -112,7 +133,8 @@ async def run_git(tree: Path, *args: str, root: Path | None = None) -> tuple[int
     placed, or a missing one, returns a failed call rather than raising, since the operator
     can move a project directory at any time and callers handle "git said no".
     """
-    location = _location(tree, root)
+    # Off the event loop: placing a linked worktree scans the root's admin directories.
+    location = await asyncio.to_thread(_location, tree, root)
     if location is None:
         return 1, "", f"{tree} is not a worktree this project registered"
     try:

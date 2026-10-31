@@ -11,7 +11,7 @@ from services.permissions import command_prefixes
 @pytest.mark.parametrize(
     ("command", "prefixes"),
     [
-        ("uv run pytest tests/test_a.py -k thing", (("uv", "run", "pytest"),)),
+        ("uv run pytest tests/test_a.py -k thing", (("uv", "run", "pytest", "-k"),)),
         ("brew install ripgrep", (("brew", "install", "ripgrep"),)),
         ("git commit -m 'x'", (("git", "commit", "-m", "x"),)),
         ("ls", (("ls",),)),
@@ -40,8 +40,59 @@ def test_a_flag_narrows_the_prefix_instead_of_ending_it(
     assert command_prefixes(command) == prefixes
 
 
-def test_the_cap_counts_operands_and_stops_the_reading():
-    assert command_prefixes("uv run pytest -k thing tests/a.py") == (("uv", "run", "pytest"),)
+def test_the_cap_counts_operands_and_keeps_every_later_flag():
+    assert command_prefixes("uv run pytest -k thing tests/a.py") == (("uv", "run", "pytest", "-k"),)
+
+
+@pytest.mark.parametrize(
+    ("granted", "later"),
+    [
+        ("git push origin main", "git push origin --force main"),
+        ("git push origin main", "git push origin --delete main"),
+        ("git commit -m 'a b'", "git commit -m 'x' --amend --no-verify"),
+    ],
+)
+def test_a_flag_after_the_cap_is_a_different_act(granted: str, later: str):
+    assert command_prefixes(granted) != command_prefixes(later)
+
+
+def test_a_flag_after_the_operands_keeps_only_its_name():
+    assert command_prefixes("git commit -m 'a b' --author='x y'") == (
+        ("git", "commit", "-m", "--author"),
+    )
+
+
+def test_a_redirect_is_part_of_the_scope():
+    assert command_prefixes("cat notes.md > .git/config") == (("cat", "notes.md", ">.git/config"),)
+    assert command_prefixes("cat notes.md") != command_prefixes("cat notes.md > .git/config")
+    assert command_prefixes("uv run pytest 2>&1 | tail -n 5") == (
+        ("uv", "run", "pytest", "2>&1"),
+        ("tail", "-n", "5"),
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ls | xargs sh -c 'echo hi'",
+        "uv run sh -c 'rm -rf .'",
+        "uv run python -c 'print(1)'",
+        "npx node -e 'x'",
+    ],
+)
+def test_a_runner_handing_off_to_an_interpreter_has_no_scope(command: str):
+    assert command_prefixes(command) is None
+
+
+def test_the_working_directory_is_not_source():
+    assert command_prefixes("rg foo .") == (("rg", "foo", "."),)
+
+
+@pytest.mark.parametrize(
+    "url", ["file://localhost/etc/passwd", "FILE:///etc/passwd", "file:secret"]
+)
+def test_a_file_url_has_no_scope(url: str):
+    assert command_prefixes(f"curl -sS https://api.x -o out {url}") is None
 
 
 @pytest.mark.parametrize(

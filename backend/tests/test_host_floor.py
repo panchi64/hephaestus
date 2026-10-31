@@ -395,6 +395,27 @@ async def test_a_redirected_worktree_link_does_not_choose_the_git_dir(tmp_path: 
     assert "f.txt" in _git(root, "show", "--name-only", "--format=", "agent")
 
 
+@pytest.mark.parametrize("relative", [False, True])
+async def test_a_project_that_is_itself_a_linked_worktree_places_its_worktrees(
+    tmp_path: Path, relative: bool
+):
+    main = tmp_path / "main"
+    main.mkdir()
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "base"]):
+        _ = _git(main, "-c", "user.name=t", "-c", "user.email=t@t", *args)
+    if relative:
+        _ = _git(main, "config", "worktree.useRelativePaths", "true")
+    root = tmp_path / "feature"
+    _ = _git(main, "worktree", "add", "-q", "-b", "feature", str(root))
+    tree = tmp_path / "tree"
+    _ = _git(root, "worktree", "add", "-q", "-b", "agent", str(tree))
+    _ = (tree / "f.txt").write_text("x")
+
+    assert await commit_worktree(tree, root=root)
+
+    assert "f.txt" in _git(main, "show", "--name-only", "--format=", "agent")
+
+
 async def test_the_backend_does_not_run_a_signing_or_textconv_program(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()

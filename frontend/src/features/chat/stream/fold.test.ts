@@ -262,19 +262,19 @@ describe("why Auto asked", () => {
 
   test("the reason rides onto the card that asks", () => {
     const h = harness(turn());
-    h.fold(asked("mail_send", "acts outside the VM"));
+    h.fold(asked("mail_send", "it acts outside the VM"));
     const block = blockOf(h.messages, "approval");
     expect(block?.kind === "approval" && block.approval.autoReason).toBe(
-      "acts outside the VM",
+      "it acts outside the VM",
     );
   });
 
   test("and onto the terminal, which is where the shell asks", () => {
     const h = harness(turn());
-    h.fold(asked("shell_run_on_host", "runs on the host", "brew install x"));
+    h.fold(asked("shell_run_on_host", "it runs on the host", "brew install x"));
     const block = blockOf(h.messages, "host_command");
     expect(block?.kind === "host_command" && block.command.autoReason).toBe(
-      "runs on the host",
+      "it runs on the host",
     );
   });
 

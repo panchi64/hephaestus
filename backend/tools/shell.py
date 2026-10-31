@@ -25,6 +25,7 @@ from pydantic_ai_harness.shell import ShellToolset
 from core.config import get_settings
 from services.home.paths import HomePathError, parse
 from services.home.table import RunHome
+from services.permissions import VM_SHELL_TOOLS
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import HostExecutionError, host_scratch_dir, resolve_confinement, run_on_host
 from services.sandbox.refusals import host_refusal
@@ -47,11 +48,11 @@ _MAX_LOG_BYTES = 100_000_000
 
 #: The tools that execute something new; `check_command` and `stop_command` act on a process
 #: already approved into existence.
-EXECUTING_TOOLS = frozenset({"run_command", "start_command"})
+EXECUTING_TOOLS = frozenset(name.removeprefix("shell_") for name in VM_SHELL_TOOLS)
 
 #: The same, namespaced. A name absent from `app.state.gated_tools` cannot be granted for the
 #: conversation, so the operator would be asked on every command.
-GATED_TOOLS = frozenset(f"shell_{name}" for name in EXECUTING_TOOLS)
+GATED_TOOLS = VM_SHELL_TOOLS
 
 
 def _host_root(home: RunHome | None) -> Path:

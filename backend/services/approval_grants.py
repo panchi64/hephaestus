@@ -42,13 +42,17 @@ from core.db import in_session, upsert
 from core.serde import as_utc
 from models._fields import new_id, utcnow
 from models.approval_grant import ApprovalGrant
-from services.permissions import OPERATOR_ONLY_TOOLS, command_prefixes
+from services.permissions import (
+    HOST_TOOLS,
+    OPERATOR_ONLY_TOOLS,
+    VM_SHELL_TOOLS,
+    command_prefixes,
+)
 from services.permissions.guards import is_guarded
 
-#: Literals because ``services/`` sits below ``tools/``; ``tests/test_approval_grants.py``
-#: pins the set against the catalog's so a new executing tool cannot inherit a whole-tool
-#: grant.
-COMMAND_SCOPED_TOOLS = frozenset({"shell_run_command", "shell_start_command", "shell_run_on_host"})
+#: ``tests/test_approval_grants.py`` pins the set against the catalog's so a new executing
+#: tool cannot inherit a whole-tool grant.
+COMMAND_SCOPED_TOOLS = VM_SHELL_TOOLS | HOST_TOOLS
 
 _COMMAND_ARGUMENT = "command"
 

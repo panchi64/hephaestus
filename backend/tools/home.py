@@ -128,7 +128,8 @@ async def unmounted_project(deps: RunDeps, home: RunHome, path: str) -> Place | 
 
 async def lease(deps: RunDeps, home: RunHome, place: Place) -> RunHome:
     """Let this thread write ``place`` from now on, and the rest of this run at once. A
-    project the home did not mount is mounted by rebuilding the home."""
+    project the home did not mount is mounted by rebuilding the home, which raises
+    ``WorktreeBusyError`` while another conversation holds the thread's worktree."""
     leases = deps.caps.get_optional(WriteLeases)
     if leases is not None and deps.conversation_id:
         await leases.lease(deps.owner_id, deps.conversation_id, place)

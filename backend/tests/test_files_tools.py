@@ -186,6 +186,17 @@ async def test_an_approved_write_leases_the_project_to_the_thread(tmp_path: Path
     assert (root / "more.md").read_text() == "more"
 
 
+async def test_a_relative_write_into_an_unmounted_project_asks_to_mount_it(tmp_path: Path):
+    caps, root, _leases = await _with_project(tmp_path)
+    manager = ScratchDirs(tmp_path)
+    args: dict[str, object] = {"path": "projects/api/notes.md", "content": "hi"}
+    with pytest.raises(ApprovalRequired):
+        _ = await _call("write_file", args, manager=manager, caps=caps)
+    _ = await _call("write_file", args, manager=manager, caps=caps, approved=True)
+    assert (root / "notes.md").read_text() == "hi"
+    assert not (manager.path("conv-1") / "projects").exists()
+
+
 async def test_a_delegated_agent_cannot_take_write_access(tmp_path: Path):
     caps, root, leases = await _with_project(tmp_path)
     args: dict[str, object] = {"path": "~/projects/api/notes.md", "content": "hi"}

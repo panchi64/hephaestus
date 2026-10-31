@@ -454,8 +454,8 @@ export interface ApprovalRequired extends Base {
   guard?: string | null;
   /** Set on a host command about to run with no fence in force, saying why. */
   unconfined?: string | null;
-  /** Why the Auto level parked this call ("runs on the host", "the VM can reach the
-   *  network"). Absent at other levels. */
+  /** Why the Auto level parked this call, as a clause ("it runs on the host", "the VM is
+   *  unavailable"). Absent at other levels. */
   auto_reason?: string | null;
 }
 /** The operator settled a parked approval. A replay carries the card's `approval.required`

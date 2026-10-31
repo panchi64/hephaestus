@@ -22,6 +22,7 @@ from pydantic_ai import (
 from pydantic_ai.models.test import TestModel
 from sqlmodel import Session, select
 
+import routes.runs as runs_routes
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from agent.gating import EnvApproved, GrantApproved
 from agent.parked_codec import decode_park, encode_park
@@ -34,6 +35,7 @@ from services.agents import builtin_roster
 from services.conversations import ConversationBinding
 from services.registry import ModelRegistry
 from services.subagents import SubagentLauncher
+from tools import RunDeps
 
 from ._helpers import (
     await_parked,
@@ -113,6 +115,40 @@ async def test_a_clean_restart_restores_a_parked_chat_run_and_approving_finishes
         assert types[-1] == "run.ended"
         assert restored.status is RunStatus.done
         await await_row(app, run_id, present=False)
+
+
+async def test_a_restored_park_re_checks_a_vm_cleared_call_against_the_parks_own_deps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    install_sensitive_tool(monkeypatch)
+    async with client_app(home=tmp_path) as (client, app):
+        swap_tool_catalog(app, danger_categories())
+        run_id, call_id = await park_chat(client, app)
+
+    seen: list[RunDeps] = []
+
+    async def still_clears(deps: RunDeps, _tool: str) -> bool:
+        seen.append(deps)
+        return True
+
+    monkeypatch.setattr(runs_routes, "env_still_clears", still_clears)
+    async with client_app(home=tmp_path) as (client, app):
+        swap_tool_catalog(app, danger_categories())
+        restored = await await_parked(app, run_id)
+        parked = parked_turn(restored)
+        assert parked.compaction is None
+        cleared = ToolCallPart(
+            tool_name="shell_run_command", args={"command": "ls"}, tool_call_id="vm-1"
+        )
+        parked.requests.approvals.append(cleared)
+        parked.settled["vm-1"] = EnvApproved()
+        resp = await client.post(
+            f"/runs/{run_id}/approve",
+            json={"decisions": [{"tool_call_id": call_id, "approved": True}]},
+        )
+
+    assert resp.status_code == 202
+    assert [d.conversation_id for d in seen] == [restored.conversation_id]
 
 
 async def test_a_crash_leaves_the_park_to_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
