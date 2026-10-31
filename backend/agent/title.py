@@ -28,12 +28,13 @@ import logging
 from collections.abc import Sequence
 from typing import cast
 
-from pydantic_ai import ModelMessage
+from pydantic_ai import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
 from core.text import strip_think_blocks
 from prompts.utility import TITLE_INSTRUCTIONS
+from services.conversation_view import operator_content
 
 from .meta import make_utility_agent
 
@@ -74,7 +75,11 @@ def _part_text(message: ModelMessage, part_names: frozenset[str]) -> str:
     for part in message.parts:
         if type(part).__name__ not in part_names:
             continue
-        content: object = getattr(part, "content", None)
+        content: object = (
+            operator_content(message, part)
+            if isinstance(message, ModelRequest) and isinstance(part, UserPromptPart)
+            else getattr(part, "content", None)
+        )
         if isinstance(content, str):
             chunks.append(content)
         elif isinstance(content, list | tuple):

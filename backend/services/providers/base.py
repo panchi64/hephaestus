@@ -184,3 +184,9 @@ class Provider(Protocol):
         that says nothing means ``{}``.
         """
         return {}
+
+    def run_settings(self, *, attended: bool) -> ModelSettings:
+        """Settings that depend on who is waiting on the run, merged over
+        :meth:`model_settings` per request. Keys must be this provider's own prefixed
+        ones: every adapter's are merged into every turn, whatever model it runs on."""
+        return {}

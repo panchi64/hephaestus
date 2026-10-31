@@ -142,8 +142,8 @@ def compose_turn(
     owner_id: str = OPERATOR_ID,
     attachment_ids: list[str] | None = None,
     file_refs: list[str] | None = None,
-    # A slash command's expansion, resolved by the caller; rides the prompt tail and is
-    # stripped before recording, so the `/name` typed is what persists.
+    # A slash command's expansion, resolved by the caller; rides the prompt tail as
+    # chassis text, so the transcript shows the `/name` typed.
     turn_context: str = "",
     # The invocation, which is recorded, so a regenerate resolves `/reviewer` afresh rather
     # than replaying an old block.

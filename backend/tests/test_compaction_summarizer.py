@@ -7,8 +7,9 @@ continuing its own conversation, which makes three properties load-bearing:
 - **The request is the turn's.** The thread's replay, normalised as a turn normalises it,
   plus one appended user message — on the same brief and the same tool array — so a local
   engine serves it from the prefix it already holds. The compaction prompt is never part of
-  the brief, and the call runs with ``tool_choice='none'``.
-- **It is a side run.** A tool call in the reply fails the fold and is never executed; the
+  the brief, and the call runs with the turn's own settings.
+- **It is a side run.** A tool call in the reply is retried once under ``tool_choice='none'``
+  and is never executed; the
   observers that keep state on the agent (the injection announcer, the prefix watch) leave
   it alone; only the answer text is kept, never the model's reasoning.
 - **Trust and fidelity.** The one section that repeats tool-sourced facts is fenced on the
@@ -184,14 +185,38 @@ class TestTheRequestIsTheTurns:
         [(messages, _)] = seen
         assert any(isinstance(p, SystemPromptPart) for p in messages[0].parts)
 
-    async def test_tool_choice_none_is_sent_and_nothing_caps_the_answer(self):
+    async def test_the_turns_own_settings_are_sent_and_nothing_caps_the_answer(self):
+        """A ``tool_choice`` change would invalidate the provider's cached conversation."""
         seen: _Seen = []
         _ = await summarize_history(_agent(_model("s", seen=seen)), _deps(), _turn("hi", "hello"))
         [(_, info)] = seen
         assert info.model_settings is not None
-        assert info.model_settings.get("tool_choice") == "none"
+        assert "tool_choice" not in info.model_settings
         assert "max_tokens" not in info.model_settings
-        assert FOLD_SETTINGS == {"tool_choice": "none"}
+
+    async def test_a_tool_call_is_retried_under_tool_choice_none(self):
+        seen: _Seen = []
+        ran: list[str] = []
+
+        async def streamed(messages: list[ModelMessage], info: AgentInfo):
+            seen.append((messages, info))
+            if len(seen) == 1:
+                yield {0: DeltaToolCall(name="touch", json_args="{}", tool_call_id="t1")}
+            else:
+                yield "the story"
+
+        agent = _agent(FunctionModel(stream_function=streamed))
+
+        @agent.tool_plain
+        def touch() -> str:
+            ran.append("touched")
+            return "ok"
+
+        summary = await summarize_history(agent, _deps(), _turn("hi", "hello"))
+        assert _briefing(summary) == "the story"
+        assert ran == []
+        retry = seen[1][1].model_settings
+        assert retry is not None and retry.get("tool_choice") == FOLD_SETTINGS.get("tool_choice")
 
     def test_the_replay_is_normalised_as_a_turns_is(self):
         """A dangling call is stripped and a stretch ending on a request absorbs the
@@ -226,8 +251,8 @@ class TestItIsASideRun:
         assert _briefing(summary) == "the story so far"
 
     async def test_a_tool_call_fails_the_fold_and_never_runs(self):
-        """Some local servers ignore ``tool_choice='none'``. A summary run that acted on
-        the world would be a turn nobody asked for, so the call is refused, not run."""
+        """Some local servers ignore ``tool_choice='none'`` on the retry too. A summary run
+        that acted on the world would be a turn nobody asked for, so the call is refused."""
         ran: list[str] = []
         model = _model({0: DeltaToolCall(name="touch", json_args="{}", tool_call_id="t1")})
         agent = Agent(model, deps_type=RunDeps, output_type=[str, DeferredToolRequests])

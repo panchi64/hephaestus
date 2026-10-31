@@ -32,7 +32,7 @@ from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelEndpoint, ModelRole
 from runs import Endpoint, EndpointGate
-from services import embeddings, llm
+from services import embeddings, llm, reasoning
 from services.endpoint_spec import EndpointSpec
 from services.permissions import decision_reviewer
 from services.providers import DEFAULT_PROVIDER_ID, get_provider
@@ -149,6 +149,7 @@ class ModelRegistry:
         native_tools: bool = True,
         vision: bool = False,
         thinking: bool = False,
+        effort: str | None = None,
         enabled: bool = True,
         max_concurrent_runs: int | None = None,
     ) -> ModelEndpoint:
@@ -164,6 +165,7 @@ class ModelRegistry:
             native_tools=native_tools,
             vision=vision,
             thinking=thinking,
+            effort=effort,
             enabled=enabled,
             max_concurrent_runs=max_concurrent_runs,
         )
@@ -206,6 +208,8 @@ class ModelRegistry:
                 elif key == "model":
                     # An explicit empty value clears the default back to discovery-only.
                     endpoint.model = str(value) if value else None
+                elif key == "effort":
+                    endpoint.effort = str(value) if value else None
                 elif key == "max_concurrent_runs" and value == 0:
                     endpoint.max_concurrent_runs = None
                 elif value is not None:
@@ -844,6 +848,7 @@ class ModelRegistry:
             native_tools=endpoint.native_tools,
             vision=endpoint.vision,
             thinking=endpoint.thinking,
+            effort=reasoning.parse_effort(endpoint.effort),
             endpoint_id=endpoint.id,
             name=endpoint.name,
             max_concurrent_runs=endpoint.max_concurrent_runs,

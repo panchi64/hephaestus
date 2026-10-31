@@ -13,7 +13,7 @@ orchestrator's error handling, its verifier branch and its title epilogue is wha
 It fills a :class:`TurnSetup` **in place** rather than returning a new one, because the
 orchestrator arms its stop-flush hooks *before* any of this runs — a bound tripping
 mid-prelude has to record the operator's bare prompt — and those hooks read
-``turn_start``, ``persisted`` and ``stamp_ids`` off that same object at flush time. The
+``turn_start``, ``chassis_tail`` and ``stamp_ids`` off that same object at flush time. The
 defaults on the dataclass are the correct record for a turn that stopped before it began.
 
 Nothing here reads settings for itself: the orchestrator resolves one object and passes
@@ -73,7 +73,8 @@ class TurnSetup:
     # read by the flush hooks from the moment they are armed — defaults are the
     # correct record for a turn that stopped before it began
     turn_start: TurnStart = field(default_factory=TurnStart)
-    persisted: list[UserContent] | None = None
+    #: How many trailing items of ``user_prompt`` the chassis added (stop notice, context).
+    chassis_tail: int = 0
     stamp_ids: list[str] = field(default_factory=list)
     #: The `@` references that resolved, stamped on the turn's user request so the
     #: operator's chips come back on a reload. The marker naming them persists with the
@@ -81,8 +82,7 @@ class TurnSetup:
     file_refs: list[str] = field(default_factory=list)
     # filled by prepare_turn
     user_prompt: str | list[UserContent] | None = None
-    #: The stop notice this turn opens with: at the head of a fresh ``user_prompt`` (which
-    #: the recorded prompt leaves out), or of a regenerate's tail context.
+    #: The stop notice this turn carries, first in its tail context.
     stop_notice: str | None = None
     history: list[ModelMessage] | None = None  # persistence baseline
     model_history: list[ModelMessage] | None = None  # what the model replays
@@ -127,17 +127,13 @@ def record_prompt(
     ):
         return
     content = setup.user_prompt if setup.user_prompt is not None else prompt
-    if setup.stop_notice is not None and isinstance(content, list):
-        # The store reads the leading string as the operator's typed text.
-        rest = content[1:]
-        content = rest[0] if len(rest) == 1 and isinstance(rest[0], str) else rest
     message_id = store.record_prompt(
         conversation_id,
         ModelRequest(parts=[UserPromptPart(content)]),
         attachment_ids=list(setup.stamp_ids),
         file_refs=list(setup.file_refs),
         command=command,
-        persisted=setup.persisted,
+        chassis_tail=setup.chassis_tail,
     )
     setup.turn_start.prompt_message_id = message_id
     run.prompt_message_id = message_id
@@ -176,11 +172,10 @@ async def prepare_turn(
     handed.
 
     ``turn_context`` is the caller's block for this one invocation (a picked slash
-    command's expansion). It joins the per-turn context at the tail, first, and leaves
-    with it — none of that is persisted, so the turn on record stays what was typed. On a
-    regenerate the caller resolves it again from the invocation stamped on the turn being
-    re-answered, and it rides the replayed history's trailing request like the standing
-    providers do.
+    command's expansion). It joins the per-turn context at the tail, first, and persists
+    with it as chassis text the transcript doesn't show. On a regenerate the caller
+    resolves it again from the invocation stamped on the turn being re-answered, and it
+    replaces the tail of the replayed history's trailing request.
     """
 
     history = (
@@ -286,7 +281,6 @@ async def prepare_turn(
         # chips; foreign/deleted ids are dropped.
         if resolved.content:
             user_prompt = [prompt, *resolved.content]
-        setup.persisted = resolved.persisted or None
         setup.stamp_ids = resolved.ids
 
     # Files the operator named with `@`. A **reference**, not an injection: the block
@@ -309,16 +303,10 @@ async def prepare_turn(
                 else [user_prompt]
             )
             user_prompt = [*base, refs_marker]
-            # Beside whatever the attachments left, never instead of it: a turn can carry
-            # both, and an empty list here is still the "strip to the typed prompt" signal
-            # the tail context relies on.
-            setup.persisted = [*(setup.persisted or []), refs_marker]
 
-    # Per-turn prompt context (each manifest's `prompt_context` export — the
-    # document state): appended at the *tail* of the current turn's user prompt,
-    # never persisted, so it's re-resolved fresh each turn with exactly one copy
-    # in context — and, unlike an instruction, its churn never touches the head
-    # of the request, keeping the whole history a byte-stable cacheable prefix.
+    # Per-turn prompt context (each manifest's `prompt_context` export — the document
+    # state): appended at the *tail* of the current turn's user prompt and persisted with
+    # it, so its churn never touches the head and the history stays append-only.
     #
     # Announced here rather than from the capability the head's blocks are read
     # from: these resolve before the agent starts, so there is no request to read
@@ -343,10 +331,9 @@ async def prepare_turn(
     #
     # Unguarded by `prompt is not None`, unlike the attachment and reference work above,
     # and for the reason the standing providers below are: a **regenerate** has no fresh
-    # prompt but still has a turn to compose. Its block rides the trailing request of the
-    # replayed history instead (`with_tail_context`, at the foot of this function), which
-    # is the same place and the same non-persisted lifetime. Without this a re-answer would
-    # be answering a plain `/reviewer …` token — a different question than the first time.
+    # prompt but still has a turn to compose. Its block replaces the tail of the replayed
+    # history's trailing request instead (`with_tail_context`, at the foot of this
+    # function). Without this a re-answer would be answering a plain `/reviewer …` token.
     if turn_context:
         context_texts.append(turn_context)
         announce_injection(run, "command", turn_context, "prompt")
@@ -362,40 +349,26 @@ async def prepare_turn(
             continue
         context_texts.append(text)
         announce_injection(run, contributor_id(provider), text, "prompt")
-    if context_texts:
-        if prompt is not None:
-            context_base: list[UserContent] = (
-                user_prompt
-                if isinstance(user_prompt, list)
-                else []
-                if user_prompt is None
-                else [user_prompt]
-            )
-            user_prompt = [*context_base, *context_texts]
-            # An empty (non-None) persisted set still strips the live payload back
-            # to the typed prompt on record — the tail context must not persist.
-            setup.persisted = setup.persisted if setup.persisted is not None else []
-    # The first turn after the operator stopped one opens on a word about it, ahead of what
-    # they say now, so the model does not resume as if nothing happened. Not persisted: it
-    # is about this turn, not the thread. A regenerate has no fresh prompt to lead, so it
-    # rides the tail context there. Read, not taken: the engine takes it once the turn is
-    # recorded, so a prelude that fails after this point leaves it for the retry.
+    # First in the tail, never ahead of the prompt: position 0 of a user part is the
+    # operator's own words (`services/permissions/reviewer`). Read, not taken: the engine
+    # takes it once the turn is recorded, so a prelude that fails here leaves it for the retry.
     stop_notice = STOP_NOTICE if run.messages.stop_notice_pending else None
     if stop_notice is not None:
         setup.stop_notice = stop_notice
         announce_injection(run, "stop", stop_notice, "prompt")
-        if prompt is not None:
-            head: list[UserContent] = (
-                user_prompt
-                if isinstance(user_prompt, list)
-                else []
-                if user_prompt is None
-                else [user_prompt]
-            )
-            user_prompt = [stop_notice, *head]
-            setup.persisted = setup.persisted if setup.persisted is not None else []
-        else:
-            context_texts.insert(0, stop_notice)
+        context_texts.insert(0, stop_notice)
+    if context_texts and prompt is not None:
+        context_base: list[UserContent] = (
+            user_prompt
+            if isinstance(user_prompt, list)
+            else []
+            if user_prompt is None
+            else [user_prompt]
+        )
+        user_prompt = [*context_base, *context_texts]
+        # Persisted as sent, so the next turn replays the bytes this one cached; the count
+        # is how readers of the operator's words take the tail back off.
+        setup.chassis_tail = len(context_texts)
     setup.user_prompt = user_prompt
 
     # Fold the older turns away — *after* the attachments and the per-turn context are

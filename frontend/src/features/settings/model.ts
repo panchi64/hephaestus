@@ -21,6 +21,8 @@ export interface EndpointInput {
   nativeTools: boolean;
   vision: boolean;
   thinking: boolean;
+  /** Null on create is the adapter's default; on update "" clears a stored level. */
+  effort?: string | null;
   /** Omitted from the create/edit form; carried for the row toggle's PATCH. */
   enabled?: boolean;
 }

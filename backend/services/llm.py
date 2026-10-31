@@ -60,7 +60,7 @@ def descriptor_of(spec: EndpointSpec) -> reasoning.ModelDescriptor:
     forgotten field cannot silently skip the lever in one of them.
     """
     return reasoning.ModelDescriptor(
-        model_id=spec.model, base_url=spec.base_url, thinking=spec.thinking
+        model_id=spec.model, base_url=spec.base_url, thinking=spec.thinking, effort=spec.effort
     )
 
 

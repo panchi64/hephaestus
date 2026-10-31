@@ -44,6 +44,9 @@ export interface ConversationStats {
   ttftAvgMs: number | null;
   /** Generation throughput, output tokens per second of model time. */
   tokensPerSecond: number | null;
+  /** Dollars at list price, and what caching saved; null without a published price. */
+  costUsd: number | null;
+  savedUsd: number | null;
   /** The last model request on its own: its route and what the provider's cache did.
    *  Separate from the totals because a sum hides a fallback model and a cold cache.
    *  Null before the first response. */
@@ -60,6 +63,11 @@ export interface LastRequest {
   outputTokens: number | null;
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
+  costUsd: number | null;
+  /** Where the prompt diverged from the previous request's (`system_changed`, …), as
+   *  Anthropic's cache diagnostics report it, and roughly the tokens it cost. */
+  cacheMissReason: string | null;
+  cacheMissedTokens: number | null;
 }
 
 /** "compaction" is the chassis marking where earlier turns were folded into a summary:

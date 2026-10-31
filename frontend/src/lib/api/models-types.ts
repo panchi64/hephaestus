@@ -37,6 +37,8 @@ export interface EndpointViewDTO {
   native_tools: boolean;
   vision: boolean;
   thinking: boolean;
+  /** Effort pinned for every request (`low`…`max`); null is the adapter's default. */
+  effort: string | null;
   enabled: boolean;
   last_status: EndpointStatus | null;
   last_error_category: EndpointErrorCategory | null;

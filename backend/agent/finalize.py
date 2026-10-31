@@ -27,7 +27,12 @@ from runs import Run, RunStatus
 from services.conversations import ConversationStore
 
 from .flush import CANCELLED_DETAIL, PersistContext
-from .history import TurnStart, after_recorded_prompt, split_injected_requests
+from .history import (
+    TurnStart,
+    after_recorded_prompt,
+    recorded_on_send,
+    split_injected_requests,
+)
 from .parking import ParkedTurn
 from .turn import TurnResult
 
@@ -69,6 +74,7 @@ def finalize(
         recorded = context.start.prompt_message_id
         turn_messages = context.start.slice(messages)
         if recorded is not None:
+            store.amend_request(conversation_id, recorded, recorded_on_send(turn_messages))
             turn_messages = after_recorded_prompt(turn_messages)
         # `blocked_reason` stamps the branch node so a reload shows the live stop marker; with
         # nothing after the prompt (a stop before the first token) the prompt carries it.

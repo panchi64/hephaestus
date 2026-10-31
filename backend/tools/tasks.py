@@ -251,9 +251,8 @@ def tasks_toolset() -> AbstractToolset[RunDeps]:
 async def tasks_context(req: PromptContextRequest) -> str:
     """The current task list, for the tail of this turn's prompt.
 
-    Delivered per turn rather than written into history: the list changes on nearly every
-    step, and a changing block at the head of the request would invalidate the inference
-    engine's prompt-prefix cache for the whole conversation behind it.
+    In the tail rather than the head: the list changes on nearly every turn, and a fresh
+    copy per turn is cheaper than an instruction change each time.
     """
     tasks = req.caps.get_optional(ConversationTasks)
     if tasks is None or req.conversation_id is None:

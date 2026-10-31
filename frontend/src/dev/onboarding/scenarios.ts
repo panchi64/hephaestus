@@ -126,6 +126,7 @@ function endpoint(over: Partial<EndpointViewDTO>): EndpointViewDTO {
     native_tools: true,
     vision: false,
     thinking: false,
+    effort: null,
     enabled: true,
     last_status: null,
     last_error_category: null,

@@ -7,8 +7,8 @@ their native shape) instead of squeezing Claude through an OpenAI-compat gateway
 
 from __future__ import annotations
 
-from typing import override
-from urllib.parse import quote
+from typing import Literal, override
+from urllib.parse import quote, urlparse
 
 import httpx
 from pydantic import JsonValue
@@ -16,7 +16,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.anthropic import AnthropicProvider as _SdkProvider
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from core.config import get_settings
 from core.exceptions import DegradedCapabilityError
@@ -27,6 +27,9 @@ from services.providers.base import ModelLimits, Provider, ProviderPreset
 from services.reasoning import ModelDescriptor
 
 _DEFAULT_BASE_URL = "https://api.anthropic.com"
+_FIRST_PARTY_HOST = "api.anthropic.com"
+# Pinned rather than left to the model, whose default varies by model (Opus 5.5: medium).
+_DEFAULT_EFFORT: ThinkingEffort = "high"
 # The Messages API demands a pinned version header on every request.
 _API_VERSION = "2023-06-01"
 _TIMEOUT = httpx.Timeout(8.0, connect=3.0)
@@ -63,21 +66,14 @@ class AnthropicNativeProvider(Provider):
         provider = _SdkProvider(api_key=spec.api_key, base_url=spec.base_url)
         settings: AnthropicModelSettings = self.model_settings(descriptor_of(spec))
         if spec.max_output_tokens is not None:
-            # The model's own ceiling in place of the library's 4096 — `Provider
-            # .model_limits` has why. On the construction-time settings for the reason
-            # `model_settings` gives, which is also what lets a caller that does want a
-            # bound still set one per request.
+            # The model's own ceiling in place of the library's 4096 (`Provider
+            # .model_limits`); a request's own `max_tokens` still wins.
             settings = {**settings, "max_tokens": spec.max_output_tokens}
         return AnthropicModel(
             spec.model,
             provider=provider,
             settings=settings,
-            # Our window when we have one, the library's otherwise — `Provider
-            # .build_model` has the reasoning. This adapter talks to one lab, so a model
-            # name really does name that model and the library's figure is the best
-            # available when the models API couldn't be asked, or a proxy in front of it
-            # doesn't say. Partial either way: every other inferred capability of the
-            # named model stands.
+            # Our window when we have one, the library's otherwise (`Provider.build_model`).
             profile=(
                 ModelProfile(context_window=spec.context_window)
                 if spec.context_window is not None
@@ -176,44 +172,62 @@ class AnthropicNativeProvider(Provider):
 
     @override
     def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
-        # Claude's extended thinking is opt-in per request — a background call that
-        # asks for nothing gets nothing, so there is no lever to pull here.
-        return {}
+        # Unified `False` thinks as little as the model allows where it can't turn
+        # thinking off (Claude Opus 5.5), so background calls never run at chat effort.
+        return {"thinking": False}
 
     @override
     def model_settings(self, descriptor: ModelDescriptor) -> AnthropicModelSettings:
-        """Prompt-cache breakpoints on the three prefixes a chat turn repeats verbatim.
+        """Prompt-cache breakpoints, pinned effort and, on the first-party API, cache
+        diagnostics.
 
-        A conversation re-sends its whole history on every turn, and in front of that
-        history sit two blocks that barely change at all: the standing instructions and
-        the tool catalog — about fourteen thousand tokens of schema before the first word
-        of the thread. Without a breakpoint every turn pays full price to re-read them.
+        The breakpoints are the automatic one that walks forward with the conversation,
+        plus the tool array and the static instructions. ``anthropic_cache_messages`` is
+        absent on purpose: it replaces the automatic breakpoint for gateways that reject
+        it. :meth:`run_settings` raises the TTL for attended runs.
 
-        The three settings are the three prefixes, and they compose: ``anthropic_cache``
-        is the automatic breakpoint that walks forward as the conversation grows,
-        ``anthropic_cache_instructions`` pins the system block and
-        ``anthropic_cache_tool_definitions`` pins the tool array. Only
-        ``anthropic_cache_messages`` conflicts with the automatic one, and it is
-        deliberately absent — it is the fallback for gateways that reject the top-level
-        parameter, not a fourth breakpoint.
-
-        Nothing here depends on ``descriptor``: caching is a property of the Messages
-        API, not of one Claude model, so every model this adapter builds gets it.
-
-        ``anthropic_cache_ttl = "off"`` returns **no settings at all** rather than a
-        disabled-looking trio. ``base_url`` is honored here, so this adapter also fronts
-        Anthropic-compatible proxies, and one that rejects ``cache_control`` fails the
-        request outright — an operator behind such a proxy needs a way to stop sending the
-        breakpoints, not a cheaper tier of them.
+        Effort goes through the unified ``thinking`` setting, not ``anthropic_effort``:
+        Pydantic AI then sends a mid-conversation change as a per-message effort entry
+        where the model supports one, which keeps the cached history valid.
         """
-        ttl = get_settings().anthropic_cache_ttl
-        if ttl == "off":
-            return {}
-        return {
-            "anthropic_cache": ttl,
-            "anthropic_cache_instructions": ttl,
-            "anthropic_cache_tool_definitions": ttl,
+        settings: AnthropicModelSettings = {
+            **_cache_settings(_ttl(attended=False)),
+            "thinking": descriptor.effort or _DEFAULT_EFFORT,
         }
+        if _is_first_party(descriptor.base_url):
+            settings["anthropic_cache_diagnostics"] = True
+        return settings
+
+    @override
+    def run_settings(self, *, attended: bool) -> AnthropicModelSettings:
+        return _cache_settings(_ttl(attended=attended))
+
+
+def _ttl(*, attended: bool) -> Literal["5m", "1h"] | None:
+    """The configured TTL resolved for one run; None when caching is switched off."""
+    ttl = get_settings().anthropic_cache_ttl
+    if ttl == "off":
+        return None
+    if ttl == "auto":
+        return "1h" if attended else "5m"
+    return ttl
+
+
+def _cache_settings(ttl: Literal["5m", "1h"] | None) -> AnthropicModelSettings:
+    # "off" sends no keys at all: a proxy that rejects `cache_control` fails the whole
+    # request, so a disabled-looking value is not enough.
+    if ttl is None:
+        return {}
+    return {
+        "anthropic_cache": ttl,
+        "anthropic_cache_instructions": ttl,
+        "anthropic_cache_tool_definitions": ttl,
+    }
+
+
+def _is_first_party(base_url: str | None) -> bool:
+    # Diagnostics is a Claude API field; a proxy in front of it may reject it.
+    return urlparse(base_url or _DEFAULT_BASE_URL).hostname == _FIRST_PARTY_HOST
 
 
 PROVIDER = AnthropicNativeProvider()

@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequestPart,
     ModelResponsePart,
+    UserContent,
 )
 
 from core.compaction_sections import SummarySection, summary_sections
@@ -80,13 +81,29 @@ ATTACHMENTS_MARKER_OPEN = "[Attached file(s):"
 #: Request-metadata key holding the slash command a turn was sent with; unlike the others,
 #: the backend reads it back.
 #:
-#: A command's expansion is never persisted (``services/commands/expand``), so a regenerate
-#: would replay a bare ``/reviewer …`` token. Storing the invocation lets the chat route
-#: (which holds the registry; ``agent/`` resolves no command names) re-expand it against
-#: whatever the name resolves to now. Read by ``ConversationStore.turn_stamps``.
+#: Storing the invocation lets a regenerate re-expand it against whatever the name resolves
+#: to now, in the chat route (which holds the registry; ``agent/`` resolves no command
+#: names). Read by ``ConversationStore.turn_stamps``.
 COMMAND_KEY = "command"
 
+#: Request-metadata key: how many trailing items of the request's first user part the
+#: chassis added after the operator's own content (stop notice, per-turn context). They
+#: persist as sent, so the replayed history is the prefix the provider cached; every
+#: reader of the operator's words slices them off.
+CHASSIS_TAIL_KEY = "chassis_tail"
+
 _NO_IDS: frozenset[str] = frozenset()
+
+
+def operator_content(message: ModelRequest, part: UserPromptPart) -> str | Sequence[UserContent]:
+    """``part``'s content without the items the chassis appended to the operator's own."""
+    content = part.content
+    first = next((p for p in message.parts if isinstance(p, UserPromptPart)), None)
+    metadata = as_dict(message.metadata)
+    tail = metadata.get(CHASSIS_TAIL_KEY) if metadata is not None else None
+    if isinstance(content, str) or first is not part or not isinstance(tail, int) or tail <= 0:
+        return content
+    return list(content[: len(content) - tail])
 
 
 @dataclass
@@ -688,7 +705,7 @@ def project_tree(
             if user_parts and not returns:
                 assistant = None
                 part = user_parts[0]
-                text = flatten_content(part.content)
+                text = flatten_content(operator_content(message, part))
                 notice = notice_body(text)
                 if notice is not None:
                     views.append(

@@ -13,8 +13,10 @@ from __future__ import annotations
 import httpx
 import pytest
 from pydantic import JsonValue
+from pydantic_ai import ModelRequest, UserPromptPart
 
 from routes.deps import app_state
+from services.conversation_view import operator_content
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, obj, s
@@ -159,10 +161,13 @@ class TestRerunningTheTurn:
             _ = await collect_sse_events(client, s(json_body(resp)["run_id"]))
             replay = await app_state(app).conversations.model_history(conversation_id)
 
-        # The point of stamping the invocation rather than the block: after a regenerate
-        # the thread still holds one copy of the operator's typed text and no copy of the
-        # directive. A persisted expansion would now be replayed on every later turn.
-        assert not any("agents_spawn" in str(m) for m in replay)
+        # The expansion persists as sent, as the request's chassis tail, so the cached
+        # prefix survives. A regenerate swaps it rather than stacking a second copy, and
+        # it never reads as the operator's own words.
+        assert sum(str(m).count("agents_spawn") for m in replay) == 1
+        request = next(m for m in replay if isinstance(m, ModelRequest))
+        part = next(p for p in request.parts if isinstance(p, UserPromptPart))
+        assert "agents_spawn" not in str(operator_content(request, part))
 
     async def test_an_edit_keeps_the_command_its_new_text_still_names(
         self, monkeypatch: pytest.MonkeyPatch

@@ -68,6 +68,8 @@ export interface ModelEndpoint {
   nativeTools: boolean;
   vision: boolean;
   thinking: boolean;
+  /** Effort pinned for every request; null is the adapter's default. */
+  effort: string | null;
   /** Whether this endpoint is active — disabled endpoints are hidden from the
    *  picker and skipped in fallback chains (the backend enforces both). */
   enabled: boolean;
@@ -203,6 +205,7 @@ function toEndpoint(dto: EndpointViewDTO): ModelEndpoint {
     nativeTools: dto.native_tools,
     vision: dto.vision,
     thinking: dto.thinking,
+    effort: dto.effort,
     enabled: dto.enabled,
     lastStatus: dto.last_status,
     lastErrorCategory: dto.last_error_category,

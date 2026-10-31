@@ -18,6 +18,7 @@ const BLANK_FORM: EndpointFormValues = {
   nativeTools: true,
   vision: false,
   thinking: false,
+  effort: "",
 };
 
 function formFor(ep: ModelEndpoint): EndpointFormValues {
@@ -33,6 +34,7 @@ function formFor(ep: ModelEndpoint): EndpointFormValues {
     nativeTools: ep.nativeTools,
     vision: ep.vision,
     thinking: ep.thinking,
+    effort: ep.effort ?? "",
   };
 }
 

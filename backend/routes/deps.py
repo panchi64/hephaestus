@@ -270,7 +270,7 @@ def instruction_providers(request: Source) -> tuple[InstructionProvider, ...]:
 
 
 def prompt_context_providers(request: Source) -> tuple[PromptContextProvider, ...]:
-    """The manifests' per-turn providers, appended to each user prompt's tail, never persisted."""
+    """The manifests' per-turn providers, appended to each user prompt's tail."""
     return app_state(request).prompt_context_providers
 
 

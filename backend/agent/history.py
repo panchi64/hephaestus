@@ -18,17 +18,32 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from pydantic_ai import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.messages import (
+    ModelRequestPart,
     NativeToolSearchReturnPart,
     ToolAvailabilityDeltaPart,
     ToolSearchReturnPart,
+)
+
+from services.conversation_view import operator_content
+
+#: Parts Pydantic AI adds to an outgoing request: the instruction window's baseline, and
+#: the instruction, effort and tool changes it delivers in place.
+_RECORDED_ON_SEND = (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    ModelSettingsDeltaPart,
+    ToolAvailabilityDeltaPart,
 )
 
 
@@ -54,20 +69,20 @@ def drop_dangling_tool_calls(messages: list[ModelMessage]) -> list[ModelMessage]
 
 
 def with_tail_context(messages: list[ModelMessage], texts: list[str]) -> list[ModelMessage]:
-    """Append per-turn context to the trailing user request — the *model's view only*.
+    """Replace the trailing user request's per-turn context — the *model's view only*.
 
-    The regenerate path re-runs a history that already ends in the user request, so
-    there is no fresh ``user_prompt`` to carry the prompt-context providers' output;
-    instead it rides on that trailing request here. Rebuilds via ``replace`` (never
-    mutates — the store's in-memory tree shares these objects), and since the caller
-    persists only ``messages[start:]``, a message replaced *before* ``start`` never
-    reaches the durable history. No trailing user request (defensive) ⇒ unchanged."""
+    A regenerate re-runs a history that already ends in the user request, carrying the
+    context it was first sent with; this swaps that for fresh context. Rebuilds via
+    ``replace`` (the store's in-memory tree shares these objects), and the caller persists
+    only ``messages[start:]``, so the swap never reaches the durable history. No trailing
+    user request (defensive) ⇒ unchanged."""
     if not messages or not isinstance(messages[-1], ModelRequest):
         return messages
     last = messages[-1]
     for index, part in enumerate(last.parts):
         if isinstance(part, UserPromptPart):
-            content = part.content if isinstance(part.content, list) else [part.content]
+            own = operator_content(last, part)
+            content = [own] if isinstance(own, str) else list(own)
             parts = list(last.parts)
             parts[index] = replace(part, content=[*content, *texts])
             return [*messages[:-1], replace(last, parts=parts)]
@@ -173,6 +188,15 @@ def after_recorded_prompt(turn: list[ModelMessage]) -> list[ModelMessage]:
         return rest
     parts = [p for p in opening.parts if isinstance(p, UserPromptPart)]
     return [*(ModelRequest(parts=[part]) for part in parts[1:]), *rest]
+
+
+def recorded_on_send(turn: list[ModelMessage]) -> list[ModelRequestPart]:
+    """The parts the library added to ``turn``'s opening request as it sent it, which the
+    prompt written at the start of the turn never had. Without them the next turn finds no
+    instruction baseline and rewrites the cached head."""
+    if not turn or not isinstance(turn[0], ModelRequest):
+        return []
+    return [p for p in turn[0].parts if isinstance(p, _RECORDED_ON_SEND)]
 
 
 def split_injected_requests(messages: list[ModelMessage]) -> list[ModelMessage]:

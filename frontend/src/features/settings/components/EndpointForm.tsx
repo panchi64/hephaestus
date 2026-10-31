@@ -25,7 +25,21 @@ export interface EndpointFormValues {
   nativeTools: boolean;
   vision: boolean;
   thinking: boolean;
+  /** "" is the adapter's default. */
+  effort: string;
 }
+
+/** The provider whose adapter pins an effort level instead of reading `thinking`. */
+const EFFORT_PROVIDER = "anthropic";
+
+const EFFORT_OPTIONS: SelectOption[] = [
+  { value: "", label: "Default (high)" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max" },
+];
 
 export interface EndpointFormProps {
   values: EndpointFormValues;
@@ -134,13 +148,26 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
           onChange={(c) => props.onChange("vision", c)}
         />
       </Row>
-      <Row gap={4} align="center" justify="between">
-        <Field label="Thinking" orientation="row" value="" />
-        <Toggle
-          checked={v().thinking}
-          onChange={(c) => props.onChange("thinking", c)}
+      <Show
+        when={v().provider === EFFORT_PROVIDER}
+        fallback={
+          <Row gap={4} align="center" justify="between">
+            <Field label="Thinking" orientation="row" value="" />
+            <Toggle
+              checked={v().thinking}
+              onChange={(c) => props.onChange("thinking", c)}
+            />
+          </Row>
+        }
+      >
+        <Select
+          label="Effort"
+          value={v().effort}
+          options={EFFORT_OPTIONS}
+          onChange={(level) => props.onChange("effort", level)}
+          hint="How hard the model thinks on chat turns. Background work always runs low. Changing it mid-thread keeps the prompt cache on current Claude models."
         />
-      </Row>
+      </Show>
     </>
   );
 

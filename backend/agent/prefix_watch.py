@@ -35,7 +35,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import cast, override
 
-from pydantic_ai import InstructionPart, RunContext
+from pydantic_ai import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    InstructionPart,
+    ModelSettingsDeltaPart,
+    RunContext,
+)
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelRequestContext
@@ -118,11 +124,19 @@ def _absorb(digest: hashlib.blake2b, value: object) -> None:
                 _absorb(digest, repr(value))
 
 
+#: Parts the library records on a request after this hook has read it. A baseline is never
+#: sent and a delta only ever extends the history, so neither can move an earlier prefix, and
+#: hashing them would report the request this hook saw as changed on the next one.
+_RECORDED_AFTER_HOOKS = (InstructionBaselinePart, InstructionDeltaPart, ModelSettingsDeltaPart)
+
+
 def _message_digest(message: ModelMessage) -> str:
     """One message's fingerprint: its type, then each part's type and payload, in order."""
     digest = _hasher()
     digest.update(type(message).__name__.encode())
     for part in message.parts:
+        if isinstance(part, _RECORDED_AFTER_HOOKS):
+            continue
         digest.update(_FIELD)
         digest.update(type(part).__name__.encode())
         for name in _PAYLOAD_FIELDS:
@@ -166,7 +180,7 @@ def digest_request(
     between parts and our own unnamed literal, and a reading assembled from the named blocks
     alone would miss a change in either.
     """
-    parts = instruction_parts or []
+    parts = _as_sent(instruction_parts or [], messages)
     joined = InstructionPart.join(parts) or ""
     brief = _hasher()
     _absorb(brief, joined)
@@ -182,6 +196,36 @@ def digest_request(
         tool_names=tuple(tool_def.name for tool_def in function_tools),
         messages=tuple(_message_digest(message) for message in messages),
     )
+
+
+def _as_sent(parts: list[InstructionPart], messages: list[ModelMessage]) -> list[InstructionPart]:
+    """``parts`` with each append-mode block at the value its window opened with.
+
+    This hook reads the current values; the library then sends the latest
+    ``InstructionBaselinePart``'s values in the head and delivers the change as a delta.
+    """
+    baseline = next(
+        (
+            part
+            for message in reversed(messages)
+            for part in reversed(message.parts)
+            if isinstance(part, InstructionBaselinePart)
+        ),
+        None,
+    )
+    if baseline is None:
+        return parts
+    opened = {
+        recorded.id: recorded.content
+        for recorded in baseline.instructions
+        if isinstance(recorded, InstructionPart) and recorded.id is not None
+    }
+    return [
+        replace(part, content=opened[part.id])
+        if part.on_change == "append" and part.id is not None and part.id in opened
+        else part
+        for part in parts
+    ]
 
 
 def _block_digest(content: str) -> str:

@@ -42,6 +42,7 @@ function endpoint(over: Partial<ModelEndpoint> = {}): ModelEndpoint {
     nativeTools: true,
     vision: false,
     thinking: false,
+    effort: null,
     enabled: true,
     lastStatus: "ok",
     lastErrorCategory: null,

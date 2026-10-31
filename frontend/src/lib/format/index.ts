@@ -108,6 +108,13 @@ export function compactCount(n: number, precise = false): string {
   return `${n}`;
 }
 
+/** A dollar amount, sign kept: cents from a dollar up, a tenth of a cent below it, since
+ *  one request usually costs less than a cent. */
+export function usd(value: number): string {
+  const abs = Math.abs(value);
+  return `${value < 0 ? "−" : ""}$${abs.toFixed(abs >= 1 ? 2 : 3)}`;
+}
+
 /** A count and its noun, agreeing: `1 source`, `4 sources`, `0 topics`. `many` for the
  *  nouns that do not take an `s`. */
 export function plural(n: number, one: string, many = `${one}s`): string {
