@@ -12,6 +12,7 @@ database, are then overwritten and unlinked.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -39,10 +40,11 @@ class MigrationError(HephaestusError):
 
 def migrate_legacy_plaintext(settings: Settings, db_key: bytes) -> None:
     """Encrypt a plaintext database, move plaintext files into the volume, shred the rest."""
-    if settings.db_url is not None:
-        # Not ours to move or delete: an explicit URL may point anywhere.
-        return
     db_path = settings.data_dir / "app.db"
+    # Not ours to move or delete: an explicit URL may point anywhere. One naming the
+    # default file (the dev instance sets it for hand-run `alembic`) is still ours.
+    if settings.db_url not in (None, f"sqlite:///{db_path}"):
+        return
     _recover_interrupted_swap(db_path, db_key)
     if db_path.exists() and is_plaintext_sqlite(db_path):
         _encrypt_database(db_path, db_key)
@@ -52,6 +54,9 @@ def migrate_legacy_plaintext(settings: Settings, db_key: bytes) -> None:
     if db_path.exists() and not is_plaintext_sqlite(db_path):
         for leftover in _plaintext_leftovers(settings):
             shred_tree(leftover)
+    for parent in ("sandbox", "plugins", "searxng"):
+        with contextlib.suppress(OSError):  # absent, or still holding something
+            (settings.data_dir / parent).rmdir()
 
 
 def is_plaintext_sqlite(path: Path) -> bool:

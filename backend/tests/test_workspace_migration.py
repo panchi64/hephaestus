@@ -139,6 +139,9 @@ def test_plaintext_files_move_into_the_volume_and_leftovers_are_shredded(tmp_pat
         tmp_path / "searxng" / "secret_key",
         tmp_path / "app.db.pre-modes-backup",
         sealed,
+        tmp_path / "sandbox",
+        tmp_path / "plugins",
+        tmp_path / "searxng",
     ):
         assert not gone.exists(), gone
 
@@ -160,11 +163,20 @@ def test_leftovers_stay_while_the_database_is_still_plaintext(
     assert backup.exists()
 
 
-def test_an_explicit_database_url_is_never_touched(tmp_path: Path):
+def test_a_database_url_elsewhere_is_never_touched(tmp_path: Path):
+    db = tmp_path / "elsewhere.db"
+    _plaintext_db(db)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    migrate_legacy_plaintext(Settings(data_dir=data_dir, db_url=f"sqlite:///{db}"), _KEY)
+    assert is_plaintext_sqlite(db)
+
+
+def test_a_database_url_naming_the_default_file_is_still_migrated(tmp_path: Path):
     db = tmp_path / "app.db"
     _plaintext_db(db)
     migrate_legacy_plaintext(Settings(data_dir=tmp_path, db_url=f"sqlite:///{db}"), _KEY)
-    assert is_plaintext_sqlite(db)
+    assert not is_plaintext_sqlite(db)
 
 
 def test_shred_overwrites_before_unlinking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

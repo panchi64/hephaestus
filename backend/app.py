@@ -147,11 +147,14 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     )
     await lifecycle.start("vm-image", start=platform.start, stop=platform.stop)
 
+    volume = core.volume.select_volume(settings)
+    # A crashed process can leave the volume mounted, decrypted, while this one is locked.
+    await core.volume.close_volume(volume)
     workspace = WorkspaceSession(
         app,
         settings,
         vault=vault,
-        volume=core.volume.select_volume(settings),
+        volume=volume,
         platform=platform,
         discovery_client=discovery_client,
     )

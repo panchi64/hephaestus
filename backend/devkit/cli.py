@@ -15,11 +15,14 @@ reader to guess the second.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from collections.abc import Callable
 from typing import TypedDict
 
+import core.volume
+from core.config import Settings
 from devkit import doctor, launch, ports, processes, surfaces
 from devkit.instance import DevInstance, resolve
 from devkit.processes import Supervisor
@@ -211,6 +214,10 @@ def _cmd_reset(args: _Args) -> int:
         )
         return 1
     _ = processes.stop_recorded(instance.root)
+    # A backend killed hard leaves its volume mounted; deleting through a live mount would
+    # walk the decrypted files instead of the backing store.
+    volume = core.volume.select_volume(Settings(data_dir=instance.data_dir))
+    asyncio.run(core.volume.close_volume(volume))
     summary = reset_workspace(instance.data_dir)
     # `reset_workspace` deliberately preserves the live database — it is written for a
     # running app that holds the file open. Nothing holds it now, and leaving it would
