@@ -32,8 +32,12 @@ class Settings(BaseSettings):
 
     auth_enabled: bool = True
 
-    # All user data lives under here — gitignored, encrypted at rest.
+    # All user data lives under here, gitignored. The database is a SQLCipher file and
+    # file-shaped data sits in the encrypted volume mounted at `data_dir/volume`.
     data_dir: Path = Path("data")
+    # Cap on the encrypted volume (an `hdiutil -size` value); the backing store only grows
+    # as files are written. gocryptfs has no cap.
+    volume_max_size: str = "512g"
 
     @field_validator("data_dir")
     @classmethod
