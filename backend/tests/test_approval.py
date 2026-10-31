@@ -9,6 +9,7 @@ from pydantic_ai import (
     FunctionToolset,
     ModelMessage,
     RunContext,
+    RunUsage,
     ToolApproved,
     ToolDenied,
     ToolReturnPart,
@@ -223,8 +224,10 @@ async def test_parked_turn_keeps_parallel_tool_calls_on_resume():
 
     assert parked.agent is not None
     settings = parked.agent.model_settings
-    assert isinstance(settings, dict)
-    assert settings.get("parallel_tool_calls") is True
+    assert settings is not None and not isinstance(settings, dict)
+    deps = RunDeps(run=run, owner_id="operator")
+    resolved = settings(RunContext(deps=deps, model=TestModel(), usage=RunUsage()))
+    assert resolved.get("parallel_tool_calls") is True
 
     call_id = parked.requests.approvals[0].tool_call_id
     resumed = await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}))

@@ -7,13 +7,13 @@ sub-agent's wake) drives an ordinary turn through the same path a route does.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import NamedTuple, TypedDict
 
 from fastapi import HTTPException
 from pydantic_ai import AbstractToolset
 from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from agent import build_chat_orchestrator
 from agent.summarize import AutoCompactPolicy
@@ -48,6 +48,8 @@ class TurnModels(NamedTuple):
     vision: bool
     #: The main model's primary endpoint, which the turn's run leases.
     endpoint: Endpoint | None = None
+    #: ``ResolvedModel.with_effort`` for the main model.
+    with_effort: Callable[[ThinkingEffort], Model] | None = None
 
 
 class WallClockOverride(TypedDict, total=False):
@@ -120,7 +122,13 @@ async def resolve_turn_models(
         utility_model = background.model
         title_settings = background.reasoning_off
     return TurnModels(
-        resolved, utility_model, title_settings, main.context_window, main.vision, main.endpoint
+        resolved,
+        utility_model,
+        title_settings,
+        main.context_window,
+        main.vision,
+        main.endpoint,
+        main.with_effort,
     )
 
 
@@ -142,8 +150,8 @@ def compose_turn(
     owner_id: str = OPERATOR_ID,
     attachment_ids: list[str] | None = None,
     file_refs: list[str] | None = None,
-    # A slash command's expansion, resolved by the caller; rides the prompt tail and is
-    # stripped before recording, so the `/name` typed is what persists.
+    # A slash command's expansion, resolved by the caller; rides the prompt tail as
+    # chassis text, so the transcript shows the `/name` typed.
     turn_context: str = "",
     # The invocation, which is recorded, so a regenerate resolves `/reviewer` afresh rather
     # than replaying an old block.
@@ -172,7 +180,11 @@ def compose_turn(
     ``kind`` says who asked: the operator (``chat``), the scheduler (``task``) or the agent
     (``linked``). All compose the identical orchestrator; the kind only picks the
     concurrency lane (``runs/lanes.py``), so unattended work can't hold up a watched turn."""
-    resolved, utility_model, background_settings, context_window, vision, endpoint = models
+    resolved = models.main
+    if binding is not None and binding.effort is not None and models.with_effort is not None:
+        resolved = models.with_effort(binding.effort)
+    utility_model, background_settings = models.utility, models.utility_settings
+    context_window, vision, endpoint = models.context_window, models.vision, models.endpoint
     orchestrator = build_chat_orchestrator(
         prompt,
         model=resolved,

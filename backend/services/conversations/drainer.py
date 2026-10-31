@@ -43,6 +43,8 @@ class DrainerMixin(StoreCore):
             await self._persist_unblock(job)
         elif job.kind == "block":
             await self._persist_block(job)
+        elif job.kind == "amend":
+            await self._persist_amend(job)
         # Deliberately not in a `finally`: a raise here is retried by the worker, and
         # the conversation must stay pinned across those attempts. A job that exhausts
         # its retries releases through `_on_drop` instead.
@@ -167,6 +169,15 @@ class DrainerMixin(StoreCore):
             row = session.get(Message, job.message_id) if job.message_id else None
             if row is not None:
                 row.blocked_reason = job.blocked_reason
+
+        await in_session(self._engine, work)
+
+    async def _persist_amend(self, job: PersistJob) -> None:
+        def work(session: Session) -> None:
+            # FIFO behind the request's insert, so the row exists.
+            row = session.get(Message, job.message_id) if job.message_id else None
+            if row is not None and job.blob is not None:
+                row.blob = self._vault.encrypt_str(job.blob)
 
         await in_session(self._engine, work)
 

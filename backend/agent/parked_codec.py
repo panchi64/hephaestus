@@ -10,13 +10,14 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, JsonValue, TypeAdapter
-from pydantic_ai import DeferredToolRequests, ToolApproved, ToolDenied
+from pydantic_ai import DeferredToolRequests, ModelRequest, ToolApproved, ToolDenied
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from runs import Endpoint, Run
 from services.conversations import ConversationBinding
 
 from .gating import EnvApproved, GrantApproved
+from .history import history_part_count
 from .parking import ParkedTurn
 
 _REQUESTS = TypeAdapter(DeferredToolRequests)
@@ -52,7 +53,10 @@ class ParkPayload(BaseModel):
     conversation_id: str | None
     prompt_message_id: str | None
     persist_from: int
-    persist_from_parts: int
+    # Payloads parked before the boundary was counted from the front carry only the
+    # turn's own parts, counted from the end.
+    persist_from_parts: int = 0
+    persist_from_history_parts: int | None = None
     clean_drop: list[int] | None
     vision: bool
     workspace_key: str
@@ -94,7 +98,7 @@ def encode_park(parked: ParkedTurn, run: Run) -> str:
         conversation_id=parked.conversation_id,
         prompt_message_id=parked.prompt_message_id,
         persist_from=parked.persist_from,
-        persist_from_parts=parked.persist_from_parts,
+        persist_from_history_parts=parked.persist_from_history_parts,
         clean_drop=list(parked.clean_drop) if parked.clean_drop is not None else None,
         vision=parked.vision,
         workspace_key=parked.workspace_key,
@@ -132,15 +136,25 @@ def decode_park(payload: str, *, kind: str) -> tuple[ParkedTurn, Endpoint | None
             settled[each.call_id] = EnvApproved(override_args=each.override_args)
         else:
             settled[each.call_id] = ToolApproved(override_args=each.override_args)
+    history = ModelMessagesTypeAdapter.validate_json(stored.history)
+    history_parts = stored.persist_from_history_parts
+    if history_parts is None:
+        boundary = history[stored.persist_from] if stored.persist_from < len(history) else None
+        own = stored.persist_from_parts
+        history_parts = (
+            history_part_count(boundary.parts[: max(len(boundary.parts) - own, 0)])
+            if isinstance(boundary, ModelRequest) and own
+            else 0
+        )
     parked = ParkedTurn(
         agent=None,
-        message_history=ModelMessagesTypeAdapter.validate_json(stored.history),
+        message_history=history,
         requests=_REQUESTS.validate_json(stored.requests),
         announced=set(stored.announced),
         settled=settled,
         conversation_id=stored.conversation_id,
         persist_from=stored.persist_from,
-        persist_from_parts=stored.persist_from_parts,
+        persist_from_history_parts=history_parts,
         clean_drop=(stored.clean_drop[0], stored.clean_drop[1]) if stored.clean_drop else None,
         prompt_message_id=stored.prompt_message_id,
         binding=_BINDING.validate_json(stored.binding),

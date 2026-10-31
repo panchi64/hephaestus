@@ -196,6 +196,8 @@ export interface ConversationDetailDTO extends ConversationSummaryDTO {
   /** How far the model may go in this thread. Always populated: the backend resolves
    *  threads that predate the column to their effective level. */
   permission_level?: string | null;
+  /** The thread's own effort level; null runs at the endpoint's. */
+  effort?: string | null;
 }
 
 /**

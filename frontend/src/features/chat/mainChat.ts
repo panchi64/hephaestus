@@ -45,6 +45,7 @@ import { toWindowSpec } from "~/features/plugins/windows";
 import { windowActions } from "~/lib/stores/pluginWindows";
 import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { refreshSessions } from "./data/sessions";
+import { effortToSend, seatEffort } from "./effortSeat";
 import { createHistoryLoad, watchLateRuns } from "./historyLoad";
 import type { HistoryStatus } from "./historyStatus";
 import { DEFAULT_PERMISSION_LEVEL, type PermissionLevel } from "./model";
@@ -95,6 +96,10 @@ export interface MainChat {
    *  `provisional`). The composer renders the control as pending on it rather than
    *  asserting the placeholder as the thread's level. */
   permissionPending: Accessor<boolean>;
+  /** The open thread's effort level ("" runs at the endpoint's), seated from the loaded
+   *  thread and named by the next send once the operator picks one (`effortSeat.ts`). */
+  effort: Accessor<string>;
+  setEffort: (level: string) => void;
   /** The agent the operator picked for the thread on screen and has not yet had
    *  confirmed by a send — undefined until they pick one. The composer shows this
    *  over the thread's stored agent, and the next send names it. */
@@ -131,6 +136,13 @@ export function mainChat(): MainChat {
       permissionOwner = currentId();
       setLevel(level);
     };
+    const [effort, setEffortValue] = createSignal("");
+    // The thread the effort above was picked on (`effortSeat.ts`).
+    let effortOwner: string | null = null;
+    const setEffort = (level: string): void => {
+      effortOwner = currentId();
+      setEffortValue(level);
+    };
     const [agentChoice, setChoice] = createSignal<string | undefined>(
       undefined,
     );
@@ -157,6 +169,7 @@ export function mainChat(): MainChat {
           // thread whose level is unknown and drop the control to the default,
           // mid-turn, on the very thread that was created with it.
           permissionOwner = id;
+          effortOwner = id;
           agentOwner = id;
           // So does whatever the operator typed while the first turn ran. The
           // composer's draft is keyed by thread, and the seat below re-keys it: left
@@ -184,6 +197,12 @@ export function mainChat(): MainChat {
         projectId: stagedProjectId,
         // Read on every send — the level is the one binding fact that moves.
         permission,
+        effort: () =>
+          effortToSend({
+            choice: effort(),
+            owner: effortOwner,
+            currentId: currentId(),
+          }),
         // Named only when the operator changed it and a send has not yet carried it.
         agent: (isNewThread) =>
           agentToSend({
@@ -209,6 +228,16 @@ export function mainChat(): MainChat {
         },
       },
     );
+    createEffect(() => {
+      const seat = seatEffort({
+        currentId: currentId(),
+        owner: effortOwner,
+        stored: loaded()?.effort,
+      });
+      if (seat === null) return;
+      effortOwner = seat.owner;
+      setEffortValue(seat.value);
+    });
     createEffect(() => {
       const id = currentId();
       if (id === agentOwner) return;
@@ -324,6 +353,8 @@ export function mainChat(): MainChat {
       permission,
       setPermission,
       permissionPending,
+      effort,
+      setEffort,
       agentChoice,
       setAgentChoice,
     } satisfies MainChat;

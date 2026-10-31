@@ -4,18 +4,18 @@ stop markers and pins on recorded nodes.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from dataclasses import replace
 
-from pydantic_ai import ModelMessage, ModelRequest, ModelResponse
-from pydantic_ai.messages import UserContent
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 
 from runs.timings import ResponseTiming
+from services.chassis_tail import chassis_tails, prompt_index, tail_stamp, with_tails
 from services.commands.spec import Invocation
 from services.conversation_view import COMMAND_KEY, FILE_REFS_KEY
 
 from .core import StoreCore
 from .paths import active_path_model
-from .projection import MESSAGE, install_persisted_attachments, project
+from .projection import MESSAGE, project
 from .rows import PersistJob, Row
 
 
@@ -27,7 +27,7 @@ class RecordingMixin(StoreCore):
         attachment_ids: list[str] | None = None,
         file_refs: list[str] | None = None,
         command: Invocation | None = None,
-        persisted: Sequence[UserContent] | None = None,
+        chassis_tail: int = 0,
         blocked_reason: str | None = None,
         timings: list[ResponseTiming] | None = None,
         prompt_id: str | None = None,
@@ -45,11 +45,10 @@ class RecordingMixin(StoreCore):
         is stamped as the request, and a ``blocked_reason`` with no response to carry it
         lands on the prompt node.
 
-        ``attachment_ids``/``file_refs``/``command``/``persisted`` belong to the turn's first
-        user request. The ids are stamped on its node and row (chips); ``persisted``, when
-        given, replaces the request's live attachment content with the capped set before
-        serialization, so replayed history never carries the uncapped payload. That lives
-        here because what the durable blob contains is the store's job.
+        ``attachment_ids``/``file_refs``/``command``/``chassis_tail`` belong to the turn's
+        first user request, which is stored exactly as sent. The ids are stamped on its node
+        and row (chips); ``chassis_tail`` counts the trailing items the chassis added, so
+        readers can tell them from the operator's words (``services.chassis_tail``).
 
         ``blocked_reason``, when the turn ended blocked (a usage, loop, context or time
         bound), stamps the first response, the node ``project_tree`` keys the view by, so a
@@ -93,6 +92,7 @@ class RecordingMixin(StoreCore):
                 # its expansion, so a regenerate re-expands the current template.
                 stamp = {
                     **({FILE_REFS_KEY: list(file_refs)} if file_refs else {}),
+                    **tail_stamp(node.message.parts, chassis_tail),
                     **(
                         {COMMAND_KEY: {"name": command.name, "argument": command.argument}}
                         if command is not None
@@ -104,7 +104,6 @@ class RecordingMixin(StoreCore):
                         **(getattr(node.message, "metadata", None) or {}),
                         **stamp,
                     }
-                install_persisted_attachments(node.message, persisted)
                 if blocked_on_request:
                     node.blocked_reason = blocked_reason
                 stamped = True
@@ -158,7 +157,7 @@ class RecordingMixin(StoreCore):
         attachment_ids: list[str] | None = None,
         file_refs: list[str] | None = None,
         command: Invocation | None = None,
-        persisted: Sequence[UserContent] | None = None,
+        chassis_tail: int = 0,
     ) -> str:
         """Write the operator's prompt down **as the turn begins**, returning its node id.
 
@@ -171,12 +170,53 @@ class RecordingMixin(StoreCore):
             attachment_ids=attachment_ids,
             file_refs=file_refs,
             command=command,
-            persisted=persisted,
+            chassis_tail=chassis_tail,
         )[0]
 
     async def leaf_id(self, conversation_id: str) -> str | None:
         """The active leaf — on a regenerate, the request about to be re-answered."""
         return (await self.tree(conversation_id)).active_leaf_id
+
+    def amend_request(self, conversation_id: str, node_id: str, sent: ModelRequest) -> None:
+        """Bring a recorded prompt up to ``sent``, the prompt as it went out, durably.
+
+        ``sent`` opens on the prompt part. Where its content differs (a regenerate swapped
+        the tail), its content and tail record replace the stored ones; the parts after it
+        are appended, skipping any already held (a resumed turn amends the same prompt
+        again). The stored stamps stay. A no-op for an unknown node, a response, or a
+        request without a user part."""
+        tree = self._cache.get(conversation_id)
+        if tree is None:
+            tree = self.hydrate_blocking(conversation_id)
+        node = tree.nodes.get(node_id)
+        if node is None or not isinstance(node.message, ModelRequest) or not sent.parts:
+            return
+        stored = node.message
+        at = prompt_index(stored)
+        if at is None:
+            return
+        prompt, later, old = sent.parts[0], sent.parts[1:], stored.parts[at]
+        if not isinstance(prompt, UserPromptPart) or not isinstance(old, UserPromptPart):
+            return
+        held = list(stored.parts)
+        tails = chassis_tails(stored)
+        if prompt.content != old.content:
+            # The library's own prompt carries no tail record; only a swapped one does.
+            held[at] = replace(old, content=prompt.content)
+            tails[at] = chassis_tails(sent).get(0, 0)
+        held += [part for part in later if part not in held]
+        amended = with_tails(replace(stored, parts=held), tails)
+        if amended == stored:
+            return
+        node.message = amended
+        self._submit(
+            PersistJob(
+                kind="amend",
+                conversation_id=conversation_id,
+                message_id=node.id,
+                blob=MESSAGE.dump_json(node.message).decode(),
+            )
+        )
 
     def stamp_block(self, conversation_id: str, node_id: str, reason: str) -> None:
         """Stamp a stop marker on a node that is already recorded, durably.

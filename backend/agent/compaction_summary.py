@@ -11,10 +11,9 @@ the work in its own format rather than a re-rendered transcript of it.
 
 Three things keep it a *side* run rather than a turn:
 
-- **``tool_choice='none'``**, so the tool definitions stay in the request (the prefix is
-  unchanged) while the model is told to answer in text. Some local servers ignore the
-  setting; a reply that calls a tool anyway is a failed fold, and the call never runs —
-  the node that would execute it is never reached.
+- **The tool calls never run.** The tool definitions stay in the request so the prefix is
+  unchanged, and the instructions ask for text. A reply that calls a tool anyway is retried
+  once under ``tool_choice='none'``; the node that would execute a call is never reached.
 - **It is marked a side run** (``agent.emit.SIDE_RUN``), and its stream goes nowhere but
   the summary deltas. The capabilities that observe a request each handle that on their
   own terms: ``MeasureOverhead`` measures and emits into nothing, so ``Run.context_overhead``
@@ -39,7 +38,7 @@ in verbatim lives in :mod:`agent.compaction_carry`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Protocol
 
 from pydantic_ai import (
     Agent,
@@ -72,23 +71,26 @@ from .emit import SIDE_RUN
 from .factory import TurnAgent
 from .history import drop_dangling_tool_calls, merge_consecutive_requests
 
-#: Where a fold's summary text goes while it is being written. Synchronous and
-#: fire-and-forget: it is a progress signal, so it must not be able to fail a fold or slow
-#: the model call down, and the caller that supplies one is the caller that owns a stream.
-type DeltaSink = Callable[[str], None]
 
-#: The run-level settings a summary is written under, merged over the agent's own. Only
-#: the tool choice: the model's reasoning settings are the session's, and there is
-#: deliberately no ``max_tokens`` — the endpoint's own ceiling is the only one.
+class DeltaSink(Protocol):
+    """Where a fold's summary text goes while it is being written. Synchronous and
+    fire-and-forget: it is a progress signal, so it must not be able to fail a fold or slow
+    the model call down. ``restart`` discards the text sent so far."""
+
+    def __call__(self, text: str, *, restart: bool = False) -> None: ...
+
+
+#: The settings a summary is retried under when the first answer called a tool. Only the
+#: tool choice, and no ``max_tokens``: the endpoint's own ceiling is the only one.
 FOLD_SETTINGS: ModelSettings = {"tool_choice": "none"}
 
 
 class SummaryCalledTool(Exception):
     """The model answered the request for a summary with a tool call.
 
-    ``tool_choice='none'`` asks it not to, and some local servers ignore that. The call is
-    never executed — a side run that acted on the world would be a turn nobody asked for —
-    so the fold fails instead."""
+    The call is never executed: a side run that acted on the world would be a turn nobody
+    asked for. Some local servers ignore ``tool_choice='none'`` too, so a retry under it
+    can still raise this, and the fold fails."""
 
 
 def compact_instructions(focus: str | None = None) -> str:
@@ -141,12 +143,33 @@ async def write_summary(
     raw** — unstripped, not yet merged with carried anchors and not yet fenced — because
     they are for a human watching a pause go by. Everything that makes the text *safe to
     store* is done to the settled string, never to a delta: a fence cannot be applied to
-    half a section, and a ``<think>`` block cannot be recognised until it closes."""
+    half a section, and a ``<think>`` block cannot be recognised until it closes.
+
+    Asked first with the turn's own settings, so the request reads the conversation from
+    the provider's cache (a ``tool_choice`` change invalidates the messages cache). A
+    model that answers with a tool call is asked once more under :data:`FOLD_SETTINGS`."""
+    history = summary_request(messages, focus=focus)
+    try:
+        return await _write_once(agent, deps, history, settings=None, on_delta=on_delta)
+    except SummaryCalledTool:
+        if on_delta is not None:
+            on_delta("", restart=True)
+        return await _write_once(agent, deps, history, settings=FOLD_SETTINGS, on_delta=on_delta)
+
+
+async def _write_once(
+    agent: TurnAgent,
+    deps: RunDeps,
+    history: list[ModelMessage],
+    *,
+    settings: ModelSettings | None,
+    on_delta: DeltaSink | None,
+) -> str | None:
     async with agent.iter(
         None,
         deps=deps,
-        message_history=summary_request(messages, focus=focus),
-        model_settings=FOLD_SETTINGS,
+        message_history=history,
+        model_settings=settings,
         metadata={SIDE_RUN: True},
     ) as agent_run:
         node = agent_run.next_node

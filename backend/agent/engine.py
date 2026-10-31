@@ -320,15 +320,13 @@ def build_chat_orchestrator(
     so a path picked before a worktree existed can't point at an unopenable file.
 
     ``turn_context`` is a block the caller resolved for this turn (today a slash command's
-    expansion). It rides the tail of the user prompt and is stripped before recording, so
-    persisted text stays what the operator typed. It is a parameter, not a
-    ``PromptContextProvider``, because a provider re-resolves from
-    ``(caps, owner_id, conversation_id)`` and never sees this request.
+    expansion). It rides the tail of the user prompt and persists there as sent, so the
+    next turn replays the prefix this one cached; the transcript shows only what the
+    operator typed. It is a parameter, not a ``PromptContextProvider``, because a provider
+    re-resolves from ``(caps, owner_id, conversation_id)`` and never sees this request.
 
     ``command`` is the invocation behind that block (name and argument), written onto the
-    user request so a regenerate can rebuild the block. The block itself is not persisted:
-    a stored template would replay a stale copy of an edited file and a directive like
-    "before anything else in this turn" would be false by the next turn.
+    user request so a regenerate rebuilds the block from the current template.
 
     ``model`` is the resolved ``main`` model. ``categories`` overrides the tool catalog and
     ``dormant`` (category → one-line summary) names groups whose schemas the model loads

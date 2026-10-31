@@ -17,6 +17,7 @@ import {
   parseInstant,
   plural,
   relativeTime,
+  usd,
 } from "./index";
 
 /** Built from local-time parts on purpose. `longTimestamp` reads the operator's clock
@@ -172,6 +173,17 @@ describe("plural", () => {
   it("takes an irregular plural when given one", () => {
     expect(plural(2, "match", "matches")).toBe("2 matches");
     expect(plural(1, "match", "matches")).toBe("1 match");
+  });
+});
+
+describe("usd", () => {
+  it("shows a tenth of a cent below a dollar and cents above", () => {
+    expect(usd(0.0042)).toBe("$0.004");
+    expect(usd(12.345)).toBe("$12.35");
+  });
+
+  it("keeps the sign of a saving that cost money", () => {
+    expect(usd(-0.03)).toBe("−$0.030");
   });
 });
 

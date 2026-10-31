@@ -44,6 +44,7 @@ from prompts.compaction import (
     COMPACT_OPERATOR_SECTION,
     COMPACT_OPERATOR_TAG,
 )
+from services.chassis_tail import operator_content
 from services.conversation_view import flatten_content, strip_chassis_markers
 from services.notices import ENVELOPE_TAGS, notice_body
 
@@ -102,7 +103,7 @@ def operator_messages(messages: list[ModelMessage]) -> tuple[list[OperatorMessag
         for part in message.parts:
             if not isinstance(part, UserPromptPart):
                 continue
-            text = flatten_content(part.content).strip()
+            text = flatten_content(operator_content(message, part)).strip()
             if is_checkpoint(text):
                 body = section_body(without_fenced(strip_preamble(text)), COMPACT_OPERATOR_SECTION)
                 if body:

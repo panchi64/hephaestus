@@ -228,6 +228,8 @@ class ConversationDetail(ConversationSummary):
     # only; the sidebar row doesn't need it. A thread predating the column reads as the
     # level it effectively ran at.
     permission_level: str = DEFAULT_PERMISSION
+    # The thread's own effort, so a reload restores the composer's; null is the endpoint's.
+    effort: str | None = None
     # Workspace snapshots captured per file-changing turn, newest last; the frontend merges
     # them into the View timeline beside the per-message versions.
     snapshots: list[ViewSnapshotRefOut] = []
@@ -407,6 +409,9 @@ async def _detail(
     store = deps.store(request)
     messages = await store.messages_view(conversation_id)
     history = await store.history(conversation_id)
+    # Resolved through the registry, so a row from an older build or with an unknown value
+    # opens at the least-permissive level.
+    binding = await store.binding(conversation_id)
     meter = await read_context_meter(
         conversation_id,
         owner_id=OPERATOR_ID,
@@ -428,6 +433,9 @@ async def _detail(
             input_tokens=totals.input_tokens,
             output_tokens=totals.output_tokens,
             cache_read_tokens=totals.cache_read_tokens,
+            cache_write_tokens=totals.cache_write_tokens,
+            cost_usd=totals.cost_usd,
+            saved_usd=totals.saved_usd,
             llm_ms=timings.llm_ms or None,
             tool_ms=timings.tool_ms or None,
             ttft_ms_total=timings.ttft_ms_total or None,
@@ -476,9 +484,8 @@ async def _detail(
             "context": context,
             "stats": stats,
             "active_run": active_run,
-            # Resolved through the registry, so a row from an older build or with an unknown
-            # value opens at the least-permissive level.
-            "permission_level": (await store.binding(conversation_id)).permission,
+            "permission_level": binding.permission,
+            "effort": binding.effort,
         }
     )
 
@@ -893,9 +900,8 @@ async def _run_manual_fold(run: Run, request: Request, pick: CompactRequest) -> 
     conversation_id = run.conversation_id
     assert conversation_id is not None  # set by the submit below
     try:
-        model, _, _, context_window, vision, _ = await thread_models(
-            request, conversation_id, pick.endpoint_id, pick.model
-        )
+        models = await thread_models(request, conversation_id, pick.endpoint_id, pick.model)
+        model, context_window, vision = models.main, models.context_window, models.vision
     except HTTPException as exc:
         # The resolve raises HTTP errors for its route callers; here the response has gone,
         # so the reason becomes the run's stop detail.

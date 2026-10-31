@@ -44,6 +44,7 @@ export function EndpointFormDialog(props: {
           values={editor.values()}
           providerOptions={editor.providerOptions()}
           keyHint={editor.keyHint()}
+          usesEffort={editor.usesEffort()}
           onChange={editor.onChange}
         />
         <div class="flex justify-end gap-2">

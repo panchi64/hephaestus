@@ -137,7 +137,7 @@ class TestTheAnthropicCacheBreakpoints:
             anthropic_provider, "get_settings", lambda: SimpleNamespace(anthropic_cache_ttl="off")
         )
         model = llm.build_model(spec())
-        assert not model.settings
+        assert not set(CACHE_KEYS) & set(model.settings or {})
         # …and the library agrees there is no cache request to honor, read through its own
         # resolution rather than our dict.
         assert model.resolve_cache_retention(None) is None
@@ -171,7 +171,11 @@ class TestTheProviderHook:
 
         descriptor = llm.descriptor_of(spec())
         assert Provider.model_settings(get_provider("openai-compatible"), descriptor) == {}
-        assert set(get_provider("anthropic").model_settings(descriptor)) == set(CACHE_KEYS)
+        assert set(get_provider("anthropic").model_settings(descriptor)) == {
+            *CACHE_KEYS,
+            "thinking",
+            "anthropic_cache_diagnostics",
+        }
 
     def test_the_descriptor_is_projected_from_the_spec(self):
         """One projection for the reasoning-off lookup and the settings hook, so the two

@@ -1,4 +1,5 @@
 import { Show, type JSX } from "solid-js";
+import { DEFAULT_EFFORT, effortOptions } from "~/lib/effort";
 import {
   Disclosure,
   Field,
@@ -25,6 +26,8 @@ export interface EndpointFormValues {
   nativeTools: boolean;
   vision: boolean;
   thinking: boolean;
+  /** "" is the adapter's default. */
+  effort: string;
 }
 
 export interface EndpointFormProps {
@@ -40,6 +43,9 @@ export interface EndpointFormProps {
   providerOptions?: SelectOption[];
   /** The chosen provider's key hint (e.g. "sk-ant-…"), shown on the key field. */
   keyHint?: string;
+  /** The chosen provider reads an effort level, so the form offers one in place of
+   *  the Thinking toggle. */
+  usesEffort?: boolean;
   /** Show only Base URL and API key; the rest sits under a closed "Advanced". */
   essentials?: boolean;
 }
@@ -134,13 +140,26 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
           onChange={(c) => props.onChange("vision", c)}
         />
       </Row>
-      <Row gap={4} align="center" justify="between">
-        <Field label="Thinking" orientation="row" value="" />
-        <Toggle
-          checked={v().thinking}
-          onChange={(c) => props.onChange("thinking", c)}
+      <Show
+        when={props.usesEffort}
+        fallback={
+          <Row gap={4} align="center" justify="between">
+            <Field label="Thinking" orientation="row" value="" />
+            <Toggle
+              checked={v().thinking}
+              onChange={(c) => props.onChange("thinking", c)}
+            />
+          </Row>
+        }
+      >
+        <Select
+          label="Effort"
+          value={v().effort}
+          options={effortOptions(DEFAULT_EFFORT)}
+          onChange={(level) => props.onChange("effort", level)}
+          hint="How hard the model thinks on chat turns; a thread can pick its own in the composer. Background work always runs at medium."
         />
-      </Row>
+      </Show>
     </>
   );
 

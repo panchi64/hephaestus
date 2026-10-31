@@ -11,9 +11,11 @@ from __future__ import annotations
 import importlib
 import pkgutil
 
+from pydantic_ai.settings import ModelSettings
+
 from services.providers.base import Provider, ProviderPreset
 
-__all__ = ["Provider", "ProviderPreset", "all_providers", "get_provider"]
+__all__ = ["Provider", "ProviderPreset", "all_providers", "get_provider", "run_settings"]
 
 DEFAULT_PROVIDER_ID = "openai-compatible"
 
@@ -56,3 +58,12 @@ def get_provider(provider_id: str) -> Provider:
 def all_providers() -> list[Provider]:
     """Every adapter, stable-ordered by id — the ``GET /models/providers`` listing."""
     return [p for _, p in sorted(registry().items())]
+
+
+def run_settings(*, attended: bool) -> ModelSettings:
+    """Every adapter's :meth:`Provider.run_settings`, merged. Each uses its own prefixed
+    keys, so a fallback chain mixing providers gets the right ones for each link."""
+    merged: ModelSettings = {}
+    for provider in all_providers():
+        merged.update(provider.run_settings(attended=attended))
+    return merged

@@ -78,6 +78,7 @@ dependencies = [
     "jsonschema>=4.26.0",
     "discord-py>=2.7.1",
     "sqlcipher3>=0.6.4",
+    "genai-prices>=0.1.13",
 ]
 
 # At rest, sqlcipher3 encrypts the whole database file, and sensitive columns are also

@@ -29,6 +29,7 @@ from pydantic_ai import (
 from pydantic_ai.agent import AgentRetries
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import WarnOnCacheBusts
 
 from core.timezone import local_zone_key
@@ -39,8 +40,10 @@ from prompts.agent import (
     SPAWNED_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
 )
+from runs.lanes import is_attended
 from services.llm import TOOL_CALL_SETTINGS
 from services.permissions import permission_spec
+from services.providers import run_settings
 from tools import (
     InstructionProvider,
     NarrationCapability,
@@ -65,6 +68,11 @@ from .prefix_watch import WatchPrefix, watch_prefix_enabled
 NO_DORMANT: Mapping[str, str] = MappingProxyType({})
 
 type TurnAgent = Agent[RunDeps, DeferredToolRequests | str]
+
+
+def _turn_settings(ctx: RunContext[RunDeps]) -> ModelSettings:
+    """Parallel tool calls, plus the providers' settings for whoever waits on this run."""
+    return {**TOOL_CALL_SETTINGS, **run_settings(attended=is_attended(ctx.deps.run.kind))}
 
 
 def build_agent(
@@ -104,12 +112,9 @@ def build_agent(
             categories, dormant=tuple(dormant), call_timeout_s=tool_call_timeout_s
         ),
         retries=retries,
-        # Parallel tool calling (see `services.llm.TOOL_CALL_SETTINGS`). Declared at
-        # construction, not per-run on `agent.iter(...)`: a park stashes this agent on
-        # the ParkedTurn, so every resume inherits it with nothing threaded through the
-        # payload. The library merges run-level settings over these, so it's a default
-        # a future per-run knob can still override.
-        model_settings=TOOL_CALL_SETTINGS,
+        # Declared on the agent, not per `agent.iter(...)`, so a parked turn's resume
+        # inherits it unthreaded. Run-level settings still merge over it.
+        model_settings=_turn_settings,
         output_type=[str, DeferredToolRequests],
         # ReinjectSystemPrompt keeps our system prompt authoritative — it transforms only
         # what the model sees, never what we persist. Nothing else rewrites the history on
@@ -178,21 +183,13 @@ def build_agent(
         ],
     )
 
-    # Feature-contributed dynamic instructions (each manifest's `instructions` export —
-    # the skill catalog): re-resolved fresh each turn, so they're always current and,
-    # unlike an appended prompt, never accumulate in history. Each resolves its own
-    # capability from the run's bag and no-ops (returns "") when the capability isn't
-    # wired, so registration is unconditional. Instructions render at the *head* of
-    # every request — keep them small and low-churn, or they invalidate the inference
-    # engine's prompt-prefix cache for the whole history behind them (volatile context
-    # belongs in a manifest's `prompt_context` export instead, delivered at the tail).
+    # Append mode: a changed block goes out as a message after the history, never in the
+    # cached head. Each resolves "" when it has nothing to say, hence no condition here.
     #
-    # `name=` is what makes the context readout's per-provider rows possible: the library
-    # stamps the resolved part with that name, so `agent/overhead.py` reads each block off
-    # the assembled request instead of measuring providers as they run — and
-    # `agent/injections.py` reads the same name to announce what the block said.
+    # `name=` is the id appending needs; `agent/overhead.py` and `agent/injections.py`
+    # read each block off the assembled request by it.
     for provider in instruction_providers:
-        _ = agent.instructions(name=contributor_id(provider))(provider)
+        _ = agent.instructions(name=contributor_id(provider), on_change="append")(provider)
 
     # The standing index of the withheld groups — a name and a line each, no schemas.
     # Registered here rather than arriving with the providers above because it is not a
@@ -202,9 +199,9 @@ def build_agent(
     # `search_tools` call away. Resolves to "" when nothing is dormant (or when the
     # operator has switched a group off entirely), which is why it is unconditional.
     dormant_index = dormant_index_instructions(dormant, names_by_category)
-    _ = agent.instructions(name=contributor_id(dormant_index))(dormant_index)
+    _ = agent.instructions(name=contributor_id(dormant_index), on_change="append")(dormant_index)
 
-    @agent.instructions(name="level")
+    @agent.instructions(name="level", on_change="append")
     def _level_posture(ctx: RunContext[RunDeps]) -> str:
         """What the thread's permission level means for how the model works, read off the
         level's registry so its prose lives with the rest of its declaration. The level is
@@ -214,29 +211,13 @@ def build_agent(
         `prompts/levels.py`), which is why this is unconditional."""
         return permission_spec(ctx.deps.permission).instructions
 
-    # ── Why the head is registered in this order ─────────────────────────────────────
-    #
-    # **Not by churn probability, which buys nothing.** llama.cpp, vLLM and the OpenAI wire
-    # each have a single monotone cache boundary, so a change *anywhere* in the head
-    # invalidates the tool array and the whole history behind it identically, whichever
-    # block moved. Ordering by how often a block changes only pays where there are several
-    # breakpoints — Anthropic alone — and there the lever is static-versus-dynamic, not
-    # registration order.
-    #
-    # Two things about the order *are* load-bearing, and both are Anthropic's arithmetic:
-    #
-    # - **The one static part comes first.** The library places its instructions breakpoint
-    #   after the last *static* block by counting the statics and indexing that far in — so
-    #   it assumes the statics lead. Every block below is a function and therefore dynamic;
-    #   the literal brief passed to `Agent(instructions=…)` is the only static one, and it is
-    #   first. Add a static part after a dynamic one and the breakpoint silently lands on the
-    #   wrong block, with no error anywhere. `tests/test_prompt_prefix_stability.py` pins it.
-    # - **`date` is last**, so the midnight roll falls outside the pinned prefix rather than
-    #   in the middle of it.
-    @agent.instructions(name="date")
+    # The literal brief passed to `Agent(instructions=…)` must stay the only static part:
+    # the library places its instructions breakpoint after the statics, then a second one
+    # after the append-mode blocks. `tests/test_prompt_prefix_stability.py` pins it.
+    @agent.instructions(name="date", on_change="append")
     def _current_date() -> str:
-        """Give the agent today's date as a dynamic instruction — re-resolved fresh each
-        turn (always current, no stale pinned copy) and kept out of history.
+        """Give the agent today's date as a dynamic instruction, re-resolved each turn; a
+        new day arrives as an appended change.
 
         The zone travels with it. Everything downstream already runs on the operator's own
         clock — `builtin_now`, a calendar tool's default timezone — and the model was the

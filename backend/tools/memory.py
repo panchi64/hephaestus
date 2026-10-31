@@ -265,8 +265,8 @@ def memory_catalog_block(catalog: MemoryCatalog) -> str:
 
 
 async def memory_catalog_instructions(ctx: RunContext[RunDeps]) -> str:
-    """List the pinned memories (`MEM-4`) as a dynamic instruction, current every turn and
-    kept out of history. Empty while the vault is locked: the descriptions are sealed."""
+    """List the pinned memories (`MEM-4`) as a dynamic instruction, current every turn.
+    Empty while the vault is locked: the descriptions are sealed."""
     store = ctx.deps.caps.get_optional(MemoryStore)
     if store is None:
         return ""

@@ -70,7 +70,7 @@ def test_the_overhead_fallback_is_not_zero():
 
 
 def test_the_anthropic_cache_ttl_default():
-    assert Settings().anthropic_cache_ttl == "5m"
+    assert Settings().anthropic_cache_ttl == "auto"
 
 
 # --- the store ---------------------------------------------------------------

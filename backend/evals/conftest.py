@@ -1,7 +1,8 @@
 """Eval gating + live fixtures.
 
 Registers the ``live_models`` marker and **auto-skips every test in this directory
-unless all six ``HEPH_EVAL_*`` env vars are set**, so the default ``uv run pytest``
+unless all six ``HEPH_EVAL_*`` env vars are set** (or the names a module lists in its own
+``REQUIRED_ENV``), so the default ``uv run pytest``
 (no creds) never runs these and stays green. Provides the live embedder + chat
 model fixtures, and a load-bearing **preflight** that does one real
 ``embed(["probe"])`` and asserts a non-empty vector of positive dim.
@@ -15,6 +16,7 @@ makes that failure loud (a hard error) instead of a quietly-wrong number.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -27,6 +29,7 @@ from evals.live import EnvEmbedder, build_chat_model, missing_env
 from services.conversation_search import ConversationSearch
 from services.conversations import ConversationStore
 from services.memory import MemoryStore
+from services.shapes import as_list
 
 OWNER = "operator"
 
@@ -40,16 +43,24 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Mark every test in this dir ``live_models`` and skip the lot when the env is
-    absent — so the suite is invisible to a credential-free ``uv run pytest``."""
-    absent = missing_env()
-    skip = pytest.mark.skip(
-        reason=f"live model evals: set {', '.join(absent)} to run" if absent else ""
-    )
+    """Mark every test in this dir ``live_models`` and skip each one whose env is
+    absent — so the suite is invisible to a credential-free ``uv run pytest``. A module
+    that declares ``REQUIRED_ENV`` is gated on those names instead of the six."""
     for item in items:
         item.add_marker(pytest.mark.live_models)
+        absent = _absent_for(item)
         if absent:
-            item.add_marker(skip)
+            item.add_marker(pytest.mark.skip(reason=f"live evals: set {', '.join(absent)}"))
+
+
+def _absent_for(item: pytest.Item) -> list[str]:
+    own: object = (
+        getattr(item.module, "REQUIRED_ENV", None) if isinstance(item, pytest.Function) else None
+    )
+    names = as_list(own)
+    if names is None:
+        return missing_env()
+    return [name for name in names if isinstance(name, str) and not os.environ.get(name)]
 
 
 @pytest.fixture

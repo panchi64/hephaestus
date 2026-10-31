@@ -48,6 +48,7 @@ from .compaction_context import CompactionContext
 from .history import (
     TurnStart,
     drop_dangling_tool_calls,
+    history_part_count,
     merge_consecutive_requests,
 )
 from .injections import announce_injection
@@ -122,8 +123,10 @@ async def fold(
                 )
             )
 
-        def announce_delta(text: str) -> None:
-            _ = run.emit(CompactionDelta(conversation_id=ctx.conversation_id, text=text))
+        def announce_delta(text: str, *, restart: bool = False) -> None:
+            _ = run.emit(
+                CompactionDelta(conversation_id=ctx.conversation_id, text=text, restart=restart)
+            )
 
         async with run.keepalive():
             result = await compact_conversation(
@@ -295,14 +298,12 @@ async def compact_and_retry(
     if turn_start.prompt_message_id is not None:
         # The turn wrote its prompt down as it began, so the store's replay now ends on it
         # (the plan holds an unanswered prompt out of the fold, and the checkpoint is
-        # hoisted in front of it). The live copy — with the tail context and any inline
-        # image the stored one has shed — is the first message of `turn_slice`, so the
-        # stored copy comes off or the request would be re-sent twice.
+        # hoisted in front of it). The live copy, the first message of `turn_slice`, also
+        # carries the library's parts not yet amended onto the stored one, so the stored
+        # copy comes off or the request would be sent twice.
         folded = folded[:-1]
     head = merge_consecutive_requests(drop_dangling_tool_calls(folded))
-    turn_slice = merge_consecutive_requests(
-        _without_empty_tail(partial_history[turn_start.index :])
-    )
+    turn_slice = merge_consecutive_requests(_without_empty_tail(turn_start.slice(partial_history)))
     collapsed = (
         bool(head)
         and bool(turn_slice)
@@ -311,7 +312,7 @@ async def compact_and_retry(
     )
     rebuilt = merge_consecutive_requests([*head, *turn_slice])
     turn_start.index = len(head) - 1 if collapsed else len(head)
-    turn_start.parts = len(turn_slice[0].parts) if collapsed else 0
+    turn_start.history_parts = history_part_count(head[-1].parts) if collapsed else 0
     # Nothing in the rebuilt replay was measured against the thread as it now stands — this
     # turn's own responses included, since they reported their prompt size before the fold.
     # So the boundary is the whole replay: the frame below reads the estimate, and the first

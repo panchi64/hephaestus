@@ -82,7 +82,8 @@ export function foldCompaction(ev: RunEvent, c: FoldContext): boolean {
           for (let i = list.length - 1; i >= 0; i -= 1) {
             const live = list[i];
             if (live.role !== "compaction" || !live.compaction) continue;
-            live.compaction.summary = (live.compaction.summary ?? "") + ev.text;
+            const before = ev.restart ? "" : (live.compaction.summary ?? "");
+            live.compaction.summary = before + ev.text;
             return;
           }
         }),

@@ -7,16 +7,10 @@ through the file itself with its files/code tools. Nothing of the file's *text* 
 prompt — a 300-page PDF costs the same handful of marker tokens as a one-line note, and
 the model reads only the parts it actually needs.
 
-Two shapes still come back, and the split now matters for images only:
-
-- :attr:`ResolvedAttachments.content` — what the live attach turn sees.
-- :attr:`ResolvedAttachments.persisted` — what replayed history carries.
-
-An **image** is handed to a vision model as pixels and retained inline in both (there is
-nothing to "sift through" in a picture, and no way to re-see one on demand), so for images
-the two differ from a document only in kind. Its bytes are staged too, so code can crop or
-convert it without a round-trip. For a **document** the two shapes are identical: the
-marker, and only the marker.
+The live turn and replayed history carry the same content, so the cached prefix survives
+the save. An **image** is handed to a vision model as pixels and kept inline (there is no
+way to re-see one on demand); its bytes are staged too, so code can crop or convert it. A
+**document** is the marker, and only the marker.
 
 **Degrade path.** The sandbox is fail-closed and can be unavailable (no runtime, a locked
 vault, a workspace that won't open). Pointing the model at a path that doesn't exist would
@@ -54,14 +48,11 @@ _IMAGE_PREFIX = "image/"
 
 @dataclass(frozen=True)
 class ResolvedAttachments:
-    """The two faces of a turn's attachments. ``content`` is what the live user prompt
-    carries; ``persisted`` is what replaces it in durable/replayed history. They are
-    identical for documents (a marker naming the staged path) and differ only in that an
-    image's pixels ride in both. ``ids`` are the uploads that actually resolved
-    (foreign/deleted ids dropped), so only real attachments get stamped as chips."""
+    """A turn's attachments as the user prompt carries them, live and replayed. ``ids`` are
+    the uploads that actually resolved (foreign/deleted ids dropped), so only real
+    attachments get stamped as chips."""
 
-    content: list[UserContent]  # live-turn
-    persisted: list[UserContent]  # durable
+    content: list[UserContent]
     ids: list[str]
 
 
@@ -99,7 +90,6 @@ async def resolve_attachments(
     file still being extracted contributes a short placeholder. Unknown or foreign ids are
     skipped."""
     content: list[UserContent] = []
-    persisted: list[UserContent] = []
     staged: list[_Staged] = []
     resolved_ids: list[str] = []
     views = await uploads.get_many(owner_id, ids)
@@ -129,22 +119,14 @@ async def resolve_attachments(
             )
         )
         if vision and view.mime.startswith(_IMAGE_PREFIX) and blob is not None:
-            # An image is pixels in both shapes — bounded in cost, and unre-fetchable
-            # once the turn is behind us.
-            binary = BinaryContent(data=blob.content, media_type=view.mime)
-            content.append(binary)
-            persisted.append(binary)
+            content.append(BinaryContent(data=blob.content, media_type=view.mime))
         elif path is None:
-            # Not staged — the file's own content has to ride inline or the model has
-            # nothing at all. Identical in both shapes: there is no cap to apply.
-            inline = _inline_fallback(view)
-            content.append(inline)
-            persisted.append(inline)
+            # Not staged: the file's own content has to ride inline or the model has nothing.
+            content.append(_inline_fallback(view))
     marker = _marker(staged, workspace)
     if marker:
         content.append(marker)
-        persisted.append(marker)
-    return ResolvedAttachments(content=content, persisted=persisted, ids=resolved_ids)
+    return ResolvedAttachments(content=content, ids=resolved_ids)
 
 
 def _stage(

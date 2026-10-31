@@ -39,6 +39,7 @@ from core.serde import jsonable
 from core.text import chars_to_tokens
 from core.untrusted import strip_envelope_note
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
+from services.chassis_tail import operator_content
 from services.commands.spec import Invocation
 from services.notices import notice_body
 from services.shapes import as_dict, as_list
@@ -80,10 +81,9 @@ ATTACHMENTS_MARKER_OPEN = "[Attached file(s):"
 #: Request-metadata key holding the slash command a turn was sent with; unlike the others,
 #: the backend reads it back.
 #:
-#: A command's expansion is never persisted (``services/commands/expand``), so a regenerate
-#: would replay a bare ``/reviewer …`` token. Storing the invocation lets the chat route
-#: (which holds the registry; ``agent/`` resolves no command names) re-expand it against
-#: whatever the name resolves to now. Read by ``ConversationStore.turn_stamps``.
+#: Storing the invocation lets a regenerate re-expand it against whatever the name resolves
+#: to now, in the chat route (which holds the registry; ``agent/`` resolves no command
+#: names). Read by ``ConversationStore.turn_stamps``.
 COMMAND_KEY = "command"
 
 _NO_IDS: frozenset[str] = frozenset()
@@ -688,7 +688,7 @@ def project_tree(
             if user_parts and not returns:
                 assistant = None
                 part = user_parts[0]
-                text = flatten_content(part.content)
+                text = flatten_content(operator_content(message, part))
                 notice = notice_body(text)
                 if notice is not None:
                     views.append(

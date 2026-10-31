@@ -108,8 +108,12 @@ def test_reasoning_off_is_provider_shaped():
     openai = get_provider("openai-compatible")
     assert openai.reasoning_off(ModelDescriptor(model_id="qwen-3")) != {}
     assert openai.reasoning_off(ModelDescriptor(model_id="llama-3.1-70b")) == {}
-    # Anthropic thinking is opt-in per request — nothing to turn off.
-    assert get_provider("anthropic").reasoning_off(ModelDescriptor(model_id="claude-x")) == {}
+    # Claude background work runs at medium effort, with the caps thinking requires.
+    assert get_provider("anthropic").reasoning_off(ModelDescriptor(model_id="claude-x")) == {
+        "thinking": "medium",
+        "temperature": 1.0,
+        "max_tokens": 16_384,
+    }
     # Only the Gemini Flash/Lite family accepts a zero budget; Pro rejects it.
     google = get_provider("google")
     assert google.reasoning_off(ModelDescriptor(model_id="gemini-2.5-flash")) == {
@@ -119,6 +123,26 @@ def test_reasoning_off_is_provider_shaped():
 
 
 # --- save-time validation ---------------------------------------------------
+
+
+async def test_an_endpoints_effort_round_trips_and_clears():
+    async with client_app() as (client, _app):
+        created = json_body(
+            await client.post(
+                "/models/endpoints",
+                json={
+                    "name": "claude",
+                    "base_url": "https://api.anthropic.com",
+                    "provider": "anthropic",
+                    "api_key": "sk-ant-k",
+                    "effort": "xhigh",
+                },
+            )
+        )
+        assert created["effort"] == "xhigh"
+        url = f"/models/endpoints/{s(created['id'])}"
+        assert (await client.patch(url, json={"effort": "extreme"})).status_code == 422
+        assert json_body(await client.patch(url, json={"effort": ""}))["effort"] is None
 
 
 async def test_key_requiring_provider_rejects_a_keyless_save():

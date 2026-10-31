@@ -41,12 +41,14 @@ from core.vault import Vault
 from models.corpus import CorpusChunk
 from models.upload import Upload, UploadStatus
 from runs import Run, RunRegistry, RunStatus, RunStream
+from services.chassis_tail import operator_content, tail_stamp
 from services.conversation_view import (
     ATTACHMENTS_MARKER_OPEN,
     FILE_REFS_MARKER_OPEN,
     strip_chassis_markers,
 )
-from services.conversations import ConversationStore, install_persisted_attachments
+from services.conversations import ConversationStore
+from services.conversations.projection import project
 from services.corpus.chunk_store import CorpusChunkStore
 from services.corpus.folder import FolderAdapter
 from services.corpus.index import CorpusIndex
@@ -188,10 +190,8 @@ async def test_a_document_becomes_a_marker_not_its_text():
     # *Which* workspace is `services/workspace.py`'s answer, not this function's — see
     # `test_workspace.py` for the assertion that a conversation gets its own.
     assert sessions.session.files == {"attachments/dossier": b"raw-bytes"}
-    # And what the model gets is a marker naming it — no extracted text at all, in
-    # either shape. The two collapse to the same thing for a document.
+    # And what the model gets is a marker naming it — no extracted text at all.
     body = _text(resolved.content)
-    assert resolved.content == resolved.persisted
     assert "zebra dossier" not in body
     assert "dossier" in body and uid in body and "text/plain" in body
     assert "/work/attachments/dossier" in body
@@ -208,12 +208,11 @@ async def test_vision_model_gets_pixels_and_the_image_is_staged_too():
         store, OWNER, [uid], vision=True, workspace=_workspace(sessions)
     )
 
-    # An image is still pixels, live and retained — there is nothing to page through in a
-    # picture — but its bytes are staged as well, so code can act on it with no round-trip.
+    # An image is still pixels — there is nothing to page through in a picture — but its
+    # bytes are staged as well, so code can act on it with no round-trip.
     assert _binaries(resolved.content)
-    assert _binaries(resolved.persisted)
     assert sessions.session.files == {"attachments/dossier": b"raw-bytes"}
-    assert "/work/attachments/dossier" in _text(resolved.persisted)
+    assert "/work/attachments/dossier" in _text(resolved.content)
 
 
 async def test_an_image_for_a_text_only_model_is_a_staged_file_like_any_other():
@@ -238,7 +237,6 @@ async def test_staging_failure_degrades_to_the_full_text_inline():
     # No path to point at, so the text rides inline — in full, wrapped as data — and the
     # marker says the file could not be staged rather than naming a path that isn't there.
     body = _text(resolved.content)
-    assert resolved.content == resolved.persisted
     assert "zebra dossier" in body
     assert "untrusted" in body.lower()  # wrap_untrusted sentinel/instruction present
     assert "could not be staged" in body
@@ -288,7 +286,7 @@ async def test_unknown_attachment_id_is_skipped():
     resolved = await resolve_attachments(
         store, OWNER, ["nope"], vision=True, workspace=_workspace(_FakeSandboxSessions())
     )
-    assert resolved.content == [] and resolved.persisted == [] and resolved.ids == []
+    assert resolved.content == [] and resolved.ids == []
 
 
 async def test_two_files_sharing_a_basename_stage_to_distinct_paths():
@@ -363,39 +361,33 @@ async def test_resolution_order_follows_the_request_not_the_database():
     assert body.index(reversed_ids[0]) < body.index(reversed_ids[1]) < body.index(reversed_ids[2])
 
 
-# --- install_persisted_attachments: what the durable blob carries -----------
+# --- the chassis tail: stored as sent, read without it -----------------------
 
 
-def test_install_keeps_the_prompt_and_retains_an_image():
-    request = ModelRequest(
-        parts=[
-            UserPromptPart(
-                content=["summarize this", BinaryContent(data=b"x", media_type="image/png")]
-            )
-        ]
-    )
-    install_persisted_attachments(
-        request,
-        [BinaryContent(data=b"x", media_type="image/png"), "[Attached file(s): a.png (id: up1).]"],
-    )
-
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
-    assert isinstance(part.content, list)  # an image survives → kept as a multimodal list
-    assert part.content[0] == "summarize this"
-    assert any(isinstance(item, BinaryContent) for item in part.content)
-    assert any(isinstance(item, str) and "Attached file(s)" in item for item in part.content)
+def _with_tail() -> tuple[ModelRequest, UserPromptPart]:
+    image = BinaryContent(data=b"x", media_type="image/png")
+    part = UserPromptPart(content=["summarize this", image, "<tasks>open: 1</tasks>"])
+    return ModelRequest(parts=[part], metadata=tail_stamp([part], 1)), part
 
 
-def test_install_collapses_to_text_when_no_binary_survives():
-    request = ModelRequest(parts=[UserPromptPart(content=["summarize this", "<file>doc</file>"])])
-    install_persisted_attachments(request, ["<file>doc</file>", "[Attached file(s): d (id: up2).]"])
+def test_operator_content_drops_only_the_chassis_tail():
+    request, part = _with_tail()
+    own = operator_content(request, part)
+    assert isinstance(own, list)
+    assert own[0] == "summarize this"
+    assert any(isinstance(item, BinaryContent) for item in own)
+    assert "<tasks>open: 1</tasks>" not in own
 
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
-    assert isinstance(part.content, str)  # no binary → collapsed back to one string
-    assert part.content.startswith("summarize this")
-    assert "Attached file(s)" in part.content
+
+def test_a_request_without_a_tail_reads_whole():
+    part = UserPromptPart(content=["summarize this", "[Attached file(s): d (id: up2).]"])
+    assert operator_content(ModelRequest(parts=[part]), part) == part.content
+
+
+def test_search_text_leaves_the_tail_out():
+    request, _part = _with_tail()
+    _kind, text = project(request)
+    assert "summarize this" in text and "open: 1" not in text
 
 
 def test_the_bubble_shows_only_what_the_operator_typed():
@@ -409,7 +401,7 @@ def test_the_bubble_shows_only_what_the_operator_typed():
     assert strip_chassis_markers("no markers here") == "no markers here"
 
 
-# --- the engine: full live content, capped persisted content ----------------
+# --- the engine: an attachment persists as sent ------------------------------
 
 
 async def _conv_store() -> ConversationStore:
@@ -430,8 +422,7 @@ async def test_image_attachment_is_retained_inline_in_history():
     await conv.start()
     cid = await conv.create_conversation(OWNER)
 
-    # Snapshot what the model received *at call time* — the message object is mutated in
-    # place when the capped content is installed afterward.
+    # Snapshot what the model received at call time.
     saw_binary: list[bool] = []
 
     async def capture(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:

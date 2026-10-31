@@ -99,6 +99,12 @@ export interface LastRequestUsage {
   output_tokens: number | null;
   cache_read_tokens: number | null;
   cache_write_tokens: number | null;
+  /** Null when the model has no published price. */
+  cost_usd: number | null;
+  /** Anthropic's cache diagnostics: where this prompt first diverged from the previous
+   *  request's, and roughly how many tokens that cost the cache. */
+  cache_miss_reason: string | null;
+  cache_missed_tokens: number | null;
 }
 
 /** What the thread has cost so far, cumulative over the conversation rather than the
@@ -114,6 +120,10 @@ export interface RunMetrics extends Base {
   output_tokens: number | null;
   /** Provider-reported cached prompt tokens; null when the endpoint reports none. */
   cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  /** Dollars over the priced responses, and what caching saved; null when unpriced. */
+  cost_usd: number | null;
+  saved_usd: number | null;
   /** Wall-clock measured by the backend around its own streaming. `llm_ms` is the full
    *  round-trip, connect and queue included. */
   llm_ms: number | null;
@@ -351,6 +361,8 @@ export interface CompactionDelta extends Base {
   type: "compaction.delta";
   conversation_id: string;
   text: string;
+  /** The summarizer started over; the text streamed so far is discarded first. */
+  restart?: boolean;
 }
 
 /** A fold that started and did not land (the summarizer failed or wrote nothing usable);

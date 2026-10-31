@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic_ai.settings import ThinkingEffort
+
 from runs import Endpoint
 
 
@@ -27,6 +29,7 @@ class EndpointSpec:
     native_tools: bool = True
     vision: bool = False
     thinking: bool = False
+    effort: ThinkingEffort | None = None
     # The stored endpoint this spec was resolved from; None for a spec built by hand.
     endpoint_id: str | None = None
     name: str = ""
