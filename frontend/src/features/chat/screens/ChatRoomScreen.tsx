@@ -36,7 +36,7 @@ import {
   stagedProjectId,
 } from "~/lib/stores/stagedProject";
 import { createComposerAttachments } from "~/features/uploads/data";
-import { setStagedPrivate } from "~/features/private";
+import { setStagedPrivate, stagedPrivate } from "~/features/private";
 import { useProjects } from "~/lib/stores/projects";
 import { settled } from "~/lib/resource";
 import { directoryLabel } from "../addDirectory";
@@ -298,7 +298,9 @@ export function ChatRoomScreen(): JSX.Element {
   // Attachments are transient: switching threads discards them. Not when the seat only
   // moves from null to the id the stream was already bound to (same thread, now named);
   // clearing then would drop files attached during the first turn.
-  const attachments = createComposerAttachments();
+  const attachments = createComposerAttachments(() =>
+    openId() === null ? stagedPrivate() : (currentSummary()?.private ?? false),
+  );
   createEffect(
     on(currentId, (id, prev) => {
       if (isNamedInPlace(id, prev, stream.conversationId())) return;

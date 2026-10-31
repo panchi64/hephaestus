@@ -60,11 +60,16 @@ async def _rewind_reporting(
 
 async def _validate_attachments(request: Request, attachment_ids: list[str]) -> None:
     """Every attached id must name an upload the operator owns; foreign or unknown ids get a
-    404 rather than being silently dropped at run time."""
+    404 rather than being silently dropped at run time. A private file is unknown to a
+    caller who may not see the Private area, since sending it in an ordinary chat would
+    make it ordinary."""
     if not attachment_ids:
         return
+    store = deps.uploads(request)
     # One decrypt-free query for the whole list, not a thread hop per id.
-    owned = await deps.uploads(request).owned_ids(OPERATOR_ID, attachment_ids)
+    owned = await store.owned_ids(OPERATOR_ID, attachment_ids)
+    if not deps.private_visible(request):
+        owned -= await store.private_among(OPERATOR_ID, attachment_ids)
     for upload_id in attachment_ids:
         if upload_id not in owned:
             raise HTTPException(status_code=404, detail=f"attachment {upload_id!r} not found")

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -92,6 +93,7 @@ class CorpusIndex:
         visible_projects: tuple[str | None, ...] | None = None,
         since: datetime | None = None,
         include_private: bool = False,
+        allowed_private: Collection[str] = (),
     ) -> list[CorpusHit]:
         """Fan the query out to the selected sources and RRF-fuse the results.
 
@@ -111,12 +113,19 @@ class CorpusIndex:
         direction: another project's sources, which is the contamination rule.
 
         ``since`` drops anything written or changed before it. Private threads are left out
-        unless ``include_private``; those returned are marked ``private``.
+        unless ``include_private``; those returned are marked ``private``. Private files
+        never reach ambient recall, and ``source_ids`` reaches only those in
+        ``allowed_private`` (a private chat reading its own files).
         """
         query_vec, query_model = await embed_query(self._embedder, owner_id, query)
         query_tokens = ranking.tokens(query)
         excluded = await self.out_of_scope_source_ids(owner_id, visible_projects)
 
+        if source_ids:
+            hidden = await self._private_sources(owner_id, source_ids) - set(allowed_private)
+            source_ids = [sid for sid in source_ids if sid not in hidden]
+            if not source_ids:
+                return []
         if source_ids:
             hits = await self._chunks.retrieve(
                 owner_id,
@@ -176,10 +185,11 @@ class CorpusIndex:
         *,
         visible_projects: tuple[str | None, ...] | None = None,
         include_private: bool = False,
+        allowed_private: Collection[str] = (),
     ) -> CorpusDocument | None:
         """One item in full by a hit's ``gid``: a surface's own record, or a whole file
         stitched back from its chunks. A private thread reads as missing unless
-        ``include_private``."""
+        ``include_private``; a private file unless it is in ``allowed_private``."""
         source_id, sep, ref = gid.partition(":")
         if not sep or not ref:
             return None
@@ -187,6 +197,8 @@ class CorpusIndex:
         if surface is not None:
             return await surface.read(owner_id, ref, include_private=include_private)
         if source_id in await self.out_of_scope_source_ids(owner_id, visible_projects):
+            return None
+        if source_id not in allowed_private and await self._private_sources(owner_id, [source_id]):
             return None
         item = item_of(ref)
         found = await self._chunks.read_item(owner_id, source_id, item)
@@ -258,6 +270,12 @@ class CorpusIndex:
     async def rebuild(self, owner_id: str, source_id: str) -> bool:
         """Re-crawl a folder from scratch (folders only; surfaces own their content)."""
         return await self._folder.rebuild(owner_id, source_id)
+
+    async def _private_sources(self, owner_id: str, source_ids: list[str]) -> set[str]:
+        found: set[str] = set()
+        for adapter in self._adapters:
+            found |= await adapter.private_source_ids(owner_id, source_ids)
+        return found
 
     def _surface_adapter(self, source_id: str) -> SourceAdapter | None:
         """The surface adapter with this fixed id, or ``None`` (folders carry dynamic

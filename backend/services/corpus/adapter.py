@@ -115,6 +115,11 @@ class SourceAdapter(ABC):
         del owner_id, ref, include_private
         return None
 
+    async def private_source_ids(self, owner_id: str, source_ids: list[str]) -> set[str]:
+        """Which of these chunk-store source ids this source holds as private."""
+        del owner_id, source_ids
+        return set()
+
     async def reindex(self, owner_id: str, *, current_model: str | None = None) -> int:
         """(Re-)embed this source's pending/stale chunks into ``current_model``'s
         space. Default no-op for adapters whose store embeds on its own write path

@@ -149,6 +149,15 @@ class PrivateArea:
     async def is_private(self, conversation_id: str) -> bool:
         return await self._conversations.is_private(conversation_id)
 
+    async def own_files(self, owner_id: str, conversation_id: str) -> frozenset[str]:
+        """The uploads a private thread may open: those attached anywhere in its spawn
+        family. Empty for an ordinary thread. Holds while the area is locked, which gates
+        the operator and other threads, not the thread itself."""
+        if not await self.is_private(conversation_id):
+            return frozenset()
+        family = await self._conversations.family_ids(conversation_id)
+        return frozenset(await self._conversations.attachment_ids(owner_id, family))
+
     async def title(self, owner_id: str, conversation_id: str) -> str | None:
         """A thread's title for an approval card; recall tools hold no conversation store."""
         return (await self._conversations.titles([conversation_id], owner_id)).get(conversation_id)
@@ -161,21 +170,34 @@ class PrivateArea:
             PrivateAreaLocked: the thread is private and the area is locked or the caller
                 is not the operator.
         """
-        if not await self.is_private(conversation_id):
+        self.require_visible(await self.is_private(conversation_id), by_operator=by_operator)
+
+    def require_visible(self, private: bool, *, by_operator: bool) -> None:
+        """Refuse private material while the area is locked, or to anyone but the operator's
+        own session, and keep an open area open.
+
+        Raises:
+            PrivateAreaLocked: ``private`` and the area is locked or the caller is not the
+                operator.
+        """
+        if not private:
             return
         if not (by_operator and self.is_unlocked()):
             raise PrivateAreaLocked
         self.touch()
 
-    async def set_private(self, owner_id: str, conversation_id: str, private: bool) -> None:
-        """File a thread in or out of the area.
+    async def set_private(self, owner_id: str, conversation_id: str, private: bool) -> set[str]:
+        """File a thread's spawn family in or out of the area.
+
+        Returns:
+            The ids of the threads that moved.
 
         Raises:
             PrivateAreaLocked: the area is locked.
             InvalidInputError: filing a thread in with no PIN set.
         """
         await self.require_writable(owner_id, filing_in=private)
-        await self._conversations.set_private(conversation_id, private)
+        return await self._conversations.set_private(conversation_id, private)
 
     async def require_writable(self, owner_id: str, *, filing_in: bool = True) -> None:
         """Refuse to file a thread in or out unless the area is open, and to file one in

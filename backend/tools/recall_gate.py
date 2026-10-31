@@ -70,6 +70,16 @@ async def gate_private_read(ctx: RunContext[RunDeps], ref: str, purpose: str | N
     return True
 
 
+async def own_private_files(ctx: RunContext[RunDeps]) -> frozenset[str]:
+    """The private files this run may open: those its own private thread's family attaches
+    (:meth:`PrivateArea.own_files`). Empty without a :class:`PrivateArea`."""
+    area = ctx.deps.caps.get_optional(PrivateArea)
+    conversation_id = ctx.deps.conversation_id
+    if area is None or conversation_id is None:
+        return frozenset()
+    return await area.own_files(ctx.deps.owner_id, conversation_id)
+
+
 def gate_global_recall(ctx: RunContext[RunDeps]) -> None:
     """Pause a global recall for operator approval unless it was already approved.
     ``tool_call_approved`` is set on the re-invocation after an approval, so this raises

@@ -19,12 +19,14 @@ Extraction runs off the request path, so a row is born ``queued`` and moves thro
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from enum import StrEnum
 from typing import ClassVar
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field
+from sqlmodel import Field, col, select
+from sqlmodel.sql.expression import SelectOfScalar
 
 from models._fields import new_id, utcnow
 from models._table import Table, TableArgs
@@ -85,6 +87,9 @@ class Upload(Table, table=True):
     # anything; default false. Meaningful only for image uploads, but cheap and harmless
     # on any row.
     favorite: bool = Field(default=False)
+    # True while every chat that attaches it is in the Private area, or while it sits
+    # staged in a private composer (`services/private_uploads.py`).
+    private: bool = Field(default=False, index=True, sa_column_kwargs={"server_default": "0"})
     # Which extractor produced the current text: "basic" (the built-in fallback) or
     # "mineru" (high-fidelity), or "manual" once the operator corrects it. Clear
     # metadata, null until extracted — lets the UI flag fallback extractions as
@@ -98,3 +103,9 @@ class Upload(Table, table=True):
     note: str | None = None
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+def select_private_ids(owner_id: str, among: Collection[str] | None = None) -> SelectOfScalar[str]:
+    """The owner's private upload ids, optionally narrowed to ``among``."""
+    stmt = select(Upload.id).where(Upload.owner_id == owner_id, col(Upload.private).is_(True))
+    return stmt if among is None else stmt.where(col(Upload.id).in_(among))

@@ -639,11 +639,13 @@ async def delete_message(
     deps.claim_conversation(request, conversation_id)
     try:
         orphans = await teardown.message_image_orphans(OPERATOR_ID, conversation_id, message_id)
+        attached = await store.subtree_attachment_ids(conversation_id, message_id)
         if not await store.delete_message(conversation_id, message_id):
             raise HTTPException(status_code=404, detail="message not found")
     finally:
         deps.release_conversation(request, conversation_id)
     await teardown.purge_uploads(OPERATOR_ID, orphans)
+    await deps.upload_privacy(request).reconcile(OPERATOR_ID, attached)
     return await _detail(request, conversation_id, summary)
 
 
@@ -891,9 +893,10 @@ async def set_private(
     conversation_id: str, body: PrivateUpdate, request: Request
 ) -> ConversationSummary:
     """File the thread's whole spawn family in or out of the Private area. The area must be
-    open, and filing in needs a PIN set."""
+    open, and filing in needs a PIN set. The family's attached files follow it."""
     _ = await _require_owned(request, conversation_id)
-    await deps.private_area(request).set_private(OPERATOR_ID, conversation_id, body.private)
+    moved = await deps.private_area(request).set_private(OPERATOR_ID, conversation_id, body.private)
+    await deps.upload_privacy(request).reconcile_conversations(OPERATOR_ID, moved)
     summary = await _require_owned(request, conversation_id)
     return _summary(
         summary,

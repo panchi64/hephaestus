@@ -141,7 +141,7 @@ async def test_a_private_chat_is_out_of_a_channels_reach(monkeypatch: pytest.Mon
         first = await hub.inbound("fake", OWNER_ID, "dm:1", "ping")
         await settle(app)
         assert first.conversation_id is not None
-        await deps.service(app, ConversationStore).set_private(first.conversation_id, True)
+        _ = await deps.service(app, ConversationStore).set_private(first.conversation_id, True)
 
         refused = await hub.inbound("fake", OWNER_ID, "dm:1", "more")
         assert refused.outcome == "failed" and refused.conversation_id is None

@@ -49,6 +49,7 @@ from services.offline import OfflineModeService
 from services.plan_mode import PlanMode
 from services.plugins import PluginStore
 from services.private_area import PrivateArea
+from services.private_uploads import UploadPrivacy
 from services.projects import ProjectStore, WorktreeManager, visible_project_ids
 from services.projects.tree import worktree_root
 from services.registry import ModelRegistry
@@ -122,6 +123,7 @@ class AppState(State):
         self.commands: CommandRegistry
         self.command_store: CommandStore
         self.uploads: UploadStore
+        self.upload_privacy: UploadPrivacy
         self.upload_rate_limiter: RateLimiter
         self.embedding_reindexer: EmbeddingReindexer
         self.search: SearchService
@@ -437,6 +439,10 @@ def uploads(request: Source) -> UploadStore:
     return app_state(request).uploads
 
 
+def upload_privacy(request: Source) -> UploadPrivacy:
+    return app_state(request).upload_privacy
+
+
 def upload_rate_limiter(request: Request) -> RateLimiter:
     return app_state(request).upload_rate_limiter
 
@@ -583,6 +589,18 @@ async def private_gate(request: Request) -> None:
     )
     if isinstance(conversation_id, str) and conversation_id:
         await require_private_open(request, conversation_id)
+
+
+async def private_upload_gate(request: Request) -> None:
+    """Route dependency refusing a private upload named by an ``upload_id`` path parameter
+    to a caller who may not see it, and keeping an open area open on an allowed use."""
+    upload_id = request.path_params.get("upload_id")
+    if not isinstance(upload_id, str) or not upload_id:
+        return
+    private_area(request).require_visible(
+        bool(await uploads(request).private_among(OPERATOR_ID, [upload_id])),
+        by_operator=not via_api_token(request.state),
+    )
 
 
 def credentials(request: Request) -> CredentialStore:

@@ -13,6 +13,7 @@ from services.home.changes import ThreadChanges
 from services.home.scratch import ScratchDirs
 from services.notifications import NotificationService
 from services.plan_mode import PlanMode
+from services.private_uploads import UploadPrivacy
 from services.projects import ProjectStore, WorktreeManager
 from services.subagent_store import SubagentStore
 from services.task_list import ConversationTasks
@@ -27,6 +28,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         store=services.get(ConversationStore),
         registry=services.get(RunRegistry),
         uploads=services.get(UploadStore),
+        upload_privacy=services.get(UploadPrivacy),
         notifications=services.get(NotificationService),
         workspace_history=services.get(WorkspaceHistoryStore),
         conversation_tasks=services.get(ConversationTasks),

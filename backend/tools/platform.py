@@ -35,7 +35,12 @@ from services.recall_index import rank_texts
 
 from .deps import RunDeps
 from .project_agents import run_catalog
-from .recall_gate import CONVERSATIONS_SURFACE, gate_global_recall, gate_private_read
+from .recall_gate import (
+    CONVERSATIONS_SURFACE,
+    gate_global_recall,
+    gate_private_read,
+    own_private_files,
+)
 from .skills import skill_catalog
 
 
@@ -344,6 +349,7 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
             ref,
             visible_projects=visible_project_ids(deps.project_id),
             include_private=include_private,
+            allowed_private=await own_private_files(ctx),
         )
         if document is None:
             return f"Nothing found for ref {ref!r}. Use a `ref` from a `platform_search` hit."

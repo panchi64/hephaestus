@@ -117,7 +117,7 @@ async def env() -> AsyncIterator[Env]:
 async def _private_chat(env: Env, *turns: tuple[str, str]) -> str:
     conversation_id = await record_conversation(env.platform.store, OWNER, *turns)
     await env.platform.store.set_title(conversation_id, "Taxes 2026")
-    await env.platform.store.set_private(conversation_id, True)
+    _ = await env.platform.store.set_private(conversation_id, True)
     return conversation_id
 
 
@@ -203,10 +203,10 @@ async def test_a_private_thread_is_refused_while_locked(env: Env):
 async def test_a_spawned_thread_inherits_and_follows_its_parents_flag(env: Env):
     store = env.platform.store
     parent = await store.create_conversation(OWNER)
-    await store.set_private(parent, True)
+    _ = await store.set_private(parent, True)
     child = await store.create_conversation(OWNER, parent_id=parent)
     assert await env.area.is_private(child)
-    await store.set_private(parent, False)
+    _ = await store.set_private(parent, False)
     assert not await env.area.is_private(child)
 
 
@@ -215,9 +215,9 @@ async def test_filing_a_spawned_thread_moves_its_whole_family(env: Env):
     parent = await store.create_conversation(OWNER)
     child = await store.create_conversation(OWNER, parent_id=parent)
     grandchild = await store.create_conversation(OWNER, parent_id=child)
-    await store.set_private(child, True)
+    assert await store.set_private(child, True) == {parent, child, grandchild}
     assert [await env.area.is_private(c) for c in (parent, child, grandchild)] == [True] * 3
-    await store.set_private(grandchild, False)
+    _ = await store.set_private(grandchild, False)
     assert [await env.area.is_private(c) for c in (parent, child, grandchild)] == [False] * 3
 
 

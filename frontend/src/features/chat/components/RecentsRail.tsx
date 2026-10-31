@@ -53,6 +53,7 @@ import {
   deleteConversationFlow,
   retitleConversation,
 } from "../conversationActions";
+import { refreshUploads } from "~/features/uploads/data";
 import { createRenameConversation } from "./RenameConversationModal";
 import { directoryLabel, useAddDirectory } from "../addDirectory";
 import { settled } from "~/lib/resource";
@@ -206,8 +207,8 @@ export function RecentsRail(props: {
     toChat();
   };
 
-  // The backend lists private threads only while the area is open, so every change of
-  // lock re-reads the list. A private thread on screen when it shuts is cleared, and
+  // The backend lists private threads and files only while the area is open, so every
+  // change of lock re-reads both lists. A private thread on screen when it shuts is cleared, and
   // unless the operator locked it themselves, the PIN prompt offers to bring it back.
   createEffect(
     on(
@@ -217,6 +218,7 @@ export function RecentsRail(props: {
         const wasPrivate =
           open !== null && rows()?.find((s) => s.id === open)?.private;
         refreshSessions();
+        refreshUploads();
         if (unlocked || !wasPrivate) return;
         setCurrentId(null);
         if (lockedByOperator()) return;

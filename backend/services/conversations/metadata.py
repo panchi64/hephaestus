@@ -272,37 +272,29 @@ class MetadataMixin(StoreCore):
 
         return await in_session(self._engine, work)
 
-    async def set_private(self, conversation_id: str, private: bool) -> None:
+    async def set_private(self, conversation_id: str, private: bool) -> set[str]:
         """File the thread's whole spawn family, from its root down, in or out of the
-        Private area.
+        Private area. Returns the family's ids.
 
         A parent holds its children's tasks and reports, and a child of a private thread
         must stay private, so a family never splits across the area.
         """
 
-        def work(session: Session) -> None:
-            root = session.get(Conversation, conversation_id)
-            visited: set[str] = set()
-            while root is not None and root.parent_id is not None and root.id not in visited:
-                visited.add(root.id)
-                root = session.get(Conversation, root.parent_id)
-            if root is None:
-                return
-            root.private = private
-            visited = {root.id}
-            frontier: list[str] = [root.id]
-            while frontier:
-                children = session.exec(
-                    select(Conversation).where(col(Conversation.parent_id).in_(frontier))
-                ).all()
-                frontier = []
-                for child in children:
-                    if child.id not in visited:
-                        visited.add(child.id)
-                        child.private = private
-                        frontier.append(child.id)
+        def work(session: Session) -> set[str]:
+            family = _family(session, conversation_id)
+            for member in family:
+                member.private = private
+            return {member.id for member in family}
 
-        await in_session(self._engine, work)
+        return await in_session(self._engine, work)
+
+    async def family_ids(self, conversation_id: str) -> set[str]:
+        """The thread's whole spawn family, from its root down; empty if it doesn't exist."""
+
+        def work(session: Session) -> set[str]:
+            return {member.id for member in _family(session, conversation_id)}
+
+        return await in_session(self._engine, work)
 
     async def open_child(self, conversation_id: str, owner_id: str) -> str:
         """List a spawned agent's thread beside its parent's. Returns the parent's id."""
@@ -372,3 +364,28 @@ class MetadataMixin(StoreCore):
                 conversation.context_overhead = overhead.as_dict()
 
         await in_session(self._engine, work)
+
+
+def _family(session: Session, conversation_id: str) -> list[Conversation]:
+    """The thread's spawn family: walk up to its root, then down every child."""
+    root = session.get(Conversation, conversation_id)
+    seen: set[str] = set()
+    while root is not None and root.parent_id is not None and root.id not in seen:
+        seen.add(root.id)
+        root = session.get(Conversation, root.parent_id)
+    if root is None:
+        return []
+    family = [root]
+    seen = {root.id}
+    frontier: list[str] = [root.id]
+    while frontier:
+        children = session.exec(
+            select(Conversation).where(col(Conversation.parent_id).in_(frontier))
+        ).all()
+        frontier = []
+        for child in children:
+            if child.id not in seen:
+                seen.add(child.id)
+                family.append(child)
+                frontier.append(child.id)
+    return family
