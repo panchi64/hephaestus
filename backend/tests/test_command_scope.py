@@ -68,11 +68,28 @@ def test_a_command_that_could_not_be_read_has_no_prefix(command: str):
         "cat ../outside/x",
         "cd .. && ls",
         "git --git-dir=/elsewhere/.git log",
-        "sh -c 'cat /etc/passwd'",
+        "make OUT=/etc/x",
+        "curl file:///etc/passwd",
+        "grep -r foo '\"/etc/passwd\"'",
     ],
 )
 def test_a_command_that_leaves_the_working_directory_has_no_prefix(command: str):
     # The same leading words, and not the same act.
+    assert command_prefixes(command) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sh -c 'cat /etc/passwd'",
+        "sh -c 'cat \"/etc/passwd\"'",
+        "bash -c 'rm -rf src'",
+        "python3 -c 'print(1)'",
+        "/usr/bin/node -e 'x'",
+    ],
+)
+def test_an_inline_script_has_no_prefix(command: str):
+    # `("sh", "-c")` would cover every script the shell could be handed.
     assert command_prefixes(command) is None
 
 

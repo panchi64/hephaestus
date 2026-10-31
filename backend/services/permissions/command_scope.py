@@ -7,6 +7,8 @@ a grant can't be recorded from it or cover it, and the operator answers it each 
 
 from __future__ import annotations
 
+import re
+
 from tree_sitter import Node
 
 from services.permissions.shell_ast import ShellCommand, decode_word, node_text, parse
@@ -23,6 +25,14 @@ _LITERAL = frozenset({"word", "number", "raw_string", "string", "concatenation"}
 _REWRITTEN = frozenset("$`\\*?[]{}")
 #: Shell syntax a program could run as a command line of its own.
 _SYNTAX = frozenset(";|&<>()$`\n")
+#: What separates one path from the next inside a word: anything a path can't contain.
+_PATH_FRAGMENT = re.compile(r"[^\w./~-]+")
+#: A URL's scheme, dropped before measuring so `https://host/x` reads as a host and a
+#: path, and `file:///etc/passwd` still as an absolute path.
+_URL_SCHEME = re.compile(r"\b[a-zA-Z][\w+.-]*://")
+#: Programs that run a script given inline. A scope on one (`sh -c`) would name the
+#: interpreter and cover any script, so a call to one has no scope.
+_INTERPRETERS = re.compile(r"(?:ba|z|da|k|fi)?sh|python[\d.]*|node|perl|ruby|php|osascript|eval")
 
 
 def command_prefixes(command: str) -> tuple[tuple[str, ...], ...] | None:
@@ -68,6 +78,8 @@ def _collect(node: Node, into: list[ShellCommand]) -> bool:
         words.append(word)
     if not words or not words[0] or any(c.isspace() for c in words[0]):
         return False
+    if _INTERPRETERS.fullmatch(words[0].rsplit("/", 1)[-1]):
+        return False
     into.append(ShellCommand(words[0], tuple(words[1:])))
     return True
 
@@ -97,12 +109,12 @@ def _literal(node: Node) -> str | None:
 
 def _outside(word: str) -> bool:
     """Whether ``word`` carries shell syntax, or names a path outside the working directory
-    in any of its whitespace-separated parts or after a flag's `=`."""
+    anywhere in it: each run of path characters is measured on its own, so a path glued to a
+    quote (`cat "/etc/passwd"` inside a script) or after an `=` is still seen."""
     if set(word) & _SYNTAX:
         return True
-    for part in word.split():
-        value = part.split("=", 1)[1] if is_flag(part) and "=" in part else part
-        if value.startswith(("/", "~")) or ".." in value.split("/"):
+    for fragment in _PATH_FRAGMENT.split(_URL_SCHEME.sub("", word)):
+        if fragment.startswith(("/", "~")) or ".." in fragment.split("/"):
             return True
     return False
 
