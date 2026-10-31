@@ -23,7 +23,7 @@ from pydantic_ai.models.test import TestModel
 from sqlmodel import Session, select
 
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
-from agent.gating import GrantApproved
+from agent.gating import EnvApproved, GrantApproved
 from agent.parked_codec import decode_park, encode_park
 from core.db import in_session
 from core.exceptions import NotFoundError
@@ -379,7 +379,8 @@ def test_a_park_round_trips_through_its_json():
         ),
         announced={"c1"},
         settled={
-            "c2": GrantApproved(needs_whole_tool=True),
+            "c2": GrantApproved(),
+            "c5": EnvApproved(),
             "c3": ToolDenied(message="no"),
             "c4": ToolApproved(override_args={"k": "v"}),
         },
@@ -418,8 +419,8 @@ def test_a_park_round_trips_through_its_json():
         "ws",
         False,
     )
-    grant = back.settled["c2"]
-    assert isinstance(grant, GrantApproved) and grant.needs_whole_tool
+    assert isinstance(back.settled["c2"], GrantApproved)
+    assert isinstance(back.settled["c5"], EnvApproved)
     assert back.settled["c3"] == ToolDenied(message="no")
     assert back.settled["c4"] == ToolApproved(override_args={"k": "v"})
     assert endpoint == Endpoint("e1", "local", 2)

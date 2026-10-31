@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from services.permissions.fence import HomeFence
 from services.projects.store import ProjectStore
 
 from .backend import HomeBackend, Mount
@@ -52,15 +51,6 @@ class RunHome:
     def with_writable(self, place: Place) -> RunHome:
         mounts = tuple(replace(m, writable=True) if m.place == place else m for m in self.mounts)
         return replace(self, mounts=mounts)
-
-    def fence(self, cwd: str | None = None) -> HomeFence:
-        """The home as the permission judge measures a path against it, from where the
-        thread's shell stands (its default place before its first command)."""
-        return HomeFence(
-            places=frozenset(m.place for m in self.mounts),
-            writable=frozenset(m.place for m in self.mounts if m.writable),
-            cwd=cwd or self.default.path,
-        )
 
 
 async def thread_mounts(

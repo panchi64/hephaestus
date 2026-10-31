@@ -17,8 +17,6 @@ from .approvals import (
     QuestionAsked,
     QuestionOption,
     QuestionSpec,
-    ReviewCompleted,
-    ReviewStarted,
 )
 from .base import (
     PROTOCOL_VERSION,
@@ -142,8 +140,6 @@ __all__ = [
     "QuestionAsked",
     "QuestionOption",
     "QuestionSpec",
-    "ReviewCompleted",
-    "ReviewStarted",
     "RunEnded",
     "RunError",
     "RunMetrics",

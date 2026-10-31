@@ -25,7 +25,6 @@ from runs import ConversationBusyError, InboxDispatch, RunRegistry
 from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
-from services.approval_ledger import ApprovalLedger
 from services.artifacts import ArtifactStore
 from services.backup import BackupService
 from services.browser import BrowserSessionManager
@@ -112,7 +111,6 @@ class AppState(State):
         self.conversation_tasks: ConversationTasks
         self.plan_mode: PlanMode
         self.approval_grants: ApprovalGrantStore
-        self.approval_ledger: ApprovalLedger
         self.egress: EgressPolicy
         self.skills: SkillStore
         self.platform_skills: PlatformSkills
@@ -354,10 +352,6 @@ def plan_mode(request: Request) -> PlanMode:
 
 def approval_grants(request: Request) -> ApprovalGrantStore:
     return app_state(request).approval_grants
-
-
-def approval_ledger(request: Request) -> ApprovalLedger:
-    return app_state(request).approval_ledger
 
 
 def egress(request: Request) -> EgressPolicy:

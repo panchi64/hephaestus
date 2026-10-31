@@ -14,8 +14,6 @@ from .approvals import (
     ApprovalRequired,
     QuestionAnswered,
     QuestionAsked,
-    ReviewCompleted,
-    ReviewStarted,
 )
 from .browser import BrowserOpened
 from .citations import CitationAdded
@@ -94,8 +92,6 @@ EventBody = Annotated[
     | ApprovalDecided
     | QuestionAsked
     | QuestionAnswered
-    | ReviewStarted
-    | ReviewCompleted
     | MessageQueued
     | MessageEdited
     | MessageWithdrawn

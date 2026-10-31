@@ -244,36 +244,6 @@ class Settings(BaseSettings):
     # per-call approval.
     approval_grant_ttl_s: float = 86400.0
 
-    # Auto review (`services/permissions`). A deferred call the structural judge declines
-    # goes to the `decision` model. A timeout parks the call, like every other failure.
-    # `review_transcript_entries` counts entries of prose (the operator's and the
-    # assistant's own words), not messages; the turn's opening request is kept on top of
-    # it. `review_transcript_chars` caps them all together, and with
-    # `review_ledger_entries` (how many of the conversation's approved calls the model
-    # reads) bounds a review's time: a decision model re-reads the prompt for every
-    # question. `review_max_per_turn` caps decision calls per turn; past it the calls park.
-    # Both timeouts cover a local server loading the model on first request; the bind
-    # probe also waits out a cold load from disk.
-    review_timeout_s: float = 30.0
-    review_probe_timeout_s: float = 120.0
-    review_transcript_entries: int = 12
-    review_transcript_chars: int = 2_000
-    review_max_per_turn: int = 12
-    review_ledger_entries: int = 3
-    # Thresholds over the decision model's probabilities (`decision_scoring.py`).
-    # `too_destructive` at P(irreversible) >= destroy_min. `low` needs at most
-    # low_tail_max on the two upper levels, at most low_irreversible_max on the top one,
-    # and P(outward) < outward_max. `explicitly_yes` needs P(requested) >= requested_min,
-    # P(refused) < refused_clear_max and P(mismatch) < mismatch_max.
-    decision_destroy_min: float = 0.35
-    decision_low_tail_max: float = 0.2
-    decision_low_irreversible_max: float = 0.1
-    decision_outward_max: float = 0.5
-    decision_refused_min: float = 0.5
-    decision_requested_min: float = 0.8
-    decision_refused_clear_max: float = 0.2
-    decision_mismatch_max: float = 0.5
-
     # Web search. `web_search_result_limit` caps results from the SearXNG provider;
     # `web_search_timeout_s` bounds one query (its own budget, not the fetch timeout).
     web_search_result_limit: int = 10

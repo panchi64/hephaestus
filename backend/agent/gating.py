@@ -2,28 +2,9 @@
 
 A turn wanting a sensitive tool ends with the call unexecuted; :func:`settle_deferred`
 walks the batch and returns the calls settled without a human and those needing one, so
-``turn.py`` keeps control flow, not policy.
-
-``services/permissions`` owns the rules (what an action reaches, whether its structure
-clears it, how a model's three scores add up) and knows nothing of runs, streams or
-capability bags. This module is the seam: it resolves the reviewer from the run's
-capabilities, passes the rules the host fact the structural stage can't look up (whether
-a fence can be built), and announces results on the run's stream.
-
-The announcement is not optional. Auto gives the operator's approvals for them, which is
-acceptable only if visible: a reviewed call emits ``review.started`` and ``review.completed``
-into the work log, or a call they never approved would look like a gate failing open.
-
-These frames are the Auto level's own and not where reach and fence are reported: only a
-reviewing level produces them. The fence verdict also rides the executing
-tool's result (``tools/shell.py``), true at every level and what a cold reload reads. The
-frames add the ruling: who cleared the call and on what ground.
-
-One review pass per batch, run concurrently. Each deferred call is judged on its own, but
-everything not per-call is built once: the reviewer, the transcript (role-tagged entries
-read inside an untrusted fence) and the home paths are measured against
-(:func:`_judged_root`). The remaining model calls are independent and time-bounded, so
-they are awaited together.
+``turn.py`` keeps control flow, not policy. ``services/permissions`` owns the rules; this
+module reads the run's facts they need (grants, the home, the VM) and records which
+producer an allow came from, since the resume and the executing tool re-check some of them.
 """
 
 from __future__ import annotations
@@ -31,47 +12,24 @@ from __future__ import annotations
 import logging
 from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
 
 from pydantic_ai import ToolApproved, ToolDenied
-from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.messages import ToolCallPart
 
-from core.concurrency import gather_bounded
 from core.config import get_settings
 from core.container import ServiceContainer
-from core.exceptions import DegradedCapabilityError, NotFoundError
-from core.untrusted import new_nonce
 from runs import Run
-from runs.events import ReviewCompleted, ReviewStarted
-from services.approval_grants import (
-    ApprovalGrantStore,
-    GrantInfo,
-    covered_by_grant,
-    grant_width,
-)
-from services.approval_ledger import ApprovalLedger, LedgerEntry
+from services.approval_grants import ApprovalGrantStore, GrantInfo, covered_by_grant
 from services.home.table import RunHome
 from services.permissions import (
-    ActionKind,
-    Capability,
+    AUTO_KEY,
+    EGRESS_TOOL,
+    AutoOutcome,
     Decision,
-    GrantWidth,
-    PriorApproval,
-    ReviewBudget,
-    Reviewer,
-    ReviewOutcome,
-    TranscriptEntry,
-    TurnBoundary,
+    auto_decision,
     blocked_message,
-    capability_of,
     decide,
-    measured_against_root,
-    review,
-    review_transcript,
 )
-from services.permissions.capability import EGRESS_TOOL
-from services.permissions.decision_reviewer import make_decision_reviewer
-from services.permissions.fence import Fence
 from services.permissions.guards import (
     GUARD_KEY,
     GUARDED_TOOLS,
@@ -79,19 +37,12 @@ from services.permissions.guards import (
     guard,
     is_guarded,
 )
-from services.registry import ModelRegistry
-from services.vm import ConversationMachines
 from tools.deps import RunDeps
 from tools.guarded import shell_cwd
-from tools.home import resolve_run_home
-from tools.home_workspace import allowed_hosts
+from tools.home_workspace import auto_env
 from tools.run_home import home_of
 
 logger = logging.getLogger(__name__)
-
-#: Reviews of one batch in flight at once. Each is a decision-model round trip, so the cap
-#: protects the far side (and a local runtime's queue); the point is overlapping latencies.
-_REVIEW_CONCURRENCY = 4
 
 _UNEXPLAINED = "This call always needs your approval."
 _UNCHECKED = "This call could not be checked, so it needs your approval."
@@ -102,27 +53,19 @@ class GrantApproved(ToolApproved):
     """An approval a standing conversation grant produced, marked as one.
 
     The approve route re-validates what a parked turn settled without the operator, since a
-    grant can be revoked or lapse while the run waits. Only a grant's approval has anything
-    to re-validate: a review that cleared a call on its own grounds leaves no grant, so a
-    re-check would deny a call the operator was never offered.
-
-    A review can still produce one: at Auto a grant is an input, but where it supplied the
-    authorization the allow rests on the same revocable thing (``ReviewOutcome.by_grant``),
-    so it is marked and re-checked alike.
-
-    The mark rides on the decision because that is the only part of the settled pile that
-    crosses into the parked payload.
-
-    ``needs_whole_tool`` is what the re-check must demand, deliberately not the width the
-    operator held. Only an allow that cleared an act nobody can undo
-    (``services/permissions/decide.py``) turns on the wider width. Recording the held width
-    would break Manual and Edit, where either settles the call: a thread with both grants
-    would measure "tool", and revoking only that one would deny a call the surviving
-    command grant fully answers for.
+    grant can be revoked or lapse while the run waits. The mark rides on the decision
+    because that is the only part of the settled pile that crosses into the parked payload.
     """
 
-    #: Whether this allow rests on the wider width; False for all but one kind of allow.
-    needs_whole_tool: bool = False
+
+@dataclass(kw_only=True)
+class EnvApproved(ToolApproved):
+    """An approval Auto gave because the conversation's VM was offline, marked as one.
+
+    The VM can gain network while the run waits (an egress grant, offline mode switched
+    off), so the resume re-checks it, as the executing tool does for a call that runs at
+    once (``RunDeps.env_cleared``).
+    """
 
 
 async def settle_deferred(
@@ -132,125 +75,77 @@ async def settle_deferred(
     caps: ServiceContainer,
     conversation_id: str | None,
     deps: RunDeps,
-    messages: list[ModelMessage],
     permission: str,
-    turn_start: TurnBoundary | None = None,
-    budget: ReviewBudget | None = None,
     metadata: MutableMapping[str, dict[str, object]] | None = None,
 ) -> tuple[dict[str, ToolApproved | ToolDenied], list[ToolCallPart]]:
     """Rule on every call this hop deferred, returning ``(settled, manual)``.
 
-    ``metadata`` is the deferral's own, by call id: a call marked guarded there goes to the
-    operator, and every guarded call's reason is written into it.
-
     ``settled`` holds the decisions the turn continues on at once: an allow the model never
     notices, or a denial it is told in place of the result. ``manual`` is what is left for
-    the operator; a non-empty one parks the turn.
+    the operator; a non-empty one parks the turn. ``metadata`` is the deferral's own, by
+    call id: a guarded call's reason and a parked Auto call's reason are written into it so
+    the park announces them.
 
-    A guarded call is ruled first (``services/permissions/guards.py``): it goes to the
-    operator at every level, and no grant or reviewer can answer it. A level that refuses
-    outright still refuses.
+    In order:
 
-    The level rules next; a grant may answer it but never overturn it. A standing grant
-    settles a call the level would have put to the operator. But a refusing level already
-    carries their answer: a grant recorded while the thread could act is not consent in one
-    since set to act in nothing (Plan's contract is that nothing changes). The resume path
-    reads it the same way (``routes/runs.py``). Grants are conversation-scoped, so a
-    stateless turn always asks, and a command tool's grant is scoped to the command's
-    leading words: a yes to `uv run pytest` settles the next test run and nothing else.
+    1. A guarded call (``services/permissions/guards.py``) goes to the operator at every
+       level, and no grant or rule can answer it, unless the level refuses it outright.
+    2. The level rules. A refusal stands whatever the grants say; a level's own allow (Yolo)
+       needs no grant.
+    3. Where the level asks, a standing grant covering the call settles it. Grants are
+       conversation-scoped, so a stateless turn always asks.
+    4. At Auto, :func:`services.permissions.auto_decision` settles the call: what the
+       offline VM bounds runs, then what a grant covers, and the rest parks.
 
-    At the top level grants are not consulted: nothing is asked, so there is no prompt to
-    skip and no park for a revocation to catch. The approval is the level's, recorded as
-    such (:func:`_by_level`).
-
-    At Auto a grant is an input to the review, not the answer. A grant naming one command
-    rides along as the authorization for that act and the review still runs. The wider grant
-    (this tool and everything it runs) is read as the answer, being the operator's reply to
-    the review's own question and the only thing that also clears an act nobody can undo.
-    Neither bypasses the judge or stands in for a review that couldn't run, which parks
-    whatever the grants say (:func:`services.permissions.review`). An allow the grant's
-    authorization produced is recorded as the grant's (:class:`GrantApproved`) so the resume
-    re-checks it if the operator revokes while the rest of the batch waits.
-
-    ``turn_start`` and ``budget`` belong to the turn, threaded from ``drive_turn``: where
-    its own messages begin (so the reviewer sees the opening request however many tools ran
-    since) and the ceiling on model reviews per turn.
+    An allow a grant produced is recorded as :class:`GrantApproved` and one the offline VM
+    produced as :class:`EnvApproved`, so the resume re-checks them.
     """
     granted: list[GrantInfo] = []
     store = caps.get_optional(ApprovalGrantStore)
     if store is not None and conversation_id is not None:
         granted = await store.list(run.owner_id, conversation_id)
-    # Ruled before any review, so the batch knows which calls need a model before paying to
-    # resolve one. Each row carries the decision and whether a grant produced it: an ALLOW
-    # can come from a grant or an allowing level, and only the first is revocable.
     home = await _guard_home(deps, approvals)
-    settled: dict[str, ToolApproved | ToolDenied] = {}
-    asking = list(approvals)
-    guarded = _guard_reasons(asking, home, shell_cwd(deps), metadata)
+    guarded = _guard_reasons(approvals, home, shell_cwd(deps), metadata)
     ruled = [
         (call, Decision.ASK, False)
         if call.tool_call_id in guarded and decide(permission, call.tool_name) is not Decision.BLOCK
         else (call, *_by_level(permission, call, granted))
-        for call in asking
+        for call in approvals
     ]
-    reviewed = await review_batch(
-        run,
-        [call for call, decision, _ in ruled if decision is Decision.REVIEW],
-        caps=caps,
-        deps=deps,
-        messages=messages,
-        grants=granted,
-        conversation_id=conversation_id,
-        turn_start=turn_start,
-        budget=budget,
-        home=home,
-    )
+    at_auto = [call for call, decision, _ in ruled if decision is Decision.REVIEW]
+    auto = await auto_batch(deps, at_auto, granted) if at_auto else {}
+    settled: dict[str, ToolApproved | ToolDenied] = {}
     manual: list[ToolCallPart] = []
-    approved: list[LedgerEntry] = []
     for call, decision, grant_backed in ruled:
-        outcome = reviewed.get(call.tool_call_id)
+        outcome = auto.get(call.tool_call_id)
         if outcome is not None:
             decision = outcome.decision
         if decision is Decision.ALLOW:
-            if _reviewed_on_its_own(outcome):
-                approved.append(
-                    LedgerEntry.of(call.tool_call_id, call.tool_name, call.args_as_dict(), "review")
-                )
-            # Reviewed, grant-backed, or allowed by a level: only the grant is worth
-            # re-checking. A review leaning on a grant counts as the grant's (revocable). A
-            # level's own allow must not be marked so: the resume would find no covering
-            # grant and deny something no operator refused.
-            by_grant = outcome.by_grant if outcome is not None else grant_backed
-            settled[call.tool_call_id] = (
-                GrantApproved(
-                    # With no ``outcome`` a grant settled the call at a level that takes
-                    # either width; only a review can require the wider one.
-                    needs_whole_tool=outcome is not None and outcome.needs_whole_tool
-                )
-                if by_grant
-                else ToolApproved()
-            )
+            settled[call.tool_call_id] = _approval(call, outcome, grant_backed, deps)
         elif decision is Decision.BLOCK:
-            # Only a level refuses outright; a review's refusals became parks, since an act
-            # nobody can undo is the one the operator most needs to see.
             settled[call.tool_call_id] = ToolDenied(
                 message=blocked_message(permission, call.tool_name)
             )
         else:
+            if outcome is not None and metadata is not None:
+                metadata.setdefault(call.tool_call_id, {})[AUTO_KEY] = outcome.reason
             manual.append(call)
-    ledger = caps.get_optional(ApprovalLedger)
-    if ledger is not None and conversation_id is not None:
-        await ledger.record(
-            run.owner_id, conversation_id, approved, keep=get_settings().review_ledger_entries
-        )
     return settled, manual
 
 
-def _reviewed_on_its_own(outcome: ReviewOutcome | None) -> bool:
-    """Whether the decision model cleared the call without leaning on a grant: the only
-    allow the ledger records here. A grant reaches the review directly, and a structural
-    clearance or a level's own allow says nothing about the operator's wishes."""
-    return outcome is not None and outcome.stage == "reviewer" and not outcome.by_grant
+def _approval(
+    call: ToolCallPart, outcome: AutoOutcome | None, grant_backed: bool, deps: RunDeps
+) -> ToolApproved:
+    """The allow for one call, marked with what produced it. A level's own allow is plain:
+    the resume would find no grant behind it and deny something no operator refused."""
+    if outcome is None:
+        return GrantApproved() if grant_backed else ToolApproved()
+    if outcome.by_grant:
+        return GrantApproved()
+    if outcome.by_environment:
+        deps.env_cleared.add(call.tool_call_id)
+        return EnvApproved()
+    return ToolApproved()
 
 
 async def _guard_home(deps: RunDeps, approvals: Sequence[ToolCallPart]) -> RunHome | None:
@@ -268,9 +163,9 @@ def _guard_reasons(
 ) -> dict[str, str]:
     """Why each call that must reach the operator at every level has to, by call id.
 
-    Ahead of grants, level and reviewer, none of which may answer these. A call already
-    marked guarded in ``metadata`` stays guarded, and every reason is written back so the
-    park announces it and a restored park keeps it.
+    Ahead of grants, level and Auto, none of which may answer these. A call already marked
+    guarded in ``metadata`` stays guarded, and every reason is written back so the park
+    announces it and a restored park keeps it.
     """
     settings = get_settings()
     reasons: dict[str, str] = {}
@@ -305,21 +200,11 @@ def _by_level(
     permission: str, call: ToolCallPart, granted: Sequence[GrantInfo]
 ) -> tuple[Decision, bool]:
     """What the thread's level says about one call, letting standing grants answer only
-    where the level was asking a question they can answer.
+    where the level was asking. Returns the decision and whether a grant produced it, which
+    can't be recovered from the decision once several things return ``ALLOW``.
 
-    Returns the decision and whether a grant produced it, which can't be recovered from the
-    decision once several things return ``ALLOW``.
-
-    Three answers stand whatever the grants say. A refusal already carries the operator's
-    answer in the level they chose. A review is the level doing the deciding; a grant
-    short-circuiting it would turn one "allow for this conversation" into a thread where no
-    command is ever looked at again, so the grant goes to the review instead. An allow has
-    nothing for a grant to add (nothing is asked at the top level); recording it as a
-    grant's would make the resume deny a call that never rested on one.
-
-    Takes the call, not just its name: a command tool's grant is scoped to the command
-    (``services/approval_grants.py``), so what settles a call at Manual and Edit is a yes
-    to this act, not everything the tool could do.
+    A refusal, an allow and Auto's ``REVIEW`` stand as they are: Auto reads the grants
+    itself, after the environment (:func:`auto_batch`).
     """
     decision = decide(permission, call.tool_name)
     if decision in (Decision.BLOCK, Decision.REVIEW, Decision.ALLOW):
@@ -329,221 +214,20 @@ def _by_level(
     return decision, False
 
 
-async def review_batch(
-    run: Run,
-    calls: Sequence[ToolCallPart],
-    *,
-    caps: ServiceContainer,
-    deps: RunDeps,
-    messages: list[ModelMessage],
-    grants: Sequence[GrantInfo] = (),
-    conversation_id: str | None = None,
-    turn_start: TurnBoundary | None = None,
-    budget: ReviewBudget | None = None,
-    home: RunHome | None = None,
-) -> dict[str, ReviewOutcome]:
-    """Review every call the level sent to review, by ``tool_call_id``.
-
-    ``home`` is the one the caller already opened for the batch.
-
-    The reviewer (a registry lookup) and the transcript (one walk of recent history) are
-    built once and shared across the batch.
-
-    The fence token is minted once too, which is what makes sharing pay on the server: with
-    a nonce per prompt each diverged from its siblings within a few tokens. One nonce per
-    batch with the shared prose first (``decision_questions.build_state``) lets later reviews
-    arrive on a prefix the engine already processed. Per batch and no wider: fresh every
-    turn, never reused across threads or over time.
-    """
-    if not calls:
-        return {}
-    settings = get_settings()
-    reviewer = await resolve_reviewer(caps, run.owner_id)
-    ledger = caps.get_optional(ApprovalLedger)
-    prior = (
-        await ledger.recent(run.owner_id, conversation_id, settings.review_ledger_entries)
-        if ledger is not None and conversation_id is not None
-        else []
+async def auto_batch(
+    deps: RunDeps, calls: Sequence[ToolCallPart], grants: Sequence[GrantInfo]
+) -> dict[str, AutoOutcome]:
+    """Auto's answer for every call the level sent to it, by ``tool_call_id``. The VM facts
+    are read once for the batch, and an egress request anywhere in it counts as network for
+    all of it, since it would open the network before the commands run."""
+    env = await auto_env(
+        deps, egress_requested=any(call.tool_name == EGRESS_TOOL for call in calls)
     )
-    transcript = review_transcript(
-        messages,
-        turn_start=turn_start,
-        limit=settings.review_transcript_entries,
-        total_chars=settings.review_transcript_chars,
-    )
-    nonce = new_nonce()
-    root = await _judged_root(deps, calls, home)
-    fenced = await vm_fences(deps, calls)
-    outcomes = await gather_bounded(
-        [
-            review_call(
-                run,
-                tool_call_id=call.tool_call_id,
-                tool=call.tool_name,
-                args=call.args_as_dict(),
-                root=root,
-                transcript=transcript,
-                prior=prior,
-                reviewer=reviewer,
-                granted=grant_width(call.tool_name, call.args_as_dict(), grants),
-                fenced=fenced,
-                budget=budget,
-                nonce=nonce,
-            )
-            for call in calls
-        ],
-        _REVIEW_CONCURRENCY,
-    )
-    return {call.tool_call_id: outcome for call, outcome in zip(calls, outcomes, strict=True)}
-
-
-async def vm_fences(deps: RunDeps, calls: Sequence[ToolCallPart]) -> bool:
-    """Whether this batch's commands would run in a conversation VM with no network.
-
-    Only then is the VM a fence the structural stage may lean on: it clears programs it
-    cannot read whole, and an allowed host takes uploads as readily as downloads. A batch
-    asking for egress would open the network before its commands run.
-    """
-    machines = deps.caps.get_optional(ConversationMachines)
-    if machines is None or not machines.platform.available:
-        return False
-    if any(call.tool_name == EGRESS_TOOL for call in calls):
-        return False
-    return await allowed_hosts(deps) is None
-
-
-async def _judged_root(
-    deps: RunDeps, calls: Sequence[ToolCallPart], opened: RunHome | None = None
-) -> Fence | None:
-    """The home every path in this batch is measured against, from where the run's shell stands.
-
-    Resolved, not read off the run's memo: a turn's first shell command is deferred before
-    any tool has opened a workspace, so the memo is empty. Judging against None is strictest
-    (every absolute or upward path escapes) but wrong for that call, escalating ordinary
-    work a resolved root clears.
-
-    Once per batch, and only if a call is placed against a root
-    (:func:`measured_against_root`): opening a workspace is a `git worktree add` or sandbox
-    start, which a batch of mail sends shouldn't pay for.
-
-    A failure never ends the turn: the tool will report the unopenable workspace in words
-    the model can act on, and meanwhile the judge answers strictly with no root.
-    """
-    if not any(measured_against_root(call.tool_name) for call in calls):
-        return None
-    home = opened
-    if home is None:
-        try:
-            home = await resolve_run_home(deps)
-        except Exception:  # a judge that raises would abort the operator's turn
-            logger.info("auto review: no home to judge against", exc_info=True)
-            return None
-    if home is None:
-        return None
-    cwd = shell_cwd(deps)
-    return home.fence(cwd if cwd is not None and home.place_of(cwd) is not None else None)
-
-
-async def resolve_reviewer(caps: ServiceContainer, owner_id: str) -> Reviewer | None:
-    """The Auto reviewer over the ``decision`` role, or None when none is bound.
-
-    None parks every call that reaches the model stage, and the review row asks the
-    operator to set a decision model up. Nothing falls back to a chat model.
-    """
-    registry = caps.get_optional(ModelRegistry)
-    if registry is None:
-        return None
-    try:
-        spec = await registry.resolve_raw_spec(owner_id, "decision")
-    except (DegradedCapabilityError, NotFoundError) as exc:
-        logger.info("auto review unavailable: no decision model (%s)", exc)
-        return None
-    return make_decision_reviewer(spec, settings=get_settings(), client=registry.http_client)
-
-
-def _in_vm(capability: Capability) -> bool:
-    return capability.kind is ActionKind.SHELL and not capability.on_host
-
-
-def _event_reach(capability: Capability) -> Literal["offline", "host"] | None:
-    """The review row's wire label: the frontend still reads ``host`` for the host tool
-    and ``offline`` plus ``network`` for a VM command."""
-    if capability.on_host:
-        return "host"
-    return "offline" if _in_vm(capability) else None
-
-
-async def review_call(
-    run: Run,
-    *,
-    tool_call_id: str,
-    tool: str,
-    args: dict[str, object],
-    root: Fence | None,
-    transcript: Sequence[TranscriptEntry],
-    prior: Sequence[PriorApproval] = (),
-    reviewer: Reviewer | None,
-    granted: GrantWidth = "none",
-    fenced: bool,
-    budget: ReviewBudget | None = None,
-    nonce: str | None = None,
-) -> ReviewOutcome:
-    """Rule on one deferred call at the Auto level, announcing both ends on the stream.
-
-    ``root`` is the run's home, resolved once per batch (:func:`_judged_root`); None is the
-    strictest reading, where every absolute or upward path escalates. ``fenced`` is the host
-    fact the structural stage can't look up, ``granted`` how far the standing grant reaches
-    (nothing, the one act, or the whole tool), and ``nonce`` the batch's shared fence token
-    so every prompt opens on the same bytes.
-    """
-    capability = capability_of(tool, args, root=root)
-    _ = run.emit(
-        ReviewStarted(
-            tool_call_id=tool_call_id,
-            name=tool,
-            summary=capability.summary,
-            detail=capability.detail,
-            reach=_event_reach(capability),
-            network=capability.runs_with_network if _in_vm(capability) else None,
+    return {
+        call.tool_call_id: auto_decision(
+            call.tool_name,
+            env=env,
+            granted=covered_by_grant(call.tool_name, call.args_as_dict(), grants),
         )
-    )
-    outcome = await review(
-        capability,
-        reviewer=reviewer,
-        transcript=transcript,
-        approved_calls=prior,
-        granted=granted,
-        fenced=fenced,
-        budget=budget,
-        nonce=nonce,
-    )
-    verdict = outcome.verdict
-    _ = run.emit(
-        ReviewCompleted(
-            tool_call_id=tool_call_id,
-            name=tool,
-            # `review` never returns REVIEW, so the map is total; a lookup so a fourth
-            # Decision member fails here, not on a client.
-            decision=WIRE_DECISION[outcome.decision],
-            stage=outcome.stage,
-            reason=outcome.reason,
-            tier=outcome.tier,
-            fenced=fenced,
-            risk=verdict.risk if verdict else None,
-            authorization=verdict.authorization if verdict else None,
-            correctness=verdict.correctness if verdict else None,
-            scores=dict(outcome.scores) if outcome.scores is not None else None,
-            setup=outcome.setup,
-        )
-    )
-    return outcome
-
-
-#: Review outcomes on the wire. `REVIEW` is absent: it is the question, and returning it
-#: would be a bug. `BLOCK` is no longer returned (an unrecoverable act parks) but stays
-#: because stored events of earlier threads still carry it and clients render those.
-WIRE_DECISION: dict[Decision, Literal["allow", "ask", "block"]] = {
-    Decision.ALLOW: "allow",
-    Decision.ASK: "ask",
-    Decision.BLOCK: "block",
-}
+        for call in calls
+    }

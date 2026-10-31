@@ -32,6 +32,7 @@ from services.sandbox.refusals import host_refusal
 from .code import exec_result
 from .deps import RunDeps
 from .home import resolve_run_home
+from .home_workspace import ENV_CHANGED, still_bounded
 
 #: Long enough for a real build or test suite; anything longer belongs in `start_command`.
 SHELL_TIMEOUT_S = 300.0
@@ -172,10 +173,12 @@ class ShellCategory(ShellToolset[RunDeps]):
         approved = ctx.tool_call_approved or ctx.deps.delegated_approved
         if name in EXECUTING_TOOLS and not approved:
             raise ApprovalRequired()
+        if not await still_bounded(ctx, f"shell_{name}"):
+            return ENV_CHANGED
         try:
             return cast(object, await super().call_tool(name, tool_args, ctx, tool))
         finally:
-            # Where the next command starts, which the guard and the judge place paths from.
+            # Where the next command starts, which the guard places paths from.
             ctx.deps.shell_cwd = self._cwd
 
 

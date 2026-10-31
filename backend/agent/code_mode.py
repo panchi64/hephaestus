@@ -367,10 +367,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
                 caps=deps.caps,
                 conversation_id=deps.conversation_id,
                 deps=deps,
-                messages=list(ctx.messages),
                 permission=deps.permission,
-                turn_start=deps.turn_start,
-                budget=deps.review_budget,
                 metadata=requests.metadata,
             )
         needs_operator = {call.tool_call_id for call in manual}

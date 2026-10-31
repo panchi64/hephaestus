@@ -58,7 +58,6 @@ from routes.deps import OPERATOR_ID, AppState, app_state
 from runs import LaneLimits, PrefixLedger, RunRegistry
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
-from services.approval_ledger import ApprovalLedger
 from services.conversations import ConversationStore
 from services.credential_store import CredentialStore
 from services.egress import EgressPolicy
@@ -248,7 +247,6 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Conversation-scoped tool auto-approval grants; core, beside the run substrate the
     # approvals park on.
     state.approval_grants = ApprovalGrantStore(engine, settings.approval_grant_ttl_s)
-    state.approval_ledger = ApprovalLedger(engine, vault)
     # The grants remember which tools may run unasked, this which domains a conversation's
     # machine may reach.
     state.egress = EgressPolicy(engine, settings.egress_allowed_domains)
@@ -348,7 +346,6 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Core-owned agent-facing handles: the engine consults grants at the deferred split,
     # and the egress tool and fences read the policy. The rest arrive via manifests.
     agent_capabilities.add(state.approval_grants)
-    agent_capabilities.add(state.approval_ledger)
     agent_capabilities.add(state.egress)
     # Sub-agents resolve the `utility` model via the same `resolve_background` rule as
     # titling and verification.

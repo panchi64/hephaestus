@@ -15,7 +15,7 @@ silently. So a level is stored and shown as a name, and *resolved* to a pair:
   also permits changing what this installation owns; the top class permits every kind of
   reach there is, which is what the room for a third was for;
 - an **approval policy** — what happens to an act that reaches past that ceiling: withhold
-  the tool outright, park for the operator, send it to review, or allow it outright.
+  the tool outright, park for the operator, settle it by Auto's rule, or allow it outright.
 
 The levels are presets over that pair. A sixth is a row here, and nothing else moves —
 which is how the fifth arrived: ``yolo`` is one entry in :data:`PERMISSIONS`, one member
@@ -31,10 +31,10 @@ widen; they do not narrow. A tool that gates itself — the global-recall pause,
 edit — is still answered at every level below the top one, because the reason it gates is
 not the one this axis reasons about (a recall pulls untrusted content into the model's
 context; it changes nothing the ceiling describes). What clears a tool's own gate is the
-operator: at the prompt, through a standing conversation grant, or — at the level whose
-meaning is that they asked for their answers to be given for them — through the review.
-That asymmetry is what keeps adding a level from quietly deleting a protection nobody
-re-examined.
+operator: at the prompt, through a standing conversation grant, or — at Auto — through
+Auto's rule, which clears a classified read or VM work while the VM is offline and parks
+the rest (``decide.py``). That asymmetry is what keeps adding a level from quietly
+deleting a protection nobody re-examined.
 
 **Yolo is where the operator deletes it on purpose, and it is the only one.** Its whole
 proposition is that nothing in a thread stops, and a "free rein" level that still parked
@@ -47,14 +47,6 @@ by a default, a fallback or a degrade (:data:`DEFAULT_PERMISSION`,
 :data:`STRICTEST_PERMISSION`), and that it removes the *asking* and not the fence — a
 VM command still runs inside the conversation VM, and one that needs more than the VM
 allows still fails in there rather than going ahead.
-
-**At Auto, "through the review" includes the review's own deterministic answer**, and for
-a self-gated *read* that answer costs no model call: ``judge.py`` clears a tool the
-shipped catalog classifies as observing on the strength of the class, at the tier it
-records as ``read``. The gate is still answered — by the stage the operator's chosen level
-delegates to — but nothing weighs the arguments, because for that class of tool there is
-nothing in them to weigh. It is the one place where a level's delegation resolves without
-a model, and the review row says so in those words rather than reporting it as a review.
 
 Two sets are exempt in the other direction, here rather than at a call site because both
 halves of the enforcement need them. The model's own task list and the tools that move a
@@ -131,7 +123,7 @@ class ApprovalPolicy(StrEnum):
     WITHHOLD = "withhold"
     #: Park and wait for the operator's decision.
     ASK = "ask"
-    #: Judged, then reviewed; parks on doubt.
+    #: Settled by Auto's rule (``decide.auto_decision``).
     REVIEW = "review"
     #: Run it, asking nobody. The one policy that also answers a gate the *tool* raised
     #: for reasons this axis knows nothing about — see the module docstring for why
@@ -186,11 +178,8 @@ PERMISSIONS: Mapping[PermissionLevel, PermissionSpec] = {
     "edit": PermissionSpec(
         level="edit", ceiling=Sensitivity.WORKSPACE_WRITE, approval_policy=ApprovalPolicy.ASK
     ),
-    # The default, and the same reach as Edit: the operator's decision is replaced by a
-    # review rather than removed — a structural judge over the command's own syntax, then
-    # a model reviewer, parking on any doubt and on every way the review can fail
-    # (`decide.py`). It says a line about itself because it asks the model to *declare*
-    # something (`prompts/levels.py`), which is the one thing here a model has to be told.
+    # The default, and the same reach as Edit: what the offline VM bounds runs, what a
+    # standing grant covers runs, and the rest parks (`decide.py`).
     "auto": PermissionSpec(
         level="auto",
         ceiling=Sensitivity.WORKSPACE_WRITE,
@@ -207,10 +196,9 @@ PERMISSIONS: Mapping[PermissionLevel, PermissionSpec] = {
     # the rest: a tool that gates itself is cleared too, which is the one place a level
     # takes a gate away and the reason this member exists.
     #
-    # What it does *not* remove is the fence. A command still declares its reach and still
-    # runs inside the sandbox profile built from that declaration, so a command that needs
-    # more than it declared fails in there exactly as it does at Auto. This level removes
-    # the asking; the containment is not the asking's to remove.
+    # What it does *not* remove is the fence. A command still runs inside the conversation
+    # VM, so one that needs more than the VM allows fails in there exactly as it does at
+    # Auto. This level removes the asking; the containment is not the asking's to remove.
     "yolo": PermissionSpec(
         level="yolo",
         ceiling=TOP_SENSITIVITY,
@@ -222,7 +210,7 @@ PERMISSIONS: Mapping[PermissionLevel, PermissionSpec] = {
 
 #: How permissive each policy is, once the ceiling has been compared. Withholding the tool
 #: is the least a level can do with an act it does not permit; parking asks the operator;
-#: reviewing answers for them; allowing asks nobody. Only meaningful *within* one ceiling
+#: Auto's rule answers for them; allowing asks nobody. Only meaningful *within* one ceiling
 #: — a level that reaches further is more permissive whatever it does at the boundary.
 _POLICY_PERMISSIVENESS: Mapping[ApprovalPolicy, int] = {
     ApprovalPolicy.WITHHOLD: 0,
@@ -319,7 +307,7 @@ PLANNING_TOOLS = frozenset(
 COORDINATION_TOOLS = frozenset({"agents_spawn", "agents_message"})
 
 #: Tools whose deferred call only the operator may answer, at every level. Approving a plan
-#: raises the thread's level, so no level, review or standing grant may approve it for them.
+#: raises the thread's level, so no level, rule or standing grant may approve it for them.
 OPERATOR_ONLY_TOOLS = frozenset({"plan_submit"})
 
 #: Every tool the level gate never elevates.

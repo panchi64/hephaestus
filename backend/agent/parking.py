@@ -43,6 +43,7 @@ from runs import ApprovalRequired, EventBody, QuestionAsked, Run, RunStatus
 from services.answers import questions_of
 from services.conversations import ConversationBinding, ConversationStore
 from services.notification_view import NotificationView
+from services.permissions import AUTO_KEY
 from services.permissions.guards import GUARD_KEY, unconfined
 
 from .compaction_context import CompactionContext
@@ -184,8 +185,6 @@ def announcements(
         explanation = args.get("explanation")
         if not isinstance(explanation, str):
             explanation = metadata.get("explanation")
-        reason = metadata.get(GUARD_KEY)
-        guard_reason = reason if isinstance(reason, str) and reason else None
         events.append(
             ApprovalRequired(
                 tool_call_id=call.tool_call_id,
@@ -193,8 +192,9 @@ def announcements(
                 args=args,
                 summary=summarize_call(call.tool_name, args),
                 explanation=explanation if isinstance(explanation, str) else None,
-                guard=guard_reason,
+                guard=_text(metadata.get(GUARD_KEY)),
                 unconfined=unconfined(call.tool_name, settings=get_settings()),
+                auto_reason=_text(metadata.get(AUTO_KEY)),
             )
         )
     for call in requests.calls:
@@ -205,6 +205,10 @@ def announcements(
             )
         )
     return events, pending_names, bool(requests.calls)
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 #: How much of one argument, and of the whole line, survives into the summary. Commands,

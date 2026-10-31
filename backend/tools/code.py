@@ -33,7 +33,7 @@ from services.vm import ConversationMachines
 
 from .deps import RunDeps
 from .emit import RunEventEmitted
-from .home_workspace import home_workspace
+from .home_workspace import ENV_CHANGED, home_workspace, still_bounded
 
 _MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([^']+)'")
 
@@ -224,6 +224,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         """
         # The description is `_execute_description`; this docstring supplies only the
         # parameter text.
+        if not await still_bounded(ctx, "code_execute"):
+            return {"ok": False, "error": ENV_CHANGED}
         machines = ctx.deps.caps.get_optional(ConversationMachines)
         if machines is None:
             return {

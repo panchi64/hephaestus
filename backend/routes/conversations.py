@@ -744,10 +744,6 @@ class ApprovalGrantOut(BaseModel):
     #: grant. Kept as words, not a joined string, because it identifies the grant to the
     #: `DELETE` below and splitting a joined form is only unambiguous by a distant invariant.
     command_prefix: list[str] = []
-    #: The operator's wider pick for the whole tool, which the reviewing level takes as
-    #: authorization rather than weighing. Needed because an empty `command_prefix` also
-    #: fits an ordinary non-command grant and a scheduled task's seed.
-    decisive: bool = False
     #: Whether the tool's grants are command-scoped at all, so the chip says "any command"
     #: only where that is a real contrast.
     command_scoped: bool = False
@@ -763,7 +759,6 @@ async def list_grants(conversation_id: str, request: Request) -> list[ApprovalGr
         ApprovalGrantOut(
             tool_name=g.tool_name,
             command_prefix=list(g.command_prefix),
-            decisive=g.decisive,
             command_scoped=g.tool_name in COMMAND_SCOPED_TOOLS,
             expires_at=g.expires_at,
         )

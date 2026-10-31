@@ -91,11 +91,11 @@ class TestTheLevelPart:
             assert AUTO_LEVEL in await _brief(project_id=project_id, permission="auto")
         assert "Every shell command" not in AUTO_LEVEL
 
-    async def test_auto_never_states_the_bar(self):
-        """What clears the review is deliberately absent — from here as much as from the
-        reviewer's own prompt: a model told the bar writes for the bar."""
-        for tell in ("low", "high", "too_destructive", "authorization"):
-            assert tell not in AUTO_LEVEL
+    async def test_auto_says_a_stop_is_waited_on_not_routed_around(self):
+        """The rule is deterministic, so it is stated; the one thing it can't catch is the
+        same act reached through another tool."""
+        assert "offline" in AUTO_LEVEL
+        assert "rather than reaching the same result another way" in AUTO_LEVEL
 
     async def test_a_plan_thread_is_told_its_missing_tools_are_deliberate(self):
         """The catalog is cut at Plan whether or not the model knows why. Without this it

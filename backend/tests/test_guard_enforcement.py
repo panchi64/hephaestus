@@ -100,7 +100,6 @@ async def _settle(
         caps=caps if caps is not None else ServiceContainer(),
         conversation_id=CONV,
         deps=RunDeps(run=run, owner_id=OWNER, permission=permission),
-        messages=[],
         permission=permission,
         metadata=metadata,
     )
@@ -118,12 +117,12 @@ class TestTheDeferredPath:
         asked: list[str] = []
 
         async def spy(
-            _run: Run, calls: Sequence[ToolCallPart], **_kwargs: object
+            _deps: RunDeps, calls: Sequence[ToolCallPart], _grants: object
         ) -> dict[str, object]:
             asked.extend(call.tool_call_id for call in calls)
             return {}
 
-        monkeypatch.setattr(gating, "review_batch", spy)
+        monkeypatch.setattr(gating, "auto_batch", spy)
         settled, manual = await _settle(level, [_call(DANGEROUS)])
         assert asked == []
         assert [c.tool_call_id for c in manual] == ["c1"]
@@ -134,12 +133,11 @@ class TestTheDeferredPath:
         assert manual == []
         assert isinstance(settled["c1"], ToolApproved)
 
-    @pytest.mark.parametrize("decisive", [False, True])
-    async def test_a_standing_grant_does_not_answer_it(self, decisive: bool):
+    async def test_a_standing_grant_does_not_answer_it(self):
         engine = make_engine("sqlite:///:memory:")
         init_db(engine)
         grants = ApprovalGrantStore(engine, 3600)
-        _ = await grants.grant(OWNER, CONV, "shell_run_command", decisive=decisive)
+        _ = await grants.grant(OWNER, CONV, "shell_run_command")
         caps = ServiceContainer.of(grants)
         # The grant does cover an ordinary command at this level...
         settled, manual = await _settle("edit", [_call("ls", "ok")], caps=caps)

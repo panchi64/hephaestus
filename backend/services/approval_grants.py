@@ -20,11 +20,9 @@ task's ``pre_authorized`` list (``plugins/routines/executor.py``) seeds one per 
 there is no command to name ahead of any turn, and a narrower grant would park the task
 forever.
 
-**``decisive`` records the operator's wider pick.** The approval card offers a second
-width, this tool with any command. The two differ to :func:`grant_width` only at the level
-that *reviews*: a command-scoped grant is an input to the review, a decisive one is the
-operator's authorization. Neither covers an irreversible act or replaces a review that
-could not run.
+A grant settles the call it covers at every level that asks, Auto included, where it
+clears what the offline VM does not bound (``services/permissions/decide.py``). A level's
+refusal it never overturns.
 
 Expiry is compared in Python after normalizing to UTC, because SQLite may drop tzinfo.
 """
@@ -44,11 +42,7 @@ from core.db import in_session, upsert
 from core.serde import as_utc
 from models._fields import new_id, utcnow
 from models.approval_grant import ApprovalGrant
-from services.permissions import (
-    OPERATOR_ONLY_TOOLS,
-    GrantWidth,
-    command_prefixes,
-)
+from services.permissions import OPERATOR_ONLY_TOOLS, command_prefixes
 from services.permissions.guards import is_guarded
 
 #: Literals because ``services/`` sits below ``tools/``; ``tests/test_approval_grants.py``
@@ -63,7 +57,7 @@ _WORDS = TypeAdapter(list[str])
 #: Tools no grant may cover. A grant approves a tool name only, so one on the egress request
 #: would cover every domain (the egress policy remembers approved domains instead) and one
 #: on a plan approval would let the agent raise its own level. Both grant writers consult
-#: it, and :func:`grant_width` ignores any row on one.
+#: it, and :func:`covered_by_grant` ignores any row on one.
 ONCE_ONLY_TOOLS = frozenset({"code_request_egress"}) | OPERATOR_ONLY_TOOLS
 
 
@@ -82,9 +76,6 @@ class GrantInfo:
     #: The leading words this grant is scoped to (`("uv", "run", "pytest")`), empty for a
     #: grant over the whole tool.
     command_prefix: tuple[str, ...] = ()
-    #: Whether this grant answers for the operator at the level that reviews, or only
-    #: informs it. See :func:`grant_width`.
-    decisive: bool = False
 
 
 def encode_prefix(words: Sequence[str]) -> str:
@@ -143,56 +134,30 @@ def _scopes_of(args: Mapping[str, object]) -> list[tuple[str, ...]] | None:
     return list(prefixes) if prefixes else None
 
 
-def grant_width(
-    tool_name: str | None, args: Mapping[str, object], grants: Sequence[GrantInfo]
-) -> GrantWidth:
-    """How far this conversation's active grants reach over one deferred call.
-
-    The single rule shared by the engine's park-time split, the review a call is handed to,
-    and the approve route's resume-time re-validation.
-
-    ``"tool"``: a decisive whole-tool grant covers the call, and only that. ``"command"``:
-    a grant naming the act covers it, or an undecisive whole-tool row (a scheduled task's
-    seed, or a thread granted before the wider option existed). ``"none"``: nothing does.
-    Decisiveness is never inferred from an empty scope; only the operator says it.
-
-    A whole-tool grant covers any call to its tool. A command-scoped one covers a command
-    **every** stage of which leads with **exactly** some granted scope's words: every
-    stage, since a grant on a pipeline's head is not consent to its tail; exactly, since a
-    scope of `("env",)` matched as a prefix would cover `env rm -rf /tmp/x`. The words
-    include flags (:func:`services.permissions.command_prefixes`), so a yes to `curl -sS
-    <url>` does not stand for `curl -d @.env <elsewhere>`.
-
-    Nothing covers a command the grammar could not read or one naming a path outside the
-    worktree.
-    """
-    if tool_name is None or tool_name in ONCE_ONLY_TOOLS:
-        return "none"
-    on_tool = [grant for grant in grants if grant.tool_name == tool_name]
-    if not on_tool:
-        return "none"
-    whole_tool = [grant for grant in on_tool if not grant.command_prefix]
-    if whole_tool:
-        return "tool" if any(grant.decisive for grant in whole_tool) else "command"
-    called = _scopes_of(args)
-    if not called:
-        return "none"
-    scopes = [grant.command_prefix for grant in on_tool]
-    if not all(scope in scopes for scope in called):
-        return "none"
-    # A command-scoped grant names one act, so it informs a review whatever width it has.
-    return "command"
-
-
 def covered_by_grant(
     tool_name: str | None, args: Mapping[str, object], grants: Sequence[GrantInfo]
 ) -> bool:
-    """Whether a deferred call is covered by a conversation's active grants at all.
+    """Whether this conversation's active grants cover one deferred call: the rule shared
+    by the engine's park-time split and the approve route's resume-time re-check.
 
-    For the levels that ask outright, a grant of either width settles the call; width only
-    matters where a *review* decides (:func:`grant_width`, which this reads).
+    A whole-tool grant covers any call to its tool. A command-scoped one covers a command
+    **every** stage of which leads with **exactly** some granted scope's words: every stage,
+    since a grant on a pipeline's head is not consent to its tail; exactly, since a scope of
+    `("env",)` matched as a prefix would cover `env rm -rf /tmp/x`. The words include flags
+    (:func:`services.permissions.command_prefixes`), so a yes to `curl -sS <url>` does not
+    stand for `curl -d @secrets <elsewhere>`. Nothing covers a command the grammar could not
+    read or one naming a path outside the working directory.
     """
-    return grant_width(tool_name, args, grants) != "none"
+    if tool_name is None or tool_name in ONCE_ONLY_TOOLS:
+        return False
+    on_tool = [grant for grant in grants if grant.tool_name == tool_name]
+    if any(not grant.command_prefix for grant in on_tool):
+        return True
+    called = _scopes_of(args)
+    if not on_tool or not called:
+        return False
+    scopes = [grant.command_prefix for grant in on_tool]
+    return all(scope in scopes for scope in called)
 
 
 class ApprovalGrantStore:
@@ -206,15 +171,10 @@ class ApprovalGrantStore:
         conversation_id: str,
         tool_name: str,
         command_prefix: Sequence[str] = (),
-        decisive: bool = False,
     ) -> datetime:
         """Record (or refresh) a conversation-scoped auto-approval for ``tool_name``,
         scoped to ``command_prefix`` where the tool runs a command. Returns the new
-        expiry.
-
-        ``decisive`` is the operator's wider pick: their answer for the whole tool, taken as
-        the authorization by the level that reviews.
-        """
+        expiry."""
         expires_at = utcnow() + self._ttl
         scope = encode_prefix(command_prefix)
 
@@ -229,7 +189,6 @@ class ApprovalGrantStore:
                     conversation_id=conversation_id,
                     tool_name=tool_name,
                     command_prefix=scope,
-                    decisive=decisive,
                     created_at=utcnow(),
                     expires_at=expires_at,
                 )
@@ -240,15 +199,7 @@ class ApprovalGrantStore:
                         "tool_name",
                         "command_prefix",
                     ],
-                    # ``decisive`` is outside the unique index so the wider option promotes
-                    # the existing row instead of adding a second. It promotes and never
-                    # narrows: a conflicting write without it is a refresh or half a batch,
-                    # not a withdrawal; revoking the chip is how the operator narrows.
-                    set_=(
-                        {"expires_at": expires_at, "decisive": True}
-                        if decisive
-                        else {"expires_at": expires_at}
-                    ),
+                    set_={"expires_at": expires_at},
                 )
             )
             _ = session.exec(stmt)
@@ -281,7 +232,6 @@ class ApprovalGrantStore:
                             tool_name=r.tool_name,
                             expires_at=as_utc(r.expires_at),
                             command_prefix=decode_prefix(r.command_prefix),
-                            decisive=r.decisive,
                         )
                     )
                 else:

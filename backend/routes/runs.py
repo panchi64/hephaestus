@@ -8,21 +8,18 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal, NoReturn
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from pydantic_ai import ToolApproved, ToolDenied
-from pydantic_ai.messages import ToolCallPart
 
 from agent import AwaitingKind, ParkedTurn, awaiting_kind, build_resume_orchestrator
 from agent.approval_guards import guarded_approvals
-from agent.gating import GrantApproved
+from agent.gating import EnvApproved, GrantApproved
 from agent.recompose import RecomposeError, recompose
 from core.auth import via_api_token
-from core.config import get_settings
 from routes import deps
 from runs import (
     AnsweredQuestionOut,
@@ -40,11 +37,11 @@ from services.answers import (
     questions_of,
     render_answer,
 )
-from services.approval_grants import GrantInfo, grant_scopes, grant_width, grantable
-from services.approval_ledger import LedgerEntry
+from services.approval_grants import covered_by_grant, grant_scopes, grantable
 from services.plan_mode import PLAN_SUBMIT_TOOL
 from services.settings_store import get_inactivity_timeout, get_wall_clock_timeout
 from services.subagents import SubtreeStopper
+from tools.home_workspace import ENV_CHANGED, env_still_clears
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 logger = logging.getLogger(__name__)
@@ -247,20 +244,6 @@ class ApprovalOutcome(BaseModel):
     unscoped: list[str] = Field(default_factory=list)
 
 
-def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[GrantInfo]) -> bool:
-    """Whether the grant that settled this call still covers it, at the width it needed.
-
-    A grant can be revoked or lapse while the run waits, so the allow is re-checked before
-    resume. Only a whole-tool grant clears an act nobody can undo
-    (:func:`services.permissions.decide.review`), so that allow is re-checked at the wider
-    width: otherwise a surviving command-scoped grant would stand in for the revoked
-    whole-tool one, which the risk axis refused. Other grant-driven allows need a grant of
-    either width.
-    """
-    width = grant_width(call.tool_name, call.args_as_dict(), active)
-    return width == "tool" if settled.needs_whole_tool else width != "none"
-
-
 def _refuse_decision(run_id: str, detail: str, *, cause: Exception | None = None) -> NoReturn:
     """Log and raise the 409 for a decision the run can no longer take; the client shows
     ``detail`` to the operator as written."""
@@ -344,47 +327,45 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         _ = run.emit(frame)
 
     grants = deps.approval_grants(request)
-    # Re-validate grant-driven pre-approvals against current grants: a grant revoked or
-    # lapsed while parked must not still auto-run its call.
-    grant_approved = {
-        call_id for call_id, o in parked.settled.items() if isinstance(o, GrantApproved)
-    }
+    # Re-validate what a grant or the offline VM pre-approved: a grant revoked or lapsed
+    # while parked, or a VM that gained network, must not still auto-run its call. Every
+    # other settled call (a level's refusal, a Yolo allow) left nothing to re-check.
+    settled = parked.settled
     active = (
         await grants.list(deps.OPERATOR_ID, parked.conversation_id)
-        if grant_approved and parked.conversation_id is not None
+        if parked.conversation_id is not None
+        and any(isinstance(o, GrantApproved) for o in settled.values())
         else []
     )
+    parked_deps = parked.compaction.deps if parked.compaction is not None else None
     decisions: dict[str, ToolApproved | ToolDenied] = {}
-    for call_id, outcome in parked.settled.items():
-        # isinstance rather than the set above: the re-check needs the grant's width, which
-        # only the narrowed type carries.
-        if not isinstance(outcome, GrantApproved):
-            # Settled on grounds no grant touches, so nothing to re-validate: a refusal by
-            # the permission level (a later grant covers a tool the level forbids anyway);
-            # a call Auto's review cleared on its own grounds; and an approval the top level
-            # gave outright (a Yolo turn parked on a question, ``agent/turn.py``). None
-            # leaves a grant behind, so a grant check would misread that as revocation. A
-            # review that cleared a call because of a grant is marked as the grant's
-            # (``agent/gating.py``) and is re-checked.
-            decisions[call_id] = outcome
-        elif (call := call_by_id.get(call_id)) is not None and _still_covered(
-            call, outcome, active
-        ):
-            decisions[call_id] = ToolApproved()
-        else:
-            # Revoked or expired while parked; the message names neither cause.
-            decisions[call_id] = ToolDenied(
-                message="This tool's conversation auto-approval is no longer in effect."
+    for call_id, outcome in settled.items():
+        call = call_by_id.get(call_id)
+        if isinstance(outcome, GrantApproved):
+            covered = call is not None and covered_by_grant(
+                call.tool_name, call.args_as_dict(), active
             )
+            decisions[call_id] = (
+                ToolApproved()
+                if covered
+                else ToolDenied(
+                    message="This tool's conversation auto-approval is no longer in effect."
+                )
+            )
+        elif isinstance(outcome, EnvApproved):
+            clear = call is not None and await env_still_clears(parked_deps, call.tool_name)
+            decisions[call_id] = ToolApproved() if clear else ToolDenied(message=ENV_CHANGED)
+        else:
+            decisions[call_id] = outcome
 
-    # New "allow for this conversation" grants chosen this batch, as (tool, command scope,
-    # decisive) rows. At the narrow width the scope is derived here from the call as it will
+    # New "allow for this conversation" grants chosen this batch, as (tool, command scope)
+    # rows. At the narrow width the scope is derived here from the call as it will
     # run (the operator's override if any, since that is the act approved), never sent by the
     # client, which could otherwise widen it. A command tool yields one grant per stage of
     # its command line, none if unreadable (`services/approval_grants.py`); those ids go
     # back in `unscoped`. The wider width names the tool, so it derives nothing and never
     # appears there.
-    to_grant: list[tuple[str, tuple[str, ...], bool]] = []
+    to_grant: list[tuple[str, tuple[str, ...]]] = []
     unscoped: list[str] = []
     for decision in body.decisions:
         if decision.approved:
@@ -413,9 +394,8 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
                     scopes = grant_scopes(granted_call.tool_name, effective)
                     if scopes is None:
                         unscoped.append(decision.tool_call_id)
-                decisive = decision.scope == "conversation_tool"
                 for scope in scopes or ():
-                    row = (granted_call.tool_name, scope, decisive)
+                    row = (granted_call.tool_name, scope)
                     if row not in to_grant:
                         to_grant.append(row)
         else:
@@ -476,18 +456,18 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     # see them or a tool re-called in that turn would re-prompt. If the resume is refused,
     # the new grants are rolled back so a dead run leaves no standing auto-approval.
     #
-    # Only new ones are rolled back, hence reading existing scopes first: at the reviewing
-    # level a command-scoped grant doesn't settle a call, so a thread can hold a live grant
-    # and still park on the act it names. Approving refreshes that row, and a blanket
-    # rollback would delete a grant held before this card opened.
+    # Only new ones are rolled back, hence reading existing scopes first: a thread can hold
+    # a live grant and still park on the act it names (a guarded call), and approving
+    # refreshes that row, so a blanket rollback would delete a grant held before this card
+    # opened.
     conv_id = parked.conversation_id
     already: set[tuple[str, tuple[str, ...]]] = set()
     if to_grant and conv_id is not None:
         already = {
             (g.tool_name, g.command_prefix) for g in await grants.list(deps.OPERATOR_ID, conv_id)
         }
-        for tool_name, scope, decisive in to_grant:
-            _ = await grants.grant(deps.OPERATOR_ID, conv_id, tool_name, scope, decisive)
+        for tool_name, scope in to_grant:
+            _ = await grants.grant(deps.OPERATOR_ID, conv_id, tool_name, scope)
     # Resume runs under the operator's bounds, not registry defaults, or the setting would be
     # a half-truth on the only path approval-gated tools run on.
     settings_store = deps.settings_store(request)
@@ -501,7 +481,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         is None
     ):
         if to_grant and conv_id is not None:
-            for tool_name, scope, _ in to_grant:
+            for tool_name, scope in to_grant:
                 if (tool_name, scope) not in already:
                     await grants.revoke(deps.OPERATOR_ID, conv_id, tool_name, scope)
         _refuse_decision(run_id, "Already decided: the run could not be resumed.")
@@ -509,22 +489,4 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     # every event the resumed turn produces; a refused resume announces nothing.
     for d in body.decisions:
         _ = run.emit(ApprovalDecided(tool_call_id=d.tool_call_id, approved=d.approved))
-    if conv_id is not None:
-        await deps.approval_ledger(request).record(
-            deps.OPERATOR_ID,
-            conv_id,
-            [
-                LedgerEntry.of(
-                    decision.tool_call_id,
-                    call_by_id[decision.tool_call_id].tool_name,
-                    decision.override_args
-                    if decision.override_args is not None
-                    else call_by_id[decision.tool_call_id].args_as_dict(),
-                    "operator",
-                )
-                for decision in body.decisions
-                if decision.approved
-            ],
-            keep=get_settings().review_ledger_entries,
-        )
-    return ApprovalOutcome(granted=[list(scope) for _, scope, _ in to_grant], unscoped=unscoped)
+    return ApprovalOutcome(granted=[list(scope) for _, scope in to_grant], unscoped=unscoped)

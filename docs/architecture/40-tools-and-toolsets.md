@@ -154,7 +154,7 @@ model requests a sensitive tool
         ToolApproved may carry override_args; ToolDenied.message is shown to the model so it adapts
 ```
 
-As built: the `Agent` is constructed in `agent/factory.py` with `output_type` `[str, DeferredToolRequests]`, so a turn either finishes with text or returns pending approvals. Inside `agent/turn.py`'s loop, `agent/gating.py`'s `settle_deferred()` rules on each deferred call (grant, then the thread's permission level, then Auto's review), and whatever is left for the operator goes to `agent/parking.py`'s `park_for_input()`, which stashes a `ParkedTurn` (the agent, the message history, the requests, any pending correction-drop range) on `run.parked_payload`; `build_resume_orchestrator()` consumes it and feeds the operator's decisions back in. **Pydantic AI decides *what* needs approval and *exactly what it would do*; we own *parking, notifying, waiting, resuming*.** Because the parked state is just serialized history + pending requests, it survives disconnect for free and can outlive the connection entirely for unattended runs.
+As built: the `Agent` is constructed in `agent/factory.py` with `output_type` `[str, DeferredToolRequests]`, so a turn either finishes with text or returns pending approvals. Inside `agent/turn.py`'s loop, `agent/gating.py`'s `settle_deferred()` rules on each deferred call (guards, the thread's permission level, grants, then Auto's rule), and whatever is left for the operator goes to `agent/parking.py`'s `park_for_input()`, which stashes a `ParkedTurn` (the agent, the message history, the requests, any pending correction-drop range) on `run.parked_payload`; `build_resume_orchestrator()` consumes it and feeds the operator's decisions back in. **Pydantic AI decides *what* needs approval and *exactly what it would do*; we own *parking, notifying, waiting, resuming*.** Because the parked state is just serialized history + pending requests, it survives disconnect for free and can outlive the connection entirely for unattended runs.
 
 > The frozen v1 event protocol carries `approval.required`, with an **optional `explanation`** field for the host-exec case — additive, no version bump.
 
@@ -215,46 +215,33 @@ The `AE-3` sensitivity model rests on a *known* list (shell, email, vault…). T
 
 Consistent with the whole posture: unknowns are contained until the operator deliberately, per-tool, relaxes them — never the agent. Lands with `MCP-*` / `INTEG-*`.
 
-### 4.5 The Auto level's review — deterministic first, then a model
+### 4.5 The Auto level's rule
 
-Three of the four permission levels answer a deferred call without help: Plan refuses it, Manual and Edit put it in front of the operator. **Auto is the level whose entire meaning is that the operator's answers are given for them**, so it needs something to give them — a review, in two stages, deterministic first (`services/permissions/`).
+Plan refuses a deferred call, and Manual and Edit put it in front of the operator. **Auto answers for the operator, by a deterministic rule over the environment** (`services/permissions/decide.py`), never by reading the command:
 
 ```
 a deferred call at the Auto level
-  → capability.py    what this call would do at its WORST, extracted from its arguments
-  │                    a shell command: its programs, paths, env writes, network reach
-  │                    (shell_ast.py walks the real bash grammar via tree-sitter-bash)
-  │                  a file write: the one resolved target path
-  │                  an MCP call: the connector, the tool, and the argument KEYS
-  → judge.py         a STRUCTURAL stage over that capability — no list of programs.
-  │                    Two facts have to agree: what the syntax names, and whether a
-  │                    fence (the conversation's VM, with no network) holds it there.
-  │                    Contained + fenced clears at that tier.  Its only power is to
-  │                    APPROVE; everything else escalates rather than being refused —
-  │                    a host command, a command that reaches the network (always, whatever
-  │                    the operator's allowed-domains list holds: the fence bounds no
-  │                    reads of the project, so egress is how what a command read leaves the machine),
-  │                    a path outside the worktree, an AST shape it could not read, or
-  │                    a command with no fence to hold it — which includes any VM
-  │                    that can reach the network.
-  → reviewer.py      one structured call on the `utility` model, scoring three axes:
-  │                    risk           low | high | too_destructive
-  │                    authorization  explicitly_no | neutral | explicitly_yes
-  │                    correctness    a sentence, or null
-  → decide.py        too_destructive PARKS — the operator is asked, never refused for
-                     them.  low runs unless the operator said no.
-                     high runs only on an explicit yes.  Everything else parks.
+  → guards.py        a guarded act (git config, a host backstop, a delete under ~)
+  │                  asks the operator, at every level
+  → decide.py        clears it when the ENVIRONMENT bounds it:
+  │                    a classified read                       → runs
+  │                    VM shell or code_execute, with the VM
+  │                    up, offline, and no writable checkout    → runs
+  → grants           a standing conversation grant covering it → runs
+  → otherwise        parks, with the reason on the card:
+                     "runs on the host", "the VM can reach the network",
+                     "the VM is unavailable", "this thread's own checkout is
+                     writable", "acts outside the VM"
 ```
 
-Four properties are load-bearing and each is there for a reason that is easy to lose:
+Four properties are load-bearing:
 
-- **The cheap stage settles the common case only offline.** In a conversation VM with no network (offline mode, or an empty allowlist and no grants), `git status`, `ls src`, `grep -rn foo .`, `uv run pytest`, `git commit -m x` clear with no model call at all — on their *shape*, whatever binary they happen to name. Once the VM can reach any host, every command goes to the reviewer: `uv run pytest` runs code nobody read, and an allowed host takes an upload as readily as a download. Narrowing the stage costs latency, widening it costs the operator's trust, and only one of those is recoverable.
-- **The fence bounds writes and egress, and deliberately not reads of the project.** A cleared command runs in a VM that mounts the project, so it can still read any of it by a route its words did not name, and it writes straight to any mount that is writable. Containment is therefore checked in the judge before anything else, and the extraction refuses any word it cannot place as a single path — a program named by path and an environment assignment's value included. The unread-program tier (a program in scratch, or `code_execute`) additionally needs scratch to be the only writable place.
-- **The reviewer is told the rubric and never the passing score.** The combination lives in `decide.py` and is written down nowhere the model can read it. A reviewer that knows the threshold optimises for the threshold, which turns three independent observations into one negotiated verdict.
-- **Its transcript carries user and assistant messages only — never tool results.** Everything the model has read from a file, a page or an MCP server is content someone else wrote, and a reviewer that saw it could be argued into approving the very call that untrusted text asked for. Same posture `XC-SEC-5` takes everywhere else, applied to the one call whose output is a permission. What it *does* see is fenced as untrusted on top of that.
-- **Every failure parks.** No utility model bound, a reviewer timeout, an unparseable answer — all of them return the call to the operator. This is the one place in the codebase where the conservative branch has to be the default (`XC-DEG-*`): a review that cannot run is not a review that passes.
+- **The VM is the fence, so the rule reads the VM, not the command.** A cleared command can read only what the VM mounts (scratch, the thread's own project, its worktrees, and projects it holds a write lease on), write only the writable mounts, and reach no network. Parsing a command to prove the same thing again gave false parks on ordinary commands (`rg "a|b"`, heredocs, `python -c`) and no extra safety.
+- **A writable real checkout parks VM work.** Root in the guest can rewrite the checkout's `.git`, and a nested read-only bind of it does not hold (it can be unmounted). Hooks or config planted there would run on the operator's next host commit, so the VM is no fence in that thread. Worktree threads and read-only checkouts are unaffected.
+- **The VM is checked again when the call runs.** An allow the offline VM produced is marked (`EnvApproved`). The executing tool, and the resume path after a park, re-read the VM and refuse if it has gained network since.
+- **The host's own git never trusts the tree.** The platform snapshots, diffs and merges worktrees on the host. `services/projects/repo.py` passes `--git-dir`/`--work-tree` explicitly, finding a worktree's git directory from the project root's side rather than from the worktree's own `.git` link, and pins signing, external diff and textconv off.
 
-**And it is visible.** `review.started` / `review.completed` (additive to the frozen v1 protocol, no bump) carry the extracted worst case, the verdict, which stage settled it, and the three axes — rendered in the work log beside the call they judged. A level that answers for the operator is only worth having if they can read afterwards what was decided and why; without that, a tool call they never approved is indistinguishable from a gate that failed open.
+What parks carries its reason on `approval.required` (`auto_reason`), so the operator reads why Auto stopped.
 
 ---
 
@@ -263,7 +250,7 @@ Four properties are load-bearing and each is there for a reason that is easy to 
 1. The turn loop assembles `RunDeps` (run, owner, disabled-tool set, capability handles) — `agent/turn.py:drive_turn`.
 2. `build_agent_toolsets()` produces the gated, namespaced stack; the `Agent` is built with it (`deps_type=RunDeps`, `output_type=[str, DeferredToolRequests]`).
 3. The model runs its multi-step loop; for each call, the `_enabled_gate` and tool args are evaluated against `ctx.deps`. A non-sensitive tool executes and may emit `tool.progress`.
-4. A **sensitive** tool does *not* execute — the turn ends with `DeferredToolRequests`. The engine rules on each deferred call: the thread's permission level refuses or parks it, a standing conversation grant answers the levels that would have asked, and at the Auto level the review settles it — with the grant riding into that review as the operator's authorization rather than skipping it (§4.5). What is still unanswered parks (§4.1) and waits for `POST …/approve`.
+4. A **sensitive** tool does *not* execute — the turn ends with `DeferredToolRequests`. The engine rules on each deferred call: the thread's permission level refuses or parks it, a standing conversation grant answers the levels that would have asked, and at the Auto level the rule settles it: what the offline VM bounds runs, then what a grant covers (§4.5). What is still unanswered parks (§4.1) and waits for `POST …/approve`.
 5. `code_execute` and the shell run in the conversation's VM if one can be created, else report unavailable (§4.2); `code_request_egress` and `shell_run_on_host` always park for approval first — the two exits, never the compute.
 
 The result: access control (`AE-2` categories, `AE-3` sensitivity and enable/disable, `AE-4` model-discerns) is a **dozen lines of toolset composition plus a per-tool `requires_approval` flag**, keyed on one deps object. Every harder case (host exec, scheduled tasks, external tools) reuses the same deferred-tool pause.
@@ -277,7 +264,7 @@ The result: access control (`AE-2` categories, `AE-3` sensitivity and enable/dis
 | Toolset stack (namespacing + enabled gate + approval gate) | ✅ built (`tools/toolsets.py`) |
 | `builtin`, `memory`, `code` categories | ✅ built |
 | Approval pause/resume (engine + `/runs/{id}/approve`) | ✅ built |
-| Auto-level review (shell judge + utility-model reviewer) | ✅ built (`services/permissions/`, `agent/gating.py`) |
+| Auto-level rule (offline VM, then grants) | ✅ built (`services/permissions/decide.py`, `agent/gating.py`) |
 | Home file tools + per-conversation VM commands + host escape hatch | ✅ built (`services/home`, `services/vm`, `tools/files.py`, `tools/shell.py`, `tools/code.py`) |
 | Blast-radius model (egress allowlist enforced by smol, per-conversation VMs, fenced host tool) | ✅ built (`services/egress.py`, `services/vm/machines.py`, `services/sandbox/fence.py`, `tools/shell.py`) |
 | Async sub-agents (`subagents` category, register, wake, panel) | ✅ built (`services/subagents/`, `services/subagent_store.py`, `harness/manifests/subagents.py`, `tools/subagents.py`) — replaces the `agents` category and its blocking `delegate_task`, and the `research` category with it: research is now the `researcher` spec in the roster, launched, redirected (`subagents_send`) and listed (`subagents_list`) like any other |

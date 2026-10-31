@@ -1,26 +1,22 @@
-"""The permission axis: what a level is (:mod:`levels`), what it rules (:mod:`decide`),
-and — at the one level whose meaning is that the operator's answers are given for them —
-what an action would do (:mod:`capability`, :mod:`shell_ast`, :mod:`shell_flags`) and who
-says so (:mod:`judge`, structurally, then the decision model in :mod:`decision_reviewer`).
-Imported through the package, so a caller names one home for all of it."""
+"""The permission axis: what a level is (:mod:`levels`), what it rules and Auto's rule
+(:mod:`decide`), and the shell reading the guards and command grants share (:mod:`shell_ast`,
+:mod:`shell_scan`, :mod:`command_scope`). Imported through the package, so a caller names one
+home for all of it."""
 
-from services.permissions.capability import (
-    ActionKind,
-    Capability,
-    capability_of,
-    measured_against_root,
-)
+from services.permissions.command_scope import command_prefixes
 from services.permissions.decide import (
+    AUTO_KEY,
+    EGRESS_TOOL,
+    HOST_TOOLS,
+    VM_TOOLS,
+    AutoEnv,
+    AutoOutcome,
     Decision,
-    ReviewBudget,
-    ReviewOutcome,
-    ReviewStage,
-    SetupNeeded,
+    auto_decision,
     blocked_message,
     decide,
-    review,
+    environment_clears,
 )
-from services.permissions.judge import Judgement, Tier, judge
 from services.permissions.levels import (
     ACTING_PERMISSIONS,
     COORDINATION_TOOLS,
@@ -41,69 +37,38 @@ from services.permissions.levels import (
     stricter_permission,
     tools_beyond_scope,
 )
-from services.permissions.reviewer import (
-    ApprovedBy,
-    Authorization,
-    GrantWidth,
-    PriorApproval,
-    Reviewer,
-    ReviewRequest,
-    ReviewUnavailable,
-    ReviewVerdict,
-    ScoredVerdict,
-    TranscriptEntry,
-    TurnBoundary,
-    review_transcript,
-)
-from services.permissions.shell_ast import ShellCommand, command_prefixes, strip_comments
+from services.permissions.shell_ast import ShellCommand
 
 __all__ = [
     "ACTING_PERMISSIONS",
+    "AUTO_KEY",
+    "EGRESS_TOOL",
+    "COORDINATION_TOOLS",
     "DEFAULT_PERMISSION",
+    "HOST_TOOLS",
+    "LEVEL_EXEMPT_TOOLS",
+    "OPERATOR_ONLY_TOOLS",
     "PERMISSIONS",
     "PERMISSION_LADDER",
     "PERMISSION_LEVELS",
-    "COORDINATION_TOOLS",
-    "LEVEL_EXEMPT_TOOLS",
-    "OPERATOR_ONLY_TOOLS",
     "PLANNING_TOOLS",
     "STRICTEST_PERMISSION",
-    "ActionKind",
+    "VM_TOOLS",
     "ApprovalPolicy",
-    "ApprovedBy",
-    "Authorization",
-    "Capability",
+    "AutoEnv",
+    "AutoOutcome",
     "Decision",
-    "GrantWidth",
-    "Judgement",
     "PermissionLevel",
     "PermissionSpec",
-    "PriorApproval",
-    "ReviewBudget",
-    "ReviewOutcome",
-    "ReviewRequest",
-    "ReviewStage",
-    "ReviewUnavailable",
-    "ReviewVerdict",
-    "Reviewer",
-    "ScoredVerdict",
-    "SetupNeeded",
     "ShellCommand",
-    "Tier",
-    "TranscriptEntry",
-    "TurnBoundary",
+    "auto_decision",
     "beyond_scope",
     "blocked_message",
-    "capability_of",
     "command_prefixes",
     "decide",
-    "judge",
-    "measured_against_root",
+    "environment_clears",
     "permission_level",
     "permission_spec",
-    "review",
-    "review_transcript",
     "stricter_permission",
-    "strip_comments",
     "tools_beyond_scope",
 ]

@@ -4,17 +4,13 @@
 persists and what the transcript renders; what this module builds is appended to the
 *tail* of the same turn's user prompt, announced as a context injection, and stripped
 before the turn is recorded (``agent/prelude``, ``services/conversations``'s
-``install_persisted_attachments``). Three consequences worth holding on to:
+``install_persisted_attachments``). Two consequences worth holding on to:
 
 * A command body **never enters history**. It is re-derived each turn it applies to, so
   editing a skill changes what the next invocation does rather than leaving an old copy
   replayed forever.
 * It never touches the request *head*, so the cached prefix survives a command that
   differs on every turn.
-* The Auto reviewer reads position 0 of a user part and explicitly refuses to join the
-  tail (``services/permissions/reviewer``), so nothing written here can wear the
-  operator's label in a review. That is the property that makes it safe to put a
-  project-declared template in this block at all.
 
 **Skills and sub-agents are reached by directive, not by invocation.** Both already have
 one tested path — ``skills_open`` and ``agents_spawn`` — carrying staging, the
