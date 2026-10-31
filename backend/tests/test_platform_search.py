@@ -107,6 +107,13 @@ class Platform:
 
 @pytest.fixture
 async def platform() -> AsyncIterator[Platform]:
+    built = await make_platform()
+    yield built
+    await built.store.stop()
+
+
+async def make_platform() -> Platform:
+    """A platform over an in-memory DB; the caller stops ``store``."""
     engine, vault, store, search = await setup_search(DegradedEmbedder())
     embedder = DegradedEmbedder()
     memory = MemoryStore(engine, vault, embedder)
@@ -119,7 +126,7 @@ async def platform() -> AsyncIterator[Platform]:
     for adapter in record_adapters(engine, vault):
         index.register(adapter)
     index.register(routine_runs_adapter(engine, vault))
-    yield Platform(
+    return Platform(
         engine,
         vault,
         store,
@@ -129,7 +136,6 @@ async def platform() -> AsyncIterator[Platform]:
         PluginStore(engine, vault),
         folder,
     )
-    await store.stop()
 
 
 def _refs(results: PlatformResults) -> list[str]:

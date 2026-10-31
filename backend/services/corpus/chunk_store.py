@@ -437,12 +437,14 @@ class CorpusChunkStore:
         limit: int,
         source_id: str | None = None,
         source_ids: list[str] | None = None,
+        exclude_source_ids: set[str] | None = None,
         since: datetime | None = None,
     ) -> list[CorpusHit]:
         """Hybrid recall over a source's chunks, scored but **unfused** (the index
         fuses across sources). Filtered to ``source_kind`` (pass ``None`` to span every
         kind — a targeted read by id), to one ``source_id``, or to a set of
-        ``source_ids`` (e.g. a chat's own attached files). ``kb_excluded`` governs
+        ``source_ids`` (e.g. a chat's own attached files), and never returning one of
+        ``exclude_source_ids``. ``kb_excluded`` governs
         **ambient recall only**: a kind-scoped/fan-out read hides excluded chunks, but an
         explicit ``source_ids`` fetch overrides exclusion — a caller that names a file
         (the chat reading its own attachment from the marker) still gets it, while it
@@ -456,6 +458,8 @@ class CorpusChunkStore:
             if source_kind is not None and meta.source_kind != source_kind:
                 return False
             if source_id is not None and meta.source_id != source_id:
+                return False
+            if exclude_source_ids and meta.source_id in exclude_source_ids:
                 return False
             if since is not None and (doc.at is None or doc.at < since):
                 return False

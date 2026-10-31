@@ -451,7 +451,8 @@ in reverse, so the region is taken apart rather than switched off.
 
 Eight surfaces use it, and the list is meant to stay short: the chat **View**,
 the **settings dialog**, the **park dock** (the approval/question dock that takes
-the composer's slot), the **404** plate, the **unlock plate** (login and setup),
+the composer's slot), the **404** plate, the **unlock plates** (login and setup, and
+the Private area's PIN prompt, which is the same plate on a `FramedOverlay`),
 the **first-run walkthrough's column**
 (a place prepared for the operator before the workspace exists), and the two panels behind the
 composer's status bar — the **context breakdown** (behind the context bar) and the

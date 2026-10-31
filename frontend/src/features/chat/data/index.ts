@@ -48,6 +48,7 @@ export {
   renameConversation,
   revokeGrant,
   setAutoCompactOverride,
+  setConversationPrivate,
   useChatSession,
 } from "./conversations";
 

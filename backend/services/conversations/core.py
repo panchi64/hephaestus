@@ -228,6 +228,7 @@ class StoreCore:
         agent_name: str | None = None,
         parent_id: str | None = None,
         workspace_key: str | None = None,
+        private: bool = False,
     ) -> str:
         """Start a thread. ``project_id`` files it (null is unfiled, which is visible
         under every scope) and lets it write that project.
@@ -235,10 +236,13 @@ class StoreCore:
         ``permission`` is the level it *starts* at and moves freely afterwards; absent, the
         default level applies. ``agent_name`` is the agent it runs; absent, the default.
         ``parent_id`` and ``workspace_key`` are a spawned agent's: the thread that spawned it,
-        and the workspace every turn of it works in."""
+        and the workspace every turn of it works in. A child of a private thread is private
+        whatever ``private`` says, so delegation can't carry its content out of the area."""
 
         def work(session: Session) -> str:
+            parent = session.get(Conversation, parent_id) if parent_id is not None else None
             conversation = Conversation(
+                private=private or (parent is not None and parent.private),
                 owner_id=owner_id,
                 title_enc=self._seal_title(title),
                 ephemeral=ephemeral,

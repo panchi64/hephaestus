@@ -86,7 +86,9 @@ async def get_overview(request: Request) -> Overview:
         models.list_roles(OPERATOR_ID),
         models.list_endpoints(OPERATOR_ID),
         deps.search(request).list_providers(OPERATOR_ID),
-        deps.store(request).count_conversations(OPERATOR_ID),
+        deps.store(request).count_conversations(
+            OPERATOR_ID, include_private=deps.private_visible(request)
+        ),
         deps.memory(request).count(OPERATOR_ID),
     )
 

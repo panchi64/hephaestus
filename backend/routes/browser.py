@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from core.sse import sse_stream
@@ -22,7 +22,7 @@ from services.browser.view import ViewInput, dispatch, frames
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/browser", tags=["browser"])
+router = APIRouter(prefix="/browser", tags=["browser"], dependencies=[Depends(deps.private_gate)])
 
 #: Shown verbatim in a toast.
 _UNAVAILABLE = "The browser is not available: the services VM or web fetch is not running."

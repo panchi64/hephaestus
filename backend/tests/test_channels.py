@@ -133,6 +133,30 @@ async def test_an_answer_relays_only_where_the_chat_is_linked(monkeypatch: pytes
         assert channel.sent == []
 
 
+async def test_a_private_chat_is_out_of_a_channels_reach(monkeypatch: pytest.MonkeyPatch):
+    _answering(monkeypatch, "ok")
+    async with client_app() as (_client, app):
+        channel = FakeChannel(fallback="dm:ops")
+        hub = await _hub(app, channel)
+        first = await hub.inbound("fake", OWNER_ID, "dm:1", "ping")
+        await settle(app)
+        assert first.conversation_id is not None
+        _ = await deps.service(app, ConversationStore).set_private(first.conversation_id, True)
+
+        refused = await hub.inbound("fake", OWNER_ID, "dm:1", "more")
+        assert refused.outcome == "failed" and refused.conversation_id is None
+
+        call = PendingCall("call-1", "shell_run_on_host", "run `ls`", None)
+        parked = ApprovalRequest("run-1", first.conversation_id, (call,), token="t", questions=0)
+        answers = Answers()
+        approvals = await _approval_hub(app, answers, parked)
+        await approvals.attach(channel)
+        await approvals.request_approvals("run-1", first.conversation_id)
+        assert channel.asked == []
+        decided = await approvals.decide("fake", OWNER_ID, "run-1", "t", approve=True)
+        assert not decided.settled and answers.decided == []
+
+
 # --- approvals ------------------------------------------------------------------
 
 

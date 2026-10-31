@@ -4,6 +4,7 @@ export const ASSET_IDS = {
   workspaceRail: "HEPH-WKS-01",
   setupRail: "HEPH-SET-01",
   auth: "HEPH-AUTH-01",
+  privateArea: "HEPH-PRV-01",
   notFound: "HEPH-ERR-404",
   knowledgeBase: "HEPH-RAG-01",
   compare: "HEPH-CMP-01",

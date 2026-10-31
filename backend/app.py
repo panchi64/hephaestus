@@ -65,6 +65,7 @@ from services.embeddings import RegistryEmbedder
 from services.home.scratch import ScratchDirs
 from services.onboarding import mark_pending as mark_onboarding_pending
 from services.plan_mode import PlanMode
+from services.private_area import PrivateArea
 from services.registry import ModelRegistry
 from services.sandbox import (
     resolve_confinement,
@@ -244,6 +245,8 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     state.settings_store = SettingsStore(engine)
     if created_at_boot:
         await mark_onboarding_pending(state.settings_store, OPERATOR_ID)
+    state.private_area = PrivateArea(vault, state.settings_store, state.conversations)
+    vault.register_on_lock(state.private_area.lock)
     # Conversation-scoped tool auto-approval grants; core, beside the run substrate the
     # approvals park on.
     state.approval_grants = ApprovalGrantStore(engine, settings.approval_grant_ttl_s)
@@ -330,6 +333,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         state.conversations,
         state.credentials,
         state.settings_store,
+        state.private_area,
         state.approval_grants,
         state.egress,
         state.api_tokens,
@@ -347,6 +351,9 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # and the egress tool and fences read the policy. The rest arrive via manifests.
     agent_capabilities.add(state.approval_grants)
     agent_capabilities.add(state.egress)
+    # Recall and memory tools keep private threads out unless the area is open and the
+    # operator approves.
+    agent_capabilities.add(state.private_area)
     # Sub-agents resolve the `utility` model via the same `resolve_background` rule as
     # titling and verification.
     agent_capabilities.add(state.models)

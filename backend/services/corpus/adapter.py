@@ -58,6 +58,8 @@ class CorpusHit:
     at: datetime | None = None
     #: A name for the passage's origin when the ref alone is opaque (a conversation's title).
     title: str | None = None
+    #: From a private thread; only returned when the caller asked for private threads.
+    private: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,22 +92,33 @@ class SourceAdapter(ABC):
         *,
         limit: int,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[CorpusHit]:
         """Hybrid recall from this source's store, returned **ranked** (best first) so
         the index can fuse it by position. ``query`` is the raw text (for stores that
         embed it themselves); ``query_vec``/``query_tokens`` are the pre-computed dense
         and sparse forms (for stores that score rows directly). A degraded query vector
-        ⇒ sparse-only. Each hit carries its ``matched_by``. ``since`` drops anything older."""
+        ⇒ sparse-only. Each hit carries its ``matched_by``. ``since`` drops anything older.
+        A source holding private threads leaves them out unless ``include_private``, and
+        marks those it returns ``private``."""
 
     @abstractmethod
     async def status(self, owner_id: str) -> SourceStatus | list[SourceStatus]:
         """This source's row(s) for the ``/rag`` list — one status, or several for a
         registry of instances (e.g. one folder adapter managing many folders)."""
 
-    async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
-        """One item in full by its ref, or None when this source has no such item."""
-        del owner_id, ref
+    async def read(
+        self, owner_id: str, ref: str, *, include_private: bool = False
+    ) -> CorpusDocument | None:
+        """One item in full by its ref, or None when this source has no such item or it is
+        private and ``include_private`` is False."""
+        del owner_id, ref, include_private
         return None
+
+    async def private_source_ids(self, owner_id: str, source_ids: list[str]) -> set[str]:
+        """Which of these chunk-store source ids this source holds as private."""
+        del owner_id, source_ids
+        return set()
 
     async def reindex(self, owner_id: str, *, current_model: str | None = None) -> int:
         """(Re-)embed this source's pending/stale chunks into ``current_model``'s

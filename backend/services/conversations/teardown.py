@@ -16,6 +16,7 @@ from services.egress import EgressPolicy
 from services.home.changes import ThreadChanges
 from services.notifications import NotificationService
 from services.plan_mode import PlanMode
+from services.private_uploads import UploadPrivacy
 from services.projects import ProjectStore, WorktreeManager
 from services.subagent_store import SubagentStore
 from services.task_list import ConversationTasks
@@ -53,6 +54,7 @@ class ConversationTeardown:
         store: ConversationStore,
         registry: RunRegistry,
         uploads: UploadStore,
+        upload_privacy: UploadPrivacy,
         notifications: NotificationService,
         workspace_history: WorkspaceHistoryStore,
         conversation_tasks: ConversationTasks,
@@ -70,6 +72,7 @@ class ConversationTeardown:
         self._store: ConversationStore = store
         self._registry: RunRegistry = registry
         self._uploads: UploadStore = uploads
+        self._upload_privacy: UploadPrivacy = upload_privacy
         self._notifications: NotificationService = notifications
         self._workspace_history: WorkspaceHistoryStore = workspace_history
         self._conversation_tasks: ConversationTasks = conversation_tasks
@@ -124,6 +127,7 @@ class ConversationTeardown:
             _ = await self._notifications.delete_for_conversations(owner_id, thread_ids)
             if purge_images:
                 await self.purge_unreferenced_images(owner_id, attached)
+                await self._upload_privacy.reconcile(owner_id, attached)
             await self._purge_disk_state(conversation_id)
             return attached
         finally:
@@ -159,6 +163,7 @@ class ConversationTeardown:
                     _ = await self._delete_for_clear(owner_id, summary.id, attached)
         finally:
             await self.purge_unreferenced_images(owner_id, attached)
+            await self._upload_privacy.reconcile(owner_id, attached)
         return ClearOutcome(deleted=deleted, skipped_ids=sorted(skipped))
 
     async def message_image_orphans(

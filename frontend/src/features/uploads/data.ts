@@ -10,6 +10,7 @@ import {
 } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import type { ComposerAttachment, ComposerAttachmentsApi } from "~/ui";
+import { withPrivateAccess } from "~/features/private";
 import { api } from "~/lib/api";
 import type { Upload, UploadStatus } from "./model";
 
@@ -106,11 +107,20 @@ export function refreshUploads(): void {
 
 /* ── Mutations ────────────────────────────────────────────────────────────── */
 
-/** Upload one file. Returns the created (or recognized-duplicate) upload. */
-async function uploadFile(file: File): Promise<Upload> {
+/** The upload form. A private chat's composer files its uploads private. */
+export function uploadForm(file: File, isPrivate: boolean): FormData {
   const form = new FormData();
   form.append("file", file, file.name);
-  const dto = await api.postForm<UploadOut>("/uploads", form);
+  if (isPrivate) form.append("private", "true");
+  return form;
+}
+
+/** Upload one file. Returns the created (or recognized-duplicate) upload. A private
+ *  file's bytes are refused while the area is locked, so that asks for the PIN. */
+async function uploadFile(file: File, isPrivate: boolean): Promise<Upload> {
+  const dto = await withPrivateAccess(() =>
+    api.postForm<UploadOut>("/uploads", uploadForm(file, isPrivate)),
+  );
   refreshUploads();
   return toUploadDetail(dto);
 }
@@ -152,9 +162,12 @@ function failureReason(err: unknown): string | undefined {
  * until it settles. Toggling KB membership and removing are relayed to the seam.
  * `snapshot`/`restore` let the Composer put a message's files back when its send
  * is refused, and `retry` re-runs a failed chip. Bind once per composer; the poll
- * cleans itself up with the owning component.
+ * cleans itself up with the owning component. `isPrivate` says whether the composer
+ * writes to a private chat, read at each upload.
  */
-export function createComposerAttachments(): ComposerAttachmentsApi {
+export function createComposerAttachments(
+  isPrivate: () => boolean = () => false,
+): ComposerAttachmentsApi {
   const [items, setItems] = createStore<ComposerAttachment[]>([]);
   // The store proxy is itself reactive; the Composer reads it through this
   // accessor so its `For`/derivations track adds, removes, and field changes.
@@ -174,7 +187,11 @@ export function createComposerAttachments(): ComposerAttachmentsApi {
   // one cheap list read every consumer shares, never a per-file detail
   // GET that would decrypt the whole document just to read a status enum.
   const uploads = useUploads();
-  const inFlight = () => items.some((a) => a.status === "extracting");
+  // Extracting chips the latest list left out: a private file while the area is locked.
+  // They stop driving the poll, and settle when unlocking re-reads the list.
+  let hidden = new Set<string>();
+  const inFlight = () =>
+    items.some((a) => a.status === "extracting" && !hidden.has(a.id));
 
   // Reconcile each still-extracting chip against the freshest list row whenever
   // the list resolves (re-runs after each `refreshUploads()` below). The list is
@@ -185,6 +202,11 @@ export function createComposerAttachments(): ComposerAttachmentsApi {
     if (!rows) return;
     const index = new Map(rows.map((u) => [u.id, u]));
     untrack(() => {
+      hidden = new Set(
+        items
+          .filter((a) => a.status === "extracting" && !index.has(a.id))
+          .map((a) => a.id),
+      );
       for (const a of items) {
         if (a.status !== "extracting") continue;
         const row = index.get(a.id);
@@ -228,7 +250,7 @@ export function createComposerAttachments(): ComposerAttachmentsApi {
 
   const startUpload = (tempId: string, file: File): void => {
     unsent.set(tempId, file);
-    void uploadFile(file)
+    void uploadFile(file, isPrivate())
       .then((u) => {
         unsent.delete(tempId);
         patch(tempId, (x) => {

@@ -66,6 +66,7 @@ from services.conversations import (
     ConversationBinding,
     ConversationStore,
 )
+from services.private_uploads import UploadPrivacy
 from services.settings_store import TurnTuning
 from services.tool_policy import vision_disabled_tools
 from services.uploads import UploadStore
@@ -491,6 +492,11 @@ def build_chat_orchestrator(
             store=store,
             conversation_id=conversation_id,
         )
+        # Once recorded, so the files' privacy follows the chats that actually hold them: a
+        # queued send counts when it runs, a refused one never does.
+        privacy = capabilities.get_optional(UploadPrivacy)
+        if setup.stamp_ids and privacy is not None:
+            await privacy.reconcile(run.owner_id, setup.stamp_ids)
         if setup.stop_notice is not None:
             _ = run.messages.take_stop_notice()
 

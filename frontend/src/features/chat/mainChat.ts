@@ -43,6 +43,7 @@ import { moveDraft } from "~/ui";
 import { agentToSend } from "~/features/agents/model";
 import { toWindowSpec } from "~/features/plugins/windows";
 import { windowActions } from "~/lib/stores/pluginWindows";
+import { setStagedPrivate, stagedPrivate } from "~/features/private";
 import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { refreshSessions } from "./data/sessions";
 import { effortToSend, seatEffort } from "./effortSeat";
@@ -179,6 +180,9 @@ export function mainChat(): MainChat {
           // because this is the one place that knows the flip is an adoption and not a
           // navigation, and it still happens with the room unmounted.
           moveDraft(chatDraftKey(null), chatDraftKey(id));
+          // Filing in Private is chosen per new thread, unlike the project scope, so a
+          // later new thread started from anywhere else is not filed there too.
+          setStagedPrivate(false);
           setCurrentId(id);
         },
         onTurnComplete: () => refreshSessions(),
@@ -195,6 +199,7 @@ export function mainChat(): MainChat {
         initialSnapshots: fromLoaded((s) => s.snapshots),
         // Read only when a send creates the conversation.
         projectId: stagedProjectId,
+        private: stagedPrivate,
         // Read on every send — the level is the one binding fact that moves.
         permission,
         effort: () =>

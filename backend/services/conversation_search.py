@@ -100,6 +100,7 @@ class ChatSearchHit:
     score: float
     matched_by: str  # semantic | keyword | both
     updated_at: datetime
+    private: bool = False
 
 
 @dataclass(frozen=True)
@@ -139,15 +140,18 @@ class ConversationSearch:
         limit: int = 5,
         exclude_conversation_id: str | None = None,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[ChatSearchHit]:
         """Hybrid recall across the owner's conversations, best hit per conversation.
 
         ``exclude_conversation_id`` drops the current thread (the agent already has
-        it in context). Ephemeral threads are never searched. A degraded embedder
-        collapses cleanly to keyword-only."""
+        it in context). Ephemeral threads are never searched, and private ones only with
+        ``include_private``. A degraded embedder collapses cleanly to keyword-only."""
         query_vec, query_model = await embed_query(self._embedder, owner_id, query)
         query_tokens = ranking.tokens(query)
-        searchable = await self._searchable(owner_id, exclude_conversation_id, since)
+        searchable = await self._searchable(
+            owner_id, exclude_conversation_id, since, include_private=include_private
+        )
         ranked = await self._index.search(
             self._collection,
             owner_id,
@@ -176,6 +180,7 @@ class ConversationSearch:
                         score=score,
                         matched_by=matched_by,
                         updated_at=conversation.updated_at,
+                        private=conversation.private,
                     )
                 )
             return hits
@@ -183,10 +188,15 @@ class ConversationSearch:
         return await in_session(self._engine, work)
 
     async def _searchable(
-        self, owner_id: str, exclude: str | None, since: datetime | None
+        self,
+        owner_id: str,
+        exclude: str | None,
+        since: datetime | None,
+        *,
+        include_private: bool,
     ) -> frozenset[str]:
         """The owner's conversations a search may surface: not ephemeral, not the
-        caller's own thread, and touched since ``since``."""
+        caller's own thread, private only when asked for, and touched since ``since``."""
 
         def work(session: Session) -> frozenset[str]:
             stmt = (
@@ -194,6 +204,8 @@ class ConversationSearch:
                 .where(Conversation.owner_id == owner_id)
                 .where(col(Conversation.ephemeral).is_(False))
             )
+            if not include_private:
+                stmt = stmt.where(col(Conversation.private).is_(False))
             if exclude is not None:
                 stmt = stmt.where(Conversation.id != exclude)
             if since is not None:
@@ -202,11 +214,14 @@ class ConversationSearch:
 
         return await in_session(self._engine, work)
 
-    async def read(self, owner_id: str, conversation_id: str) -> ChatTranscript | None:
+    async def read(
+        self, owner_id: str, conversation_id: str, *, include_private: bool = False
+    ) -> ChatTranscript | None:
         """The active-path transcript of one conversation, or None if it isn't the
-        owner's. Reuses the store's projection (no duplicate tree logic)."""
+        owner's, or is private and ``include_private`` is False. Reuses the store's
+        projection (no duplicate tree logic)."""
         summary = await self._store.get_summary(conversation_id, owner_id)
-        if summary is None:
+        if summary is None or (summary.private and not include_private):
             return None
         views = await self._store.messages_view(conversation_id)
         lines: list[str] = []

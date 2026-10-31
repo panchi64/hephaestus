@@ -29,6 +29,9 @@ from .links import ChannelLinks
 logger = logging.getLogger(__name__)
 
 NEW_COMMAND = "/new"
+#: A channel is outside the operator's session, so it never relays, continues or decides
+#: anything in a private chat, locked or open.
+_PRIVATE_REPLY = "That chat is private. Continue it in the app, or send /new."
 
 
 class ChannelRefused(Exception):
@@ -126,6 +129,8 @@ class ChannelHub:
                 await self.links.unlink(self.owner_id, channel, address)
                 return Inbound("fresh", reply="Started fresh. Your next message opens a new chat.")
             linked = await self.links.conversation(self.owner_id, channel, address)
+            if linked is not None and await self._conversations.is_private(linked):
+                return Inbound("failed", reply=_PRIVATE_REPLY)
             try:
                 conversation_id, queued = await self._send_chat(text, linked)
             except ChannelRefused as exc:
@@ -163,7 +168,10 @@ class ChannelHub:
         targets = await self.links.addresses(self.owner_id, run.conversation_id)
         if not targets:
             return
-        text = await self._ending(run)
+        if await self._conversations.is_private(run.conversation_id):
+            text = _PRIVATE_REPLY
+        else:
+            text = await self._ending(run)
         for key, address in targets:
             channel = self._channels.get(key)
             if channel is None:
@@ -191,7 +199,7 @@ class ChannelHub:
         """Show a parked run's pending calls wherever its conversation is linked, or where
         a channel takes approvals for threads that aren't."""
         request = self._pending(run_id)
-        if request is None:
+        if request is None or await self._conversations.is_private(conversation_id):
             return
         targets = await self.links.addresses(self.owner_id, conversation_id)
         if not targets:
@@ -219,6 +227,8 @@ class ChannelHub:
         request = self._pending(run_id)
         if request is None or request.token != token:
             return Decided(False, "Already decided.")
+        if await self._conversations.is_private(request.conversation_id):
+            return Decided(False, _PRIVATE_REPLY)
         if request.questions:
             return Decided(False, "This turn also asks you a question; answer it in the app.")
         decisions = tuple(Decision(call.tool_call_id, approve) for call in request.calls)

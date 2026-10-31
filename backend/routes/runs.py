@@ -110,6 +110,14 @@ def _require_run(request: Request, run_id: str) -> Run:
     return run
 
 
+async def _require_open_run(request: Request, run_id: str) -> Run:
+    """The run, refused while it belongs to a private thread and the area is locked."""
+    run = _require_run(request, run_id)
+    if run.conversation_id is not None:
+        await deps.require_private_open(request, run.conversation_id)
+    return run
+
+
 @router.get("", response_model=list[RunView])
 async def list_runs(request: Request, active: Annotated[bool, Query()] = True) -> list[RunView]:
     """The operator's runs, newest first; ``active=True`` (default) keeps only non-terminal ones."""
@@ -117,16 +125,21 @@ async def list_runs(request: Request, active: Annotated[bool, Query()] = True) -
     if active:
         runs = [r for r in runs if not r.is_terminal]
     runs.sort(key=lambda r: r.created_at, reverse=True)
-    titles = await deps.store(request).titles(
-        [r.conversation_id for r in runs if r.conversation_id is not None],
-        deps.OPERATOR_ID,
+    store = deps.store(request)
+    if not deps.private_visible(request):
+        hidden = await store.private_among(
+            [r.conversation_id for r in runs if r.conversation_id is not None]
+        )
+        runs = [r for r in runs if r.conversation_id not in hidden]
+    titles = await store.titles(
+        [r.conversation_id for r in runs if r.conversation_id is not None], deps.OPERATOR_ID
     )
     return [_view(r, titles.get(r.conversation_id) if r.conversation_id else None) for r in runs]
 
 
 @router.get("/{run_id}", response_model=RunView)
 async def get_run(run_id: str, request: Request) -> RunView:
-    run = _require_run(request, run_id)
+    run = await _require_open_run(request, run_id)
     titles = (
         await deps.store(request).titles([run.conversation_id], run.owner_id)
         if run.conversation_id is not None
@@ -143,9 +156,16 @@ async def stream_run_events(
 ):
     """SSE event stream. Reconnect with ``Last-Event-ID`` to replay missed events. A client
     on an API token tails the run without counting as the operator watching it."""
-    run = _require_run(request, run_id)
+    run = await _require_open_run(request, run_id)
     after = parse_last_event_id(request.headers.get("last-event-id"), last_event_id)
-    return sse_response(run, after, watching=not via_api_token(request.state))
+    area = deps.private_area(request)
+    private = run.conversation_id is not None and await area.is_private(run.conversation_id)
+    return sse_response(
+        run,
+        after,
+        watching=not via_api_token(request.state),
+        allowed=area.is_unlocked if private else None,
+    )
 
 
 class CancelRequest(BaseModel):
@@ -160,6 +180,8 @@ async def cancel_run(
 ) -> dict[str, str]:
     registry = deps.registry(request)
     run = registry.get(run_id)
+    if run is not None and run.conversation_id is not None:
+        await deps.require_private_open(request, run.conversation_id)
     held = None
     if body is not None and body.hold_inbox and run is not None and run.conversation_id:
         # Before the cancel, so the run ending finds the inbox already held.
@@ -260,9 +282,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     question waits on a single set.
     """
     registry = deps.registry(request)
-    run = registry.get(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="run not found")
+    run = await _require_open_run(request, run_id)
     if run.status is not RunStatus.awaiting_input or not isinstance(run.parked_payload, ParkedTurn):
         _refuse_decision(run_id, f"Already decided: the run is {run.status.value} now.")
 

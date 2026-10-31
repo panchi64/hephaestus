@@ -170,9 +170,11 @@ async def test_listing_many_runs_reads_titles_once_and_still_matches_them_up(
         calls: list[list[str]] = []
         original = store.titles
 
-        async def counted(ids: list[str], owner_id: str) -> dict[str, str]:
+        async def counted(
+            ids: list[str], owner_id: str, *, include_private: bool = True
+        ) -> dict[str, str]:
             calls.append(list(ids))
-            return await original(ids, owner_id)
+            return await original(ids, owner_id, include_private=include_private)
 
         monkeypatch.setattr(store, "titles", counted)
         body = json_list(await client.get("/runs"))

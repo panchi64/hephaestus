@@ -34,6 +34,7 @@ from services.sandbox import SandboxError, stage_attachment
 from services.uploads import UploadStore
 
 from .deps import RunDeps
+from .recall_gate import own_private_files
 from .workspace import run_workspace, unavailable
 
 
@@ -56,6 +57,18 @@ def attachments_toolset() -> FunctionToolset[RunDeps]:
         uploads = ctx.deps.caps.get_optional(UploadStore)
         if uploads is None:
             return {"ok": False, "error": "Attachments are unavailable right now."}
+        missing = ModelRetry(
+            render_tool_error(
+                f"no attachment with id {attachment_id!r}",
+                hints=["use the id from the attachment note of a file in this conversation"],
+            )
+        )
+        # A private file answers as missing outside the private chat that holds it, so its
+        # existence isn't confirmed.
+        if attachment_id not in await own_private_files(ctx) and await uploads.private_among(
+            ctx.deps.owner_id, [attachment_id]
+        ):
+            raise missing
         try:
             workspace = await run_workspace(ctx)
         except WorktreeBusyError as exc:
@@ -65,12 +78,7 @@ def attachments_toolset() -> FunctionToolset[RunDeps]:
         try:
             blob = await uploads.content(ctx.deps.owner_id, attachment_id)
         except NotFoundError:
-            raise ModelRetry(
-                render_tool_error(
-                    f"no attachment with id {attachment_id!r}",
-                    hints=["use the id from the attachment note of a file in this conversation"],
-                )
-            ) from None
+            raise missing from None
 
         try:
             staged_relpath, renamed = stage_attachment(

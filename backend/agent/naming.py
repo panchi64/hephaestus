@@ -73,6 +73,9 @@ async def approval_conversation_title(
         except Exception:  # a title lookup must not block the notify
             logger.debug("title lookup failed for %s", conversation_id, exc_info=True)
             summary = None
+        if summary is not None and summary.private:
+            # A notification shows on the lock screen and in the bell while the area is shut.
+            return "A private chat"
         if summary is not None and summary.title:
             return summary.title
     return "this conversation"

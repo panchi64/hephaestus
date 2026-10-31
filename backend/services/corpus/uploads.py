@@ -28,7 +28,7 @@ from sqlmodel import Session
 
 from core.db import in_session
 from core.worker import WriteBehindWorker
-from models.upload import Upload
+from models.upload import Upload, select_private_ids
 from services.chunking import chunk_text
 from services.corpus.adapter import CorpusHit, SourceAdapter, SourceStatus
 from services.corpus.chunk_store import CorpusChunkStore
@@ -117,7 +117,11 @@ class UploadsAdapter(SourceAdapter):
         *,
         limit: int,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[CorpusHit]:
+        # Private files stay out of ambient recall even with the area open, like private
+        # summaries and reports; only the private chat holding them reaches them by id
+        # (`CorpusIndex.retrieve`).
         return await self._chunks.retrieve(
             owner_id,
             self.source_kind,
@@ -125,8 +129,19 @@ class UploadsAdapter(SourceAdapter):
             query_model,
             query_tokens,
             limit=limit,
+            exclude_source_ids=await self._private_ids(owner_id),
             since=since,
         )
+
+    @override
+    async def private_source_ids(self, owner_id: str, source_ids: list[str]) -> set[str]:
+        return await self._private_ids(owner_id, source_ids)
+
+    async def _private_ids(self, owner_id: str, among: list[str] | None = None) -> set[str]:
+        def work(session: Session) -> set[str]:
+            return set(session.exec(select_private_ids(owner_id, among)).all())
+
+        return await in_session(self._engine, work)
 
     @override
     async def status(self, owner_id: str) -> SourceStatus:

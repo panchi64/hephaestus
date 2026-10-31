@@ -42,6 +42,7 @@ import {
   stagedProjectId,
 } from "~/lib/stores/stagedProject";
 import { createComposerAttachments } from "~/features/uploads/data";
+import { setStagedPrivate, stagedPrivate } from "~/features/private";
 import { useProjects } from "~/lib/stores/projects";
 import { settled } from "~/lib/resource";
 import { directoryLabel } from "../addDirectory";
@@ -199,10 +200,13 @@ export function ChatRoomScreen(): JSX.Element {
   /** Unconditional: used when the shown thread is gone, so it can never decline. */
   const clearThread = () => setCurrentId(null);
 
-  /** A fresh composer on request; it keeps the current thread's project. From an already
-   *  staged composer it changes nothing. */
+  /** A fresh composer on request; it keeps the current thread's project and privacy. From
+   *  an already staged composer it changes nothing. */
   const startNew = () => {
-    if (openId() !== null) setStagedProjectId(currentSummary()?.projectId);
+    if (openId() !== null) {
+      setStagedProjectId(currentSummary()?.projectId);
+      setStagedPrivate(currentSummary()?.private ?? false);
+    }
     clearThread();
   };
 
@@ -303,7 +307,9 @@ export function ChatRoomScreen(): JSX.Element {
   // Attachments are transient: switching threads discards them. Not when the seat only
   // moves from null to the id the stream was already bound to (same thread, now named);
   // clearing then would drop files attached during the first turn.
-  const attachments = createComposerAttachments();
+  const attachments = createComposerAttachments(() =>
+    openId() === null ? stagedPrivate() : (currentSummary()?.private ?? false),
+  );
   createEffect(
     on(currentId, (id, prev) => {
       if (isNamedInPlace(id, prev, stream.conversationId())) return;

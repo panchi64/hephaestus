@@ -16,6 +16,7 @@
 
 import { batch, createEffect, createSignal, on, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
+import { withPrivateAccess } from "~/features/private";
 import { api } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
 import type { PluginWindowOpened, TaskItem } from "~/lib/stream";
@@ -66,6 +67,9 @@ export interface ChatStreamOptions {
   ephemeral?: boolean;
   /** Project for the next new conversation; read only on the send that creates it. */
   projectId?: () => string | undefined;
+  /** Whether the next new conversation is filed in the Private area; read only on the
+   *  send that creates it. */
+  private?: () => boolean;
   /** Sent on every send, unlike the project: the level is a live control the backend
    *  persists from whichever send named it last. */
   permission?: () => PermissionLevel;
@@ -363,25 +367,29 @@ export function createChatStream(
     let created: ChatSendDTO;
     const agent = options.agent?.(wasNew);
     try {
-      created = await api.post<ChatSendDTO>("/chat", {
-        prompt: text.trim(),
-        conversation_id: activeConversationId ?? undefined,
-        endpoint_id: override?.endpointId,
-        model: override?.model,
-        attachment_ids: attachmentIds,
-        // Only meaningful on the send that creates the conversation.
-        ephemeral: wasNew && options.ephemeral ? true : undefined,
-        // Set once at creation; the backend re-reads it off the conversation after.
-        project_id: wasNew ? options.projectId?.() : undefined,
-        // Sent every time; the composer's control takes effect by being read here.
-        permission_level: options.permission?.(),
-        effort: options.effort?.(),
-        agent,
-        continues_message_id: continuesMessageId,
-        // Never an expansion: the backend decides what a command means.
-        command: command ?? undefined,
-        file_refs: fileRefs?.length ? fileRefs : undefined,
-      });
+      // A private thread asks for the PIN if the area has locked since it was opened.
+      created = await withPrivateAccess(() =>
+        api.post<ChatSendDTO>("/chat", {
+          prompt: text.trim(),
+          conversation_id: activeConversationId ?? undefined,
+          endpoint_id: override?.endpointId,
+          model: override?.model,
+          attachment_ids: attachmentIds,
+          // Only meaningful on the send that creates the conversation.
+          ephemeral: wasNew && options.ephemeral ? true : undefined,
+          // Set once at creation; the backend re-reads it off the conversation after.
+          project_id: wasNew ? options.projectId?.() : undefined,
+          private: wasNew && options.private?.() ? true : undefined,
+          // Sent every time; the composer's control takes effect by being read here.
+          permission_level: options.permission?.(),
+          effort: options.effort?.(),
+          agent,
+          continues_message_id: continuesMessageId,
+          // Never an expansion: the backend decides what a command means.
+          command: command ?? undefined,
+          file_refs: fileRefs?.length ? fileRefs : undefined,
+        }),
+      );
     } catch (err) {
       // A queued send drew nothing, and the live run is not ours to end.
       if (!live) hideTurn();

@@ -641,6 +641,8 @@ export interface ChatSummary {
   agentName?: string;
   /** The thread this one was opened from, when it belongs to an agent tree. */
   parentId?: string;
+  /** Filed in the PIN-locked Private area. */
+  private?: boolean;
 }
 
 /** How far the model may go in a thread (the backend's `services/permissions`

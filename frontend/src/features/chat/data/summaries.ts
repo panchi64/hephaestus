@@ -92,5 +92,6 @@ export function toSummary(dto: ConversationSummaryDTO): ChatSummary {
     projectId: dto.project_id ?? undefined,
     agentName: dto.agent_name ?? undefined,
     parentId: dto.parent_id ?? undefined,
+    private: dto.private || undefined,
   };
 }

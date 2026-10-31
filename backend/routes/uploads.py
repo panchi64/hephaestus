@@ -19,11 +19,21 @@ import math
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from core.config import get_settings
-from core.exceptions import NotFoundError, RateLimitedError
+from core.exceptions import NotFoundError, PrivateAreaLocked, RateLimitedError
 from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
@@ -36,7 +46,9 @@ from services.uploads import UploadSummaryView, UploadView
 _THUMB_SIZES = (128, 256, 512)
 _DEFAULT_THUMB = 256
 
-router = APIRouter(prefix="/uploads", tags=["uploads"])
+router = APIRouter(
+    prefix="/uploads", tags=["uploads"], dependencies=[Depends(deps.private_upload_gate)]
+)
 
 
 class UploadSummaryOut(CamelModel):
@@ -55,6 +67,8 @@ class UploadSummaryOut(CamelModel):
     kb_excluded: bool
     # The operator's star (image uploads).
     favorite: bool
+    # Filed in the Private area; listed only while the area is open.
+    private: bool
     created_at: datetime
     updated_at: datetime
 
@@ -71,6 +85,8 @@ class UploadOut(CamelModel):
     note: str | None = None
     kb_excluded: bool
     favorite: bool
+    # Filed in the Private area; listed only while the area is open.
+    private: bool
     created_at: datetime
     updated_at: datetime
 
@@ -99,6 +115,7 @@ def _summary_out(view: UploadSummaryView) -> UploadSummaryOut:
         note=view.note,
         kb_excluded=view.kb_excluded,
         favorite=view.favorite,
+        private=view.private,
         created_at=view.created_at,
         updated_at=view.updated_at,
     )
@@ -117,6 +134,7 @@ def _out(view: UploadView) -> UploadOut:
         note=view.note,
         kb_excluded=view.kb_excluded,
         favorite=view.favorite,
+        private=view.private,
         created_at=view.created_at,
         updated_at=view.updated_at,
     )
@@ -124,7 +142,9 @@ def _out(view: UploadView) -> UploadOut:
 
 @router.get("", response_model=list[UploadSummaryOut])
 async def list_uploads(request: Request) -> list[UploadSummaryOut]:
-    views = await deps.uploads(request).list_uploads(OPERATOR_ID)
+    views = await deps.uploads(request).list_uploads(
+        OPERATOR_ID, include_private=deps.private_visible(request)
+    )
     return [_summary_out(v) for v in views]
 
 
@@ -133,7 +153,10 @@ async def create_upload(
     request: Request,
     response: Response,
     file: Annotated[UploadFile, File()],
+    private: Annotated[bool, Form()] = False,
 ) -> UploadOut:
+    """Store a file. ``private`` is set by a private chat's composer. The bytes of a
+    private file are refused, without its metadata, to a caller who may not see it."""
     # UP-4: rate-limit the endpoint to protect the service before doing any work.
     try:
         deps.upload_rate_limiter(request).check(OPERATOR_ID)
@@ -154,9 +177,16 @@ async def create_upload(
             status_code=413,
             detail=f"file exceeds the {settings.upload_max_bytes}-byte limit",
         )
+    visible = deps.private_visible(request)
+    if private and not visible:
+        raise PrivateAreaLocked
     filename = file.filename or "upload"
     mime = file.content_type or guess_content_type(filename)
-    view, created = await deps.uploads(request).create(OPERATOR_ID, filename, mime, content)
+    view, created = await deps.uploads(request).create(
+        OPERATOR_ID, filename, mime, content, private=private
+    )
+    if view.private and not visible:
+        raise PrivateAreaLocked
     # 201 for a newly stored file, 200 when an identical one already existed (UP-1).
     response.status_code = 201 if created else 200
     return _out(view)

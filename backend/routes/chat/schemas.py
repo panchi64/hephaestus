@@ -47,6 +47,9 @@ class ChatCreate(BaseModel):
     # Marks a fresh conversation as a scratch thread the listing hides (compare panes);
     # ignored when continuing one.
     ephemeral: bool = False
+    # Files a fresh conversation in the Private area, which must be open; ignored when
+    # continuing one.
+    private: bool = False
     # The project a new thread is filed under (it works in that folder); ignored when continuing.
     project_id: str | None = None
     # How far the model may go, from this turn on. Persisted on the thread so switching is

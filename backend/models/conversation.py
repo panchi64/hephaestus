@@ -102,6 +102,10 @@ class Conversation(Table, table=True):
     # meant to keep. Still a fully real conversation (readable, resumable, branch-
     # able by id); it's only omitted from the conversation list and the count.
     ephemeral: bool = Field(default=False)
+    # Filed in the PIN-locked Private area (`services/private_area.py`): hidden from the
+    # listing, the API and every agent while it is locked, and read by another thread only
+    # with the operator's approval while it is open.
+    private: bool = Field(default=False, sa_column_kwargs={"server_default": "0"})
     # The thread that delegated to this one, for an agent another agent spawned. An opened
     # child is listed under it.
     parent_id: str | None = Field(default=None, index=True)

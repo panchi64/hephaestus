@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from routes import deps
@@ -36,7 +36,9 @@ from services.subagents.callsigns import class_display
 from services.subagents.report import ReportStructure, report_prose, report_structure
 from services.task_list import tasks_payload
 
-router = APIRouter(prefix="/conversations", tags=["subagents"])
+router = APIRouter(
+    prefix="/conversations", tags=["subagents"], dependencies=[Depends(deps.private_gate)]
+)
 
 
 class Subagent(BaseModel):
