@@ -1,27 +1,42 @@
-"""Loopback readiness — wait for a subprocess to bind its port, and to start serving on it.
+"""HTTP response helpers, and loopback readiness probes for the servers we spawn.
 
-The shared probes behind every server we spawn and wait on: preview dev servers, the
-managed SearXNG and the web-fetch browser. No domain coupling,
-so each caller wraps the outcome in its own error (``SandboxError``, …).
+No domain coupling, so each caller wraps the outcome in its own error (``SandboxError``, …).
 
-Two levels, because *bound* and *serving* are different facts: a dev server or an
-inference engine accepts connections well before it answers a request, and a client that
-takes the bind as the go-ahead gets a connection reset for its first fetch.
+Readiness has two levels, because *bound* and *serving* are different facts: a dev server
+accepts connections well before it answers a request, and a client that takes the bind as
+the go-ahead gets a connection reset for its first fetch.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import suppress
 
 import httpx
+
+
+class ResponseTooLarge(Exception):
+    """A streamed response body crossed its byte cap."""
 
 
 def header(headers: httpx.Headers, name: str) -> str | None:
     """The header's value, repeated occurrences joined with commas, or ``None`` when absent."""
     values = headers.get_list(name)
     return ", ".join(values) if values else None
+
+
+async def iter_capped(response: httpx.Response, max_bytes: int) -> AsyncGenerator[bytes]:
+    """The body's chunks, raising :class:`ResponseTooLarge` once they pass ``max_bytes``.
+
+    Counted as it streams, so a missing or lying ``Content-Length`` can't delay the cap.
+    """
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > max_bytes:
+            raise ResponseTooLarge(f"the response exceeds {max_bytes} bytes")
+        yield chunk
 
 
 async def await_listening(
@@ -34,10 +49,8 @@ async def await_listening(
 ) -> None:
     """Poll ``host:port`` until a TCP connection succeeds.
 
-    Raises ``TimeoutError`` if nothing is listening within ``timeout_s``. When
-    ``is_alive`` is supplied and returns ``False`` (the process we're waiting on has
-    already exited), raise ``ConnectionError`` immediately instead of waiting out the
-    full timeout — so a server that dies on startup fails fast with a clear cause.
+    Raises ``TimeoutError`` if nothing listens within ``timeout_s``, and ``ConnectionError``
+    as soon as ``is_alive`` returns ``False``.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
@@ -68,19 +81,12 @@ async def await_http_ready(
 ) -> bool:
     """Poll ``url`` until it answers with a non-5xx status. Returns whether it did.
 
-    A 5xx (or a connection error) is "still warming up"; anything below 5xx means the
-    server is serving, including a 404 — the probe usually hits a path the server has no
-    route for, and being answered at all is the fact we want.
+    A 5xx or a connection error means still warming up. A 404 counts as serving, since the
+    probe usually hits a path with no route.
 
-    Returns ``False`` on running out of budget rather than raising, because the two
-    callers disagree about what a timeout means: an engine that never became ready is a
-    failed start, while a sandbox preview that hasn't answered yet is still worth opening
-    (the operator's refresh button is the backstop). Neither reading belongs here.
-
-    ``is_alive`` behaves as in :func:`await_listening` — when the process being waited on
-    has already exited, raise ``ConnectionError`` at once instead of polling a port that
-    will never answer. Each request and each sleep is clamped to the remaining budget, so
-    the call never overshoots ``timeout_s`` even when a probe hangs.
+    Running out of budget returns ``False`` rather than raising, because callers disagree
+    on what a timeout means. ``is_alive`` behaves as in :func:`await_listening`. Each
+    request and sleep is clamped to the remaining budget, so a hung probe can't overshoot.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
