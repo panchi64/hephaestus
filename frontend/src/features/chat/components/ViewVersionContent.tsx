@@ -9,12 +9,20 @@ import {
 } from "solid-js";
 import { api, useAuthedBlobUrl } from "~/lib/api";
 import { bytes } from "~/lib/format";
-import { Button, CodeBlock, ErrorState, LoadingText, Text } from "~/ui";
+import {
+  Button,
+  CodeBlock,
+  ErrorState,
+  LoadingText,
+  Markdown,
+  Text,
+} from "~/ui";
 import type { ViewPreviewRef } from "../model";
 import { detectContentKind, extensionOf } from "../viewport/viewItems";
 import { createDownloadSlot, downloadBlob } from "../viewport/downloadRegistry";
 import { CsvTable } from "./renderers/CsvTable";
-import { fontStepStyle } from "./renderers/fontStep";
+import { rememberScroll } from "../scrollMemory";
+import { fontStepStyle, frameZoom } from "./renderers/fontStep";
 import { JsonTree } from "./renderers/JsonTree";
 import { MediaPlayer } from "./renderers/MediaPlayer";
 import { PdfViewer } from "./renderers/PdfViewer";
@@ -23,9 +31,12 @@ import { SandboxedFrame } from "./SandboxedFrame";
 import { SvgContent } from "./renderers/SvgContent";
 import { settled } from "~/lib/resource";
 
-/** Text/code under this size render inline (existing `pre` / `CodeBlock`); at or
- *  over it, the same bytes hand off to `RawTextViewer`'s virtualized rendering. */
+/** Text and code under this size render inline; at or over it, the bytes go to
+ *  `RawTextViewer`'s virtualized rendering. */
 const INLINE_TEXT_THRESHOLD = 200_000;
+/** Markdown parses and renders synchronously on the main thread, so it falls back to
+ *  raw text at a smaller size. */
+const INLINE_MARKDOWN_THRESHOLD = 50_000;
 
 /**
  * Renders a version's static **preview** — the captured file a `show(file=…)` stamped on
@@ -56,8 +67,7 @@ export function ViewVersionContent(props: {
     detectContentKind(props.title, props.preview.kind),
   );
 
-  // image + HTML render through the blob-URL hook (their src can't carry a bearer) —
-  // unchanged from the prior implementation.
+  // Image and HTML render through the blob-URL hook: their src can't carry a bearer.
   const isUrlKind = (): boolean => kind() === "image" || kind() === "html";
   const objectUrl = useAuthedBlobUrl(() =>
     isUrlKind() ? contentPath() : undefined,
@@ -80,17 +90,20 @@ export function ViewVersionContent(props: {
     armDownload({ name: props.title, getBlob: async () => b });
   });
 
-  const isTextLike = (): boolean => kind() === "text" || kind() === "code";
+  const isTextLike = (): boolean =>
+    kind() === "text" || kind() === "code" || kind() === "markdown";
   // Assume inline while the size isn't known yet, so the small/common case never
   // flashes the RawTextViewer arm first; a genuinely large file flips this once
   // `blob()` resolves with its real size.
   const inline = (): boolean =>
-    (settled(blob)?.size ?? 0) < INLINE_TEXT_THRESHOLD;
+    (settled(blob)?.size ?? 0) <
+    (kind() === "markdown" ? INLINE_MARKDOWN_THRESHOLD : INLINE_TEXT_THRESHOLD);
 
   const [text] = createResource(
     () => (isTextLike() && inline() ? settled(blob) : undefined),
     (b) => b.text(),
   );
+  const body = (): string => settled(text) ?? "";
 
   const codeLang = (): string | undefined =>
     extensionOf(props.title) ?? undefined;
@@ -199,24 +212,38 @@ export function ViewVersionContent(props: {
           </Match>
           <Match when={settled(text) !== undefined}>
             <Show
-              when={kind() === "code"}
+              when={kind() !== "code"}
               fallback={
-                <Text
-                  as="pre"
-                  variant="code"
-                  class="block h-full overflow-auto whitespace-pre-wrap break-words p-3"
-                  style={fontStepStyle(props.fontStep)}
-                >
-                  {settled(text)}
-                </Text>
+                <CodeBlock
+                  code={body()}
+                  lang={codeLang()}
+                  fontStep={props.fontStep}
+                  softWrap={props.softWrap}
+                />
               }
             >
-              <CodeBlock
-                code={settled(text) ?? ""}
-                lang={codeLang()}
-                fontStep={props.fontStep}
-                softWrap={props.softWrap}
-              />
+              <div
+                ref={(el) => rememberScroll(el, scrollKey)}
+                class="h-full overflow-auto p-3"
+              >
+                <Show
+                  when={kind() === "markdown"}
+                  fallback={
+                    <Text
+                      as="pre"
+                      variant="code"
+                      class="block whitespace-pre-wrap break-words"
+                      style={fontStepStyle(props.fontStep)}
+                    >
+                      {body()}
+                    </Text>
+                  }
+                >
+                  <div style={{ zoom: frameZoom(props.fontStep) }}>
+                    <Markdown dense>{body()}</Markdown>
+                  </div>
+                </Show>
+              </div>
             </Show>
           </Match>
         </Switch>

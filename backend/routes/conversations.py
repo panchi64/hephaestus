@@ -128,7 +128,8 @@ class ViewVersionRefOut(BaseModel):
 
     snapshot_id: str
     title: str | None
-    preview_kind: str | None  # "html" | "image" | "text" | "other" | None — the chip icon
+    # "html" | "image" | "text" | "markdown" | "other" | None — the chip icon
+    preview_kind: str | None
     # The ``show`` call that minted it, so a reload places the chip right after that call.
     tool_call_id: str | None = None
 

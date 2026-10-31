@@ -58,5 +58,5 @@ class ViewSnapshot(Body):
     created_at: datetime
     files_changed: int
     summary: str  # compact change tally, e.g. "+2 ~1 −0"
-    preview_kind: str | None = None  # "html" | "image" | "text" | "other" | None
+    preview_kind: str | None = None  # "html" | "image" | "text" | "markdown" | "other" | None
     preview_artifact_id: str | None = None

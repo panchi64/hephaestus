@@ -43,6 +43,16 @@ async def test_publish_then_serve_round_trip(tmp_path: Path):
     assert blob.content_type == "text/html"
 
 
+async def test_a_markdown_file_previews_as_markdown_whatever_its_title(tmp_path: Path):
+    store = await _store(tmp_path)
+    md = await store.publish(
+        "operator", "conv-1", filename="EU AI Act.md", content=b"# Hi", title="EU AI Act"
+    )
+    txt = await store.publish("operator", "conv-1", filename="notes.txt", content=b"hi")
+    assert md.kind == "markdown"
+    assert txt.kind == "text"
+
+
 async def test_content_is_encrypted_at_rest(tmp_path: Path):
     from sqlmodel import Session, select
 

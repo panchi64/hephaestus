@@ -37,6 +37,8 @@ def _kind(content_type: str) -> str:
         return "image"
     if content_type in ("text/html", "application/xhtml+xml"):
         return "html"
+    if content_type == "text/markdown":
+        return "markdown"
     if content_type.startswith("text/") or content_type == "application/json":
         return "text"
     return "other"

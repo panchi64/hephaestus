@@ -11,6 +11,7 @@ import type {
   ContextWindow,
   RunMetrics,
   SummarySection,
+  ViewPreviewKind,
 } from "~/lib/stream";
 import type {
   ChatActivity,
@@ -92,7 +93,7 @@ export interface ToolCallDTO {
 export interface MessageVersionRefDTO {
   snapshot_id: string;
   title: string | null;
-  preview_kind: "html" | "image" | "text" | "other" | null;
+  preview_kind: ViewPreviewKind | null;
   /** The `show` call that minted it — where a reload places the chip. */
   tool_call_id?: string | null;
 }
@@ -103,7 +104,7 @@ export interface ViewSnapshotDTO {
   created_at: string;
   files_changed: number;
   summary: string;
-  preview_kind: "html" | "image" | "text" | "other" | null;
+  preview_kind: ViewPreviewKind | null;
   preview_artifact_id: string | null;
   /** The operator's durable bookmark on this version. */
   keeper?: boolean;

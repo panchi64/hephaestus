@@ -7,6 +7,7 @@ import type {
   ContextInjected,
   ContextWindow,
   SummarySection,
+  ViewPreviewKind,
 } from "~/lib/stream";
 
 /** Why a fold happened, as the wire spells it. */
@@ -296,7 +297,7 @@ export interface HostCommand extends CommandBoundaryFacts, ApprovalCautions {
  *  with its bytes at `/views/{artifactId}/content`. Absent ⇒ a live/auto preview
  *  (a running head, or the frontend auto-picks an entry HTML page from the tree). */
 export interface ViewPreviewRef {
-  kind: "html" | "image" | "text" | "other";
+  kind: ViewPreviewKind;
   artifactId: string;
 }
 
@@ -443,7 +444,7 @@ export interface ViewVersionBlock {
   snapshotId: string;
   title?: string;
   /** The preview kind, for the chip icon (null/absent ⇒ a live/auto preview). */
-  previewKind?: "html" | "image" | "text" | "other" | null;
+  previewKind?: ViewPreviewKind | null;
 }
 /** The View's live head, started during the turn; rendered as a LIVE chip. */
 export interface ViewLiveBlock {
