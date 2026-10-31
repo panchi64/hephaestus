@@ -1,17 +1,19 @@
 """Low-level cryptographic primitives for at-rest encryption.
 
-AES-256-GCM protects content: it stays secure against quantum-capable
-adversaries at the symmetric level (Grover only halves the strength, leaving
-~128-bit). Argon2id stretches the operator's password two independent ways — a
-login verifier and a key-encryption key — so the stored login hash is useless
-for decryption. HKDF splits the DEK into per-purpose subkeys (database file,
-volume), so no two layers share key material.
+Everything at rest is symmetric with 256-bit keys, so nothing depends on the
+public-key schemes a quantum computer breaks; Grover only halves the strength,
+leaving ~128-bit (the CNSA 2.0 bar). AES-256-GCM protects content. Argon2id
+stretches the operator's password two independent ways — a login verifier and a
+key-encryption key — so the stored login hash is useless for decryption.
+HKDF-SHA512 splits the DEK into per-purpose subkeys (database file, volume), so
+no two layers share key material.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import cast
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
@@ -36,7 +38,8 @@ class KdfParams:
     def from_json(cls, value: object) -> KdfParams:
         if not isinstance(value, dict):
             raise ValueError("kdf parameters must be an object")
-        t, m, p = value.get("t"), value.get("m"), value.get("p")
+        fields = cast(dict[str, object], value)
+        t, m, p = fields.get("t"), fields.get("m"), fields.get("p")
         if not (isinstance(t, int) and isinstance(m, int) and isinstance(p, int)):
             raise ValueError("kdf parameters must be integers")
         return cls(time_cost=t, memory_cost=m, parallelism=p)
@@ -103,7 +106,7 @@ def derive_kek(password: str, salt: bytes, params: KdfParams) -> bytes:
 def derive_subkey(root: bytes | bytearray, purpose: str) -> bytearray:
     """A 256-bit key for one purpose, independent of every other purpose's key."""
     hkdf = HKDF(
-        algorithm=hashes.SHA256(),
+        algorithm=hashes.SHA512(),
         length=_SUBKEY_LEN,
         salt=None,
         info=f"hephaestus/{purpose}/v1".encode(),

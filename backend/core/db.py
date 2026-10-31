@@ -117,6 +117,9 @@ def make_engine(url: str, key: bytes | None = None) -> Engine:
             # Must be the first statement on the connection; reading the schema proves
             # the key, since SQLCipher defers the check until the first page is read.
             cursor.execute(key_pragma(key))
+            # Pins the v4 parameters (AES-256, HMAC-SHA512, SHA512 KDF), so a library
+            # default changing later cannot weaken or strand this file.
+            cursor.execute("PRAGMA cipher_compatibility = 4")
             try:
                 cursor.execute("SELECT count(*) FROM sqlite_master")
             except sqlcipher.DatabaseError as exc:
