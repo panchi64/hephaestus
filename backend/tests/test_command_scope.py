@@ -70,6 +70,8 @@ def test_a_command_that_could_not_be_read_has_no_prefix(command: str):
         "git --git-dir=/elsewhere/.git log",
         "make OUT=/etc/x",
         "curl file:///etc/passwd",
+        "curl -o/etc/x https://example.test",
+        "make -C../other",
         "grep -r foo '\"/etc/passwd\"'",
     ],
 )
@@ -86,6 +88,10 @@ def test_a_command_that_leaves_the_working_directory_has_no_prefix(command: str)
         "bash -c 'rm -rf src'",
         "python3 -c 'print(1)'",
         "/usr/bin/node -e 'x'",
+        "env sh -c 'rm -rf src'",
+        "nice -n 5 bash script.sh",
+        "awk '{print}' f",
+        "busybox sh",
     ],
 )
 def test_an_inline_script_has_no_prefix(command: str):

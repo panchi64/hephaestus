@@ -11,7 +11,7 @@ import re
 
 from tree_sitter import Node
 
-from services.permissions.shell_ast import ShellCommand, decode_word, node_text, parse
+from services.permissions.shell_ast import ShellCommand, decode_word, node_text, parse, unwrap
 from services.permissions.shell_flags import is_flag
 
 #: Operands a scope keeps after the program: `uv run pytest`, `git commit`.
@@ -30,9 +30,21 @@ _PATH_FRAGMENT = re.compile(r"[^\w./~-]+")
 #: A URL's scheme, dropped before measuring so `https://host/x` reads as a host and a
 #: path, and `file:///etc/passwd` still as an absolute path.
 _URL_SCHEME = re.compile(r"\b[a-zA-Z][\w+.-]*://")
+_FLAG_LETTERS = re.compile(r"^-+[A-Za-z]*")
 #: Programs that run a script given inline. A scope on one (`sh -c`) would name the
-#: interpreter and cover any script, so a call to one has no scope.
-_INTERPRETERS = re.compile(r"(?:ba|z|da|k|fi)?sh|python[\d.]*|node|perl|ruby|php|osascript|eval")
+#: interpreter and cover any script, so a call to one, wrapped or not, has no scope.
+_INTERPRETERS = re.compile(
+    "|".join(
+        (
+            r"(?:ba|z|da|k|fi|tc|c)?sh",
+            r"python[\d.]*",
+            r"lua[\d.]*",
+            r"[gm]?awk",
+            "node|deno|bun|perl|ruby|php|tclsh|pwsh|osascript|Rscript|busybox",
+            r"eval|source|\.",
+        )
+    )
+)
 
 
 def command_prefixes(command: str) -> tuple[tuple[str, ...], ...] | None:
@@ -78,9 +90,10 @@ def _collect(node: Node, into: list[ShellCommand]) -> bool:
         words.append(word)
     if not words or not words[0] or any(c.isspace() for c in words[0]):
         return False
-    if _INTERPRETERS.fullmatch(words[0].rsplit("/", 1)[-1]):
+    one = ShellCommand(words[0], tuple(words[1:]))
+    if any(_INTERPRETERS.fullmatch(c.program.rsplit("/", 1)[-1]) for c in (one, unwrap(one))):
         return False
-    into.append(ShellCommand(words[0], tuple(words[1:])))
+    into.append(one)
     return True
 
 
@@ -114,7 +127,9 @@ def _outside(word: str) -> bool:
     if set(word) & _SYNTAX:
         return True
     for fragment in _PATH_FRAGMENT.split(_URL_SCHEME.sub("", word)):
-        if fragment.startswith(("/", "~")) or ".." in fragment.split("/"):
+        # A short flag's value can be glued on (`-o/etc/x`, `-C../x`).
+        value = _FLAG_LETTERS.sub("", fragment)
+        if value.startswith(("/", "~")) or ".." in value.split("/"):
             return True
     return False
 
