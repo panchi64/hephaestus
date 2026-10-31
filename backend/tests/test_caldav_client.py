@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 import httpx
 import pytest
 
-from services.calendar.dav import DavCollection, DavError
+from core import ssrf
+from core.exceptions import SSRFError
+from services.calendar.dav import DavCollection, DavError, DavRefused
 
 COLLECTION = "https://dav.example.com/calendars/operator/personal/"
 
@@ -68,7 +71,6 @@ async def test_the_listing_resolves_hrefs_and_keeps_etags(checked_urls: list[str
     assert not listing.truncated
     assert requests[0].method == "REPORT"
     assert requests[0].headers["depth"] == "1"
-    assert requests[0].headers["authorization"].startswith("Basic ")
     assert checked_urls == [COLLECTION]
 
 
@@ -110,7 +112,7 @@ async def test_an_oversized_response_is_refused(monkeypatch: pytest.MonkeyPatch)
         return httpx.Response(207, content=_multistatus(_object("a.ics", "X" * 200)))
 
     async with _collection(handler) as dav:
-        with pytest.raises(DavError, match="exceeds"):
+        with pytest.raises(DavError, match="too large"):
             _ = await dav.objects(10)
 
 
@@ -136,14 +138,27 @@ async def test_put_creates_the_object_without_overwriting(checked_urls: list[str
         return httpx.Response(201, headers={"ETag": '"new"'})
 
     async with _collection(handler) as dav:
-        href, etag = await dav.put("a@local/1", "BEGIN:VCALENDAR")
+        href, etag = await dav.put("a1@local", "BEGIN:VCALENDAR")
 
-    assert href == f"{COLLECTION}a%40local%2F1.ics"
+    assert href == f"{COLLECTION}a1@local.ics"
     assert etag == '"new"'
     assert requests[0].method == "PUT"
     assert requests[0].headers["if-none-match"] == "*"
     assert requests[0].content == b"BEGIN:VCALENDAR"
     assert checked_urls == [href]
+
+
+async def test_a_uid_unsafe_in_a_path_is_named_by_its_hash():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201)
+
+    async with _collection(handler) as dav:
+        href, _ = await dav.put("abc/123@example.com", "BEGIN:VCALENDAR")
+        again, _ = await dav.put("abc/123@example.com", "BEGIN:VCALENDAR")
+
+    name = href.removeprefix(COLLECTION)
+    assert re.fullmatch(r"[0-9a-f]{64}\.ics", name)
+    assert again == href
 
 
 async def test_put_without_an_etag_header_returns_none():
@@ -161,29 +176,90 @@ async def test_a_refused_put_raises():
         return httpx.Response(412)
 
     async with _collection(handler) as dav:
-        with pytest.raises(DavError, match="HTTP 412"):
+        with pytest.raises(DavRefused, match="HTTP 412"):
             _ = await dav.put("a", "BEGIN:VCALENDAR")
 
 
-async def test_a_digest_challenge_switches_the_session_to_digest():
+def _challenging(*challenges: str, accepts: str) -> tuple[Handler, list[str]]:
+    """A server that answers 401 with ``challenges`` until it sees the ``accepts`` scheme."""
     schemes: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         auth = request.headers["authorization"] if "authorization" in request.headers else ""
         schemes.append(auth.split(" ")[0])
-        if auth.startswith("Digest "):
+        if auth.startswith(f"{accepts} "):
             return httpx.Response(207, content=_multistatus())
-        challenge = 'Digest realm="dav", nonce="abc", qop="auth"'
-        return httpx.Response(401, headers={"WWW-Authenticate": challenge})
+        return httpx.Response(401, headers=[("WWW-Authenticate", c) for c in challenges])
+
+    return handler, schemes
+
+
+_DIGEST = 'Digest realm="dav", nonce="abc", qop="auth"'
+
+
+async def test_no_credential_is_sent_before_a_digest_challenge():
+    handler, schemes = _challenging(_DIGEST, accepts="Digest")
+
+    async with _collection(handler) as dav:
+        _ = await dav.objects(10)
+        _ = await dav.objects(10)
+
+    assert schemes == ["", "Digest", "Digest"]
+
+
+async def test_a_basic_challenge_is_answered_with_basic():
+    handler, schemes = _challenging('Basic realm="dav"', accepts="Basic")
+
+    async with _collection(handler) as dav:
+        _ = await dav.objects(10)
+        _ = await dav.objects(10)
+
+    assert schemes == ["", "Basic", "Basic"]
+
+
+async def test_digest_is_preferred_when_both_schemes_are_offered():
+    handler, schemes = _challenging('Basic realm="dav"', _DIGEST, accepts="Digest")
+
+    async with _collection(handler) as dav:
+        _ = await dav.objects(10)
+
+    assert "Basic" not in schemes
+    assert schemes[-1] == "Digest"
+
+
+async def test_both_schemes_in_one_header_still_authenticate():
+    handler, schemes = _challenging(f'Basic realm="dav", {_DIGEST}', accepts="Basic")
 
     async with _collection(handler) as dav:
         listing = await dav.objects(10)
-        _ = await dav.objects(10)
 
     assert listing.objects == []
-    assert schemes[0] == "Basic"
-    assert schemes[-1] == "Digest"
-    assert "Basic" not in schemes[1:]
+    assert schemes[-1] == "Basic"
+
+
+async def test_a_transport_failure_raises_dav_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    async with _collection(handler) as dav:
+        with pytest.raises(DavError, match="could not reach"):
+            _ = await dav.objects(10)
+
+
+async def test_a_private_address_is_refused_before_any_request(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("services.calendar.dav.assert_public_url", ssrf.assert_public_url)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(207, content=_multistatus())
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    async with DavCollection("http://127.0.0.1:8080/dav/", "operator", "pw", client=client) as dav:
+        with pytest.raises(SSRFError):
+            _ = await dav.objects(10)
+
+    assert requests == []
 
 
 async def test_a_redirect_is_refused_not_followed():

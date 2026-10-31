@@ -4,9 +4,9 @@ A CalDAV object is an ICS document, so this module owns no parsing: it moves doc
 between the server (`dav.py`) and `ics.py`, and merges on ``UID`` exactly as an ICS import
 does.
 
-The server URL is operator-supplied, so it is SSRF-checked at the start of every sync, not
-trusted from when it was saved. Credentials are decrypted into locals for one sync and are
-never logged, returned or written back.
+The server URL is operator-supplied, so `dav.py` SSRF-checks every request rather than
+trusting it from when it was saved. Credentials are decrypted into locals for one sync and
+are never logged, returned or written back.
 
 **Scope.** Sync is pull-authoritative with a first-time push: remote changes win on
 conflict, local events that were never pushed are uploaded, and an event the server no
@@ -24,10 +24,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-import httpx
-
-from core.ssrf import assert_public_url
-from services.calendar.dav import DavCollection, DavError, RemoteListing
+from services.calendar.dav import DavCollection, DavRefused, RemoteListing
 from services.calendar.ics import export_ics, parse_ics
 from services.calendar.service import CalendarService
 
@@ -73,8 +70,6 @@ class CalDavSync:
         somewhere the system refuses to reach."""
         calendar = await self._calendars.get_calendar(owner_id, calendar_id)
         url, username, password = await self._calendars.caldav_credentials(owner_id, calendar_id)
-        await assert_public_url(url)
-
         async with self._connector(url, username, password) as remote:
             listing = await remote.objects(MAX_REMOTE_OBJECTS)
             result = await self._apply_remote(owner_id, calendar_id, listing)
@@ -95,9 +90,17 @@ class CalDavSync:
         not re-parsed."""
         created = updated = skipped = 0
         seen_uids: set[str] = set()
+        unreadable = False
 
         for document, href, etag in remote.objects:
-            for entry in parse_ics(document):
+            try:
+                entries = parse_ics(document)
+            except ValueError:
+                logger.warning("calendar: unreadable remote object %s", href, exc_info=True)
+                skipped += 1
+                unreadable = True
+                continue
+            for entry in entries:
                 if entry.uid is None:
                     skipped += 1
                     continue
@@ -144,13 +147,12 @@ class CalDavSync:
                     logger.warning("calendar: remote event rejected locally", exc_info=True)
                     skipped += 1
 
-        if remote.truncated:
-            # The listing covers whichever objects the server sent first, so no slice of
-            # the local calendar can be judged gone; skip the vanished pass whole.
+        if remote.truncated or unreadable:
+            # A UID the listing didn't reveal may still be on the server, so no local
+            # event can be judged gone; skip the vanished pass whole.
             logger.warning(
-                "calendar: the remote listing stopped at the %d-object cap, so no local "
-                + "event was removed this sync",
-                MAX_REMOTE_OBJECTS,
+                "calendar: the remote listing was %s, so no local event was removed this sync",
+                f"cut at {MAX_REMOTE_OBJECTS} objects" if remote.truncated else "partly unreadable",
             )
             removed = 0
         else:
@@ -180,14 +182,15 @@ class CalDavSync:
         result: SyncResult,
     ) -> SyncResult:
         """Upload local events the server has never seen, and record where they landed so
-        the next sync doesn't push them twice. One refused upload doesn't stop the rest."""
+        the next sync doesn't push them twice. One refused upload doesn't stop the rest; an
+        unreachable server does."""
         pushed = 0
         for event in await self._calendars.list_events(owner_id, calendar_id):
             if event.remote_href:
                 continue
             try:
                 href, etag = await remote.put(event.uid, export_ics([event]).decode())
-            except DavError, httpx.HTTPError:
+            except DavRefused:
                 logger.warning("calendar: remote refused an event during push", exc_info=True)
                 continue
             _ = await self._calendars.update_event(

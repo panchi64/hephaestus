@@ -39,14 +39,12 @@ dependencies = [
     # Gmail, Graph and JMAP need no client library: they are REST over httpx.
     "aioimaplib>=2.0.3",
     "aiosmtplib>=5.1.3",
-    # Not msal or google-api-python-client: those keep on-disk credential caches, which breaks
-    # the memory-only-key posture.
+    # OAuth must keep no on-disk credential cache: refresh tokens stay vault-sealed.
     "authlib>=1.9.1",
     "email-reply-parser>=0.5.12",
     "icalendar>=7.3.0",
     "python-dateutil>=3.0.0",
-    # Shell commands are classified on the real bash grammar, which survives parse errors;
-    # a regex misreads quoting and `$(…)`.
+    # Shell commands are classified on the real bash grammar, which survives parse errors.
     "tree-sitter>=0.26.0",
     "tree-sitter-bash>=0.25.1",
     "pydantic-monty>=1.3.0",
