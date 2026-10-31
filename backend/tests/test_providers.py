@@ -108,9 +108,9 @@ def test_reasoning_off_is_provider_shaped():
     openai = get_provider("openai-compatible")
     assert openai.reasoning_off(ModelDescriptor(model_id="qwen-3")) != {}
     assert openai.reasoning_off(ModelDescriptor(model_id="llama-3.1-70b")) == {}
-    # Unified `False`: the library lowers effort where a Claude model can't stop thinking.
+    # Claude background work runs at medium effort, not the lowest.
     assert get_provider("anthropic").reasoning_off(ModelDescriptor(model_id="claude-x")) == {
-        "thinking": False
+        "thinking": "medium"
     }
     # Only the Gemini Flash/Lite family accepts a zero budget; Pro rejects it.
     google = get_provider("google")

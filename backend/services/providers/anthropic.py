@@ -30,6 +30,7 @@ _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _FIRST_PARTY_HOST = "api.anthropic.com"
 # Pinned rather than left to the model, whose default varies by model (Opus 5.5: medium).
 _DEFAULT_EFFORT: ThinkingEffort = "high"
+_BACKGROUND_EFFORT: ThinkingEffort = "medium"
 # The Messages API demands a pinned version header on every request.
 _API_VERSION = "2023-06-01"
 _TIMEOUT = httpx.Timeout(8.0, connect=3.0)
@@ -172,9 +173,9 @@ class AnthropicNativeProvider(Provider):
 
     @override
     def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
-        # Unified `False` thinks as little as the model allows where it can't turn
-        # thinking off (Claude Opus 5.5), so background calls never run at chat effort.
-        return {"thinking": False}
+        # Background work (titles, judges, distillation) at medium: lower costs too much
+        # quality, and chat effort is more than it needs.
+        return {"thinking": _BACKGROUND_EFFORT}
 
     @override
     def model_settings(self, descriptor: ModelDescriptor) -> AnthropicModelSettings:

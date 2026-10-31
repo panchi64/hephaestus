@@ -165,7 +165,7 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
           value={v().effort}
           options={EFFORT_OPTIONS}
           onChange={(level) => props.onChange("effort", level)}
-          hint="How hard the model thinks on chat turns. Background work always runs low. Changing it mid-thread keeps the prompt cache on current Claude models."
+          hint="How hard the model thinks on chat turns. Background work always runs at medium. Changing it mid-thread keeps the prompt cache on current Claude models."
         />
       </Show>
     </>
