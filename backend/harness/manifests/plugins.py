@@ -30,7 +30,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         if machines is None
         else PluginRuntime(
             machines.platform,
-            ctx.settings.data_dir / "plugins" / "installed",
+            ctx.settings.plugins_install_dir,
             prefix=machine_prefix(ctx.settings.data_dir),
         )
     )

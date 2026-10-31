@@ -47,6 +47,7 @@ interface ResetSummaryDTO {
 
 const [status, setStatus] = createSignal<SessionStatus>("loading");
 const [dbMissing, setDbMissing] = createSignal(false);
+const [workspaceFailure, setWorkspaceFailure] = createSignal("");
 
 /** The probe's own failure, when the backend answered but answered badly. Held so
  *  the unlock screen can say *that* instead of presenting a plain locked vault — a
@@ -97,6 +98,7 @@ function apply(result: Probe): SessionStatus {
   const next = answer ? classify(answer, getToken() !== null) : "locked";
   if (next !== "unlocked") clearToken(); // a stale token can't unlock us
   setDbMissing(dbMissingFrom(answer));
+  setWorkspaceFailure(answer?.workspace_failure ?? "");
   setStatus(next);
   return next;
 }
@@ -206,6 +208,10 @@ export function useSession() {
      *  than describing a workspace. Empty when it answered normally. */
     get probeError(): string {
       return probeError();
+    },
+    /** Why encrypted storage last failed to open; empty when it opened or never tried. */
+    get workspaceFailure(): string {
+      return workspaceFailure();
     },
     refresh,
     setup,

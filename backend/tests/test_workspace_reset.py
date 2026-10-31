@@ -21,13 +21,13 @@ from ._helpers import client_app
 from ._json import arr, json_body
 
 
-def _settings(data_dir: Path) -> Settings:
+def _settings(data_dir: Path, *, passphrase: str | None = None) -> Settings:
     return Settings(
         db_url=None,  # a real file under data_dir — the whole point of these tests
         data_dir=data_dir,
         worktrees_dir=data_dir.parent / "worktrees",
         auth_enabled=True,
-        unlock_passphrase=None,
+        unlock_passphrase=passphrase,
         searxng_enabled=False,
         web_fetch_enabled=False,
         sandbox_enabled=False,
@@ -46,21 +46,25 @@ async def test_a_missing_database_is_noticed_at_boot(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
 
-    # A genuinely fresh install creates the database at boot, so the flag is false
-    # here too — harmless, because there is no keyfile for it to disagree with, and
-    # `/setup` marks the two in step the moment a workspace exists.
+    # A locked boot opens nothing, so it creates no database.
     app = create_app(_settings(data_dir))
     async with app.router.lifespan_context(app):
         assert _db_intact(app) is False
-    assert (data_dir / "app.db").exists()
+    assert not (data_dir / "app.db").exists()
 
-    # Second boot, database still there.
+    # The workspace opening creates it (encrypted); a later boot finds it intact.
+    app = create_app(_settings(data_dir, passphrase="pw"))
+    async with app.router.lifespan_context(app):
+        assert app_state(app).workspace.is_open
+    assert (data_dir / "app.db").exists()
+    assert not (data_dir / "app.db").read_bytes().startswith(b"SQLite format 3\x00")
     app = create_app(_settings(data_dir))
     async with app.router.lifespan_context(app):
         assert _db_intact(app) is True
 
     # Delete it the way an operator would, then boot again.
-    (data_dir / "app.db").unlink()
+    for leftover in data_dir.glob("app.db*"):
+        leftover.unlink()
     app = create_app(_settings(data_dir))
     async with app.router.lifespan_context(app):
         assert _db_intact(app) is False

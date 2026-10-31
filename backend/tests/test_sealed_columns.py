@@ -13,8 +13,8 @@ from __future__ import annotations
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, col, select
 
-from app import backfill_sealed_columns
 from core.db import in_session
+from harness.workspace_wiring import backfill_sealed_columns
 from models.conversation import Conversation
 from models.corpus import CorpusSource
 from routes.deps import OPERATOR_ID, app_state

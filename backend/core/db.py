@@ -1,8 +1,9 @@
 """Database engine and the sync-in-threadpool access pattern.
 
-The connection is built in one place (:func:`make_engine`). SQLite's driver is
-synchronous, so every unit of DB work runs in a thread to keep the event loop free
-(SQLite releases the GIL during I/O).
+The connection is built in one place (:func:`make_engine`), on SQLCipher, so the file,
+its WAL and its journal are encrypted page by page (AES-256 with an HMAC-SHA512 per
+page) under a subkey of the vault DEK. The driver is synchronous, so every unit of DB
+work runs in a thread to keep the event loop free (SQLite releases the GIL during I/O).
 """
 
 from __future__ import annotations
@@ -30,9 +31,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
+from sqlcipher3 import dbapi2 as sqlcipher
 from sqlmodel import Session, SQLModel, create_engine
 
-from core.exceptions import NotFoundError, SchemaMigrationError
+from core.exceptions import HephaestusError, NotFoundError, SchemaMigrationError
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +81,26 @@ def _is_locked(exc: OperationalError) -> bool:
     return "database is locked" in message or "database table is locked" in message
 
 
-def make_engine(url: str) -> Engine:
-    """Build the SQLite engine. In-memory URLs share one connection (for tests)."""
-    kwargs: dict[str, object] = {"connect_args": {"check_same_thread": False}}
+class DatabaseKeyError(HephaestusError):
+    """The database file does not open under the key given: wrong key, or not a database."""
+
+
+def key_pragma(key: bytes) -> str:
+    """``PRAGMA key`` with a raw 256-bit key, which skips SQLCipher's per-connection PBKDF2."""
+    if len(key) != 32:
+        raise ValueError("a SQLCipher raw key is 32 bytes")
+    return f"PRAGMA key = \"x'{key.hex()}'\""
+
+
+def make_engine(url: str, key: bytes | None = None) -> Engine:
+    """Build the SQLite engine on SQLCipher, keyed when ``key`` is given.
+
+    In-memory URLs share one connection (for tests) and are never written to disk.
+    """
+    kwargs: dict[str, object] = {
+        "connect_args": {"check_same_thread": False},
+        "module": sqlcipher,
+    }
     if ":memory:" in url:
         kwargs["poolclass"] = StaticPool
     engine = create_engine(url, **kwargs)
@@ -93,23 +112,41 @@ def make_engine(url: str) -> Engine:
     def _configure_connection(
         dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
     ) -> None:
-        # pysqlite runs DDL in autocommit and opens a transaction only before the first DML,
-        # so a migration failing partway strands its committed leading statement (e.g. a
-        # batch rebuild's `_alembic_tmp_*` table) and wedges the next startup. Isolation
-        # level None hands transaction control to SQLAlchemy, whose explicit BEGIN (the
-        # "begin" handler) makes DDL transactional so a failed migration rolls back whole.
-        dbapi_connection.isolation_level = None
+        cursor = dbapi_connection.cursor()
+        if key is not None:
+            # Must be the first statement on the connection; reading the schema proves
+            # the key, since SQLCipher defers the check until the first page is read.
+            cursor.execute(key_pragma(key))
+            # Pins the v4 parameters (AES-256, HMAC-SHA512, SHA512 KDF), so a library
+            # default changing later cannot weaken or strand this file.
+            cursor.execute("PRAGMA cipher_compatibility = 4")
+            try:
+                cursor.execute("SELECT count(*) FROM sqlite_master")
+            except sqlcipher.DatabaseError as exc:
+                cursor.close()
+                raise DatabaseKeyError("the database does not open under this key") from exc
 
+        # WAL lets readers run beside the write-behind drainers; SQLCipher encrypts the WAL
+        # like the main file. Memory temp storage keeps sorts and temp tables off disk,
+        # where they would be plaintext.
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA temp_store=MEMORY")
+        # A larger page cache (64 MiB) means fewer pages decrypted per read.
+        cursor.execute("PRAGMA cache_size=-65536")
         # Foreign keys are off per connection by default; without this the declared FKs
         # enforce nothing and a stray conversation_id silently orphans rows.
-        cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
-
-        # Without a busy handler a connection finding the write lock held errors
-        # immediately, turning a microseconds-long overlap between threadpool sessions into
-        # a hard `database is locked`. Per-connection like foreign_keys.
+        # Without a busy handler, a microseconds-long overlap between threadpool sessions
+        # is a hard `database is locked`.
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         cursor.close()
+
+        # The driver runs DDL in autocommit, so a migration failing partway would strand
+        # its committed leading statement (a batch rebuild's `_alembic_tmp_*` table) and
+        # wedge the next startup. None hands transactions to SQLAlchemy's explicit BEGIN
+        # (the "begin" handler), so a failed migration rolls back whole.
+        dbapi_connection.isolation_level = None
 
     @event.listens_for(engine, "begin")
     def _emit_begin(connection: Connection) -> None:

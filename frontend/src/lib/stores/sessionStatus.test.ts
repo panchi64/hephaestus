@@ -8,6 +8,8 @@ const status = (over: Partial<AuthStatus> = {}): AuthStatus => ({
   unlocked: true,
   auth_enabled: true,
   db_missing: false,
+  workspace: "open",
+  workspace_failure: null,
   ...over,
 });
 
@@ -22,6 +24,16 @@ describe("classify", () => {
 
   it("locks when the backend's vault is locked", () => {
     expect(classify(status({ unlocked: false }), true)).toBe("locked");
+  });
+
+  it("stays locked until the encrypted workspace has opened", () => {
+    expect(classify(status({ workspace: "opening" }), true)).toBe("locked");
+    expect(
+      classify(
+        status({ workspace: "failed", workspace_failure: "no volume" }),
+        true,
+      ),
+    ).toBe("locked");
   });
 
   it("needs a token only while the gate is enabled", () => {

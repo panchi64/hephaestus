@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -40,8 +42,23 @@ def test_password_hash_and_verify():
 
 def test_kek_is_deterministic_per_salt():
     salt = crypto.generate_salt()
-    assert crypto.derive_kek("pw", salt) == crypto.derive_kek("pw", salt)
-    assert crypto.derive_kek("pw", salt) != crypto.derive_kek("pw", crypto.generate_salt())
+    params = crypto.current_kdf()
+    assert crypto.derive_kek("pw", salt, params) == crypto.derive_kek("pw", salt, params)
+    other_salt = crypto.generate_salt()
+    assert crypto.derive_kek("pw", salt, params) != crypto.derive_kek("pw", other_salt, params)
+
+
+def test_subkeys_are_independent_per_purpose():
+    dek = crypto.generate_dek()
+    db, volume = crypto.derive_subkey(dek, "db"), crypto.derive_subkey(dek, "volume")
+    assert db != volume and bytes(db) != dek
+    assert crypto.derive_subkey(dek, "db") == db
+
+
+def test_wipe_zeroes_the_buffer_in_place():
+    key = bytearray(crypto.generate_dek())
+    crypto.wipe(key)
+    assert key == bytearray(32)
 
 
 # --- vault -------------------------------------------------------------------
@@ -60,10 +77,13 @@ async def test_locked_vault_cannot_encrypt(tmp_path: Path):
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     token = vault.encrypt_str("note")
+    _ = vault.subkey("db")
     vault.lock()
     assert not vault.is_unlocked
     with pytest.raises(VaultLocked):
         _ = vault.decrypt_str(token)
+    with pytest.raises(VaultLocked):
+        _ = vault.subkey("db")
 
 
 async def test_unlock_round_trip_across_restart(tmp_path: Path):
@@ -135,6 +155,34 @@ async def test_unlock_rehashes_a_verifier_minted_under_weaker_parameters(
     assert after["kek_salt"] == before["kek_salt"]
     assert after["wrapped_dek"] == before["wrapped_dek"]
     assert await Vault(path).unlock("pw") is True
+
+
+async def test_unlock_moves_a_v1_keyfile_to_v2_without_changing_the_dek(tmp_path: Path):
+    path = tmp_path / "keyfile.json"
+    dek = crypto.generate_dek()
+    salt = crypto.generate_salt()
+    kek = crypto.derive_kek("pw", salt, crypto.KDF_V1)
+    _ = path.write_text(
+        json.dumps({
+            "version": 1,
+            "verifier": crypto.hash_password("pw"),
+            "kek_salt": base64.b64encode(salt).decode(),
+            "wrapped_dek": base64.b64encode(crypto.aead_encrypt(kek, dek)).decode(),
+        })
+    )
+    sealed = crypto.aead_encrypt(dek, b"old row")
+
+    vault = Vault(path)
+    assert await vault.unlock("pw") is True
+    assert vault.decrypt_bytes(sealed) == b"old row"
+
+    upgraded = obj(parse_json(path.read_text()))
+    assert upgraded["version"] == 2
+    assert upgraded["kdf"] == crypto.current_kdf().to_json()
+    assert upgraded["kek_salt"] != base64.b64encode(salt).decode()
+    restarted = Vault(path)
+    assert await restarted.unlock("pw") is True
+    assert restarted.decrypt_bytes(sealed) == b"old row"
 
 
 async def test_a_failing_rehash_never_fails_the_login(

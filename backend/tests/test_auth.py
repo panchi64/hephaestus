@@ -15,21 +15,25 @@ async def test_setup_then_access_then_lock_cycle():
             "unlocked": False,
             "auth_enabled": True,
             "db_missing": False,
+            "workspace": "closed",
+            "workspace_failure": None,
         }
         assert (await client.get("/runs/whatever")).status_code == 401
 
-        # First-run setup chooses the password and returns a session.
+        # First-run setup chooses the password, opens the workspace and returns a session.
         setup = await client.post("/setup", json={"password": "correct horse"})
         assert setup.status_code == 200
         assert json_body(setup)["token"]
 
         # The cookie now authorizes feature endpoints (404 = reached the handler).
         assert (await client.get("/runs/whatever")).status_code == 404
-        assert (await client.get("/auth/status")).json()["unlocked"] is True
+        status = json_body(await client.get("/auth/status"))
+        assert status["unlocked"] is True and status["workspace"] == "open"
 
-        # Lock wipes the key and revokes sessions → gated again.
+        # Lock closes the workspace, wipes the key and revokes sessions → gated again.
         assert (await client.post("/auth/lock")).status_code == 200
         assert (await client.get("/runs/whatever")).status_code == 401
+        assert json_body(await client.get("/auth/status"))["workspace"] == "closed"
 
 
 async def test_setup_is_one_time_and_password_min_length():

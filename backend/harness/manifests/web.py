@@ -40,7 +40,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     searxng = ManagedSearxng(
         enabled=settings.searxng_enabled,
         vm=vm,
-        data_dir=settings.data_dir,
+        data_dir=settings.volume_dir,
         startup_timeout_s=settings.searxng_startup_timeout_s,
         external_base_url=settings.searxng_base_url,
     )

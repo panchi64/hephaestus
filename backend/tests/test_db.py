@@ -5,11 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Connection, CursorResult, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import Connection, CursorResult, Engine, text
+from sqlalchemy.exc import DatabaseError, OperationalError
 from sqlmodel import Session
 
-from core.db import BUSY_TIMEOUT_MS, LOCK_RETRIES, get_owned, in_session, init_db, make_engine
+from core.db import (
+    BUSY_TIMEOUT_MS,
+    LOCK_RETRIES,
+    DatabaseKeyError,
+    get_owned,
+    in_session,
+    init_db,
+    make_engine,
+)
 from core.exceptions import NotFoundError
 from models.memory import Memory
 
@@ -46,6 +54,54 @@ def test_foreign_keys_are_on_per_connection(tmp_path: Path):
     engine = make_engine(f"sqlite:///{tmp_path / 'app.db'}")
     with engine.connect() as connection:
         assert _pragma(connection, "foreign_keys") == 1
+
+
+# --- encryption at rest ---------------------------------------------------------
+_KEY = bytes(range(32))
+
+
+def _write_marker(engine: Engine) -> None:
+    with engine.begin() as connection:
+        _ = connection.execute(text("CREATE TABLE t (v TEXT)"))
+        _ = connection.execute(text("INSERT INTO t VALUES ('PLAINTEXT-MARKER')"))
+
+
+def test_a_keyed_database_is_ciphertext_on_disk_wal_included(tmp_path: Path):
+    path = tmp_path / "app.db"
+    engine = make_engine(f"sqlite:///{path}", key=_KEY)
+    _write_marker(engine)
+    with engine.connect() as connection:
+        assert connection.execute(text("PRAGMA journal_mode")).scalar_one() == "wal"
+        # Read before the checkpoint at dispose, while the row still sits in the WAL.
+        files = [p for p in tmp_path.iterdir() if p.name.startswith("app.db")]
+        assert any(p.name.endswith("-wal") for p in files)
+        for file in files:
+            raw = file.read_bytes()
+            assert b"PLAINTEXT-MARKER" not in raw and b"CREATE TABLE" not in raw
+    engine.dispose()
+    assert not path.read_bytes().startswith(b"SQLite format 3\x00")
+
+    reopened = make_engine(f"sqlite:///{path}", key=_KEY)
+    with reopened.connect() as connection:
+        assert connection.execute(text("SELECT v FROM t")).scalar_one() == "PLAINTEXT-MARKER"
+
+
+def test_a_wrong_key_raises_database_key_error(tmp_path: Path):
+    path = tmp_path / "app.db"
+    _write_marker(make_engine(f"sqlite:///{path}", key=_KEY))
+
+    wrong = make_engine(f"sqlite:///{path}", key=bytes(32))
+    with pytest.raises(DatabaseKeyError), wrong.connect():
+        pass
+    unkeyed = make_engine(f"sqlite:///{path}")
+    with pytest.raises(DatabaseError), unkeyed.connect() as connection:
+        _ = connection.execute(text("SELECT v FROM t"))
+
+
+def test_temp_storage_stays_in_memory(tmp_path: Path):
+    engine = make_engine(f"sqlite:///{tmp_path / 'app.db'}", key=_KEY)
+    with engine.connect() as connection:
+        assert _pragma(connection, "temp_store") == 2
 
 
 # --- the owner-scoped single-row read every store shares ----------------------

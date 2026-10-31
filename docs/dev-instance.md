@@ -74,7 +74,11 @@ schema changes:
 - one scheduled task, disabled
 
 Data persists between sessions, so a scenario you build up in one is still there in the
-next. `reset --yes` wipes the workspace; the next `up` re-seeds it.
+next. It is encrypted like the operator's: `app.db` is a SQLCipher file and scratch,
+plugin source and the browser profile sit in an encrypted volume mounted at
+`<data dir>/volume` while the backend runs (a sparse bundle on macOS; on Linux, install
+`gocryptfs` and `fuse3` first). Read them through the API, not from disk. `reset --yes`
+unmounts the volume and wipes the workspace; the next `up` re-seeds it.
 
 ## The model
 
@@ -152,9 +156,9 @@ forgets the instance entirely; the next `up` builds a new one.
 
 ## Running `alembic` by hand
 
-The CLI falls back to `alembic.ini`, which points at the live `data/app.db`. A command meant
-for a dev instance must carry that instance's `HEPHAESTUS_DB_URL` (`status --json` has the
-data directory), or it migrates the real database.
+The CLI holds no key, so it refuses any encrypted database, the live one and a dev
+instance's alike; both migrate at unlock. Point `HEPHAESTUS_DB_URL` at an unencrypted
+scratch file to generate or test a revision.
 
 ## What it is not
 

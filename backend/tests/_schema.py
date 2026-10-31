@@ -18,11 +18,11 @@ and so has to run it.
 
 from __future__ import annotations
 
-import sqlite3
 import threading
 
 from sqlalchemy import Engine
 from sqlalchemy.pool import PoolProxiedConnection
+from sqlcipher3 import dbapi2 as sqlite3
 
 import core.db
 
@@ -39,8 +39,8 @@ _template_pin: PoolProxiedConnection | None = None
 
 
 def _driver_connection(pooled: PoolProxiedConnection) -> sqlite3.Connection:
-    """The `sqlite3.Connection` under a pooled wrapper — narrowed, since the pool types
-    it as the generic DBAPI protocol and only SQLite's carries `backup`."""
+    """The driver connection under a pooled wrapper, narrowed: the pool types it as the
+    generic DBAPI protocol, and only SQLite's carries `backup`."""
     connection = pooled.driver_connection
     assert isinstance(connection, sqlite3.Connection)
     return connection
@@ -59,11 +59,16 @@ def _template_connection() -> sqlite3.Connection:
 def init_db(engine: Engine) -> None:
     """Bring `engine` to head from the cached schema, or through the real chain.
 
-    Only a database with no tables at all takes the copy. Anything already carrying a
-    schema may be mid-chain, stamped at an orphaned revision, or drifted from its
-    migrations, and judging which is exactly what the real path exists to do — so a
+    Only an in-memory database with no tables at all takes the copy. Anything already
+    carrying a schema may be mid-chain, stamped at an orphaned revision, or drifted from
+    its migrations, and judging which is exactly what the real path exists to do — so a
     second `init_db` on the same engine (the idempotency and guard cases) still runs it.
+    A file database is keyed, and SQLCipher refuses a backup from the plaintext template
+    into an encrypted one.
     """
+    if engine.url.database not in (None, "", ":memory:"):
+        real_init_db(engine)
+        return
     raw = engine.raw_connection()
     try:
         destination = _driver_connection(raw)

@@ -22,6 +22,7 @@ from core.container import ServiceContainer
 from core.exceptions import DegradedCapabilityError, NotFoundError, PermissionDeniedError
 from core.ratelimit import RateLimiter
 from core.vault import Vault
+from core.workspace import Workspace
 from runs import ConversationBusyError, InboxDispatch, RunRegistry
 from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
@@ -143,6 +144,7 @@ class AppState(State):
         self.private_area: PrivateArea
         self.credentials: CredentialStore
         self.vault: Vault
+        self.workspace: Workspace
         self.auth_manager: AuthManager
         self.workspace_db_intact: bool
         self.db_engine: Engine
@@ -611,6 +613,10 @@ def vault(request: Request) -> Vault:
     return app_state(request).vault
 
 
+def workspace(request: Request) -> Workspace:
+    return app_state(request).workspace
+
+
 def auth_manager(request: Request) -> AuthManager:
     return app_state(request).auth_manager
 
@@ -635,7 +641,7 @@ def require_operator(request: Request) -> None:
 def workspace_db_intact(request: Request) -> bool:
     """Whether the database survived to this boot; False means the keyfile outlived it.
 
-    Sampled once at startup before the schema is created (`app.py`); `/setup` resets it to
+    Sampled once at boot before the workspace first opens (`app.py`); `/setup` resets it to
     true, since the workspace it creates is in this database.
     """
     return app_state(request).workspace_db_intact

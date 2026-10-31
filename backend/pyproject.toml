@@ -77,12 +77,12 @@ dependencies = [
     "pydantic-monty>=1.3.0",
     "jsonschema>=4.26.0",
     "discord-py>=2.7.1",
+    "sqlcipher3>=0.6.4",
     "genai-prices>=0.1.13",
 ]
 
-# Whole-DB SQLCipher was ruled out (no portable 3.14 wheels); at-rest
-# encryption is application-layer AEAD instead (see docs decision D17).
-# Alembic migrations are wired (auto-upgrade on startup); sqlite-vec lands later.
+# At rest, sqlcipher3 encrypts the whole database file, and sensitive columns are also
+# sealed with AEAD under the vault DEK. Alembic migrates at unlock.
 
 [dependency-groups]
 dev = [

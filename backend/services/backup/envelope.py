@@ -11,17 +11,14 @@ The file is JSON so it survives being mailed, copied, and stored anywhere text g
 .. code-block:: json
 
     {"format": "hephaestus-backup", "version": 1, "created_at": "…",
-     "kdf": {"algorithm": "argon2id-kek-v1", "salt": "…"},
+     "kdf": {"algorithm": "argon2id-kek-v2", "salt": "…", "params": {"t": 4, "m": …, "p": 4}},
      "cipher": "AES-256-GCM", "payload": "<base64 nonce||ciphertext>"}
 
-Everything outside ``payload`` is format bookkeeping — a salt and two algorithm names — and
-no part of it is user data. The header is bound into the ciphertext as AEAD associated data,
-so editing it (pointing the salt somewhere else, say) fails the open rather than silently
-decrypting something else.
+Everything outside ``payload`` is format bookkeeping and no part of it is user data. The
+header is bound into the ciphertext as AEAD associated data, so editing it (pointing the salt
+somewhere else, say) fails the open rather than silently decrypting something else.
 
-Derivation reuses ``core.crypto`` rather than reaching for Argon2 here: one place in the tree
-knows how to stretch a secret into a key, and the ``argon2id-kek-v1`` tag records *which*
-scheme a given file used, so a future change to those parameters can still open old backups.
+``argon2id-kek-v1`` files carry no ``params``; they used ``crypto.KDF_V1`` and still open.
 """
 
 from __future__ import annotations
@@ -39,10 +36,8 @@ from services.shapes import as_dict
 
 FORMAT = "hephaestus-backup"
 VERSION = 1
-# The derivation this file used. A tag, not parameters: it names the scheme in
-# `core.crypto.derive_kek`, so a later change to the cost factors can branch on it instead of
-# stranding every backup ever written.
-KDF_ALGORITHM = "argon2id-kek-v1"
+KDF_ALGORITHM = "argon2id-kek-v2"
+_KDF_ALGORITHM_V1 = "argon2id-kek-v1"
 CIPHER = "AES-256-GCM"
 
 
@@ -72,12 +67,18 @@ def seal(
     if not secret:
         raise ValueError("a backup secret is required")
     salt = crypto.generate_salt()
-    key = crypto.derive_kek(secret, salt)
+    params = crypto.current_kdf()
+    key = crypto.derive_kek(secret, salt, params)
+    kdf: dict[str, JsonValue] = {
+        "algorithm": KDF_ALGORITHM,
+        "salt": base64.b64encode(salt).decode(),
+        "params": {**params.to_json()},
+    }
     header: dict[str, JsonValue] = {
         "format": FORMAT,
         "version": VERSION,
         "created_at": (created_at or datetime.now(UTC)).isoformat(),
-        "kdf": {"algorithm": KDF_ALGORITHM, "salt": base64.b64encode(salt).decode()},
+        "kdf": kdf,
         "cipher": CIPHER,
     }
     sealed = crypto.aead_encrypt(key, payload, _aad(header))
@@ -96,7 +97,16 @@ def open_envelope(secret: str, envelope: object) -> bytes:
     if fields.get("version") != VERSION:
         raise BackupFormatError(f"backup format version {fields.get('version')!r} is not supported")
     kdf = as_dict(fields.get("kdf"))
-    if kdf is None or kdf.get("algorithm") != KDF_ALGORITHM:
+    if kdf is None:
+        raise BackupFormatError("unsupported key derivation in this backup file")
+    if kdf.get("algorithm") == _KDF_ALGORITHM_V1:
+        params = crypto.KDF_V1
+    elif kdf.get("algorithm") == KDF_ALGORITHM:
+        try:
+            params = crypto.KdfParams.from_json(kdf.get("params"))
+        except ValueError as exc:
+            raise BackupFormatError("the backup file is malformed") from exc
+    else:
         raise BackupFormatError("unsupported key derivation in this backup file")
     try:
         salt_text, payload_text = kdf["salt"], fields["payload"]
@@ -107,7 +117,7 @@ def open_envelope(secret: str, envelope: object) -> bytes:
     except (KeyError, TypeError, ValueError) as exc:
         raise BackupFormatError("the backup file is malformed") from exc
 
-    key = crypto.derive_kek(secret, salt)
+    key = crypto.derive_kek(secret, salt, params)
     try:
         return crypto.aead_decrypt(key, sealed, _aad(_header(fields)))
     except Exception as exc:  # AEAD failure is one answer: it didn't open

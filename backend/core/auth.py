@@ -101,6 +101,11 @@ class _GateVault(Protocol):
     def is_unlocked(self) -> bool: ...
 
 
+class _GateWorkspace(Protocol):
+    @property
+    def is_open(self) -> bool: ...
+
+
 class _GateState(Protocol):
     """The slice of ``app.state`` the gate reads."""
 
@@ -112,6 +117,9 @@ class _GateState(Protocol):
 
     @property
     def vault(self) -> _GateVault: ...
+
+    @property
+    def workspace(self) -> _GateWorkspace: ...
 
 
 class _GateApp(Protocol):
@@ -310,4 +318,8 @@ class AuthMiddleware:
                 cast("dict[str, object]", scope.setdefault("state", {}))[_VIA_API_TOKEN] = True
         if not state.vault.is_unlocked:
             return await _reject(send, 423, "the vault is locked")
+        # Unlocked but not yet open (mounting, migrating) or failed to open: nothing the
+        # request could read is wired yet.
+        if not state.workspace.is_open:
+            return await _reject(send, 423, "the workspace is not open")
         await self.app(scope, receive, send)
