@@ -17,10 +17,8 @@ silently. So a level is stored and shown as a name, and *resolved* to a pair:
 - an **approval policy** — what happens to an act that reaches past that ceiling: withhold
   the tool outright, park for the operator, settle it by Auto's rule, or allow it outright.
 
-The levels are presets over that pair. A sixth is a row here, and nothing else moves —
-which is how the fifth arrived: ``yolo`` is one entry in :data:`PERMISSIONS`, one member
-of :class:`ApprovalPolicy`, and one branch in ``decide.py`` for the gate it deliberately
-removes (below). Nothing switched on a name, so nothing else had to be found and edited.
+The levels are presets over that pair. A sixth is a row here, and nothing else moves:
+nothing switches on a level's name.
 
 The ceiling is a sensitivity class rather than a name of its own because that is what
 makes the pair decidable: the classes already say what a tool *does*, so "may this run

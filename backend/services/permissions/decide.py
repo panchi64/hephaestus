@@ -91,8 +91,6 @@ def blocked_message(level: str, tool: str) -> str:
     )
 
 
-# --- Auto ---------------------------------------------------------------------------
-
 #: The tools whose work runs in the conversation's VM, which bounds it while it is offline.
 VM_TOOLS = frozenset({"shell_run_command", "shell_start_command", "code_execute"})
 HOST_TOOLS = frozenset({"shell_run_on_host"})
