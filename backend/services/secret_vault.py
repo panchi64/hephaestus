@@ -142,9 +142,9 @@ class SecretVaultService:
 
         key = crypto.generate_dek()
         salt = crypto.generate_salt()
-        kek = await asyncio.to_thread(crypto.derive_kek, passphrase, salt)
-        # Threaded like `derive_kek`: the same Argon2 cost, and inline it would stall
-        # every other connection on the loop for its duration.
+        # The config row records no work factors, so this vault stays on v1; its wrapped
+        # key is also sealed under the login DEK inside the encrypted database.
+        kek = await asyncio.to_thread(crypto.derive_kek, passphrase, salt, crypto.KDF_V1)
         verifier = await asyncio.to_thread(crypto.hash_password, passphrase)
         row = SecretVaultConfig(
             owner_id=owner_id,
@@ -169,7 +169,9 @@ class SecretVaultService:
             raise SecretVaultNotConfigured("the password vault has not been set up")
         if not await asyncio.to_thread(crypto.verify_password, config.verifier, passphrase):
             return False
-        kek = await asyncio.to_thread(crypto.derive_kek, passphrase, _b64d(config.kek_salt))
+        kek = await asyncio.to_thread(
+            crypto.derive_kek, passphrase, _b64d(config.kek_salt), crypto.KDF_V1
+        )
         try:
             key = crypto.aead_decrypt(kek, _b64d(self._vault.decrypt_str(config.wrapped_key_enc)))
         except InvalidTag, ValueError, VaultLocked:  # a failed unwrap is a failed unlock

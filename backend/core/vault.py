@@ -1,10 +1,11 @@
 """The vault — the operator's encryption key, held only in memory.
 
-On disk lives a small keyfile: the login verifier, the KEK salt, and the DEK
-wrapped under the password-derived KEK. The **DEK itself is never written** — it
-is unwrapped into memory at unlock and wiped at lock, so a restart leaves the
-system locked and the data unreadable until the operator unlocks again. No OS
-keystore is involved, which keeps this byte-for-byte identical across platforms.
+On disk lives a small keyfile: the login verifier, the KEK salt and work factors,
+and the DEK wrapped under the password-derived KEK. The **DEK itself is never
+written** — it is unwrapped into memory at unlock and zeroed at lock, so a restart
+leaves the system locked and the data unreadable until the operator unlocks again.
+The database file and the encrypted volume are keyed by subkeys derived from the
+DEK. No OS keystore is involved, which keeps this identical across platforms.
 """
 
 from __future__ import annotations
@@ -16,17 +17,21 @@ import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from core import crypto
 from core.serde import parse_json
 
 logger = logging.getLogger(__name__)
 
-_KEYFILE_VERSION = 1
+# v1 carried no work factors (they were `crypto.KDF_V1`); v2 records them.
+_KEYFILE_VERSION = 2
 _KEYFILE_FIELDS = frozenset({"verifier", "kek_salt", "wrapped_dek"})
+
+SubkeyPurpose = Literal["db", "volume"]
 
 
 class VaultLocked(Exception):
@@ -46,18 +51,11 @@ def _b64d(text: str) -> bytes:
 
 
 def _write_keyfile(path: Path, payload: dict[str, object]) -> None:
-    """Write the keyfile atomically and owner-only.
+    """Write the keyfile atomically (fsynced temp file, rename, fsynced dir) and owner-only.
 
-    There is exactly one copy of the wrapped DEK, and nothing can reconstruct it: a
-    torn write (crash, power loss, full disk) would take every encrypted row with it.
-    So the bytes land in a sibling temp file that is flushed and fsynced, then renamed
-    over the target — ``os.replace`` is atomic on POSIX, so a reader sees either the
-    old file or the new one, never a truncated one. The directory entry is fsynced too,
-    or the rename itself can be lost on crash.
-
-    ``0o600`` before the rename, not after: on a shared host the default umask would
-    otherwise leave the Argon2 verifier and the wrapped DEK world-readable for the
-    window in between — enough to copy them and brute-force the password offline.
+    The wrapped DEK has no second copy, so a torn write would lose every encrypted byte.
+    The mode is set at creation, not after the rename, so the verifier and wrapped DEK are
+    never world-readable even briefly.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp")
@@ -77,14 +75,39 @@ def _write_keyfile(path: Path, payload: dict[str, object]) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _kdf_params(data: dict[str, object]) -> crypto.KdfParams:
+    if data.get("version", 1) == 1:
+        return crypto.KDF_V1
+    try:
+        return crypto.KdfParams.from_json(data.get("kdf"))
+    except ValueError as exc:
+        raise VaultError(f"keyfile kdf parameters are invalid: {exc}") from exc
+
+
+async def _wrap(password: str, dek: bytes | bytearray, verifier: str) -> dict[str, object]:
+    """A v2 keyfile wrapping ``dek`` under a fresh salt and the current work factors."""
+    salt = crypto.generate_salt()
+    params = crypto.current_kdf()
+    # Argon2 burns CPU by design; on the event loop it would stall every live stream.
+    kek = await asyncio.to_thread(crypto.derive_kek, password, salt, params)
+    return {
+        "version": _KEYFILE_VERSION,
+        "verifier": verifier,
+        "kek_salt": _b64e(salt),
+        "kdf": params.to_json(),
+        "wrapped_dek": _b64e(crypto.aead_encrypt(kek, bytes(dek))),
+    }
+
+
 class Vault:
     def __init__(self, keyfile: Path) -> None:
         self._keyfile: Path = keyfile
-        self._dek: bytes | None = None
+        self._dek: bytearray | None = None
+        self._cipher: AESGCM | None = None
+        self._subkeys: dict[SubkeyPurpose, bytearray] = {}
         self._unlocked: asyncio.Event = asyncio.Event()  # lets lock-aware workers wait on unlock
-        # Callbacks other services register to react to a lock without the auth
-        # route (or this class) knowing who they are — e.g. the operator shell
-        # tearing down every live PTY session the instant the vault re-locks.
+        # Lets services (the operator shell, say) react to a lock without this class
+        # knowing who they are.
         self._on_lock: list[Callable[[], None]] = []
 
     @property
@@ -104,89 +127,89 @@ class Vault:
         if self.is_initialized:
             raise VaultError("vault already initialized")
         dek = crypto.generate_dek()
-        salt = crypto.generate_salt()
-        kek = await asyncio.to_thread(crypto.derive_kek, password, salt)
-        # Argon2 by design burns CPU (64 MiB, t=3); on the event loop it would stall
-        # every live SSE stream and tool loop for its full duration, so it threads like
-        # `derive_kek` above.
         verifier = await asyncio.to_thread(crypto.hash_password, password)
-        keyfile: dict[str, object] = {
-            "version": _KEYFILE_VERSION,
-            "verifier": verifier,
-            "kek_salt": _b64e(salt),
-            "wrapped_dek": _b64e(crypto.aead_encrypt(kek, dek)),
-        }
-        _write_keyfile(self._keyfile, keyfile)
+        _write_keyfile(self._keyfile, await _wrap(password, dek, verifier))
         self._set_dek(dek)
 
-    def _read_keyfile(self) -> dict[str, str]:
-        """Parse the keyfile, turning any damage into `VaultError` rather than a 500.
-
-        Writes are atomic, so a torn file shouldn't happen — but a hand-edited or
-        externally-restored keyfile still reaches here, and a bare `JSONDecodeError`
-        or `KeyError` out of the login route says nothing about what is wrong.
-        """
+    def _read_keyfile(self) -> dict[str, object]:
+        """Parse the keyfile, turning any damage into `VaultError` rather than a 500."""
         try:
             data = parse_json(self._keyfile.read_text())
         except (OSError, ValueError) as exc:
             raise VaultError(f"keyfile is unreadable or corrupt: {exc}") from exc
         if not isinstance(data, dict) or not _KEYFILE_FIELDS <= data.keys():
             raise VaultError("keyfile is missing required fields")
-        return cast("dict[str, str]", data)
+        data = cast("dict[str, object]", data)
+        if not all(isinstance(data[field], str) for field in _KEYFILE_FIELDS):
+            raise VaultError("keyfile fields must be strings")
+        return data
 
     async def unlock(self, password: str) -> bool:
         """Verify the password and unwrap the DEK into memory. False on bad password."""
         if not self.is_initialized:
             raise VaultError("vault not initialized")
         data = self._read_keyfile()
-        # Threaded for the same reason `derive_kek` is: the verify is the same Argon2
-        # cost, and a login must not freeze the loop for every other connection.
-        if not await asyncio.to_thread(crypto.verify_password, data["verifier"], password):
+        verifier = cast(str, data["verifier"])
+        if not await asyncio.to_thread(crypto.verify_password, verifier, password):
             return False
-        kek = await asyncio.to_thread(crypto.derive_kek, password, _b64d(data["kek_salt"]))
+        params = _kdf_params(data)
+        salt = _b64d(cast(str, data["kek_salt"]))
+        kek = await asyncio.to_thread(crypto.derive_kek, password, salt, params)
         try:
-            dek = crypto.aead_decrypt(kek, _b64d(data["wrapped_dek"]))
+            dek = crypto.aead_decrypt(kek, _b64d(cast(str, data["wrapped_dek"])))
         except InvalidTag, ValueError:  # a failed unwrap is just a failed unlock
             return False
         self._set_dek(dek)
-        await self._rehash_verifier_if_stale(data, password)
+        await self._rewrap_if_stale(data, params, password)
         return True
 
-    async def _rehash_verifier_if_stale(self, data: dict[str, str], password: str) -> None:
-        """Re-mint the login verifier when it predates the current Argon2 parameters.
+    async def _rewrap_if_stale(
+        self, data: dict[str, object], params: crypto.KdfParams, password: str
+    ) -> None:
+        """Move a keyfile minted under weaker work factors onto the current ones.
 
-        Only the verifier moves: `kek_salt` and `wrapped_dek` are copied through
-        untouched, so a failure here can never cost the operator the DEK — it just
-        leaves the old verifier in place until the next login.
+        The DEK itself never changes, so no data is re-encrypted, and the new keyfile
+        replaces the old one atomically; a failure leaves the old one working.
         """
-        if not await asyncio.to_thread(crypto.needs_rehash, data["verifier"]):
+        verifier = cast(str, data["verifier"])
+        stale_verifier = await asyncio.to_thread(crypto.needs_rehash, verifier)
+        stale_kek = params != crypto.current_kdf() or data.get("version") != _KEYFILE_VERSION
+        if not (stale_verifier or stale_kek):
             return
         try:
-            verifier = await asyncio.to_thread(crypto.hash_password, password)
-            _write_keyfile(self._keyfile, {**data, "verifier": verifier})
-        except Exception:  # a stale verifier still works; never fail a login
-            logger.warning("could not re-mint the login verifier", exc_info=True)
+            if stale_verifier:
+                verifier = await asyncio.to_thread(crypto.hash_password, password)
+            if stale_kek:
+                payload = await _wrap(password, self._require_dek(), verifier)
+            else:
+                payload = {**data, "verifier": verifier}
+            _write_keyfile(self._keyfile, payload)
+        except Exception:  # the old keyfile still unlocks; never fail a login
+            logger.warning("vault: could not move the keyfile to current parameters", exc_info=True)
 
     async def verify_password(self, password: str) -> bool:
-        """Check the password against the stored verifier without unlocking —
-        doesn't touch ``_dek``. Used by host-mode re-authentication, which needs
-        proof of the password without granting/renewing decrypt access.
+        """Check the password against the stored verifier without unlocking.
 
-        Async because the Argon2 comparison is deliberately expensive; run inline it
-        would freeze the event loop (and every live stream on it) for its duration."""
+        Used by host-mode re-authentication, which needs proof of the password
+        without granting or renewing decrypt access.
+        """
         if not self.is_initialized:
             return False
-        data = self._read_keyfile()
-        return await asyncio.to_thread(crypto.verify_password, data["verifier"], password)
+        verifier = cast(str, self._read_keyfile()["verifier"])
+        return await asyncio.to_thread(crypto.verify_password, verifier, password)
 
     def register_on_lock(self, cb: Callable[[], None]) -> None:
-        """Register a callback fired synchronously from `lock()`. Lets a
-        capability (like the operator shell) react to a lock without this class
-        knowing about it."""
+        """Register a callback fired synchronously from `lock()`."""
         self._on_lock.append(cb)
 
     def lock(self) -> None:
+        if self._dek is not None:
+            crypto.wipe(self._dek)
+        for subkey in self._subkeys.values():
+            crypto.wipe(subkey)
         self._dek = None
+        self._cipher = None
+        self._subkeys.clear()
         self._unlocked.clear()
         for cb in self._on_lock:
             try:
@@ -194,24 +217,36 @@ class Vault:
             except Exception:  # one bad callback must not block the lock
                 logger.exception("vault: on-lock callback failed")
 
+    def subkey(self, purpose: SubkeyPurpose) -> bytes:
+        """The key for one encryption layer (database file, volume), derived from the DEK."""
+        dek = self._require_dek()
+        if purpose not in self._subkeys:
+            self._subkeys[purpose] = crypto.derive_subkey(dek, purpose)
+        return bytes(self._subkeys[purpose])
+
     def encrypt_str(self, plaintext: str) -> str:
-        return _b64e(crypto.aead_encrypt(self._require_dek(), plaintext.encode()))
+        return _b64e(crypto.aead_encrypt(self._require_cipher(), plaintext.encode()))
 
     def decrypt_str(self, token: str) -> str:
-        return crypto.aead_decrypt(self._require_dek(), _b64d(token)).decode()
+        return crypto.aead_decrypt(self._require_cipher(), _b64d(token)).decode()
 
     def encrypt_bytes(self, raw: bytes) -> bytes:
-        """Seal a raw blob (e.g. a workspace archive) — returned bytes go to disk."""
-        return crypto.aead_encrypt(self._require_dek(), raw)
+        return crypto.aead_encrypt(self._require_cipher(), raw)
 
     def decrypt_bytes(self, token: bytes) -> bytes:
-        return crypto.aead_decrypt(self._require_dek(), token)
+        return crypto.aead_decrypt(self._require_cipher(), token)
 
     def _set_dek(self, dek: bytes) -> None:
-        self._dek = dek
+        self._dek = bytearray(dek)
+        self._cipher = AESGCM(dek)
         self._unlocked.set()
 
-    def _require_dek(self) -> bytes:
+    def _require_dek(self) -> bytearray:
         if self._dek is None:
             raise VaultLocked("vault is locked")
         return self._dek
+
+    def _require_cipher(self) -> AESGCM:
+        if self._cipher is None:
+            raise VaultLocked("vault is locked")
+        return self._cipher

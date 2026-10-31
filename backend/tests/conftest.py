@@ -45,16 +45,11 @@ from . import _schema  # noqa: E402
 # Every test database otherwise replays the full Alembic chain; see `_schema`.
 core.db.init_db = _schema.init_db
 
-# Argon2id is deliberately costly — 64 MiB over three passes — and every booted test app
-# pays two of them, a login verifier and a key-encryption key. That is real seconds per
-# run spent re-proving that a slow KDF is slow. What these tests are about is the *shape*
-# of the scheme (a DEK only the right passphrase unwraps, a verifier that rejects a wrong
-# one, a stale verifier that gets re-minted), and none of that reads the work factors, so
-# they go to Argon2's floor here. Production takes its parameters from `core.crypto`
-# unchanged; nothing in this file is imported outside the suite.
-core.crypto.KEK_TIME_COST = 1
-core.crypto.KEK_MEMORY_COST = 8
-core.crypto.KEK_PARALLELISM = 1
+# Every booted test app pays two Argon2id derivations, and the tests check the scheme's
+# shape, not its cost, so the work factors drop to Argon2's floor. v1 and v2 stay distinct
+# so the keyfile upgrade path still runs.
+core.crypto.KDF_V1 = core.crypto.KdfParams(time_cost=1, memory_cost=8, parallelism=1)
+core.crypto.KDF_V2 = core.crypto.KdfParams(time_cost=1, memory_cost=16, parallelism=1)
 core.crypto.PASSWORD_HASHER = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 # Every agent carries `run_code` (`agent/code_mode.py`), and `TestModel`'s default of
