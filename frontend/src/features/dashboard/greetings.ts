@@ -25,16 +25,16 @@ export const GREETINGS: readonly Greeting[] = [
   { when: "afternoon", text: "Afternoon. What can I take off your plate?" },
   {
     when: "afternoon",
-    text: "Good afternoon. The post-lunch slump is a human feature, I'm told.",
+    text: "Good afternoon. Is the morning's plan still the plan?",
   },
   { when: "evening", text: "Good evening. What's on your mind?" },
   {
     when: "evening",
     text: "Good evening. Something small, or something ambitious?",
   },
-  { when: "evening", text: "Evening. Where shall we start?" },
+  { when: "evening", text: "Evening. What are we looking at?" },
   { when: "evening", text: "Good evening. One more thing, or a new one?" },
-  { when: "late", text: "Working late. I don't mind; I don't sleep." },
+  { when: "late", text: "Still at it. What's the last thing tonight?" },
   { when: "late", text: "It's late. Shall we keep this one brief?" },
   { when: "late", text: "Still up. What are we looking at?" },
   {
@@ -44,9 +44,12 @@ export const GREETINGS: readonly Greeting[] = [
   { when: "any", text: "At your service." },
   { when: "any", text: "Ready when you are." },
   { when: "any", text: "What shall we build?" },
-  { when: "any", text: "What are we breaking today? Deliberately, I mean." },
+  {
+    when: "any",
+    text: "What are we making? I'll have the objections ready.",
+  },
   { when: "any", text: "Where would you like to start?" },
-  { when: "any", text: "Go ahead. I'm listening, which is most of my job." },
+  { when: "any", text: "Go ahead. I'm listening." },
   { when: "any", text: "What needs doing?" },
   { when: "any", text: "Tell me what you need." },
 ];
