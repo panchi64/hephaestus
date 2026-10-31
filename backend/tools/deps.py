@@ -99,8 +99,8 @@ class RunDeps:
     # A delegate whose work the operator approved as one act. Tools that ask the operator
     # have nobody to ask there (the conversation is the parent's) and are withheld.
     delegated_approved: bool = False
-    # Calls Auto cleared because the VM was offline, by call id. The executing tool checks
-    # the VM is still offline before running one (`tools/shell.py`, `tools/code.py`).
+    # Calls Auto cleared because the VM bounded them, by call id. The executing tool checks
+    # the VM still does before running one (`tools/shell.py`, `tools/code.py`).
     env_cleared: set[str] = field(default_factory=set, repr=False, compare=False)
 
     def __post_init__(self) -> None:

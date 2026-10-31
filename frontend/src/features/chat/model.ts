@@ -666,7 +666,7 @@ export const PERMISSION_LEVELS: readonly PermissionLevelSpec[] = [
     id: "auto",
     label: "Auto",
     description:
-      "Acts on its own inside the offline VM; asks before the host or the network.",
+      "Acts on its own inside the VM; asks before the host or more network.",
   },
   // The one description that is a warning, not a summary: the last thing an operator
   // reads before choosing it.

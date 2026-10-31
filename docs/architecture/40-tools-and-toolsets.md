@@ -226,19 +226,21 @@ a deferred call at the Auto level
   → decide.py        clears it when the ENVIRONMENT bounds it:
   │                    a classified read                       → runs
   │                    VM shell or code_execute, with the VM
-  │                    up, offline, and no writable checkout    → runs
+  │                    up, reaching only its default hosts,
+  │                    and no writable checkout                 → runs
   → grants           a standing conversation grant covering it → runs
   → otherwise        parks, with the reason on the card:
-                     "runs on the host", "the VM can reach the network",
+                     "runs on the host", "the VM can reach hosts beyond its defaults",
                      "the VM is unavailable", "this thread's own checkout is
                      writable", "acts outside the VM"
 ```
 
-Four properties are load-bearing:
+Five properties are load-bearing:
 
-- **The VM is the fence, so the rule reads the VM, not the command.** A cleared command can read only what the VM mounts (scratch, the thread's own project, its worktrees, and projects it holds a write lease on), write only the writable mounts, and reach no network. Parsing a command to prove the same thing again gave false parks on ordinary commands (`rg "a|b"`, heredocs, `python -c`) and no extra safety.
+- **The VM is the fence, so the rule reads the VM, not the command.** A cleared command can read only what the VM mounts (scratch, the thread's own project, its worktrees, and projects it holds a write lease on), write only the writable mounts, and reach only the VM's hosts. Parsing a command to prove the same thing again gave false parks on ordinary commands (`rg "a|b"`, heredocs, `python -c`) and no extra safety.
+- **The default hosts count as contained.** The VM's configured defaults (package registries, GitHub, the Ubuntu mirrors; `egress_allowed_domains`) are what installs and clones need, so VM work clears while they are all it reaches. Any of them can carry an upload (a push to GitHub); the operator accepted that so Auto stays usable. A conversation granted any further domain parks its VM work.
 - **A writable real checkout parks VM work.** Root in the guest can rewrite the checkout's `.git`, and a nested read-only bind of it does not hold (it can be unmounted). Hooks or config planted there would run on the operator's next host commit, so the VM is no fence in that thread. Worktree threads and read-only checkouts are unaffected.
-- **The VM is checked again when the call runs.** An allow the offline VM produced is marked (`EnvApproved`). The executing tool, and the resume path after a park, re-read the VM and refuse if it has gained network since.
+- **The VM is checked again when the call runs.** An allow the VM produced is marked (`EnvApproved`). The executing tool, and the resume path after a park, re-read the VM and refuse if it has gained a host since.
 - **The host's own git never trusts the tree.** The platform snapshots, diffs and merges worktrees on the host. `services/projects/repo.py` passes `--git-dir`/`--work-tree` explicitly, finding a worktree's git directory from the project root's side rather than from the worktree's own `.git` link, and pins signing, external diff and textconv off.
 
 What parks carries its reason on `approval.required` (`auto_reason`), so the operator reads why Auto stopped.
@@ -250,7 +252,7 @@ What parks carries its reason on `approval.required` (`auto_reason`), so the ope
 1. The turn loop assembles `RunDeps` (run, owner, disabled-tool set, capability handles) — `agent/turn.py:drive_turn`.
 2. `build_agent_toolsets()` produces the gated, namespaced stack; the `Agent` is built with it (`deps_type=RunDeps`, `output_type=[str, DeferredToolRequests]`).
 3. The model runs its multi-step loop; for each call, the `_enabled_gate` and tool args are evaluated against `ctx.deps`. A non-sensitive tool executes and may emit `tool.progress`.
-4. A **sensitive** tool does *not* execute — the turn ends with `DeferredToolRequests`. The engine rules on each deferred call: the thread's permission level refuses or parks it, a standing conversation grant answers the levels that would have asked, and at the Auto level the rule settles it: what the offline VM bounds runs, then what a grant covers (§4.5). What is still unanswered parks (§4.1) and waits for `POST …/approve`.
+4. A **sensitive** tool does *not* execute — the turn ends with `DeferredToolRequests`. The engine rules on each deferred call: the thread's permission level refuses or parks it, a standing conversation grant answers the levels that would have asked, and at the Auto level the rule settles it: what the VM bounds runs, then what a grant covers (§4.5). What is still unanswered parks (§4.1) and waits for `POST …/approve`.
 5. `code_execute` and the shell run in the conversation's VM if one can be created, else report unavailable (§4.2); `code_request_egress` and `shell_run_on_host` always park for approval first — the two exits, never the compute.
 
 The result: access control (`AE-2` categories, `AE-3` sensitivity and enable/disable, `AE-4` model-discerns) is a **dozen lines of toolset composition plus a per-tool `requires_approval` flag**, keyed on one deps object. Every harder case (host exec, scheduled tasks, external tools) reuses the same deferred-tool pause.
@@ -264,7 +266,7 @@ The result: access control (`AE-2` categories, `AE-3` sensitivity and enable/dis
 | Toolset stack (namespacing + enabled gate + approval gate) | ✅ built (`tools/toolsets.py`) |
 | `builtin`, `memory`, `code` categories | ✅ built |
 | Approval pause/resume (engine + `/runs/{id}/approve`) | ✅ built |
-| Auto-level rule (offline VM, then grants) | ✅ built (`services/permissions/decide.py`, `agent/gating.py`) |
+| Auto-level rule (the VM, then grants) | ✅ built (`services/permissions/decide.py`, `agent/gating.py`) |
 | Home file tools + per-conversation VM commands + host escape hatch | ✅ built (`services/home`, `services/vm`, `tools/files.py`, `tools/shell.py`, `tools/code.py`) |
 | Blast-radius model (egress allowlist enforced by smol, per-conversation VMs, fenced host tool) | ✅ built (`services/egress.py`, `services/vm/machines.py`, `services/sandbox/fence.py`, `tools/shell.py`) |
 | Async sub-agents (`subagents` category, register, wake, panel) | ✅ built (`services/subagents/`, `services/subagent_store.py`, `harness/manifests/subagents.py`, `tools/subagents.py`) — replaces the `agents` category and its blocking `delegate_task`, and the `research` category with it: research is now the `researcher` spec in the roster, launched, redirected (`subagents_send`) and listed (`subagents_list`) like any other |

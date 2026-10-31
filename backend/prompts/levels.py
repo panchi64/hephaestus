@@ -10,7 +10,7 @@ propose is the wrong posture, and a model that does not know why its tools are m
 reads a deliberately narrowed catalog as a broken installation and says so. At **Manual**
 every change stops on the operator, so how the work is *shaped* changes: ten separate
 edits are ten interruptions, and the model is the only thing that can group them. At
-**Auto** the model is told the rule, so it prefers work inside the offline VM and waits on a
+**Auto** the model is told the rule, so it prefers work inside the VM and waits on a
 stop rather than routing around it. At **Yolo** nothing parks, so the fragment has to say
 both that nothing will stop the work and that the VM still bounds it.
 
@@ -70,12 +70,12 @@ of work instead of a dozen fragments of it."""
 # it plainly. The last sentence is the load-bearing one: a stop routed around (the same
 # act through another tool) is the failure this level can't catch.
 AUTO_LEVEL = """\
-This thread is at the Auto level: your commands and code run on their own while the VM \
-has no network, held to the folders it mounts. The host, the network, a project's own \
-working copy and anything outside the VM stop for the operator, unless they have already \
-allowed that act for this thread. Prefer the approach that stays inside the offline VM. \
-When something stops for the operator, wait for their answer rather than reaching the \
-same result another way."""
+This thread is at the Auto level: your commands and code run on their own in the VM, held \
+to the folders it mounts and its default hosts (package registries and source hosts). The \
+host, any further network access, a project's own working copy and anything outside the \
+VM stop for the operator, unless they have already allowed that act for this thread. \
+Prefer the approach that stays inside the VM. When something stops for the operator, wait \
+for their answer rather than reaching the same result another way."""
 
 
 # Yolo: nothing parks, and the model is the last thing standing between the operator and

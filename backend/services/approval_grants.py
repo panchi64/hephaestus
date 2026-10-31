@@ -21,7 +21,7 @@ there is no command to name ahead of any turn, and a narrower grant would park t
 forever.
 
 A grant settles the call it covers at every level that asks, Auto included, where it
-clears what the offline VM does not bound (``services/permissions/decide.py``). A level's
+clears what the VM does not bound (``services/permissions/decide.py``). A level's
 refusal it never overturns.
 
 Expiry is compared in Python after normalizing to UTC, because SQLite may drop tzinfo.

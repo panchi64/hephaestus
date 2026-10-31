@@ -60,11 +60,10 @@ class GrantApproved(ToolApproved):
 
 @dataclass(kw_only=True)
 class EnvApproved(ToolApproved):
-    """An approval Auto gave because the conversation's VM was offline, marked as one.
+    """An approval Auto gave because the conversation's VM bounded the call, marked as one.
 
-    The VM can gain network while the run waits (an egress grant, offline mode switched
-    off), so the resume re-checks it, as the executing tool does for a call that runs at
-    once (``RunDeps.env_cleared``).
+    The VM can gain hosts while the run waits (an egress grant), so the resume re-checks
+    it, as the executing tool does for a call that runs at once (``RunDeps.env_cleared``).
     """
 
 
@@ -95,9 +94,9 @@ async def settle_deferred(
     3. Where the level asks, a standing grant covering the call settles it. Grants are
        conversation-scoped, so a stateless turn always asks.
     4. At Auto, :func:`services.permissions.auto_decision` settles the call: what the
-       offline VM bounds runs, then what a grant covers, and the rest parks.
+       VM bounds runs, then what a grant covers, and the rest parks.
 
-    An allow a grant produced is recorded as :class:`GrantApproved` and one the offline VM
+    An allow a grant produced is recorded as :class:`GrantApproved` and one the VM
     produced as :class:`EnvApproved`, so the resume re-checks them.
     """
     granted: list[GrantInfo] = []

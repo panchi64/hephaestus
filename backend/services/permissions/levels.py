@@ -30,7 +30,7 @@ edit — is still answered at every level below the top one, because the reason 
 not the one this axis reasons about (a recall pulls untrusted content into the model's
 context; it changes nothing the ceiling describes). What clears a tool's own gate is the
 operator: at the prompt, through a standing conversation grant, or — at Auto — through
-Auto's rule, which clears a classified read or VM work while the VM is offline and parks
+Auto's rule, which clears a classified read or VM work the VM bounds and parks
 the rest (``decide.py``). That asymmetry is what keeps adding a level from quietly
 deleting a protection nobody re-examined.
 
@@ -98,10 +98,8 @@ PERMISSION_LEVELS: frozenset[str] = frozenset(PERMISSION_LADDER)
 #:
 #: ``auto`` reaches no further than ``edit`` — the two share a ceiling — and differs only
 #: in who answers at that boundary: Edit stops and asks, Auto rules first and asks about
-#: what it will not settle. The default moved once the ruling became structural: contained
-#: offline work is cleared by the grammar and an OS fence rather than by a model's opinion
-#: of a program name, so the ordinary work of a thread stopped costing the operator a
-#: prompt while everything that leaves the workspace still reaches them.
+#: what it will not settle: work the VM bounds runs without a prompt, while everything
+#: that leaves it still reaches the operator.
 #:
 #: **This is the default for a *fresh* thread only.** Existing rows keep the level they
 #: were stored with (``models/conversation.py`` changed its Python default and not its
@@ -176,7 +174,7 @@ PERMISSIONS: Mapping[PermissionLevel, PermissionSpec] = {
     "edit": PermissionSpec(
         level="edit", ceiling=Sensitivity.WORKSPACE_WRITE, approval_policy=ApprovalPolicy.ASK
     ),
-    # The default, and the same reach as Edit: what the offline VM bounds runs, what a
+    # The default, and the same reach as Edit: what the VM bounds runs, what a
     # standing grant covers runs, and the rest parks (`decide.py`).
     "auto": PermissionSpec(
         level="auto",

@@ -94,7 +94,7 @@ class TestTheLevelPart:
     async def test_auto_says_a_stop_is_waited_on_not_routed_around(self):
         """The rule is deterministic, so it is stated; the one thing it can't catch is the
         same act reached through another tool."""
-        assert "offline" in AUTO_LEVEL
+        assert "default hosts" in AUTO_LEVEL
         assert "rather than reaching the same result another way" in AUTO_LEVEL
 
     async def test_a_plan_thread_is_told_its_missing_tools_are_deliberate(self):

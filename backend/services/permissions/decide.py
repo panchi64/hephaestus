@@ -91,7 +91,7 @@ def blocked_message(level: str, tool: str) -> str:
     )
 
 
-#: The tools whose work runs in the conversation's VM, which bounds it while it is offline.
+#: The tools whose work runs in the conversation's VM, which bounds it.
 VM_TOOLS = frozenset({"shell_run_command", "shell_start_command", "code_execute"})
 HOST_TOOLS = frozenset({"shell_run_on_host"})
 #: The request to open the VM's network to more hosts.
@@ -106,8 +106,11 @@ class AutoEnv:
     """The facts about the conversation's VM that Auto's rule reads, taken once per batch."""
 
     vm_up: bool
-    #: No host is reachable: no egress allowlist and no egress request in the batch.
-    offline: bool
+    #: The VM reaches nothing past the configured default hosts (package registries and
+    #: source hosts): this conversation holds no egress grant of its own and the batch asks
+    #: for none. Those defaults can carry an upload (a push to GitHub); the operator chose
+    #: to accept that so ordinary installs and clones run at Auto.
+    default_hosts_only: bool
     #: The home mounts an operator's own checkout writable. Root in the guest can rewrite
     #: its `.git`, which their next host commit runs, so the VM is no fence there.
     writable_checkout: bool
@@ -121,7 +124,7 @@ class AutoOutcome:
     reason: str
     #: A standing grant produced the allow, so the resume re-checks it.
     by_grant: bool = False
-    #: The offline VM produced the allow, so execution re-checks the VM is still offline.
+    #: The VM produced the allow, so execution re-checks it still bounds the call.
     by_environment: bool = False
 
 
@@ -140,10 +143,10 @@ def auto_decision(tool: str, *, env: AutoEnv, granted: bool) -> AutoOutcome:
 def environment_clears(tool: str, env: AutoEnv) -> tuple[bool, str]:
     """Whether the environment alone bounds a call to ``tool``, and why or why not.
 
-    A classified read changes nothing. VM work is bounded by the VM's mounts and its lack
-    of network, so it clears exactly when the VM is up, offline, and holds no writable
-    checkout. Only a classified name reads as a read: an unknown one resolves to the class
-    that reaches furthest (``tool_sensitivity``).
+    A classified read changes nothing. VM work is bounded by the VM's mounts and its
+    network, so it clears exactly when the VM is up, reaches only the default hosts, and
+    holds no writable checkout. Only a classified name reads as a read: an unknown one
+    resolves to the class that reaches furthest (``tool_sensitivity``).
     """
     if classified(tool) and sensitivity_of(tool) is Sensitivity.READ:
         return True, "only reads"
@@ -153,8 +156,8 @@ def environment_clears(tool: str, env: AutoEnv) -> tuple[bool, str]:
         return False, "acts outside the VM"
     if not env.vm_up:
         return False, "the VM is unavailable"
-    if not env.offline:
-        return False, "the VM can reach the network"
+    if not env.default_hosts_only:
+        return False, "the VM can reach hosts beyond its defaults"
     if env.writable_checkout:
         return False, "this thread's own checkout is writable"
-    return True, "runs in the offline VM"
+    return True, "runs in the VM"

@@ -1,4 +1,4 @@
-"""The Auto level: what the offline VM bounds runs, what a standing grant covers runs, and
+"""The Auto level: what the VM bounds runs, what a standing grant covers runs, and
 everything else parks with its reason."""
 
 from __future__ import annotations
@@ -39,24 +39,27 @@ from .vm_support import install_fake_smol, ready_platform
 OWNER = "operator"
 CONV = "conv-1"
 
-OFFLINE = AutoEnv(vm_up=True, offline=True, writable_checkout=False)
+OFFLINE = AutoEnv(vm_up=True, default_hosts_only=True, writable_checkout=False)
 
 
 class TestTheRule:
     @pytest.mark.parametrize("tool", ["shell_run_command", "shell_start_command", "code_execute"])
-    def test_vm_work_clears_while_the_vm_is_up_offline_and_holds_no_checkout(self, tool: str):
-        assert environment_clears(tool, OFFLINE) == (True, "runs in the offline VM")
+    def test_vm_work_clears_while_the_vm_is_up_contained_and_holds_no_checkout(self, tool: str):
+        assert environment_clears(tool, OFFLINE) == (True, "runs in the VM")
 
     @pytest.mark.parametrize(
         ("env", "reason"),
         [
-            (AutoEnv(vm_up=False, offline=True, writable_checkout=False), "the VM is unavailable"),
             (
-                AutoEnv(vm_up=True, offline=False, writable_checkout=False),
-                "the VM can reach the network",
+                AutoEnv(vm_up=False, default_hosts_only=True, writable_checkout=False),
+                "the VM is unavailable",
             ),
             (
-                AutoEnv(vm_up=True, offline=True, writable_checkout=True),
+                AutoEnv(vm_up=True, default_hosts_only=False, writable_checkout=False),
+                "the VM can reach hosts beyond its defaults",
+            ),
+            (
+                AutoEnv(vm_up=True, default_hosts_only=True, writable_checkout=True),
                 "this thread's own checkout is writable",
             ),
         ],
@@ -71,7 +74,7 @@ class TestTheRule:
         assert environment_clears("external_x_read", OFFLINE) == (False, "acts outside the VM")
 
     def test_a_classified_read_clears_wherever_the_vm_stands(self):
-        down = AutoEnv(vm_up=False, offline=False, writable_checkout=True)
+        down = AutoEnv(vm_up=False, default_hosts_only=False, writable_checkout=True)
         assert environment_clears("browse_navigate", down) == (True, "only reads")
 
     def test_a_grant_clears_what_the_environment_does_not(self):
@@ -155,12 +158,12 @@ LS = _call("shell_run_command", "ls src")
 
 
 class TestTheGate:
-    async def test_vm_work_runs_when_the_vm_is_offline(
+    async def test_vm_work_runs_while_the_vm_reaches_only_its_default_hosts(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
         _ = install_fake_smol(monkeypatch)
         _home(monkeypatch, tmp_path)
-        deps = _deps(_machines(await ready_platform(tmp_path)), egress_policy(()))
+        deps = _deps(_machines(await ready_platform(tmp_path)), egress_policy(("pypi.org",)))
         # The commands the old syntax judge parked on run here like any other.
         calls = [
             LS,
@@ -172,15 +175,28 @@ class TestTheGate:
         assert all(isinstance(settled[c.tool_call_id], EnvApproved) for c in calls)
         assert deps.env_cleared == {"c1", "c2", "c3"}
 
-    async def test_vm_work_parks_with_its_reason_when_the_vm_can_reach_a_host(
+    async def test_vm_work_parks_with_its_reason_once_the_conversation_has_more_hosts(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
         _ = install_fake_smol(monkeypatch)
         _home(monkeypatch, tmp_path)
-        deps = _deps(_machines(await ready_platform(tmp_path)), egress_policy(("pypi.org",)))
+        policy = egress_policy(("pypi.org",))
+        deps = _deps(_machines(await ready_platform(tmp_path)), policy)
+        _ = await policy.allow(deps.scratch_key, ["example.com"])
         _, manual, metadata = await _settle(deps, [LS])
         assert manual == [LS]
-        assert metadata["c1"][AUTO_KEY] == "the VM can reach the network"
+        assert metadata["c1"][AUTO_KEY] == "the VM can reach hosts beyond its defaults"
+
+    async def test_a_granted_default_host_is_not_more_network(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        _ = install_fake_smol(monkeypatch)
+        _home(monkeypatch, tmp_path)
+        policy = egress_policy(("pypi.org",))
+        deps = _deps(_machines(await ready_platform(tmp_path)), policy)
+        _ = await policy.allow(deps.scratch_key, ["pypi.org"])
+        _, manual, _ = await _settle(deps, [LS])
+        assert manual == []
 
     async def test_an_egress_request_in_the_batch_counts_as_network(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
