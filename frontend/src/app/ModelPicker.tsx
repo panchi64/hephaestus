@@ -50,7 +50,10 @@ import {
 export function ModelPicker(props: { class?: string }): JSX.Element {
   return (
     <div
-      class={cx("flex min-w-0 max-w-44 items-center sm:max-w-56", props.class)}
+      class={cx(
+        "flex min-w-0 max-w-44 items-center sm:max-w-56 @max-composer-tight/composer:max-w-28",
+        props.class,
+      )}
     >
       <Combobox
         cell

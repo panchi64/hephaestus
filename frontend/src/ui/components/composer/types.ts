@@ -154,6 +154,9 @@ export interface ComposerProps {
    *  message is (level, model). Each direct child is one `StatusBar` cell: a
    *  `StatusCell`, or a picker with `cell` set. */
   controls?: JSX.Element;
+  /** Secondary cells after `controls`, folded into a `more` menu when the composer is
+   *  narrow. A render function, because the cells mount inline and in the menu. */
+  overflow?: () => JSX.Element;
   /** Cells at the end of the status bar: the state of the thread the message is going
    *  into (tasks, stats, context fullness). A separate right-aligned slot so the bar
    *  reads "what this is, then where it's going" and keeps its edge when it wraps. */

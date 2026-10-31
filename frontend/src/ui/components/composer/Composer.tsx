@@ -13,6 +13,7 @@ import {
 import { ComposerField } from "./ComposerField";
 import { ComposerHeader } from "./ComposerHeader";
 import { ComposerMenu } from "./ComposerMenu";
+import { ComposerOverflow } from "./ComposerOverflow";
 import { createComposerKeys } from "./composerKeys";
 import { createComposerMenuController } from "./composerMenuController";
 import type { ComposerProps } from "./types";
@@ -98,7 +99,11 @@ export function Composer(props: ComposerProps): JSX.Element {
   // `class` is layout glue for the whole unit, which is also the drop target.
   return (
     <div
-      class={cx("heph-composer", !props.bare && "bg-surface", props.class)}
+      class={cx(
+        "heph-composer @container/composer",
+        !props.bare && "bg-surface",
+        props.class,
+      )}
       data-live={
         props.streaming && !props.waiting && !recalling() ? "" : undefined
       }
@@ -179,6 +184,9 @@ export function Composer(props: ComposerProps): JSX.Element {
               disabled={Boolean(props.disabled || recalling())}
             />
             {controls()}
+            <Show when={props.overflow}>
+              {(cells) => <ComposerOverflow cells={cells()} />}
+            </Show>
           </>
         }
         end={

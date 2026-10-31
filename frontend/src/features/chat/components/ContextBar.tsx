@@ -80,8 +80,11 @@ export function ContextBar(props: ContextBarProps): JSX.Element {
           class="gap-2"
         >
           {/* Presentation only: the fill and the tick are positions along the backend's
-              own fractions. */}
-          <span aria-hidden="true" class="relative h-1 w-16 shrink-0 bg-line">
+              own fractions. A narrow composer keeps just the figure. */}
+          <span
+            aria-hidden="true"
+            class="relative h-1 w-16 shrink-0 bg-line @max-composer-tight/composer:hidden"
+          >
             <span
               class="absolute inset-y-0 left-0 bg-text"
               style={{ width: `${fill()}%` }}

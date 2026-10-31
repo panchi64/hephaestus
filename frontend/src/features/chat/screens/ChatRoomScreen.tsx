@@ -549,6 +549,7 @@ export function ChatRoomScreen(): JSX.Element {
             6px outside its frame, with air to spare. */}
           <div class="sticky bottom-0 px-4">
             <div class={cx("relative pb-4", MEASURE)}>
+              {status.taskRows()}
               {/* A parked run takes the composer's slot and offers only what it waits for. */}
               <Show when={stream.park()}>
                 {(park) => (
@@ -629,9 +630,8 @@ export function ChatRoomScreen(): JSX.Element {
                       : null
                   }
                   controls={
-                    // The project is chosen while staged and only named once saved, since
-                    // re-pointing would strand the thread's worktree. The level is a live
-                    // control available throughout and rides the next send.
+                    // The level is a live control available throughout and rides the
+                    // next send.
                     <>
                       <ModelPicker />
                       <PermissionControl
@@ -641,6 +641,10 @@ export function ChatRoomScreen(): JSX.Element {
                         // strictest as a placeholder; the control reports that.
                         pending={permissionPending()}
                       />
+                    </>
+                  }
+                  overflow={() => (
+                    <>
                       <EffortControl
                         value={effort()}
                         onChange={setEffort}
@@ -652,15 +656,13 @@ export function ChatRoomScreen(): JSX.Element {
                         value={agentValue()}
                         onChange={setAgentChoice}
                       />
+                      {/* The project is chosen while staged and only named once saved,
+                          since re-pointing would strand the thread's worktree. */}
                       <Show
                         when={openId() === null}
                         fallback={
                           <Show when={savedProjectLabel()}>
-                            {(label) => (
-                              <StatusCell class="max-sm:hidden">
-                                {label()}
-                              </StatusCell>
-                            )}
+                            {(label) => <StatusCell>{label()}</StatusCell>}
                           </Show>
                         }
                       >
@@ -671,14 +673,15 @@ export function ChatRoomScreen(): JSX.Element {
                         />
                       </Show>
                     </>
-                  }
+                  )}
                   trailing={status.items()}
                 />
               </Show>
               {/* While parked, the composer's status bar is replaced by a boxed one so the
                 trailing cells stay visible. `Disconnected`, normally in the composer
-                header, takes its leading cell: one place at a time. */}
-              <div>
+                header, takes its leading cell: one place at a time. Named like the
+                composer so its cells shorten at the same widths. */}
+              <div class="@container/composer">
                 <Show when={stream.park()}>
                   <StatusBar
                     edge="box"
@@ -691,7 +694,6 @@ export function ChatRoomScreen(): JSX.Element {
                     class="mt-1.5"
                   />
                 </Show>
-                {status.taskRows()}
               </div>
             </div>
           </div>

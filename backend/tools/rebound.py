@@ -104,9 +104,7 @@ class ReboundToolset(AbstractToolset[RunDeps]):
         # the per-key cache rather than by rebuilding the whole dict — the set is fixed
         # for a given binding, and this runs on every single call.
         tools = await self._tools_for(bound, ctx)
-        # Named as the catalog names it, so a capability event the harness toolset emits can
-        # be attributed: a prefixed toolset hands us the unprefixed `tool_name`, which is not
-        # the key the library looks the owner up under (`tools/harness_events.py`).
+        # The harness toolset's events carry `ctx.tool_name`, which must be the catalog's name.
         inward = attributable(ctx, f"{self.id}_{name}")
         return cast(object, await bound.call_tool(name, tool_args, inward, tools[name]))
 

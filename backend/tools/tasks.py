@@ -216,9 +216,7 @@ class ConversationTaskToolset(AbstractToolset[RunDeps]):
         # tool handed in carries the template's function, which is wired to the template's
         # (unbound) store.
         upstream = UPSTREAM[name]
-        # Named as the catalog names it, so the planning tools' own capability events can be
-        # attributed — a prefixed toolset otherwise hands the harness an unprefixed
-        # `tool_name` the library cannot look up (`tools/harness_events.py`).
+        # The planning tools' events carry `ctx.tool_name`, which must be the catalog's name.
         inward = attributable(ctx, f"{self.id}_{name}")
         return cast(
             object,

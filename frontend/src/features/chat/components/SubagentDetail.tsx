@@ -32,8 +32,7 @@ const LABEL: Record<SubagentStatus, string> = {
  * its transcript.
  *
  * It takes the whole pane instead of unfolding under its card: a live transcript grows
- * on every poll and would slide the next row out from under the cursor. The way back is
- * a button.
+ * as it streams and would slide the next row out from under the cursor.
  */
 export function SubagentDetail(props: {
   subagent: Subagent;
