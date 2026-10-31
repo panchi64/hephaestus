@@ -34,6 +34,7 @@ from pydantic_ai.settings import ModelSettings
 
 from core.text import strip_think_blocks
 from prompts.utility import TITLE_INSTRUCTIONS
+from services.chassis_tail import part_content
 
 from .meta import make_utility_agent
 
@@ -74,7 +75,7 @@ def _part_text(message: ModelMessage, part_names: frozenset[str]) -> str:
     for part in message.parts:
         if type(part).__name__ not in part_names:
             continue
-        content: object = getattr(part, "content", None)
+        content = part_content(message, part)
         if isinstance(content, str):
             chunks.append(content)
         elif isinstance(content, list | tuple):

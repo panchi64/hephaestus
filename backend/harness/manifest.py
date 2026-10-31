@@ -208,33 +208,22 @@ class FeatureManifest:
     composes_turns: bool = False
     # ── Which seam a block of text belongs on ────────────────────────────────────────
     #
-    # A block byte-stable across a conversation's turns belongs in the head; one that churns
-    # within it belongs in the tail. Not "small in head, large in tail", which is wrong in
-    # both directions.
+    # Prompt caches reuse leading tokens only while they match the last request. Neither
+    # seam rewrites the history, so the choice is about what a block costs to carry:
     #
-    # Prompt caches (llama.cpp's longest common prefix per slot, vLLM's chained block
-    # hashes, OpenAI's single implicit breakpoint) reuse leading tokens only while they match
-    # the last request and re-read everything after the first difference:
+    # - Head (`instructions`): the value a conversation opened with stays in the prefix and
+    #   a change arrives once, as a full replacement after the history
+    #   (`on_change="append"`, `agent/factory.py`). Right for a block that rarely changes.
+    # - Tail (`prompt_context`): a fresh copy rides every turn's user prompt and persists
+    #   with it, so the thread carries one copy per turn. Right for a short block that
+    #   changes from turn to turn.
     #
-    # - Head: a stable block is free after the first request carrying it, however large. A
-    #   changing one invalidates the entire history behind it every time.
-    # - Tail: the tail isn't persisted, so turn N+1 replays turn N's prompt without it. A
-    #   tail block costs one divergence per turn boundary, bounded by one turn's work and
-    #   not growing with the thread; free within a turn, since providers resolve once in
-    #   the prelude.
-    #
-    # So a large stable brief in the tail pays every turn, and a small volatile line in the
-    # head discards the conversation each time it moves. `agent/prefix_watch.py` reports which.
+    # `agent/prefix_watch.py` reports when a request's prefix moved anyway.
 
     # Instruction providers registered on every agent the engine builds; each resolves its
-    # capability from the run's bag and returns "" to no-op. They render at the head, so
-    # must be byte-stable for a conversation. A block that comes and goes with a session is
-    # still head material (it switches when something else already invalidated the prefix);
-    # one that moves with the turn is not.
+    # capability from the run's bag and returns "" to no-op.
     instructions: tuple[InstructionProvider, ...] = ()
-    # Like `instructions` re-resolved each turn and never persisted, but delivered at the
-    # tail of the current user prompt: where content that changes within a conversation
-    # goes, whatever its size, leaving the cached prefix intact.
+    # Resolved each turn and appended to the tail of the current user prompt.
     prompt_context: tuple[PromptContextProvider, ...] = ()
     # Constructs the feature's services at lifespan time. None ⇒ routes-only.
     build: Callable[[HarnessContext], Awaitable[FeatureRuntime]] | None = None

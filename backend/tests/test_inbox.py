@@ -180,7 +180,7 @@ async def _journal(tmp_path: Path) -> AsyncGenerator[SealedInboxJournal]:
 async def test_the_journal_brings_an_inbox_back_after_a_restart(tmp_path: Path):
     async with _journal(tmp_path) as journal:
         inbox = ConversationInbox(OPERATOR_ID, "c1", journal=journal)
-        kept = inbox.enqueue("keep me", payload=TurnPayload(attachment_ids=("u1",)))
+        kept = inbox.enqueue("keep me", payload=TurnPayload(attachment_ids=("u1",), effort="xhigh"))
         report = inbox.enqueue("found it", source="subagent", sender="reader")
         gone = inbox.enqueue("never mind")
         _ = inbox.hold(kept.id, True)
@@ -192,7 +192,7 @@ async def test_the_journal_brings_an_inbox_back_after_a_restart(tmp_path: Path):
 
     assert loaded.waiting
     assert [(m.id, m.text, m.held, m.payload) for m in loaded.messages] == [
-        (kept.id, "keep me", True, TurnPayload(attachment_ids=("u1",))),
+        (kept.id, "keep me", True, TurnPayload(attachment_ids=("u1",), effort="xhigh")),
         (report.id, "found it", False, None),
     ]
     assert loaded.messages[1].sender == "reader"
@@ -367,12 +367,12 @@ async def test_after_a_stop_everything_waits_behind_the_operators_next_message(
         assert "queued_message_id" not in resumed
         await settle(app)
 
-        # The stop notice, then the new message, then the operator's earlier one, then the
-        # report — all in the first request of the turn. The stopped turn's own prompt,
-        # never answered, merges in ahead of them.
+        # The new message with the stop notice behind it, then the operator's earlier one,
+        # then the report — all in the first request of the turn. The stopped turn's own
+        # prompt, never answered, merges in ahead of them.
         texts = seen[0]
-        at = texts.index(STOP_NOTICE)
-        assert texts[at + 1 : at + 3] == ["now", "earlier"]
+        at = texts.index("now")
+        assert texts[at : at + 3] == ["now", STOP_NOTICE, "earlier"]
         assert "found it" in texts[at + 3]
         assert inbox.messages == () and not inbox.waiting_for_operator
 
@@ -424,7 +424,7 @@ async def test_resume_releases_the_inbox_without_a_message(monkeypatch: pytest.M
 
         assert resumed["waiting_for_operator"] is False
         texts = seen[0]
-        assert texts[texts.index(STOP_NOTICE) + 1] == "queued"
+        assert texts[texts.index("queued") + 1] == STOP_NOTICE
 
 
 async def test_a_stop_after_the_run_ended_holds_nothing(monkeypatch: pytest.MonkeyPatch):

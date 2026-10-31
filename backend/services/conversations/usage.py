@@ -4,13 +4,17 @@ and the active-path totals.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, replace
 
+from genai_prices import calc_price
 from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.usage import RequestUsage
 
 from runs.events import LastRequestUsage
 from runs.overhead import TurnOverhead
 from services.conversation_view import estimate_footprint
+from services.shapes import as_dict, as_int, as_str
 
 from .paths import is_user_prompt
 
@@ -76,6 +80,8 @@ def last_request_usage(messages: list[ModelMessage]) -> LastRequestUsage | None:
         usage = message.usage
         provider = getattr(message, "provider_name", None)
         model = getattr(message, "model_name", None)
+        cost = response_cost(message)
+        miss_reason, missed_tokens = _cache_miss(message)
         return LastRequestUsage(
             route=f"{provider}:{model}" if provider and model else model,
             # Zero is what a local server reports when it means "not measured", which is
@@ -85,8 +91,80 @@ def last_request_usage(messages: list[ModelMessage]) -> LastRequestUsage | None:
             output_tokens=usage.output_tokens or None,
             cache_read_tokens=usage.cache_read_tokens or None,
             cache_write_tokens=usage.cache_write_tokens or None,
+            cost_usd=cost.total_usd if cost is not None else None,
+            cache_miss_reason=miss_reason,
+            cache_missed_tokens=missed_tokens,
         )
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class Cost:
+    """What one response cost, and what caching saved against sending its prompt uncached
+    (negative when the cache writes cost more than the reads saved)."""
+
+    total_usd: float
+    saved_usd: float
+
+
+#: Recently priced responses: the totals re-sum the whole path after every response.
+#: Each entry holds its response, so an id is never matched to a newer object.
+_PRICED: OrderedDict[int, tuple[ModelResponse, RequestUsage, Cost | None]] = OrderedDict()
+_PRICED_MAX = 4096
+
+
+def response_cost(response: ModelResponse) -> Cost | None:
+    """``response``'s price from the bundled genai-prices snapshot, as it stood when the
+    response ran, or None when it can't be priced: no usage, or a provider URL the
+    snapshot doesn't know.
+
+    Matched by URL only, never by provider name: an OpenAI-compatible local server reports
+    the provider ``openai``, and a model it serves under a hosted model's name would
+    otherwise be billed at that model's price."""
+    held = _PRICED.get(id(response))
+    if held is not None and held[0] is response and held[1] == response.usage:
+        _PRICED.move_to_end(id(response))
+        return held[2]
+    cost = _price(response)
+    _PRICED[id(response)] = (response, replace(response.usage), cost)
+    if len(_PRICED) > _PRICED_MAX:
+        _ = _PRICED.popitem(last=False)
+    return cost
+
+
+def _price(response: ModelResponse) -> Cost | None:
+    usage = response.usage
+    if not response.model_name or not response.provider_url or not usage.input_tokens:
+        return None
+    if usage.unmeasured_requests:
+        return None
+    uncached = replace(usage, cache_read_tokens=0, cache_write_tokens=0, cache_write_1h_tokens=0)
+    try:
+        actual, baseline = (
+            calc_price(
+                each,
+                response.model_name,
+                provider_api_url=response.provider_url,
+                genai_request_timestamp=response.timestamp,
+            )
+            for each in (usage, uncached)
+        )
+    except LookupError, ValueError:
+        return None
+    return Cost(
+        total_usd=float(actual.total_price),
+        saved_usd=float(baseline.total_price - actual.total_price),
+    )
+
+
+def _cache_miss(response: ModelResponse) -> tuple[str | None, int | None]:
+    """Anthropic's cache-diagnostics verdict: where the prompt diverged, and the tokens missed."""
+    details = as_dict(response.provider_details) or {}
+    diagnostics = as_dict(details.get("cache_diagnostics")) or {}
+    reason = as_dict(diagnostics.get("cache_miss_reason"))
+    if reason is None:
+        return None, None
+    return as_str(reason.get("type")), as_int(reason.get("cache_missed_input_tokens"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +193,10 @@ class ConversationTotals:
     #: Provider-reported cached prompt tokens. None when no response reported any —
     #: most OpenAI-compatible and local endpoints never do.
     cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    #: Summed over the responses :func:`response_cost` could price; None when none could.
+    cost_usd: float | None = None
+    saved_usd: float | None = None
 
 
 def conversation_totals(messages: list[ModelMessage]) -> ConversationTotals:
@@ -125,8 +207,9 @@ def conversation_totals(messages: list[ModelMessage]) -> ConversationTotals:
     flat message list: a prompt directly following another request is a mid-run aside
     the operator sent while the model worked, not a new exchange."""
     turns = steps = tool_calls = 0
-    input_tokens = output_tokens = cache_read = 0
-    saw_tokens = saw_cache = False
+    input_tokens = output_tokens = cache_read = cache_write = 0
+    cost_usd = saved_usd = 0.0
+    saw_tokens = saw_cache = saw_write = saw_cost = False
     previous: ModelMessage | None = None
 
     for message in messages:
@@ -143,6 +226,14 @@ def conversation_totals(messages: list[ModelMessage]) -> ConversationTotals:
             if usage.cache_read_tokens:
                 saw_cache = True
                 cache_read += usage.cache_read_tokens
+            if usage.cache_write_tokens:
+                saw_write = True
+                cache_write += usage.cache_write_tokens
+            cost = response_cost(message)
+            if cost is not None:
+                saw_cost = True
+                cost_usd += cost.total_usd
+                saved_usd += cost.saved_usd
         elif is_user_prompt(message) and (previous is None or isinstance(previous, ModelResponse)):
             turns += 1
         previous = message
@@ -154,4 +245,7 @@ def conversation_totals(messages: list[ModelMessage]) -> ConversationTotals:
         input_tokens=input_tokens if saw_tokens else None,
         output_tokens=output_tokens if saw_tokens else None,
         cache_read_tokens=cache_read if saw_cache else None,
+        cache_write_tokens=cache_write if saw_write else None,
+        cost_usd=cost_usd if saw_cost else None,
+        saved_usd=saved_usd if saw_cost else None,
     )

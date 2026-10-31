@@ -63,6 +63,9 @@ class ModelEndpoint(Table, table=True):
     native_tools: bool = True
     vision: bool = False
     thinking: bool = False
+    # A `services.reasoning.EFFORTS` level pinned for every request on this endpoint;
+    # None ⇒ the adapter's default. Read only by adapters that send an effort.
+    effort: str | None = None
     # Disable-without-delete: a benched endpoint keeps its config (key, capability
     # flags, role memberships) but is skipped by resolution and hidden from the
     # picker — so a flaky provider can be parked, then restored, without re-setup.

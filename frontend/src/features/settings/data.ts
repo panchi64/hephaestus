@@ -75,6 +75,7 @@ function toBody(input: Partial<EndpointInput>): Record<string, unknown> {
   if (input.nativeTools !== undefined) body.native_tools = input.nativeTools;
   if (input.vision !== undefined) body.vision = input.vision;
   if (input.thinking !== undefined) body.thinking = input.thinking;
+  if (input.effort !== undefined) body.effort = input.effort;
   if (input.enabled !== undefined) body.enabled = input.enabled;
   return body;
 }
@@ -124,6 +125,7 @@ export async function saveEndpointForm(
       ...fields,
       maxConcurrentRuns: mcr ? Number(mcr) : 0,
       model,
+      effort: f.effort,
       ...(f.apiKey ? { apiKey: f.apiKey } : {}),
     });
     return target.id;
@@ -133,6 +135,7 @@ export async function saveEndpointForm(
     maxConcurrentRuns: mcr ? Number(mcr) : null,
     model: model || undefined,
     apiKey: f.apiKey || undefined,
+    effort: f.effort || null,
   });
 }
 

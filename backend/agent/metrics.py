@@ -82,6 +82,9 @@ def turn_metrics(run: Run, messages: list[ModelMessage], *, settings: Settings) 
         input_tokens=counts.input_tokens,
         output_tokens=counts.output_tokens,
         cache_read_tokens=counts.cache_read_tokens,
+        cache_write_tokens=counts.cache_write_tokens,
+        cost_usd=counts.cost_usd,
+        saved_usd=counts.saved_usd,
         # A thread whose responses all predate the stopwatch reports no time rather
         # than none-elapsed — the same absent-not-zero rule the token counts follow.
         llm_ms=timings.llm_ms or None,

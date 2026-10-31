@@ -88,6 +88,7 @@ def _enqueue(registry: RunRegistry, conversation_id: str, body: ChatCreate) -> C
             model=body.model,
             permission_level=body.permission_level,
             agent=body.agent,
+            effort=body.effort,
         )
         if body.attachment_ids or body.command or body.file_refs
         else None
@@ -210,6 +211,8 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
             _ = await store.set_permission_level(conversation_id, body.permission_level)
         if stored is not None and body.agent is not None:
             await store.set_agent_name(conversation_id, agent_name)
+        if body.effort is not None:
+            await store.set_effort(conversation_id, body.effort or None)
         try:
             created = await submit_turn(
                 request,
@@ -232,6 +235,8 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
                 _ = await store.set_permission_level(conversation_id, stored.permission)
             if stored is not None and body.agent is not None:
                 await store.set_agent_name(conversation_id, stored.agent_name)
+            if stored is not None and body.effort is not None:
+                await store.set_effort(conversation_id, stored.effort)
             return await _queued_after_losing(request, registry, conversation_id, body)
         # Only once submitted: a rejected send leaves the unfinished turn, so it keeps the
         # marker. The claim doesn't settle that; `submit` has its own check, and a race it
@@ -249,9 +254,9 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
     again with no new prompt, recording a new version beside the old. A model override
     regenerates with a different model.
 
-    A slash-command turn is re-answered with the command resolved again: the replayed
-    history has only the literal `/reviewer …` (the expansion was tail context), so
-    otherwise the second answer would be to a different question."""
+    A slash-command turn is re-answered with the command expanded again against what its
+    name resolves to now; the fresh expansion replaces the stored one in the prompt's
+    chassis tail (``agent.history.with_tail_context``)."""
     store = deps.store(request)
     if not await store.exists(body.conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")

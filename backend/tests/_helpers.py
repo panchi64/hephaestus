@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, override
@@ -17,7 +17,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from pydantic_ai.toolsets import AbstractToolset
 
 from agent import ParkedTurn
@@ -96,7 +96,11 @@ class _StubProvider(Provider):
 
 
 async def stub_resolution(
-    registry: ModelRegistry, model: Model, *, reasoning_off: ModelSettings | None = None
+    registry: ModelRegistry,
+    model: Model,
+    *,
+    reasoning_off: ModelSettings | None = None,
+    with_effort: Callable[[ThinkingEffort], Model] | None = None,
 ) -> ResolvedModel:
     """A ``ResolvedModel`` whose window was discovered through ``registry``'s own cache."""
     from services.registry import ResolvedModel
@@ -107,6 +111,7 @@ async def stub_resolution(
         model=model,
         reasoning_off=reasoning_off or {},
         context_window=resolved.context_window,
+        with_effort=with_effort,
     )
 
 

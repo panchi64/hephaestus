@@ -35,9 +35,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import cast, override
 
-from pydantic_ai import InstructionPart, RunContext
+from pydantic_ai import InstructionBaselinePart, InstructionPart, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import CompactionPart, InstructionDigest, ModelMessage
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
 
@@ -47,6 +47,7 @@ from tools import RunDeps
 
 from .assembled import declared_function_tools
 from .emit import PrefixWatched, is_side_run
+from .history import RECORDED_ON_SEND
 
 #: Width of every fingerprint here, in bytes. This decides whether a *diagnostic* reports a
 #: change, never whether anything is trusted or authorized, and 128 bits will not collide
@@ -119,10 +120,15 @@ def _absorb(digest: hashlib.blake2b, value: object) -> None:
 
 
 def _message_digest(message: ModelMessage) -> str:
-    """One message's fingerprint: its type, then each part's type and payload, in order."""
+    """One message's fingerprint: its type, then each part's type and payload, in order.
+
+    Parts the library records after this hook read the request are skipped: none can move
+    an earlier prefix, and hashing them would report the request seen here as changed."""
     digest = _hasher()
     digest.update(type(message).__name__.encode())
     for part in message.parts:
+        if isinstance(part, RECORDED_ON_SEND):
+            continue
         digest.update(_FIELD)
         digest.update(type(part).__name__.encode())
         for name in _PAYLOAD_FIELDS:
@@ -166,7 +172,7 @@ def digest_request(
     between parts and our own unnamed literal, and a reading assembled from the named blocks
     alone would miss a change in either.
     """
-    parts = instruction_parts or []
+    parts = _as_sent(instruction_parts or [], messages)
     joined = InstructionPart.join(parts) or ""
     brief = _hasher()
     _absorb(brief, joined)
@@ -181,6 +187,41 @@ def digest_request(
         tools=_tools_digest(function_tools),
         tool_names=tuple(tool_def.name for tool_def in function_tools),
         messages=tuple(_message_digest(message) for message in messages),
+    )
+
+
+# Mirrors the private `pydantic_ai._instructions` (`instruction_window`, `continues_window`,
+# `window_prefix`); keep the two in step when the library changes.
+def _as_sent(parts: list[InstructionPart], messages: list[ModelMessage]) -> list[InstructionPart]:
+    """The head the library sends for ``parts`` after ``messages``."""
+    window: InstructionBaselinePart | None = None
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, InstructionBaselinePart):
+                window = part
+            elif isinstance(part, CompactionPart):
+                window = None
+    current = [
+        replace(part, content=part.content.strip()) if part.on_change == "append" else part
+        for part in parts
+    ]
+    rewritten = [part for part in current if part.on_change != "append"]
+    if window is None or not _continues(window, rewritten):
+        return [part for part in current if part.on_change != "append" or part.content]
+    pending = iter(rewritten)
+    return [
+        block if isinstance(block, InstructionPart) else next(pending)
+        for block in window.instructions
+        if not isinstance(block, InstructionPart) or block.content
+    ]
+
+
+def _continues(window: InstructionBaselinePart, rewritten: list[InstructionPart]) -> bool:
+    if any(isinstance(b, InstructionPart) and b.id is None for b in window.instructions):
+        return False
+    digests = [b for b in window.instructions if isinstance(b, InstructionDigest)]
+    return len(digests) == len(rewritten) and all(
+        map(InstructionDigest.matches, digests, rewritten, strict=True)
     )
 
 

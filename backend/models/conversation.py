@@ -55,6 +55,9 @@ class Conversation(Table, table=True):
     # migration re-points a thread the operator already set. Existing rows keep whatever
     # they were stored with; a row written from here on starts where a fresh thread starts.
     permission_level: str = Field(default="auto")
+    # The effort this thread's chat turns run at (`services.reasoning.EFFORTS`), set from
+    # the composer. Null falls back to the endpoint's. Moves freely, like the level.
+    effort: str | None = None
     # AEAD ciphertext of the thread's title. It is user content — an auto-generated
     # summary of the operator's own first message, and the most revealing single line a
     # thread has — so it is sealed like every peer entity's title (XC-SEC-3). Null for an

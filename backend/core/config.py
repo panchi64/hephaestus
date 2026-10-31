@@ -433,12 +433,11 @@ class Settings(BaseSettings):
     # measured figure so it nudges early without folding a thread that was never pressured.
     context_overhead_fallback_tokens: int = 12000
 
-    # Anthropic prompt caching (services/providers/anthropic.py): TTL on the cache
-    # breakpoints over the instructions and tool definitions, the prefix segments identical
-    # across a thread's turns. "5m" covers back-to-back turns; "1h" costs more to write and
-    # pays off only after long pauses. "off" sends no breakpoints, for an
-    # Anthropic-compatible proxy that rejects `cache_control`.
-    anthropic_cache_ttl: Literal["5m", "1h", "off"] = "5m"
+    # Anthropic prompt-cache TTL (services/providers/anthropic.py). "auto" is 1h for an
+    # attended run, whose next request waits on a person, and 5m for machine-paced runs.
+    # "5m"/"1h" force one TTL. "off" sends no breakpoints, for an Anthropic-compatible
+    # proxy that rejects `cache_control`.
+    anthropic_cache_ttl: Literal["auto", "5m", "1h", "off"] = "auto"
 
     # OpenAI prompt-cache retention (services/providers/openai_compat.py). OpenAI caches a
     # matching prefix implicitly; this asks it to hold the prefix longer than the default

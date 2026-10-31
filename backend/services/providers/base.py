@@ -40,6 +40,8 @@ class ProviderPreset:
     # Capability defaults for a fresh endpoint of this kind.
     native_tools: bool = True
     vision: bool = False
+    # Whether this adapter's models read an effort level (endpoint or thread).
+    uses_effort: bool = False
 
 
 @dataclass(frozen=True)
@@ -163,8 +165,8 @@ class Provider(Protocol):
         ...
 
     def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
-        """The settings that stop this provider's model from spending tokens on
-        thinking for background work — ``{}`` when there is nothing to turn off."""
+        """The settings background work merges over its own caps: thinking off where
+        the model allows it, or a moderate level plus the caps that level needs."""
         ...
 
     def model_settings(self, descriptor: ModelDescriptor) -> ModelSettings:
@@ -183,4 +185,10 @@ class Provider(Protocol):
         Defaulted rather than required: most families need nothing here, and an adapter
         that says nothing means ``{}``.
         """
+        return {}
+
+    def run_settings(self, *, attended: bool) -> ModelSettings:
+        """Settings that depend on who is waiting on the run, merged over
+        :meth:`model_settings` per request. Keys must be this provider's own prefixed
+        ones: every adapter's are merged into every turn, whatever model it runs on."""
         return {}

@@ -417,5 +417,5 @@ def _saved_block(entries: Sequence[SkillCatalogEntry]) -> str:
 
 async def skill_catalog_instructions(ctx: RunContext[RunDeps]) -> str:
     """Tell the agent which skills exist and how to open them (`SKILL-2`). A dynamic
-    instruction, so it is always current and lives outside history."""
+    instruction, so it is always current."""
     return skill_catalog_block(await skill_catalog(ctx))

@@ -17,12 +17,14 @@ and opened on resolve. Resolution validates that tool-driving roles
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 
 import httpx
 from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
@@ -31,7 +33,7 @@ from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelEndpoint, ModelRole
 from runs import Endpoint, EndpointGate
-from services import embeddings, llm
+from services import embeddings, llm, reasoning
 from services.endpoint_spec import EndpointSpec
 from services.providers import DEFAULT_PROVIDER_ID, get_provider
 from services.providers.base import ModelLimits
@@ -56,9 +58,8 @@ def _same_server(one: str, two: str) -> bool:
 
 @dataclass(frozen=True)
 class ResolvedModel:
-    """A resolved role: the model to run, plus the settings that disable its
-    reasoning (empty when the model isn't a recognized thinking model). Background
-    callers that want a fast, no-reasoning pass (titling) read ``reasoning_off``.
+    """A resolved role: the model to run, plus ``reasoning_off``, the settings
+    background callers (titling) merge over their caps (see ``Provider.reasoning_off``).
     ``context_window`` is the primary endpoint's window (None when undeclared) —
     the chat layer forwards it so the run can report context fullness. ``vision`` is
     true only when **every** endpoint in the resolved fallback chain can see — the chat
@@ -71,6 +72,9 @@ class ResolvedModel:
     vision: bool = False
     #: The primary endpoint, as the run gate leases it.
     endpoint: Endpoint | None = None
+    #: The chain rebuilt with a thread's effort on each link whose adapter reads one, so
+    #: a fallback link never gets a level it can't take. None when the primary reads none.
+    with_effort: Callable[[ThinkingEffort], Model] | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +151,7 @@ class ModelRegistry:
         native_tools: bool = True,
         vision: bool = False,
         thinking: bool = False,
+        effort: str | None = None,
         enabled: bool = True,
         max_concurrent_runs: int | None = None,
     ) -> ModelEndpoint:
@@ -162,6 +167,7 @@ class ModelRegistry:
             native_tools=native_tools,
             vision=vision,
             thinking=thinking,
+            effort=effort,
             enabled=enabled,
             max_concurrent_runs=max_concurrent_runs,
         )
@@ -204,6 +210,8 @@ class ModelRegistry:
                 elif key == "model":
                     # An explicit empty value clears the default back to discovery-only.
                     endpoint.model = str(value) if value else None
+                elif key == "effort":
+                    endpoint.effort = str(value) if value else None
                 elif key == "max_concurrent_runs" and value == 0:
                     endpoint.max_concurrent_runs = None
                 elif value is not None:
@@ -581,6 +589,22 @@ class ModelRegistry:
             # handed image bytes it can't interpret. AND across the chain, not the head.
             vision=all(spec.vision for spec in specs),
             endpoint=primary.gate_endpoint(),
+            with_effort=(
+                partial(self._chain_with_effort, specs)
+                if get_provider(primary.provider).preset.uses_effort
+                else None
+            ),
+        )
+
+    def _chain_with_effort(self, specs: Sequence[EndpointSpec], effort: ThinkingEffort) -> Model:
+        return llm.build_chain(
+            [
+                replace(spec, effort=effort)
+                if get_provider(spec.provider).preset.uses_effort
+                else spec
+                for spec in specs
+            ],
+            self._gate,
         )
 
     async def resolve_background(
@@ -833,6 +857,7 @@ class ModelRegistry:
             native_tools=endpoint.native_tools,
             vision=endpoint.vision,
             thinking=endpoint.thinking,
+            effort=reasoning.parse_effort(endpoint.effort),
             endpoint_id=endpoint.id,
             name=endpoint.name,
             max_concurrent_runs=endpoint.max_concurrent_runs,

@@ -18,17 +18,33 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from pydantic_ai import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
+    SystemPromptPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.messages import (
+    ModelRequestPart,
     NativeToolSearchReturnPart,
     ToolAvailabilityDeltaPart,
     ToolSearchReturnPart,
+)
+
+from services.chassis_tail import merge_requests, parts_from, with_tail
+
+#: Parts Pydantic AI adds to an outgoing request after the capability hooks have read it:
+#: the instruction window's baseline, and the instruction, effort and tool changes.
+RECORDED_ON_SEND = (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    ModelSettingsDeltaPart,
+    ToolAvailabilityDeltaPart,
 )
 
 
@@ -54,24 +70,15 @@ def drop_dangling_tool_calls(messages: list[ModelMessage]) -> list[ModelMessage]
 
 
 def with_tail_context(messages: list[ModelMessage], texts: list[str]) -> list[ModelMessage]:
-    """Append per-turn context to the trailing user request — the *model's view only*.
+    """Replace the trailing user request's per-turn context with ``texts`` — the *model's
+    view only*, for a regenerate, whose stored prompt still carries the context it was
+    first sent with. The swap never reaches the durable history.
 
-    The regenerate path re-runs a history that already ends in the user request, so
-    there is no fresh ``user_prompt`` to carry the prompt-context providers' output;
-    instead it rides on that trailing request here. Rebuilds via ``replace`` (never
-    mutates — the store's in-memory tree shares these objects), and since the caller
-    persists only ``messages[start:]``, a message replaced *before* ``start`` never
-    reaches the durable history. No trailing user request (defensive) ⇒ unchanged."""
+    The request is always a copy: the library records its parts on it as it sends, and
+    the store's in-memory tree must not pick them up."""
     if not messages or not isinstance(messages[-1], ModelRequest):
         return messages
-    last = messages[-1]
-    for index, part in enumerate(last.parts):
-        if isinstance(part, UserPromptPart):
-            content = part.content if isinstance(part.content, list) else [part.content]
-            parts = list(last.parts)
-            parts[index] = replace(part, content=[*content, *texts])
-            return [*messages[:-1], replace(last, parts=parts)]
-    return messages
+    return [*messages[:-1], replace(with_tail(messages[-1], texts))]
 
 
 def merge_consecutive_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -105,7 +112,7 @@ def merge_consecutive_requests(messages: list[ModelMessage]) -> list[ModelMessag
     out: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelRequest) and out and isinstance(out[-1], ModelRequest):
-            out[-1] = replace(out[-1], parts=[*out[-1].parts, *message.parts])
+            out[-1] = merge_requests(out[-1], message)
             continue
         out.append(message)
     return out
@@ -123,56 +130,81 @@ class TurnStart:
     library writes its history-processor output back, the whole reinjected brief) as new
     operator messages, or drops the operator's own prompt from the turn it records.
 
-    So the boundary is a message index *and* how many of that message's parts are the
-    turn's own. It is counted from the **end**, because the front of a shared message is
-    not stable: the library prepends the run's system prompt to the first request it sends
-    and hoists tool results ahead of user-facing parts when it merges. The turn's own
-    prompt is what the merge appended, so it stays at the tail — and the tail is what can
-    be counted. ``parts`` is zero for every turn that never folded (nearly all of them) and
-    :meth:`slice` is then exactly the plain list slice it always was. Mutable, because an
-    in-turn fold moves it and every reader holds this one object.
+    So the boundary is a message index *and* how many of that message's leading parts
+    belong to the history (:func:`history_part_count`). They are counted from the
+    **front**, because the library and steering both append to the request being sent.
+    System parts are left out of the count: the library prepends them to a replay that
+    opens without one, and they are never the turn's own. ``history_parts`` is zero for
+    every turn that never folded (nearly all of them) and :meth:`slice` is then the plain
+    list slice. Mutable, because an in-turn fold moves it and every reader holds this one
+    object.
 
     ``prompt_message_id`` is the store's id for the operator's prompt when the turn wrote it
     down as it started — the first message :meth:`slice` yields is then already persisted,
     and everything that records the turn records only what follows it
-    (:func:`after_recorded_prompt`). It rides the boundary rather than the persistence
+    (:func:`split_recorded_opening`). It rides the boundary rather than the persistence
     context because the two are one fact: *where the turn begins* and *how much of it is
-    already on record* are both questions about its opening message. ``None`` for a turn
-    that opens on a request already in the tree (a regenerate) or has nowhere to persist.
+    already on record* are both questions about its opening message. A regenerate sets it to
+    the re-answered request. ``None`` for a turn with nowhere to persist.
     """
 
     index: int = 0
-    parts: int = 0
+    history_parts: int = 0
     prompt_message_id: str | None = None
 
     def slice(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         """``messages`` from this boundary on — the turn's own messages, with anything in
         the boundary message that belongs to the history in front of the turn removed."""
         turn = messages[self.index :]
-        if not self.parts or not turn or not isinstance(turn[0], ModelRequest):
+        if not self.history_parts or not turn or not isinstance(turn[0], ModelRequest):
             return turn
-        kept = turn[0].parts[-self.parts :]
-        return [replace(turn[0], parts=kept), *turn[1:]]
+        parts = turn[0].parts
+        start, counted = 0, 0
+        while start < len(parts) and counted < self.history_parts:
+            counted += history_part_count(parts[start : start + 1])
+            start += 1
+        opening = parts_from(turn[0], start)
+        return [opening, *turn[1:]] if opening.parts else turn[1:]
 
 
-def after_recorded_prompt(turn: list[ModelMessage]) -> list[ModelMessage]:
-    """``turn`` — a :meth:`TurnStart.slice` — without its opening request, which the store
-    already holds from the moment the turn began.
+def history_part_count(parts: Sequence[object]) -> int:
+    """How many of ``parts`` :attr:`TurnStart.history_parts` counts: all but system parts."""
+    return sum(1 for p in parts if not isinstance(p, SystemPromptPart))
 
-    Not a plain ``turn[1:]``. Steering queued before the model's first request is amended
-    onto *that* request (`drive_turn`'s ``_inject_queued`` rebinds its parts), so the
-    opening message can carry user parts the early write never saw. Each one past the
-    prompt's own part is handed back as a request of its own — the shape
-    :func:`split_injected_requests` gives a mid-run aside — so a message the operator typed
-    while the turn was starting is recorded exactly once, right behind the prompt it
-    followed."""
+
+def split_recorded_opening(
+    turn: list[ModelMessage],
+) -> tuple[ModelRequest | None, list[ModelMessage]]:
+    """``turn`` — a :meth:`TurnStart.slice` — split around its opening request, which the
+    store already holds from the moment the turn began: that prompt as sent, to write back
+    over the stored one, and the messages to record after it.
+
+    The sent prompt can differ from the stored one: a regenerate swaps its tail
+    (:func:`with_tail_context`), and the library records parts on it as it sends
+    (:data:`RECORDED_ON_SEND`; without them the next turn finds no instruction baseline
+    and rewrites the cached head). Steering queued before the model's first request
+    (`drive_turn`'s ``_inject_queued``) also lands on it; from the first steering message
+    on, the parts are recorded as requests in their sent order, so replay merges them back
+    byte for byte."""
     if not turn:
-        return turn
+        return None, turn
     opening, rest = turn[0], turn[1:]
     if not isinstance(opening, ModelRequest):
-        return rest
-    parts = [p for p in opening.parts if isinstance(p, UserPromptPart)]
-    return [*(ModelRequest(parts=[part]) for part in parts[1:]), *rest]
+        return None, rest
+    prompt_at = next(
+        (i for i, p in enumerate(opening.parts) if isinstance(p, UserPromptPart)), None
+    )
+    if prompt_at is None:
+        return None, rest
+    sent = parts_from(opening, prompt_at)
+    after: list[ModelRequestPart] = [
+        p for p in sent.parts[1:] if isinstance(p, (UserPromptPart, *RECORDED_ON_SEND))
+    ]
+    steering_at = next(
+        (i for i, p in enumerate(after) if isinstance(p, UserPromptPart)), len(after)
+    )
+    prompt = replace(sent, parts=[sent.parts[0], *after[:steering_at]])
+    return prompt, [*_in_sent_order(after[steering_at:]), *rest]
 
 
 def split_injected_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -181,23 +213,37 @@ def split_injected_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
     Mid-run steering appends ``UserPromptPart``s onto the tool-return request the
     model was about to receive (`drive_turn`'s ``_inject_queued``). Persisting that
     merged request as-is would bury the operator's message inside a tool exchange —
-    no tree node of its own, so no user bubble, no edit/regenerate anchor. Split it:
-    the tool returns keep their request, and each injected part becomes its own
-    ``ModelRequest`` right after. Replay stays wire-identical — the library re-merges
-    consecutive requests (tool returns first) when preparing the model's input."""
+    no tree node of its own, so no user bubble, no edit/regenerate anchor. Split it in
+    sent order (:func:`_in_sent_order`), so replay re-merges it byte for byte."""
     out: list[ModelMessage] = []
     for message in messages:
         if not isinstance(message, ModelRequest):
             out.append(message)
             continue
-        user_parts = [p for p in message.parts if isinstance(p, UserPromptPart)]
-        tool_parts = [p for p in message.parts if isinstance(p, ToolReturnPart)]
-        if not user_parts or not tool_parts:
+        has_user = any(isinstance(p, UserPromptPart) for p in message.parts)
+        has_return = any(isinstance(p, ToolReturnPart) for p in message.parts)
+        if not has_user or not has_return:
             out.append(message)
             continue
-        rest = [p for p in message.parts if not isinstance(p, UserPromptPart)]
-        out.append(replace(message, parts=rest))
-        out.extend(ModelRequest(parts=[part]) for part in user_parts)
+        first, *later = _in_sent_order(message.parts)
+        out.extend([replace(message, parts=first.parts), *later])
+    return out
+
+
+def _in_sent_order(parts: Sequence[ModelRequestPart]) -> list[ModelRequest]:
+    """``parts`` as requests that merge back to them: user parts alone, other runs together."""
+    out: list[ModelRequest] = []
+    pending: list[ModelRequestPart] = []
+    for part in parts:
+        if not isinstance(part, UserPromptPart):
+            pending.append(part)
+            continue
+        if pending:
+            out.append(ModelRequest(parts=pending))
+            pending = []
+        out.append(ModelRequest(parts=[part]))
+    if pending:
+        out.append(ModelRequest(parts=pending))
     return out
 
 

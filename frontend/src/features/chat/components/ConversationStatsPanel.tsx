@@ -1,5 +1,5 @@
 import { createMemo, Show, type JSX } from "solid-js";
-import { compactCount, duration, pct } from "~/lib/format";
+import { compactCount, duration, pct, plural, usd } from "~/lib/format";
 import { RevealPopover, StatusCell, Text } from "~/ui";
 import type { ConversationStats } from "../model";
 import { ConversationCompactionToggle } from "./ConversationCompactionToggle";
@@ -7,8 +7,6 @@ import { ConversationGrants } from "./ConversationGrants";
 import { StatRow } from "./StatRow";
 
 const tokens = (n: number) => n.toLocaleString("en-US");
-const plural = (n: number, one: string, many: string) =>
-  `${n} ${n === 1 ? one : many}`;
 
 /** What the thread has cost, and the two settings that belong to it, behind one
  *  `stats` cell in the composer's status bar.
@@ -157,6 +155,23 @@ export function ConversationStatsPanel(props: {
                       label="Cache hit"
                       value={pct(s().cacheHitRatio! * 100)}
                       hint="Share of prompt tokens the provider served from its own cache. Only shown for providers that report it."
+                    />
+                  </Show>
+
+                  {/* Only for endpoints with a published price; a local server has none. */}
+                  <Show when={s().costUsd !== null}>
+                    <StatRow
+                      label="Conversation cost"
+                      value={
+                        <>
+                          {usd(s().costUsd!)}
+                          <Show when={s().savedUsd !== null}>
+                            {" · saved "}
+                            {usd(s().savedUsd!)}
+                          </Show>
+                        </>
+                      }
+                      hint="What this thread's chat requests cost at list price, and what prompt caching saved against sending every prompt uncached. Titles and compaction aren't counted."
                     />
                   </Show>
 

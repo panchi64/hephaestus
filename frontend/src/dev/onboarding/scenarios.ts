@@ -39,6 +39,7 @@ export const PROVIDERS: ProviderViewDTO[] = [
     docs_url: null,
     native_tools: true,
     vision: false,
+    uses_effort: false,
   },
   {
     id: "anthropic",
@@ -49,6 +50,7 @@ export const PROVIDERS: ProviderViewDTO[] = [
     docs_url: null,
     native_tools: true,
     vision: true,
+    uses_effort: true,
   },
   {
     id: "google",
@@ -59,6 +61,7 @@ export const PROVIDERS: ProviderViewDTO[] = [
     docs_url: null,
     native_tools: true,
     vision: true,
+    uses_effort: false,
   },
 ];
 
@@ -126,6 +129,7 @@ function endpoint(over: Partial<EndpointViewDTO>): EndpointViewDTO {
     native_tools: true,
     vision: false,
     thinking: false,
+    effort: null,
     enabled: true,
     last_status: null,
     last_error_category: null,

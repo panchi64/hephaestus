@@ -334,6 +334,35 @@ async def test_resolve_background_falls_back_to_picked_main_when_utility_unbound
     assert resolved.reasoning_off is not None
 
 
+async def test_a_threads_effort_reaches_only_the_links_that_read_one():
+    """A local fallback behind Claude must not be sent ``max``, which its server may reject."""
+    reg = await make_registry()
+    claude = await reg.create_endpoint(
+        OWNER,
+        name="claude",
+        provider="anthropic",
+        base_url="https://api.anthropic.com",
+        model="claude-opus-5-5",
+        api_key="sk-ant-x",
+        context_window=200_000,
+    )
+    local = await reg.create_endpoint(
+        OWNER, name="local", base_url="http://l/v1", model="qwen3", context_window=32_000
+    )
+    await reg.set_role(OWNER, "main", [claude.id, local.id])
+
+    resolved = await reg.resolve_detailed("main", owner_id=OWNER)
+    assert resolved.with_effort is not None
+    chain = resolved.with_effort("max")
+
+    assert isinstance(chain, FallbackModel)
+    head, fallback = chain.models
+    if isinstance(head, EndpointGatedModel):
+        head = head.wrapped
+    assert (head.settings or {}).get("thinking") == "max"
+    assert (fallback.settings or {}).get("thinking") is None
+
+
 async def test_delete_endpoint_prunes_it_from_role_chains():
     """Deleting an endpoint must not leave a dangling id in any chain that
     referenced it — otherwise a later resolve trips on the missing endpoint."""
