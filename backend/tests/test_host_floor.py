@@ -11,7 +11,7 @@ import pytest
 
 import services.sandbox.fence as fence_mod
 from core.config import Settings, get_settings
-from services.projects.repo import commit_worktree
+from services.projects.repo import commit_worktree, run_git
 from services.sandbox import (
     ConfinementState,
     SandboxResult,
@@ -355,5 +355,64 @@ async def test_the_backend_does_not_run_a_hook_a_repository_names(tmp_path: Path
     for args in (["init", "-q"], ["config", "core.hooksPath", str(hooks)]):
         _ = subprocess.run(["git", *args], cwd=repo, check=True)
     _ = (repo / "f.txt").write_text("x")
-    assert await commit_worktree(repo)
+    assert await commit_worktree(repo, root=repo)
+    assert not marker.exists()
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def _marking_script(tmp_path: Path, marker: Path) -> Path:
+    script = tmp_path / "mark.sh"
+    _ = script.write_text(f'#!/bin/sh\ntouch {marker}\ncat "$@"\n')
+    script.chmod(0o755)
+    return script
+
+
+async def test_a_redirected_worktree_link_does_not_choose_the_git_dir(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "base"]):
+        _ = _git(root, "-c", "user.name=t", "-c", "user.email=t@t", *args)
+    tree = tmp_path / "tree"
+    _ = _git(root, "worktree", "add", "-q", "-b", "agent", str(tree))
+    marker = tmp_path / "ran"
+    script = _marking_script(tmp_path, marker)
+    # What a command in the worktree can write: its own git dir, and a link to it.
+    _ = _git(tmp_path, "init", "-q", "--bare", str(tree / "evil"))
+    _ = _git(tree / "evil", "config", "core.bare", "false")
+    _ = _git(tree / "evil", "config", "filter.x.clean", str(script))
+    _ = (tree / ".gitattributes").write_text("* filter=x\n")
+    _ = (tree / ".git").write_text("gitdir: evil\n")
+    _ = (tree / "f.txt").write_text("x")
+
+    assert await commit_worktree(tree, root=root)
+
+    assert not marker.exists()
+    assert "f.txt" in _git(root, "show", "--name-only", "--format=", "agent")
+
+
+async def test_the_backend_does_not_run_a_signing_or_textconv_program(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    marker = tmp_path / "ran"
+    script = _marking_script(tmp_path, marker)
+    _ = _git(repo, "init", "-q")
+    for key, value in (
+        ("commit.gpgSign", "true"),
+        ("gpg.program", str(script)),
+        ("diff.x.textconv", str(script)),
+    ):
+        _ = _git(repo, "config", key, value)
+    _ = (repo / ".gitattributes").write_text("*.txt diff=x\n")
+    _ = (repo / "f.txt").write_text("x")
+
+    assert await commit_worktree(repo, root=repo)
+    _ = (repo / "f.txt").write_text("y")
+    code, _out, _err = await run_git(repo, "diff")
+
+    assert code == 0
     assert not marker.exists()

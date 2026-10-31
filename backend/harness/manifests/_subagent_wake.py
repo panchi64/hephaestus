@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 
 from core.exceptions import NotFoundError
 from core.fork import MergeReport
@@ -234,8 +235,13 @@ class SubagentWake:
         if machines is not None and row.workspace_key:
             await machines.release(row.workspace_key)
         try:
+            project = await projects.get(row.owner_id, row.project_id)
+        except NotFoundError:
+            return None
+        try:
             changed = await worktrees.child_changes(
                 project_id=row.project_id,
+                root=Path(project.root_path),
                 conversation_id=holder,
                 delegation_id=delegation,
                 base_ref=row.base_ref or branch_for(holder),

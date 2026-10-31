@@ -32,7 +32,9 @@ async def worktree_root(
     """
     if not worktree_path.is_dir():
         return project_root, False
-    code, out, _ = await run_git(worktree_path, "rev-parse", "--abbrev-ref", "HEAD")
+    code, out, _ = await run_git(
+        worktree_path, "rev-parse", "--abbrev-ref", "HEAD", root=project_root
+    )
     if code != 0 or out.strip() != branch_for(conversation_id):
         return project_root, False
     return worktree_path, True

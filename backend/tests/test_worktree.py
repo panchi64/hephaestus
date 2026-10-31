@@ -277,9 +277,9 @@ class TestChildWorktree:
         )
         return root, manager, child
 
-    async def _changes(self, manager: WorktreeManager, base_ref: str):
+    async def _changes(self, manager: WorktreeManager, root: Path, base_ref: str):
         return await manager.child_changes(
-            project_id="p", conversation_id="c1", delegation_id="d1", base_ref=base_ref
+            project_id="p", root=root, conversation_id="c1", delegation_id="d1", base_ref=base_ref
         )
 
     async def _apply(self, manager: WorktreeManager, root: Path, base_ref: str):
@@ -288,7 +288,7 @@ class TestChildWorktree:
         )
 
     async def test_a_child_opens_on_the_parents_uncommitted_edits(self, tmp_path: Path):
-        _root, manager, parent, child = await self._forked(tmp_path)
+        root, manager, parent, child = await self._forked(tmp_path)
 
         # THE assertion: the child was handed the files the parent's transcript
         # describes, not whatever happened to be committed.
@@ -305,7 +305,7 @@ class TestChildWorktree:
         # second thread taking the project.
         assert manager.holder("p") == "c1"
         # Its own work starts at the cut: nothing yet.
-        assert (await self._changes(manager, child.base_ref)).files == []
+        assert (await self._changes(manager, root, child.base_ref)).files == []
 
     async def test_reopening_reads_the_same_child_off_the_disk(self, tmp_path: Path):
         _root, manager, _parent, child = await self._forked(tmp_path)
@@ -355,10 +355,10 @@ class TestChildWorktree:
     ):
         # "Your file changed" and "your file is gone" are not the same sentence, and the
         # caller must never have to infer the second one.
-        _root, manager, _parent, child = await self._forked(tmp_path)
+        root, manager, _parent, child = await self._forked(tmp_path)
         (child.path / "hello.txt").unlink()
 
-        report = await self._changes(manager, child.base_ref)
+        report = await self._changes(manager, root, child.base_ref)
 
         assert report.deleted == ["hello.txt"]
         assert report.files == []
@@ -372,7 +372,7 @@ class TestChildWorktree:
         _code, status, _err = await run_git(root, "status", "--porcelain")
         assert sorted(line[3:] for line in status.splitlines()) == ["hello.txt", "notes.txt"]
         # And those files are its starting point, not its work.
-        assert (await self._changes(manager, child.base_ref)).files == []
+        assert (await self._changes(manager, root, child.base_ref)).files == []
 
     async def test_applying_lands_only_the_childs_work_and_writes_no_git_state(
         self, tmp_path: Path

@@ -178,8 +178,10 @@ class WorktreeManager:
                 # Commit the previous holder's leftovers before switching: `git checkout`
                 # carries uncommitted files across, so one thread's half-finished work
                 # would land on another's branch, or the checkout would fail.
-                _ = await commit_worktree(path, "Agent changes (carried forward)")
-                _ = await run_git_ok(path, "checkout", branch)
+                _ = await commit_worktree(
+                    path, root=root, message="Agent changes (carried forward)"
+                )
+                _ = await run_git_ok(path, "checkout", branch, root=root)
             else:
                 # A leftover directory with no .git is not a worktree: prune and re-add.
                 _ = await run_git(root, "worktree", "prune")
@@ -225,7 +227,9 @@ class WorktreeManager:
             else:
                 if not (source.path / ".git").exists():
                     raise WorktreeError("the worktree to cut from is not open")
-                _ = await commit_worktree(source.path, "Agent changes (forked from)")
+                _ = await commit_worktree(
+                    source.path, root=root, message="Agent changes (forked from)"
+                )
                 await add_child_worktree(
                     root=root,
                     parent_path=source.path,
@@ -233,7 +237,7 @@ class WorktreeManager:
                     branch=branch,
                     parent_branch=source.branch,
                 )
-            base = (await run_git_ok(child, "rev-parse", "HEAD")).strip()
+            base = (await run_git_ok(child, "rev-parse", "HEAD", root=root)).strip()
             return WorktreeState(path=child, branch=branch, base_ref=base)
 
     def reopen_child(
@@ -294,7 +298,13 @@ class WorktreeManager:
             return report
 
     async def child_changes(
-        self, *, project_id: str, conversation_id: str, delegation_id: str, base_ref: str
+        self,
+        *,
+        project_id: str,
+        root: Path,
+        conversation_id: str,
+        delegation_id: str,
+        base_ref: str,
     ) -> MergeReport:
         """What a sub-agent's worktree changed since ``base_ref``, committed first."""
         async with self._lock:
@@ -303,7 +313,7 @@ class WorktreeManager:
                 conversation_id=conversation_id,
                 delegation_id=delegation_id,
             )
-            return await child_changes(child=child.path, base_ref=base_ref)
+            return await child_changes(root=root, child=child.path, base_ref=base_ref)
 
     async def discard_child(
         self, *, project_id: str, root: Path, conversation_id: str, delegation_id: str
@@ -331,7 +341,7 @@ class WorktreeManager:
             return  # forking twice must not fail
         _ = await run_git_ok(root, "branch", target, branch_for(source_id))
 
-    async def snapshot(self, project_id: str, *, conversation_id: str) -> bool:
+    async def snapshot(self, root: Path, project_id: str, *, conversation_id: str) -> bool:
         """Commit whatever the agent has changed in the worktree onto its branch.
 
         Nothing else commits (see the module docstring); this runs right before anything
@@ -341,7 +351,7 @@ class WorktreeManager:
         """
         if self._holders.get(project_id) != conversation_id:
             return False
-        return await commit_worktree(self.path_for(project_id))
+        return await commit_worktree(self.path_for(project_id), root=root)
 
     async def diff(
         self, root: Path, *, base_ref: str, conversation_id: str, project_id: str
@@ -353,7 +363,7 @@ class WorktreeManager:
         rather than the possibly megabyte patch; ``-M`` makes a moved file read as a move,
         not a whole-file delete plus add.
         """
-        _ = await self.snapshot(project_id, conversation_id=conversation_id)
+        _ = await self.snapshot(root, project_id, conversation_id=conversation_id)
         branch = branch_for(conversation_id)
         # Three dots: the branch's changes since divergence, not the operator's own.
         spec = f"{base_ref}...{branch}"
@@ -407,7 +417,7 @@ class WorktreeManager:
         Snapshots first, as `diff` does, then releases the project for the next worktree
         conversation.
         """
-        _ = await self.snapshot(project_id, conversation_id=conversation_id)
+        _ = await self.snapshot(root, project_id, conversation_id=conversation_id)
         await self._require_base_checked_out(root, base_ref)
         branch = branch_for(conversation_id)
         out = await run_git_ok(root, *AUTHOR, "merge", "--no-ff", branch, "-m", f"Merged {branch}")
@@ -448,11 +458,11 @@ class WorktreeManager:
         path = self.path_for(project_id)
         if self._holders.get(project_id) == conversation_id:
             # Uncommitted files would otherwise be carried onto the next branch taken up.
-            _ = await run_git(path, "reset", "--hard")
-            _ = await run_git(path, "clean", "-fd")
+            _ = await run_git(path, "reset", "--hard", root=root)
+            _ = await run_git(path, "clean", "-fd", root=root)
             # Park off the branch so it can be deleted. `--detach` rather than the base
             # ref, which is normally checked out in the main tree (git refuses twice).
-            _ = await run_git(path, "checkout", "--detach")
+            _ = await run_git(path, "checkout", "--detach", root=root)
             del self._holders[project_id]
         _ = await run_git(root, "branch", "-D", branch)
 

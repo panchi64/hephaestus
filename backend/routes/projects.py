@@ -192,7 +192,14 @@ async def list_project_files(
     root, from_worktree = await deps.composer_tree(request, project_id, conversation_id)
     if root is None:
         raise HTTPException(status_code=404, detail="project not found")
-    listing = await list_files(root, query=query, limit=max(1, min(limit, 500)))
+    project_root = (
+        Path((await deps.projects(request).get(OPERATOR_ID, project_id)).root_path)
+        if from_worktree
+        else root
+    )
+    listing = await list_files(
+        root, repo_root=project_root, query=query, limit=max(1, min(limit, 500))
+    )
     return FilesOut(
         root="worktree" if from_worktree else "project",
         entries=[FileEntryOut(path=e.path, name=e.name) for e in listing.entries],

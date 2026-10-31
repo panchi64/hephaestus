@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -38,7 +37,7 @@ from models._fields import utcnow
 from models.project import Project
 from models.thread_change import ThreadChange
 from models.thread_worktree import ThreadWorktree
-from services.sandbox.gitenv import GIT_ARG_PINS, git_config_pins
+from services.projects.repo import run_git
 from services.settings_store import ACTIVE_PROJECT_KEY, SettingsStore
 
 from .slugs import slug_for
@@ -115,29 +114,14 @@ class ProjectView:
     probe: RepoProbe
 
 
-async def _run_git(cwd: Path, *args: str) -> tuple[int, str]:
-    """One `git` invocation with a fixed argv and no shell. Returns (code, stdout)."""
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        *GIT_ARG_PINS,
-        *args,
-        cwd=str(cwd),
-        env=git_config_pins(os.environ),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, out.decode("utf-8", "replace")
-
-
 async def probe_repo(root: Path) -> RepoProbe:
     if not root.is_dir():
         return RepoProbe(exists=False, is_git_repo=False)
-    code, _ = await _run_git(root, "rev-parse", "--is-inside-work-tree")
+    code, _, _ = await run_git(root, "rev-parse", "--is-inside-work-tree")
     if code != 0:
         return RepoProbe(exists=True, is_git_repo=False)
-    _, status = await _run_git(root, "status", "--porcelain")
-    _, branch = await _run_git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    _, status, _ = await run_git(root, "status", "--porcelain")
+    _, branch, _ = await run_git(root, "rev-parse", "--abbrev-ref", "HEAD")
     changed = len([line for line in status.splitlines() if line.strip()])
     return RepoProbe(
         exists=True,
