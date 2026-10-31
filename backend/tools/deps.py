@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from pydantic_ai import RunContext
+from pydantic_ai.settings import ThinkingEffort
 
 from core.container import ServiceContainer
 from runs import Run
@@ -77,6 +78,9 @@ class RunDeps:
     # every tool reaching past the level's write scope as needing approval before the
     # engine runs it (`services/permissions`).
     permission: PermissionLevel = DEFAULT_PERMISSION
+    # The thread's own effort for chat turns (`agent/factory.py:_turn_settings`); None
+    # leaves the endpoint's. Already dropped for adapters that don't read one.
+    effort: ThinkingEffort | None = None
     # A per-run cache memoised by `tools/workspace.py`, never set by a construction site.
     workspace: RunWorkspace | None = field(default=None, repr=False, compare=False)
     # Memoised by `tools/home.py` and replaced when a write lease widens it.

@@ -69,6 +69,9 @@ export interface ChatStreamOptions {
   /** Sent on every send, unlike the project: the level is a live control the backend
    *  persists from whichever send named it last. */
   permission?: () => PermissionLevel;
+  /** The thread effort to name in this send ("" clears it to the endpoint's).
+   *  Undefined leaves the thread's as it is. */
+  effort?: () => string | undefined;
   /** The custom agent to name in this send; asked with whether the send creates the
    *  thread. Omitted leaves the thread's agent as it is. */
   agent?: (isNewThread: boolean) => string | undefined;
@@ -372,6 +375,7 @@ export function createChatStream(
         project_id: wasNew ? options.projectId?.() : undefined,
         // Sent every time; the composer's control takes effect by being read here.
         permission_level: options.permission?.(),
+        effort: options.effort?.(),
         agent,
         continues_message_id: continuesMessageId,
         // Never an expansion: the backend decides what a command means.

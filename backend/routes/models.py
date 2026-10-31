@@ -118,6 +118,7 @@ class ProviderView(BaseModel):
     docs_url: str | None
     native_tools: bool
     vision: bool
+    uses_effort: bool
 
 
 @router.get("/providers", response_model=list[ProviderView])
@@ -132,6 +133,7 @@ async def list_providers() -> list[ProviderView]:
             docs_url=p.preset.docs_url,
             native_tools=p.preset.native_tools,
             vision=p.preset.vision,
+            uses_effort=p.preset.uses_effort,
         )
         for p in all_providers()
     ]

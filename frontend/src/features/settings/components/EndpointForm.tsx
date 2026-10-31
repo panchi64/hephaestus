@@ -1,4 +1,5 @@
 import { Show, type JSX } from "solid-js";
+import { DEFAULT_EFFORT, effortOptions } from "~/lib/effort";
 import {
   Disclosure,
   Field,
@@ -29,18 +30,6 @@ export interface EndpointFormValues {
   effort: string;
 }
 
-/** The provider whose adapter pins an effort level instead of reading `thinking`. */
-const EFFORT_PROVIDER = "anthropic";
-
-const EFFORT_OPTIONS: SelectOption[] = [
-  { value: "", label: "Default (high)" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "Extra high" },
-  { value: "max", label: "Max" },
-];
-
 export interface EndpointFormProps {
   values: EndpointFormValues;
   onChange: <K extends keyof EndpointFormValues>(
@@ -54,6 +43,9 @@ export interface EndpointFormProps {
   providerOptions?: SelectOption[];
   /** The chosen provider's key hint (e.g. "sk-ant-…"), shown on the key field. */
   keyHint?: string;
+  /** The chosen provider reads an effort level, so the form offers one in place of
+   *  the Thinking toggle. */
+  usesEffort?: boolean;
   /** Show only Base URL and API key; the rest sits under a closed "Advanced". */
   essentials?: boolean;
 }
@@ -149,7 +141,7 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
         />
       </Row>
       <Show
-        when={v().provider === EFFORT_PROVIDER}
+        when={props.usesEffort}
         fallback={
           <Row gap={4} align="center" justify="between">
             <Field label="Thinking" orientation="row" value="" />
@@ -163,9 +155,9 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
         <Select
           label="Effort"
           value={v().effort}
-          options={EFFORT_OPTIONS}
+          options={effortOptions(DEFAULT_EFFORT)}
           onChange={(level) => props.onChange("effort", level)}
-          hint="How hard the model thinks on chat turns. Background work always runs at medium. Changing it mid-thread keeps the prompt cache on current Claude models."
+          hint="How hard the model thinks on chat turns; a thread can pick its own in the composer. Background work always runs at medium."
         />
       </Show>
     </>

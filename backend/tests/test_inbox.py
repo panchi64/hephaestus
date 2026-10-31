@@ -180,7 +180,7 @@ async def _journal(tmp_path: Path) -> AsyncGenerator[SealedInboxJournal]:
 async def test_the_journal_brings_an_inbox_back_after_a_restart(tmp_path: Path):
     async with _journal(tmp_path) as journal:
         inbox = ConversationInbox(OPERATOR_ID, "c1", journal=journal)
-        kept = inbox.enqueue("keep me", payload=TurnPayload(attachment_ids=("u1",)))
+        kept = inbox.enqueue("keep me", payload=TurnPayload(attachment_ids=("u1",), effort="xhigh"))
         report = inbox.enqueue("found it", source="subagent", sender="reader")
         gone = inbox.enqueue("never mind")
         _ = inbox.hold(kept.id, True)
@@ -192,7 +192,7 @@ async def test_the_journal_brings_an_inbox_back_after_a_restart(tmp_path: Path):
 
     assert loaded.waiting
     assert [(m.id, m.text, m.held, m.payload) for m in loaded.messages] == [
-        (kept.id, "keep me", True, TurnPayload(attachment_ids=("u1",))),
+        (kept.id, "keep me", True, TurnPayload(attachment_ids=("u1",), effort="xhigh")),
         (report.id, "found it", False, None),
     ]
     assert loaded.messages[1].sender == "reader"

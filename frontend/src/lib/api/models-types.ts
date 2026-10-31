@@ -74,6 +74,8 @@ export interface ProviderViewDTO {
   docs_url: string | null;
   native_tools: boolean;
   vision: boolean;
+  /** Whether this adapter's models read an effort level (endpoint or thread). */
+  uses_effort: boolean;
 }
 
 /* ── Roles ──────────────────────────────────────────────────────────────────── */

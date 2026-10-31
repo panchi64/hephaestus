@@ -650,6 +650,8 @@ export interface ChatSession {
   snapshots: ViewSnapshotRef[];
   /** Seeded on load so the composer's control returns where the operator left it. */
   permission: PermissionLevel;
+  /** The thread's own effort level; "" runs at the endpoint's. Seeded the same way. */
+  effort: string;
 }
 
 /** The backend's status for a live run, derived from the run registry.

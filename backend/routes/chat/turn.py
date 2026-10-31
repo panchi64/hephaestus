@@ -8,6 +8,7 @@ sub-agent's wake) drives an ordinary turn through the same path a route does.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import NamedTuple, TypedDict
 
 from fastapi import HTTPException
@@ -48,6 +49,9 @@ class TurnModels(NamedTuple):
     vision: bool
     #: The main model's primary endpoint, which the turn's run leases.
     endpoint: Endpoint | None = None
+    #: Whether that endpoint's adapter reads an effort level; a thread's effort is
+    #: dropped otherwise, so a unified ``thinking`` level never reaches a local model.
+    uses_effort: bool = False
 
 
 class WallClockOverride(TypedDict, total=False):
@@ -120,7 +124,13 @@ async def resolve_turn_models(
         utility_model = background.model
         title_settings = background.reasoning_off
     return TurnModels(
-        resolved, utility_model, title_settings, main.context_window, main.vision, main.endpoint
+        resolved,
+        utility_model,
+        title_settings,
+        main.context_window,
+        main.vision,
+        main.endpoint,
+        main.uses_effort,
     )
 
 
@@ -172,7 +182,11 @@ def compose_turn(
     ``kind`` says who asked: the operator (``chat``), the scheduler (``task``) or the agent
     (``linked``). All compose the identical orchestrator; the kind only picks the
     concurrency lane (``runs/lanes.py``), so unattended work can't hold up a watched turn."""
-    resolved, utility_model, background_settings, context_window, vision, endpoint = models
+    resolved, utility_model, background_settings, context_window, vision, endpoint, effort_ok = (
+        models
+    )
+    if binding is not None and binding.effort is not None and not effort_ok:
+        binding = replace(binding, effort=None)
     orchestrator = build_chat_orchestrator(
         prompt,
         model=resolved,

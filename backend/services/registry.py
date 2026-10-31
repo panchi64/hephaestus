@@ -73,6 +73,8 @@ class ResolvedModel:
     vision: bool = False
     #: The primary endpoint, as the run gate leases it.
     endpoint: Endpoint | None = None
+    #: Whether the primary endpoint's adapter reads an effort level.
+    uses_effort: bool = False
 
 
 @dataclass(frozen=True)
@@ -596,6 +598,7 @@ class ModelRegistry:
             # handed image bytes it can't interpret. AND across the chain, not the head.
             vision=all(spec.vision for spec in specs),
             endpoint=primary.gate_endpoint(),
+            uses_effort=get_provider(primary.provider).preset.uses_effort,
         )
 
     async def resolve_background(

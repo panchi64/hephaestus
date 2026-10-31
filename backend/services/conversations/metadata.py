@@ -15,6 +15,7 @@ from models.conversation import Conversation
 from models.thread_worktree import ThreadWorktree
 from runs.overhead import TurnOverhead
 from services.permissions import PermissionLevel, permission_level
+from services.reasoning import parse_effort
 from services.sealing import open_sealed
 from services.workspace import DELEGATION_SEP
 
@@ -153,6 +154,7 @@ class MetadataMixin(StoreCore):
                 checkout_read_only=leases_from is not None and _has_worktree(session, leases_from),
                 permission=permission_level(conversation.permission_level),
                 agent_name=conversation.agent_name,
+                effort=parse_effort(conversation.effort),
                 workspace_key=conversation.workspace_key or "",
                 spawned=conversation.parent_id is not None,
             )
@@ -234,6 +236,17 @@ class MetadataMixin(StoreCore):
 
         await in_session(self._engine, work)
         return resolved
+
+    async def set_effort(self, conversation_id: str, effort: str | None) -> None:
+        """Run this thread's chat turns at ``effort`` from its next turn; None falls back to
+        the endpoint's. Like the level, a choice about what runs next, not activity."""
+
+        def work(session: Session) -> None:
+            conversation = session.get(Conversation, conversation_id)
+            if conversation is not None:
+                conversation.effort = effort
+
+        await in_session(self._engine, work)
 
     async def set_agent_name(self, conversation_id: str, agent_name: str | None) -> None:
         """Run ``agent_name`` on this thread from its next turn. None is the default agent.

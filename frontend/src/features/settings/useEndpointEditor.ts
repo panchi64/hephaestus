@@ -104,6 +104,7 @@ export function useEndpointEditor() {
     target,
     providerOptions,
     keyHint: () => providerById(values().provider)?.keyHint ?? undefined,
+    usesEffort: () => providerById(values().provider)?.usesEffort ?? false,
     onChange,
     valid,
     seed,

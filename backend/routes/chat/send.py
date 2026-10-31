@@ -88,6 +88,7 @@ def _enqueue(registry: RunRegistry, conversation_id: str, body: ChatCreate) -> C
             model=body.model,
             permission_level=body.permission_level,
             agent=body.agent,
+            effort=body.effort,
         )
         if body.attachment_ids or body.command or body.file_refs
         else None
@@ -210,6 +211,8 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
             _ = await store.set_permission_level(conversation_id, body.permission_level)
         if stored is not None and body.agent is not None:
             await store.set_agent_name(conversation_id, agent_name)
+        if body.effort is not None:
+            await store.set_effort(conversation_id, body.effort or None)
         try:
             created = await submit_turn(
                 request,
@@ -232,6 +235,8 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
                 _ = await store.set_permission_level(conversation_id, stored.permission)
             if stored is not None and body.agent is not None:
                 await store.set_agent_name(conversation_id, stored.agent_name)
+            if stored is not None and body.effort is not None:
+                await store.set_effort(conversation_id, stored.effort)
             return await _queued_after_losing(request, registry, conversation_id, body)
         # Only once submitted: a rejected send leaves the unfinished turn, so it keeps the
         # marker. The claim doesn't settle that; `submit` has its own check, and a race it

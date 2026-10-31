@@ -13,6 +13,7 @@ from pydantic_ai import (
     InstructionDeltaPart,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     RequestUsage,
     RunContext,
     TextPart,
@@ -20,6 +21,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.profiles import ModelProfile
 
 import services.providers.anthropic as anthropic_provider
 from agent import build_chat_orchestrator, stream_agent_run
@@ -27,6 +29,7 @@ from agent.factory import build_agent
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
+from routes.deps import app_state
 from runs import Run, RunRegistry, RunStream
 from services import llm
 from services.conversations import ConversationStore, conversation_totals, last_request_usage
@@ -34,8 +37,12 @@ from services.conversations.usage import response_cost
 from services.endpoint_spec import EndpointSpec
 from services.providers import get_provider, run_settings
 from services.reasoning import parse_effort
+from services.registry import ModelRegistry
 from tools import RunDeps
 from tools.deps import PromptContextRequest
+
+from ._helpers import client_app, register_stub_provider, settle, stub_resolution
+from ._json import json_body, s
 
 CACHE_KEYS = ("anthropic_cache", "anthropic_cache_instructions", "anthropic_cache_tool_definitions")
 OWNER = "op"
@@ -239,6 +246,70 @@ class TestCostAndDiagnostics:
         last = last_request_usage([response])
         assert last is not None
         assert (last.cache_miss_reason, last.cache_missed_tokens) == ("system_changed", 41)
+
+
+def _recording_resolution(
+    monkeypatch: pytest.MonkeyPatch, seen: list[AgentInfo], *, uses_effort: bool
+) -> None:
+    async def stream_fn(_messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(info)
+        yield "ok"
+
+    async def resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object):
+        # A profile that thinks, as Claude's does; the library drops `thinking` otherwise.
+        model = FunctionModel(
+            stream_function=stream_fn, profile=ModelProfile(supports_thinking=True)
+        )
+        return await stub_resolution(self, model, uses_effort=uses_effort)
+
+    register_stub_provider(monkeypatch)
+    monkeypatch.setattr(ModelRegistry, "resolve_detailed", resolve_detailed)
+
+
+class TestThreadEffort:
+    async def test_a_send_sets_the_threads_effort_and_the_turn_runs_at_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        seen: list[AgentInfo] = []
+        _recording_resolution(monkeypatch, seen, uses_effort=True)
+        async with client_app() as (client, app):
+            first = json_body(await client.post("/chat", json={"prompt": "a", "effort": "max"}))
+            conversation_id = s(first["conversation_id"])
+            await settle(app)
+            detail = json_body(await client.get(f"/conversations/{conversation_id}"))
+            assert detail["effort"] == "max"
+
+            body = {"prompt": "b", "conversation_id": conversation_id, "effort": "low"}
+            _ = await client.post("/chat", json=body)
+            await settle(app)
+            history = await app_state(app).conversations.history(conversation_id)
+
+            cleared = {"prompt": "c", "conversation_id": conversation_id, "effort": ""}
+            _ = await client.post("/chat", json=cleared)
+            await settle(app)
+            detail = json_body(await client.get(f"/conversations/{conversation_id}"))
+
+        # The library resolves unified `thinking` onto the request parameters.
+        efforts = [info.model_request_parameters.thinking for info in seen]
+        assert efforts == ["max", "low", None]
+        assert detail["effort"] is None
+        # The change rides the history, where a model that supports it sends it in place.
+        assert any(
+            isinstance(part, ModelSettingsDeltaPart)
+            for message in history
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+
+    async def test_an_endpoint_without_effort_never_gets_the_threads(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        seen: list[AgentInfo] = []
+        _recording_resolution(monkeypatch, seen, uses_effort=False)
+        async with client_app() as (client, app):
+            _ = await client.post("/chat", json={"prompt": "a", "effort": "max"})
+            await settle(app)
+        assert seen[0].model_request_parameters.thinking is None
 
 
 def _prompt(message: ModelMessage) -> object:

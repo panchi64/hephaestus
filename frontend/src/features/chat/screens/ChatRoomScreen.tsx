@@ -30,7 +30,13 @@ import {
   titleReveals,
   useChatSessions,
 } from "../data";
-import { sendBlockedReason, setSelectedModel } from "~/lib/stores/models";
+import { DEFAULT_EFFORT } from "~/lib/effort";
+import {
+  effectiveEndpoint,
+  effectiveUsesEffort,
+  sendBlockedReason,
+  setSelectedModel,
+} from "~/lib/stores/models";
 import {
   setStagedProjectId,
   stagedProjectId,
@@ -51,6 +57,7 @@ import {
 } from "../components/ComposerHeaderStatus";
 import { createConversationStatus } from "../components/ConversationStatus";
 import { ParkDock } from "../components/ParkDock";
+import { EffortControl } from "../components/EffortControl";
 import { PermissionControl } from "../components/PermissionControl";
 import { AgentControl } from "../components/AgentControl";
 import { ProjectControl } from "../components/ProjectControl";
@@ -99,6 +106,8 @@ export function ChatRoomScreen(): JSX.Element {
     permission,
     setPermission,
     permissionPending,
+    effort,
+    setEffort,
     agentChoice,
     setAgentChoice,
   } = mainChat();
@@ -625,6 +634,12 @@ export function ChatRoomScreen(): JSX.Element {
                         // While an opened thread's level is in flight the seat holds the
                         // strictest as a placeholder; the control reports that.
                         pending={permissionPending()}
+                      />
+                      <EffortControl
+                        value={effort()}
+                        onChange={setEffort}
+                        fallback={effectiveEndpoint()?.effort ?? DEFAULT_EFFORT}
+                        enabled={effectiveUsesEffort()}
                       />
                       <AgentControl
                         agents={settled(agents) ?? []}

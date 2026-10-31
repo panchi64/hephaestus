@@ -40,6 +40,8 @@ class ProviderPreset:
     # Capability defaults for a fresh endpoint of this kind.
     native_tools: bool = True
     vision: bool = False
+    # Whether this adapter's models read an effort level (endpoint or thread).
+    uses_effort: bool = False
 
 
 @dataclass(frozen=True)

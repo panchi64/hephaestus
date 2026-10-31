@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from pydantic_ai import ModelMessage
+from pydantic_ai.settings import ThinkingEffort
 
 from services.agents.definition import UNRESTRICTED, ToolAccess
 from services.commands.spec import Invocation
@@ -36,6 +37,8 @@ class ConversationBinding:
     permission: PermissionLevel = DEFAULT_PERMISSION
     #: The agent the thread runs, by name. None is the default agent.
     agent_name: str | None = None
+    #: The thread's own effort level. None falls back to the endpoint's.
+    effort: ThinkingEffort | None = None
     #: The tools that agent is offered. Not stored: applied from the agent's definition
     #: by whoever resolves it for a turn.
     tools: ToolAccess = UNRESTRICTED

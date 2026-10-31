@@ -42,6 +42,7 @@ async function fetchSession(id: string): Promise<ChatSession> {
     activeRun: toActiveRun(dto.active_run),
     snapshots: (dto.snapshots ?? []).map(toViewSnapshotRef),
     permission: permissionLevel(dto.permission_level ?? undefined),
+    effort: dto.effort ?? "",
   };
 }
 

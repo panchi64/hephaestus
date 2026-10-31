@@ -96,7 +96,11 @@ class _StubProvider(Provider):
 
 
 async def stub_resolution(
-    registry: ModelRegistry, model: Model, *, reasoning_off: ModelSettings | None = None
+    registry: ModelRegistry,
+    model: Model,
+    *,
+    reasoning_off: ModelSettings | None = None,
+    uses_effort: bool = False,
 ) -> ResolvedModel:
     """A ``ResolvedModel`` whose window was discovered through ``registry``'s own cache."""
     from services.registry import ResolvedModel
@@ -107,6 +111,7 @@ async def stub_resolution(
         model=model,
         reasoning_off=reasoning_off or {},
         context_window=resolved.context_window,
+        uses_effort=uses_effort,
     )
 
 

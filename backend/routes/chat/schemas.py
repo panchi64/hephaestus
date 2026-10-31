@@ -3,9 +3,10 @@ and chat preferences."""
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic_ai.settings import ThinkingEffort
 
 from services.commands import Invocation
 from services.permissions import PermissionLevel
@@ -55,6 +56,9 @@ class ChatCreate(BaseModel):
     # The agent this thread runs (`services/agents`); persists and may change on any send.
     # Absent keeps the thread's, new threads get the default.
     agent: str | None = None
+    # The effort this thread's chat turns run at, persisted like the level. Absent keeps
+    # the thread's; "" clears it back to the endpoint's.
+    effort: ThinkingEffort | Literal[""] | None = None
     # Set when the operator resumes a bound-stopped turn ("Continue" under a stop marker):
     # the branch node id carrying the marker. Accepting retires the marker durably. Ignored
     # on a new conversation.

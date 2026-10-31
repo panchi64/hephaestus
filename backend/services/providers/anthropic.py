@@ -60,6 +60,7 @@ class AnthropicNativeProvider(Provider):
         key_hint="sk-ant-…",
         docs_url="https://console.anthropic.com/settings/keys",
         vision=True,
+        uses_effort=True,
     )
 
     @override

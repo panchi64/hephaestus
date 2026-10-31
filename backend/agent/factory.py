@@ -71,9 +71,15 @@ type TurnAgent = Agent[RunDeps, DeferredToolRequests | str]
 
 
 def _turn_settings(ctx: RunContext[RunDeps]) -> ModelSettings:
-    """Parallel tool calls, plus the providers' settings for whoever waits on this run
-    (an attended turn caches for an hour)."""
-    return {**TOOL_CALL_SETTINGS, **run_settings(attended=is_attended(ctx.deps.run.kind))}
+    """Parallel tool calls, the providers' settings for whoever waits on this run (an
+    attended turn caches for an hour), and the thread's own effort when it set one."""
+    settings: ModelSettings = {
+        **TOOL_CALL_SETTINGS,
+        **run_settings(attended=is_attended(ctx.deps.run.kind)),
+    }
+    if ctx.deps.effort is not None:
+        settings["thinking"] = ctx.deps.effort
+    return settings
 
 
 def build_agent(
