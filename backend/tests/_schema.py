@@ -18,11 +18,11 @@ and so has to run it.
 
 from __future__ import annotations
 
-import sqlite3
 import threading
 
 from sqlalchemy import Engine
 from sqlalchemy.pool import PoolProxiedConnection
+from sqlcipher3 import dbapi2 as sqlite3
 
 import core.db
 
@@ -39,8 +39,8 @@ _template_pin: PoolProxiedConnection | None = None
 
 
 def _driver_connection(pooled: PoolProxiedConnection) -> sqlite3.Connection:
-    """The `sqlite3.Connection` under a pooled wrapper — narrowed, since the pool types
-    it as the generic DBAPI protocol and only SQLite's carries `backup`."""
+    """The driver connection under a pooled wrapper, narrowed: the pool types it as the
+    generic DBAPI protocol, and only SQLite's carries `backup`."""
     connection = pooled.driver_connection
     assert isinstance(connection, sqlite3.Connection)
     return connection
