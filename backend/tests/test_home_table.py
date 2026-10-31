@@ -9,7 +9,7 @@ from core.vault import Vault
 from services.home.leases import WriteLeases
 from services.home.paths import SCRATCH, Place
 from services.home.table import default_place, thread_mounts
-from services.projects.store import ProjectStore
+from services.projects.store import ProjectStore, ProjectView
 from services.settings_store import SettingsStore
 
 OWNER = "operator"
@@ -23,22 +23,31 @@ async def _stores(tmp_path: Path) -> tuple[ProjectStore, WriteLeases]:
     return ProjectStore(engine, vault, SettingsStore(engine)), WriteLeases(engine, ttl_s=3600)
 
 
-async def test_a_thread_writes_its_scratch_and_reads_every_project(tmp_path: Path) -> None:
+async def test_a_thread_mounts_only_the_project_it_was_started_in(tmp_path: Path) -> None:
     projects, leases = await _stores(tmp_path)
+    created: dict[str, ProjectView] = {}
     for name in ("API", "Web"):
         (tmp_path / name).mkdir()
-        _ = await projects.create(OWNER, name, str(tmp_path / name))
-    mounts = await thread_mounts(
+        created[name] = await projects.create(OWNER, name, str(tmp_path / name))
+    unfiled = await thread_mounts(
         owner_id=OWNER,
         lease_holder="c1",
         scratch=tmp_path / "scratch",
         projects=projects,
         leases=leases,
     )
-    assert [(m.place, m.writable) for m in mounts] == [
+    assert [(m.place, m.writable) for m in unfiled] == [(SCRATCH, True)]
+    filed = await thread_mounts(
+        owner_id=OWNER,
+        lease_holder="c1",
+        scratch=tmp_path / "scratch",
+        projects=projects,
+        leases=leases,
+        filed_project_id=created["API"].id,
+    )
+    assert [(m.place, m.writable) for m in filed] == [
         (SCRATCH, True),
         (Place("projects", "api"), False),
-        (Place("projects", "web"), False),
     ]
 
 
@@ -67,7 +76,7 @@ async def test_a_lease_or_starting_in_a_project_makes_it_writable(tmp_path: Path
         projects=projects,
         leases=leases,
     )
-    assert {m.place.name: m.writable for m in other[1:]} == {"api": False, "web": False}
+    assert {m.place.name: m.writable for m in other[1:]} == {}
 
 
 async def test_a_worktree_is_its_own_place_and_leaves_the_folder_alone(tmp_path: Path) -> None:

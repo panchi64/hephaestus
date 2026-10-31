@@ -108,12 +108,14 @@ async def _with_project(tmp_path: Path) -> tuple[ServiceContainer, Path, WriteLe
     return caps, root, leases
 
 
-async def test_a_sandbox_thread_reads_a_project_by_its_home_path(tmp_path: Path):
-    caps, root, _leases = await _with_project(tmp_path)
+async def test_a_sandbox_thread_reads_a_project_only_once_it_holds_it(tmp_path: Path):
+    caps, root, leases = await _with_project(tmp_path)
     _ = (root / "CLAUDE.md").write_text("Run the checks with `make check`.\n")
-    read = await _call(
-        "read_file", {"path": "~/projects/api/README.md"}, manager=ScratchDirs(tmp_path), caps=caps
-    )
+    args: dict[str, object] = {"path": "~/projects/api/README.md"}
+    with pytest.raises(ModelRetry, match="no /home/agent/projects/api"):
+        _ = await _call("read_file", args, manager=ScratchDirs(tmp_path), caps=caps)
+    await leases.lease("operator", "conv-1", Place("projects", "api"))
+    read = await _call("read_file", args, manager=ScratchDirs(tmp_path), caps=caps)
     # The first touch of the project carries how to work in it.
     assert "the api" in str(read) and "make check" in str(read)
 
@@ -141,7 +143,8 @@ async def test_the_scratch_alias_names_the_same_file(tmp_path: Path):
 
 async def test_a_relative_path_is_inside_the_threads_own_place(tmp_path: Path):
     # A folder of the thread's own named like a group of the home is still its own folder.
-    caps, _root, _leases = await _with_project(tmp_path)
+    caps, _root, leases = await _with_project(tmp_path)
+    await leases.lease("operator", "conv-1", Place("projects", "api"))
     manager = ScratchDirs(tmp_path)
     # With no such folder of its own, it is the home's: models drop the `~/`.
     dropped = await _call(

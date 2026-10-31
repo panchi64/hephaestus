@@ -461,6 +461,21 @@ class TestMachineSpec:
         assert project.read_only is True
         assert scratch.read_only is False
 
+    def test_a_writable_checkout_binds_its_git_dir_read_only_after_it(self, tmp_path: Path):
+        home = _home(
+            tmp_path, [(Place("projects", "app"), True), (Place("projects", "lib"), False)]
+        )
+        for name in ("app", "lib"):
+            (tmp_path / "home/agent/projects" / name / ".git").mkdir(parents=True)
+
+        targets = [(b.target, b.read_only) for b in machine_spec(home, None).binds]
+
+        assert targets == [
+            ("/home/agent/projects/app", False),
+            ("/home/agent/projects/app/.git", True),
+            ("/home/agent/projects/lib", True),
+        ]
+
     def test_a_home_without_scratch_has_no_work_alias(self, tmp_path: Path):
         home = _home(tmp_path, [(Place("projects", "app"), False)])
 

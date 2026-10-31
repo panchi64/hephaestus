@@ -23,7 +23,7 @@ from routes.deps import OPERATOR_ID, app_state
 
 from ._helpers import client_app
 from ._json import arr, json_body, obj
-from .files_support import README, project_caps, run_deps
+from .files_support import README, filed_deps, project_caps, run_deps
 
 NOTES = "~/projects/api/NOTES.md"
 
@@ -82,7 +82,7 @@ def _text(restored: Restored) -> str:
 
 async def test_the_most_recent_files_come_back_newest_first(tmp_path: Path):
     caps, _ = await _two_files(tmp_path)
-    restored = await restore_after_fold(run_deps(caps), Settings(), READS)
+    restored = await restore_after_fold(await filed_deps(caps),Settings(), READS)
     assert _names(restored) == ["NOTES.md", "README.md"]
     text = _text(restored)
     assert text.startswith("<workspace-note>")
@@ -93,14 +93,14 @@ async def test_the_most_recent_files_come_back_newest_first(tmp_path: Path):
 async def test_the_file_count_caps_the_restore(tmp_path: Path):
     caps, _ = await _two_files(tmp_path)
     settings = Settings(compaction_restore_files=1)
-    restored = await restore_after_fold(run_deps(caps), settings, READS)
+    restored = await restore_after_fold(await filed_deps(caps),settings, READS)
     assert _names(restored) == ["NOTES.md"]
 
 
 async def test_the_total_budget_stops_the_restore(tmp_path: Path):
     caps, _ = await _two_files(tmp_path)
     settings = Settings(compaction_restore_total_tokens=1)
-    restored = await restore_after_fold(run_deps(caps), settings, READS)
+    restored = await restore_after_fold(await filed_deps(caps),settings, READS)
     assert restored.part is None
     assert restored.names == []
 
@@ -108,7 +108,7 @@ async def test_the_total_budget_stops_the_restore(tmp_path: Path):
 async def test_a_deleted_file_is_skipped(tmp_path: Path):
     caps, root = await _two_files(tmp_path)
     (root / "NOTES.md").unlink()
-    restored = await restore_after_fold(run_deps(caps), Settings(), READS)
+    restored = await restore_after_fold(await filed_deps(caps),Settings(), READS)
     assert _names(restored) == ["README.md"]
 
 

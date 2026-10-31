@@ -20,6 +20,7 @@ from services.projects import ProjectStore
 from services.projects.worktree import WorktreeBusyError
 from services.worktree_switch import WorktreeSwitch
 from tools.deps import RunDeps
+from tools.home import resolve_run_home
 from tools.workspace import run_workspace, unavailable
 
 _UNAVAILABLE = "Projects are unavailable in this deployment."
@@ -34,9 +35,10 @@ def project_toolset() -> FunctionToolset[RunDeps]:
     @toolset.tool(name="list")
     async def list_projects(ctx: RunContext[RunDeps]) -> dict[str, object]:
         """Returns the operator's projects, the folders they work in: each one's `id`,
-        `name`, its `path` in your home, whether it is a git repository, and whether it
-        has uncommitted changes. `active_project_id` says which one this conversation is
-        filed under, if any.
+        `name`, its `path` in your home, whether it is `mounted` in your home now, whether
+        it is a git repository, and whether it has uncommitted changes. `active_project_id`
+        says which one this conversation is filed under, if any. An unmounted project can't
+        be read; writing a file to its path asks the operator to mount it.
 
         Use it when the operator names a project you have not seen in this conversation,
         so you work on the path it lives at rather than a guess.
@@ -46,6 +48,10 @@ def project_toolset() -> FunctionToolset[RunDeps]:
             return {"available": False, "detail": _UNAVAILABLE}
         views = await store.list(ctx.deps.owner_id)
         slugs = await store.slugs(ctx.deps.owner_id)
+        try:
+            home = await resolve_run_home(ctx.deps)
+        except WorktreeBusyError:
+            home = None
         return {
             "available": True,
             "active_project_id": ctx.deps.project_id,
@@ -54,6 +60,8 @@ def project_toolset() -> FunctionToolset[RunDeps]:
                     "id": v.id,
                     "name": v.name,
                     "path": Place("projects", slugs.get(v.id, "")).path,
+                    "mounted": home is not None
+                    and home.mount(Place("projects", slugs.get(v.id, ""))) is not None,
                     "is_git_repo": v.probe.is_git_repo,
                     "uncommitted_changes": v.probe.uncommitted_changes,
                 }

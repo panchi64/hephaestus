@@ -50,6 +50,13 @@ def run_deps(caps: ServiceContainer, conversation: str = "conv-1") -> RunDeps:
     return RunDeps(run=run, owner_id="operator", caps=caps, conversation_id=conversation)
 
 
+async def filed_deps(caps: ServiceContainer) -> RunDeps:
+    """:func:`run_deps` for a thread started in the ``api`` project, so its home mounts it."""
+    deps = run_deps(caps)
+    deps.project_id = (await caps.get(ProjectStore).list("operator"))[0].id
+    return deps
+
+
 async def call_files(
     caps: ServiceContainer,
     tool: str,

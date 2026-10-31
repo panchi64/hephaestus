@@ -1,9 +1,8 @@
 """The run's home, as a tool and the approval gate see it.
 
-Assembled once per run and memoised on its deps: the thread's scratch, every registered
-project, writable where the thread holds a lease or was started in it, the thread's
-worktree of its project when it opened one, and the open worktrees of the sub-agents it
-spawned.
+Assembled once per run and memoised on its deps: the thread's scratch, the project it was
+started in and any it holds a write lease on, the thread's worktree of its project when it
+opened one, and the open worktrees of the sub-agents it spawned.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from pathlib import Path
 
 from services.home.changes import ChangeLog, ThreadChanges
 from services.home.leases import WriteLeases
-from services.home.paths import Place
+from services.home.paths import HomePathError, Place, parse
 from services.home.scratch import ScratchDirs
 from services.home.table import RunHome, default_place, thread_mounts
 from services.projects.store import ProjectStore
@@ -113,10 +112,28 @@ def may_lease(deps: RunDeps) -> bool:
     return deps.leases_from is None and not deps.delegated_approved and bool(deps.conversation_id)
 
 
+async def unmounted_project(deps: RunDeps, home: RunHome, path: str) -> Place | None:
+    """The registered project ``path`` names when this run's home does not mount it."""
+    try:
+        place = parse(home.backend.spell(path)).place
+    except HomePathError:
+        return None
+    if place.kind != "projects" or home.mount(place) is not None:
+        return None
+    projects = deps.caps.get_optional(ProjectStore)
+    if projects is None or place.name not in (await projects.slugs(deps.owner_id)).values():
+        return None
+    return place
+
+
 async def lease(deps: RunDeps, home: RunHome, place: Place) -> RunHome:
-    """Let this thread write ``place`` from now on, and the rest of this run at once."""
+    """Let this thread write ``place`` from now on, and the rest of this run at once. A
+    project the home did not mount is mounted by rebuilding the home."""
     leases = deps.caps.get_optional(WriteLeases)
     if leases is not None and deps.conversation_id:
         await leases.lease(deps.owner_id, deps.conversation_id, place)
+    if home.mount(place) is None:
+        deps.home = None
+        return await resolve_run_home(deps) or home
     deps.home = home.with_writable(place)
     return deps.home

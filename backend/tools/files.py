@@ -8,8 +8,9 @@ are read from the home, so a result's path can be passed back
 as written; a path naming no folder of the home lands in the thread's own place, its
 project or else its scratch.
 
-A write into a project the thread may only read asks the operator first, and an approval
-leases that project to the thread, so the next write there does not ask again. A write
+A write into a project the thread may only read, or one its home does not mount, asks the
+operator first, and an approval leases that project to the thread, so the next write there
+does not ask again. A write
 to the operator's own folder of a project is recorded so they can put the file back
 (``services/home/changes.py``), and the first result in a project carries its instruction
 files (``tools/briefing.py``).
@@ -40,7 +41,7 @@ from .briefing import with_brief
 from .deps import RunDeps
 from .describe import registered_tools
 from .harness_events import attributable
-from .home import change_log, lease, may_lease, resolve_run_home
+from .home import change_log, lease, may_lease, resolve_run_home, unmounted_project
 from .run_home import home_of
 from .spill import UNTRUSTED_SUFFIX, is_untrusted_spill
 from .workspace import unavailable
@@ -233,7 +234,7 @@ async def _clear_write(
 ) -> tuple[str | None, bool]:
     """Ask before a write into a place the thread may only read; lease it once approved.
     Returns the refusal, if any, and whether a lease was taken."""
-    place = home.place_of(path)
+    place = home.place_of(path) or await unmounted_project(ctx.deps, home, path)
     if place is None or home.writable(place):
         return None, False
     if not may_lease(ctx.deps):

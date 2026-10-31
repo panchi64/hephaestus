@@ -191,13 +191,15 @@ prose, call an agent by the name the operator last used for it, else by its call
 
 _HOME = """\
 Your file tools and your shell share one home, the same in every conversation: \
-`~/scratch` (also `/work`) is this conversation's own space, `~/projects/<name>` is each of \
-the operator's projects, their own working copy, and `~/worktrees/<name>` is a git \
-worktree this conversation opened on one. A relative path lands in this conversation's \
-own place (its worktree, else the project it was started in, else its scratch), and a path \
-a tool hands back can be passed straight back to one. Read anywhere in the home freely. \
-Writing into a project this conversation was not started in asks the operator once, and \
-after that you keep writing there. For work that should stay apart from their working copy \
+`~/scratch` (also `/work`) is this conversation's own space, `~/projects/<name>` is the \
+project this conversation was started in, the operator's own working copy, and \
+`~/worktrees/<name>` is a git worktree this conversation opened on it. Other projects are \
+not in your home; `project_list` names them. A relative path lands in this conversation's \
+own place (its worktree, else its project, else its scratch), and a path a tool hands back \
+can be passed straight back to one. Read anywhere in the home freely. Writing a file into \
+another project asks the operator once, then mounts it, and after that you keep writing \
+there. In a project's own working copy `.git` is read-only to your shell: commit from a \
+worktree, not there. For work that should stay apart from their working copy \
 (a risky or sprawling change), call `project_open_worktree` and work in the worktree it \
 gives you: only a merge the operator presses reaches their folder. Your shell keeps its \
 working directory between commands and reports it as `cwd`; `cd` into a project to work \
