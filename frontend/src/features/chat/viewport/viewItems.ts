@@ -47,6 +47,7 @@ export type ViewContentKind =
   | "html"
   | "image"
   | "text"
+  | "markdown"
   | "csv"
   | "json"
   | "svg"
@@ -76,7 +77,7 @@ const CODE_EXTENSIONS = new Set([
 // .jsonl is newline-delimited JSON — JSON.parse() always fails on it past the
 // first line, so it must not route to JsonTree's single-document "json" kind;
 // it falls to the plain-text renderer instead.
-const TEXT_EXTENSIONS = new Set(["md", "txt", "log", "jsonl"]);
+const TEXT_EXTENSIONS = new Set(["txt", "log", "jsonl"]);
 
 /** The lowercased extension of `filename` (no leading dot), or null when it has
  *  none (including a leading-dot dotfile like `.env` or a trailing-dot name
@@ -104,6 +105,7 @@ export function detectContentKind(
   if (previewKind === "image") return "image";
   if (ext === "csv") return "csv";
   if (ext === "json") return "json";
+  if (ext === "md") return "markdown";
   if (ext === "pdf") return "pdf";
   if (ext && AUDIO_EXTENSIONS.has(ext)) return "audio";
   if (ext && VIDEO_EXTENSIONS.has(ext)) return "video";
