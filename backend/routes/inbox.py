@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from routes import deps
@@ -17,7 +17,9 @@ from routes.deps import OPERATOR_ID
 from runs import ConversationInbox, QueuedMessage
 from runs.events import MessageSource
 
-router = APIRouter(prefix="/conversations", tags=["conversations"])
+router = APIRouter(
+    prefix="/conversations", tags=["conversations"], dependencies=[Depends(deps.private_gate)]
+)
 
 
 class InboxMessageOut(BaseModel):

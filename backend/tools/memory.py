@@ -9,6 +9,7 @@ service the REST routes call.
 
 ``forget`` and ``consolidate`` delete memories, so they always ask first; the approval
 card's explanation is built from the stored descriptions, not from the model's arguments.
+Writing from a private chat asks too, since every chat reads memory.
 
 If memory isn't wired into the run, the tools say so rather than failing — the model
 adapts (graceful degradation).
@@ -25,9 +26,12 @@ from core.exceptions import NotFoundError
 from core.vault import VaultLocked
 from prompts.memory import MEMORY_CATALOG, MEMORY_OTHERS, MEMORY_PINNED_LIMIT
 from services.memory import MemoryCatalog, MemoryStore, MemoryView
+from services.permissions.guards import GUARD_KEY
+from services.private_area import PrivateArea
 
 from .deps import RunDeps
 
+#: Grantable gates only; a write from a private chat parks as a guard, which no grant answers.
 GATED_TOOLS: frozenset[str] = frozenset({"memory_forget", "memory_consolidate"})
 
 _UNAVAILABLE = "Memory is unavailable."
@@ -62,6 +66,21 @@ def _ask(explanation: str) -> ApprovalRequired:
     return ApprovalRequired(metadata={"explanation": explanation})
 
 
+async def _gate_private_write(ctx: RunContext[RunDeps], description: str | None) -> None:
+    """Ask before a private chat writes into memory, which every chat can read."""
+    area = ctx.deps.caps.get_optional(PrivateArea)
+    conversation_id = ctx.deps.conversation_id
+    if ctx.tool_call_approved or area is None or conversation_id is None:
+        return
+    if await area.is_private(conversation_id):
+        raise ApprovalRequired(
+            metadata={
+                GUARD_KEY: "Saves from a private chat into memory every chat can read.",
+                "explanation": f'Saves "{description}".' if description else "Edits a memory.",
+            }
+        )
+
+
 def memory_toolset() -> FunctionToolset[RunDeps]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
@@ -86,6 +105,7 @@ def memory_toolset() -> FunctionToolset[RunDeps]:
         store = ctx.deps.caps.get_optional(MemoryStore)
         if store is None:
             return _UNAVAILABLE
+        await _gate_private_write(ctx, description)
         view = await store.remember(
             ctx.deps.owner_id, content, description=description, pinned=pinned
         )
@@ -121,6 +141,8 @@ def memory_toolset() -> FunctionToolset[RunDeps]:
         store = ctx.deps.caps.get_optional(MemoryStore)
         if store is None:
             return {"error": _UNAVAILABLE}
+        if content is not None or description is not None:
+            await _gate_private_write(ctx, description)
         try:
             view = await store.update(
                 ctx.deps.owner_id, id, content=content, description=description, pinned=pinned

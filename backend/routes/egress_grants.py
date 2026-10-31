@@ -7,14 +7,18 @@ the operator's decision, and a token holder is not the operator.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes import deps
 from routes.deps import OPERATOR_ID
 from services.workspace import scratch_key
 
-router = APIRouter(prefix="/operator/conversations", tags=["egress"])
+router = APIRouter(
+    prefix="/operator/conversations",
+    tags=["egress"],
+    dependencies=[Depends(deps.private_gate)],
+)
 
 
 class AllowDomain(BaseModel):

@@ -154,6 +154,23 @@ class TestTheDeferredPath:
         assert settled == {}
         assert metadata["c1"][GUARD_KEY] == "raised by the toolset"
 
+    async def test_a_private_chat_read_asks_at_yolo_despite_a_grant(self):
+        engine = make_engine("sqlite:///:memory:")
+        init_db(engine)
+        grants = ApprovalGrantStore(engine, 3600)
+        _ = await grants.grant(OWNER, CONV, "platform_read")
+        read = ToolCallPart(
+            tool_name="platform_read",
+            args={"ref": "surf-conversations:x", "purpose": "the tax total"},
+            tool_call_id="p1",
+        )
+        metadata: dict[str, dict[str, object]] = {"p1": {GUARD_KEY: "Reads the private chat"}}
+        settled, manual = await _settle(
+            "yolo", [read], caps=ServiceContainer.of(grants), metadata=metadata
+        )
+        assert [c.tool_call_id for c in manual] == ["p1"]
+        assert settled == {}
+
     async def test_the_reasons_are_written_back_for_the_park(self):
         metadata: dict[str, dict[str, object]] = {}
         _ = await _settle("yolo", [_call(DANGEROUS, "bad"), _call("ls", "fine")], metadata=metadata)

@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agent import AwaitingKind, awaiting_kind
@@ -50,7 +50,9 @@ from services.workspace_history import SnapshotView, snapshot_id_from_result
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/conversations", tags=["conversations"])
+router = APIRouter(
+    prefix="/conversations", tags=["conversations"], dependencies=[Depends(deps.private_gate)]
+)
 
 
 class ConversationSummary(BaseModel):
@@ -89,6 +91,7 @@ class ConversationSummary(BaseModel):
     # The rail joins on this id, not the basename: it lists directories with no threads, and
     # two can share a basename, which would merge two repositories into one section.
     project_id: str | None = None
+    private: bool = False
 
 
 class ToolCallImageOut(BaseModel):
@@ -325,6 +328,7 @@ def _summary(
         parent_id=view.parent_id,
         workspace=(workspaces or {}).get(view.project_id or ""),
         project_id=view.project_id,
+        private=view.private,
     )
 
 
@@ -486,7 +490,9 @@ async def _detail(
 @router.get("", response_model=list[ConversationSummary])
 async def list_conversations(request: Request) -> list[ConversationSummary]:
     views = await deps.store(request).list_conversations(
-        OPERATOR_ID, visible_projects=await deps.project_scope(request)
+        OPERATOR_ID,
+        visible_projects=await deps.project_scope(request),
+        include_private=deps.private_visible(request),
     )
     # Both resolved once per listing: the rail refreshes on a timer, and a per-row decrypt
     # would repeat the same few directories.
@@ -874,6 +880,26 @@ async def set_auto_compact_override(
     _ = await _require_owned(request, conversation_id)
     await deps.store(request).set_compaction_override(conversation_id, body.override)
     return await _compaction_state(request, conversation_id)
+
+
+class PrivateUpdate(BaseModel):
+    private: bool
+
+
+@router.put("/{conversation_id}/private", response_model=ConversationSummary)
+async def set_private(
+    conversation_id: str, body: PrivateUpdate, request: Request
+) -> ConversationSummary:
+    """File the thread's whole spawn family in or out of the Private area. The area must be
+    open, and filing in needs a PIN set."""
+    _ = await _require_owned(request, conversation_id)
+    await deps.private_area(request).set_private(OPERATOR_ID, conversation_id, body.private)
+    summary = await _require_owned(request, conversation_id)
+    return _summary(
+        summary,
+        run=_live_run(request, conversation_id),
+        last_outcome=_outcomes(request).get(conversation_id),
+    )
 
 
 _NOTHING_TO_FOLD = "Nothing to fold — there are no new turns since the last compaction."

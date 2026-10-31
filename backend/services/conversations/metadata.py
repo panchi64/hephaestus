@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import override
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
@@ -243,6 +243,64 @@ class MetadataMixin(StoreCore):
             conversation = session.get(Conversation, conversation_id)
             if conversation is not None:
                 conversation.agent_name = agent_name
+
+        await in_session(self._engine, work)
+
+    async def is_private(self, conversation_id: str) -> bool:
+        """Whether the thread is filed in the Private area; False for one that doesn't exist."""
+
+        def work(session: Session) -> bool:
+            conversation = session.get(Conversation, conversation_id)
+            return conversation is not None and conversation.private
+
+        return await in_session(self._engine, work)
+
+    async def private_among(self, conversation_ids: list[str]) -> frozenset[str]:
+        """Which of these threads are filed in the Private area."""
+        if not conversation_ids:
+            return frozenset()
+
+        def work(session: Session) -> frozenset[str]:
+            return frozenset(
+                session.exec(
+                    select(Conversation.id).where(
+                        col(Conversation.id).in_(conversation_ids),
+                        col(Conversation.private).is_(True),
+                    )
+                ).all()
+            )
+
+        return await in_session(self._engine, work)
+
+    async def set_private(self, conversation_id: str, private: bool) -> None:
+        """File the thread's whole spawn family, from its root down, in or out of the
+        Private area.
+
+        A parent holds its children's tasks and reports, and a child of a private thread
+        must stay private, so a family never splits across the area.
+        """
+
+        def work(session: Session) -> None:
+            root = session.get(Conversation, conversation_id)
+            visited: set[str] = set()
+            while root is not None and root.parent_id is not None and root.id not in visited:
+                visited.add(root.id)
+                root = session.get(Conversation, root.parent_id)
+            if root is None:
+                return
+            root.private = private
+            visited = {root.id}
+            frontier: list[str] = [root.id]
+            while frontier:
+                children = session.exec(
+                    select(Conversation).where(col(Conversation.parent_id).in_(frontier))
+                ).all()
+                frontier = []
+                for child in children:
+                    if child.id not in visited:
+                        visited.add(child.id)
+                        child.private = private
+                        frontier.append(child.id)
 
         await in_session(self._engine, work)
 

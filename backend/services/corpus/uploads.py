@@ -117,6 +117,7 @@ class UploadsAdapter(SourceAdapter):
         *,
         limit: int,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[CorpusHit]:
         return await self._chunks.retrieve(
             owner_id,

@@ -16,6 +16,7 @@ import {
   stopNotifications,
 } from "~/lib/stores/notifications";
 import { loadBuiltinPluginSwitches } from "~/features/plugins";
+import { PinDialogHost, useRelockTimer } from "~/features/private";
 import { useAmbientSignals } from "./ambient/useAmbientSignals";
 import { NotificationBell } from "./notifications/NotificationBell";
 import { PluginLauncher, PluginWindowLayer } from "./plugin-windows";
@@ -31,6 +32,7 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
   const session = useSession();
   const rail = useSidebarWidth();
   useAmbientSignals();
+  useRelockTimer(() => session.isAuthenticated);
 
   // The notification feed is app-lifetime, not per-route: subscribe once the
   // workspace is authenticated (the same signal the auth guard gates on) and
@@ -131,6 +133,8 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
       {/* App-lifetime like the dialog: a window the operator opened stays up across
           every route change, so a game keeps going while they move around. */}
       <PluginWindowLayer />
+      {/* Any surface that meets a locked private thread asks through this one prompt. */}
+      <PinDialogHost />
     </div>
   );
 }

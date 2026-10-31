@@ -7,6 +7,7 @@ import {
   ModelsScreen,
   OfflineSection,
   PlatformVmSection,
+  PrivateChatsSection,
   SearchProvidersPanel,
 } from "~/features/settings";
 import { McpScreen } from "~/features/mcp";
@@ -56,6 +57,7 @@ export const SECTION_RENDERERS: Record<string, () => JSX.Element> = {
   integrations: () => <IntegrationsScreen />,
   "web-search": () => <SearchProvidersPanel />,
   vault: () => <VaultScreen />,
+  "private-chats": () => <PrivateChatsSection />,
   "service-keys": () => <ApiTokensScreen />,
   "access-tokens": () => <AccessTokensScreen />,
   backup: () => <BackupScreen />,

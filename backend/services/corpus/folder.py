@@ -206,6 +206,7 @@ class FolderAdapter(SourceAdapter):
         *,
         limit: int,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[CorpusHit]:
         # Chunks are scored directly from the pre-computed dense/sparse forms; the raw
         # query string isn't needed here.

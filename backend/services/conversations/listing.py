@@ -95,10 +95,15 @@ class ListingMixin(StoreCore):
             project_id=conversation.project_id,
             agent_name=conversation.agent_name,
             parent_id=conversation.parent_id,
+            private=conversation.private,
         )
 
     async def list_conversations(
-        self, owner_id: str, *, visible_projects: tuple[str | None, ...] | None = None
+        self,
+        owner_id: str,
+        *,
+        visible_projects: tuple[str | None, ...] | None = None,
+        include_private: bool = True,
     ) -> list[ConversationSummaryView]:
         """Owner's conversations, newest-updated first, with a derived count +
         preview. The durable rows are the base; an active conversation's in-memory
@@ -111,8 +116,10 @@ class ListingMixin(StoreCore):
             query = (
                 select(Conversation)
                 .where(Conversation.owner_id == owner_id)
-                .where(Conversation.ephemeral == False)  # noqa: E712 — SQL boolean compare
+                .where(col(Conversation.ephemeral).is_(False))
             )
+            if not include_private:
+                query = query.where(col(Conversation.private).is_(False))
             scope = project_clause(Conversation.project_id, visible_projects)
             if scope is not None:
                 query = query.where(scope)
@@ -123,18 +130,21 @@ class ListingMixin(StoreCore):
         rows = await in_session(self._engine, work)
         return [self._summarize(*row) for row in rows]
 
-    async def count_conversations(self, owner_id: str) -> int:
+    async def count_conversations(self, owner_id: str, *, include_private: bool = True) -> int:
         """How many conversations the owner has — a scalar count that loads no
         rows or previews (the overview readout, not the listing). Conversations
         are persisted on creation, so this is accurate the moment a turn starts."""
 
         def work(session: Session) -> int:
-            return session.exec(
+            query = (
                 select(func.count())
                 .select_from(Conversation)
                 .where(Conversation.owner_id == owner_id)
-                .where(Conversation.ephemeral == False)  # noqa: E712 — SQL boolean compare
-            ).one()
+                .where(col(Conversation.ephemeral).is_(False))
+            )
+            if not include_private:
+                query = query.where(col(Conversation.private).is_(False))
+            return session.exec(query).one()
 
         return await in_session(self._engine, work)
 
@@ -157,10 +167,13 @@ class ListingMixin(StoreCore):
             return None
         return self._summarize(*result)
 
-    async def titles(self, conversation_ids: list[str], owner_id: str) -> dict[str, str]:
+    async def titles(
+        self, conversation_ids: list[str], owner_id: str, *, include_private: bool = True
+    ) -> dict[str, str]:
         """The titles of the owner's conversations among ``conversation_ids``, keyed by id.
 
-        Untitled threads and ids the owner doesn't have are absent. This is deliberately
+        Untitled threads, ids the owner doesn't have and, unless ``include_private``,
+        private threads are absent. This is deliberately
         narrower than :meth:`get_summary` — no message count, no last-message preview, and
         one query for the whole set. The runs listing wants a name per run and nothing
         else; asking for a full summary per run made it read every thread's rows.
@@ -180,7 +193,8 @@ class ListingMixin(StoreCore):
             )
 
         rows = await in_session(self._engine, work)
-        opened = ((row.id, self._open_title(row)) for row in rows)
+        shown = (row for row in rows if include_private or not row.private)
+        opened = ((row.id, self._open_title(row)) for row in shown)
         return {cid: title for cid, title in opened if title is not None}
 
     async def work_summary_candidates(
@@ -221,7 +235,7 @@ class ListingMixin(StoreCore):
             query = (
                 select(Conversation.id)
                 .where(Conversation.owner_id == owner_id)
-                .where(Conversation.ephemeral == False)  # noqa: E712 — SQL boolean compare
+                .where(col(Conversation.ephemeral).is_(False))
                 .where(Conversation.updated_at < idle_before)
                 .where(message_count >= min_messages)
                 .where(

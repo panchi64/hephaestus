@@ -16,7 +16,7 @@ from sqlalchemy import Engine
 from starlette.datastructures import State
 
 from core.api_scopes import ScopeTable
-from core.auth import SESSION_COOKIE, AuthManager, token_from_headers
+from core.auth import SESSION_COOKIE, AuthManager, token_from_headers, via_api_token
 from core.config import Settings
 from core.container import ServiceContainer
 from core.exceptions import DegradedCapabilityError, NotFoundError, PermissionDeniedError
@@ -48,6 +48,7 @@ from services.notifications import NotificationService
 from services.offline import OfflineModeService
 from services.plan_mode import PlanMode
 from services.plugins import PluginStore
+from services.private_area import PrivateArea
 from services.projects import ProjectStore, WorktreeManager, visible_project_ids
 from services.projects.tree import worktree_root
 from services.registry import ModelRegistry
@@ -137,6 +138,7 @@ class AppState(State):
         self.projects: ProjectStore
         self.worktrees: WorktreeManager
         self.settings_store: SettingsStore
+        self.private_area: PrivateArea
         self.credentials: CredentialStore
         self.vault: Vault
         self.auth_manager: AuthManager
@@ -555,6 +557,32 @@ async def active_project(request: Request) -> str | None:
 
 def settings_store(request: Source) -> SettingsStore:
     return app_state(request).settings_store
+
+
+def private_area(request: Source) -> PrivateArea:
+    return app_state(request).private_area
+
+
+def private_visible(request: Request) -> bool:
+    """Whether this caller may see private threads: the operator's session, area open. An
+    API token never may."""
+    return private_area(request).is_unlocked() and not via_api_token(request.state)
+
+
+async def require_private_open(request: Request, conversation_id: str) -> None:
+    await private_area(request).require_open(
+        conversation_id, by_operator=not via_api_token(request.state)
+    )
+
+
+async def private_gate(request: Request) -> None:
+    """Route dependency refusing a private thread named by a ``conversation_id`` path or
+    query parameter to a caller who may not see it."""
+    conversation_id = request.path_params.get("conversation_id") or request.query_params.get(
+        "conversation_id"
+    )
+    if isinstance(conversation_id, str) and conversation_id:
+        await require_private_open(request, conversation_id)
 
 
 def credentials(request: Request) -> CredentialStore:

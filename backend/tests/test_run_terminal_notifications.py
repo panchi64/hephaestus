@@ -53,6 +53,24 @@ async def test_run_failed_notifies_when_nobody_is_watching():
         assert notifs[0].body == "boom"
 
 
+async def test_a_private_threads_failure_names_neither_the_thread_nor_the_error():
+    async with client_app() as (_client, app):
+        conv_id = await app_state(app).conversations.create_conversation(OPERATOR_ID, private=True)
+
+        async def orch(_run: Run) -> None:
+            raise ValueError("salary figures")
+
+        run = app_state(app).runs.submit(
+            kind="chat", owner_id=OPERATOR_ID, orchestrator=orch, conversation_id=conv_id
+        )
+        await run.wait()
+
+        notifs = await _run_notifications(app, run.id)
+        assert [(n.title, n.body) for n in notifs] == [
+            ("Talos hit an error in a private chat", None)
+        ]
+
+
 async def test_run_completed_notifies_when_nobody_is_watching():
     async with client_app() as (_client, app):
         conv_id = await app_state(app).conversations.create_conversation(OPERATOR_ID)

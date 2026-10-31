@@ -41,6 +41,16 @@ class PermissionDeniedError(HephaestusError):
     """The operator is not permitted to perform this action."""
 
 
+class PrivateAreaLocked(PermissionDeniedError):
+    """A private thread was asked for while the Private area is locked.
+
+    The message is the fixed ``private_locked`` the frontend keys its PIN prompt on; a 423
+    would read as the whole vault being locked."""
+
+    def __init__(self) -> None:
+        super().__init__("private_locked")
+
+
 class ApprovalRequiredError(HephaestusError):
     """A sensitive action needs explicit operator approval before it runs."""
 

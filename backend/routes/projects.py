@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from core.exceptions import InvalidInputError, NotFoundError
 from routes import deps
@@ -33,7 +33,7 @@ from services.artifacts import guess_content_type
 from services.projects import ProjectView, WorktreeError
 from services.projects.listing import list_files, read_file
 
-router = APIRouter(prefix="/projects", tags=["projects"])
+router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(deps.private_gate)])
 
 
 class RepoOut(CamelModel):

@@ -113,3 +113,5 @@ class ConversationSummaryView:
     agent_name: str | None = None
     #: The thread that spawned this one, for an opened agent thread.
     parent_id: str | None = None
+    #: Filed in the PIN-locked Private area.
+    private: bool = False

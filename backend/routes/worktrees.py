@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.exceptions import NotFoundError
 from routes import deps
@@ -26,7 +26,9 @@ from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
 from services.projects import ProjectView, WorktreeError, branch_for
 
-router = APIRouter(prefix="/worktrees", tags=["projects"])
+router = APIRouter(
+    prefix="/worktrees", tags=["projects"], dependencies=[Depends(deps.private_gate)]
+)
 
 
 class FileChangeOut(CamelModel):

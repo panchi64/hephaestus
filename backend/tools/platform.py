@@ -29,12 +29,13 @@ from core.untrusted import new_nonce, unfence, untrusted_fence, untrusted_preamb
 from services import ranking
 from services.corpus import CorpusHit, CorpusIndex
 from services.plugins import PluginStore
+from services.private_area import PrivateArea
 from services.projects import visible_project_ids
 from services.recall_index import rank_texts
 
 from .deps import RunDeps
 from .project_agents import run_catalog
-from .recall_gate import gate_global_recall
+from .recall_gate import CONVERSATIONS_SURFACE, gate_global_recall, gate_private_read
 from .skills import skill_catalog
 
 
@@ -54,7 +55,7 @@ class PlatformSource:
 PLATFORM_SOURCES: DeclaredTable[str, PlatformSource] = DeclaredTable(
     "platform sources",
     {
-        "conversations": PlatformSource(("conversations",), "surf-conversations"),
+        "conversations": PlatformSource(("conversations",), CONVERSATIONS_SURFACE),
         "memory": PlatformSource(("memory",), "surf-memory"),
         "files": PlatformSource(("folder", "uploads")),
         "summaries": PlatformSource(("summaries",), "surf-summaries"),
@@ -62,7 +63,9 @@ PLATFORM_SOURCES: DeclaredTable[str, PlatformSource] = DeclaredTable(
     },
 )
 #: Surfaces keyed by conversation id, which never return the caller's own thread.
-_THREAD_SURFACES = frozenset({"surf-conversations", "surf-summaries"})
+_THREAD_SURFACES = frozenset({CONVERSATIONS_SURFACE, "surf-summaries"})
+_LOCKED_TITLE = "Locked chat"
+_LOCKED_EXCERPT = "Hidden. Open it with platform_read and a purpose; the operator is asked first."
 #: Sources answered from a catalog of what the operator published, not from the corpus.
 _CATALOGS: frozenset[str] = frozenset({"skills", "agents", "plugins"})
 _UNGATED: frozenset[str] = frozenset({"memory"}) | _CATALOGS
@@ -150,6 +153,27 @@ def _stamp(at: datetime | None) -> str | None:
     return at.isoformat(timespec="minutes") if at is not None else None
 
 
+def _platform_hit(hit: CorpusHit, nonce: str) -> PlatformHit:
+    """A corpus hit as the model sees it; a private thread only as a placeholder."""
+    if hit.private:
+        return PlatformHit(
+            ref=hit.gid,
+            source=_source_of(hit),
+            title=_LOCKED_TITLE,
+            excerpt=_LOCKED_EXCERPT,
+            at=_stamp(hit.at),
+            matched_by=hit.matched_by,
+        )
+    return PlatformHit(
+        ref=hit.gid,
+        source=_source_of(hit),
+        title=hit.title or hit.ref,
+        excerpt=untrusted_fence(hit.text, nonce, source=hit.gid),
+        at=_stamp(hit.at),
+        matched_by=hit.matched_by,
+    )
+
+
 def _source_of(hit: CorpusHit) -> str:
     return next(
         (name for name in PLATFORM_SOURCES if PLATFORM_SOURCES[name].surface_id == hit.source_id),
@@ -203,6 +227,9 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         holds content the operator did not write, so the search pauses for their
         approval first; name only the `sources` you need.
 
+        A hit titled `Locked chat` is a private conversation that matched; its title and
+        text are withheld. Open it with `platform_read` only if you need it.
+
         Args:
             query: What you are looking for, in plain words. It matches by meaning and by
                 keyword.
@@ -236,6 +263,7 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         if kinds and index is None and not _CATALOGS & set(chosen):
             return "Platform search is unavailable."
         if kinds and index is not None:
+            area = deps.caps.get_optional(PrivateArea)
             hits = await index.retrieve(
                 deps.owner_id,
                 query,
@@ -243,17 +271,11 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
                 limit=limit + 1,
                 visible_projects=visible_project_ids(deps.project_id),
                 since=after,
+                include_private=area is not None and area.is_unlocked(),
             )
             lists.append(
                 [
-                    PlatformHit(
-                        ref=hit.gid,
-                        source=_source_of(hit),
-                        title=hit.title or hit.ref,
-                        excerpt=untrusted_fence(hit.text, nonce, source=hit.gid),
-                        at=_stamp(hit.at),
-                        matched_by=hit.matched_by,
-                    )
+                    _platform_hit(hit, nonce)
                     for hit in hits
                     if not (hit.source_id in _THREAD_SURFACES and hit.ref == deps.conversation_id)
                 ]
@@ -274,7 +296,9 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         return PlatformResults(instruction=untrusted_preamble(nonce) if fenced else "", hits=found)
 
     @toolset.tool
-    async def read(ctx: RunContext[RunDeps], ref: str) -> PlatformDocument | str:
+    async def read(
+        ctx: RunContext[RunDeps], ref: str, purpose: str | None = None
+    ) -> PlatformDocument | str:
         """Opens one `platform_search` hit in full by its `ref`: a past conversation, a
         memory, a file, a summary, a report or a routine's output, cut off after
         40,000 characters.
@@ -282,10 +306,16 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         A skill or plugin hit is not opened here; the result tells you which tool loads
         it. An agent hit returns the agent's description and instructions.
 
+        A `Locked chat` hit is a private conversation. Opening one needs `purpose`, and the
+        operator approves every read; if they decline, don't try to reach it another way.
+
         Args:
             ref: The `ref` exactly as the search hit gave it.
+            purpose: Required for a `Locked chat`: one sentence on what you need from it and
+                why. The operator reads it when deciding.
         """
         deps = ctx.deps
+        include_private = await gate_private_read(ctx, ref, purpose)
         kind, _, name = ref.partition(":")
         if kind == "skill":
             return (
@@ -310,7 +340,10 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         if index is None:
             return "Platform search is unavailable."
         document = await index.read(
-            deps.owner_id, ref, visible_projects=visible_project_ids(deps.project_id)
+            deps.owner_id,
+            ref,
+            visible_projects=visible_project_ids(deps.project_id),
+            include_private=include_private,
         )
         if document is None:
             return f"Nothing found for ref {ref!r}. Use a `ref` from a `platform_search` hit."

@@ -117,14 +117,17 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             return
         try:
             summary = await conversations.get_summary(run.conversation_id, OPERATOR_ID)
+            # Notices show in the bell and on the lock screen while the Private area is shut.
+            private = summary is not None and summary.private
             title = summary.title if summary is not None and summary.title else "this conversation"
+            where = "a private chat" if private else f'"{title}"'
             agent = agent_display_name(summary.agent_name if summary is not None else None)
             if run.status is RunStatus.error:
                 _ = await notifications.notify(
                     OPERATOR_ID,
                     NotificationKind.RUN_FAILED,
-                    f'{agent} hit an error in "{title}"',
-                    body=run.error,
+                    f"{agent} hit an error in {where}",
+                    body=None if private else run.error,
                     conversation_id=run.conversation_id,
                     run_id=run.id,
                 )
@@ -132,7 +135,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
                 _ = await notifications.notify(
                     OPERATOR_ID,
                     "run_completed",
-                    f'{agent} finished "{title}"',
+                    f"{agent} finished {where}",
                     conversation_id=run.conversation_id,
                     run_id=run.id,
                 )

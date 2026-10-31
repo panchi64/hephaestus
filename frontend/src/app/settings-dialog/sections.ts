@@ -202,6 +202,14 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         keywords: ["password", "secret", "encryption", "unlock"],
       },
       {
+        id: "private-chats",
+        label: "Private chats",
+        icon: "lock",
+        description:
+          "The PIN-locked area for sensitive chats: hidden from other sessions, and every read asks first.",
+        keywords: ["pin", "lock", "hidden", "sensitive", "private"],
+      },
+      {
         id: "service-keys",
         label: "Service keys",
         icon: "key",

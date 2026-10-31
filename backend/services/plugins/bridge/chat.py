@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from pydantic import JsonValue
 
+from core.exceptions import NotFoundError
 from services.conversations import ConversationStore
+from services.private_area import PrivateArea
 
 from .base import BridgeCall, BridgeCapability, Confirmation
 from .registry import BRIDGE
@@ -25,12 +27,27 @@ def _conversation(call: BridgeCall) -> str | None:
     return call.optional_text("conversation_id", max_chars=64)
 
 
-async def _where(call: BridgeCall) -> str:
+async def _target(call: BridgeCall) -> str | None:
+    """The chat to post in, None for a new one. A plugin never reaches the Private area,
+    open or not, so a private chat answers exactly as a missing one does.
+
+    Raises:
+        NotFoundError: the chat is private.
+    """
     conversation_id = _conversation(call)
+    if conversation_id is not None and await call.services.get(PrivateArea).is_private(
+        conversation_id
+    ):
+        raise NotFoundError("conversation not found")
+    return conversation_id
+
+
+async def _where(call: BridgeCall) -> str:
+    conversation_id = await _target(call)
     if conversation_id is None:
         return "a new chat"
     titles = await call.services.get(ConversationStore).titles(
-        [conversation_id], call.window.owner_id
+        [conversation_id], call.window.owner_id, include_private=False
     )
     title = titles.get(conversation_id)
     return f'the chat "{_clip(title)}"' if title else "an untitled chat"
@@ -47,7 +64,7 @@ async def _asks(call: BridgeCall) -> Confirmation:
 
 
 async def _post(call: BridgeCall) -> JsonValue:
-    conversation_id = await call.send_chat(_prompt(call), _conversation(call))
+    conversation_id = await call.send_chat(_prompt(call), await _target(call))
     return {"conversation_id": conversation_id}
 
 

@@ -153,6 +153,8 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
     await _validate_attachments(request, body.attachment_ids)
     if body.conversation_id is None:
         await _validate_new_thread_binding(request, body)
+        if body.private:
+            await deps.private_area(request).require_writable(OPERATOR_ID)
 
     store = deps.store(request)
     agent_name = None if body.agent == DEFAULT_AGENT else body.agent
@@ -161,6 +163,7 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
         # An unknown id must not silently spawn orphan messages.
         if not await store.exists(body.conversation_id, OPERATOR_ID):
             raise HTTPException(status_code=404, detail="conversation not found")
+        await deps.require_private_open(request, body.conversation_id)
         await _after_restore(request)
         binding = stored = await store.binding(body.conversation_id)
         if body.agent is not None:
@@ -189,6 +192,7 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
             permission=body.permission_level,
             project_id=binding.project_id,
             agent_name=agent_name,
+            private=body.private and not body.ephemeral,
         )
 
     # Claimed before the remaining awaits and the `submit`: a live-run check alone leaves a
@@ -255,6 +259,7 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
     store = deps.store(request)
     if not await store.exists(body.conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
+    await deps.require_private_open(request, body.conversation_id)
     await _after_restore(request)
     # Claimed before the model resolve and the leaf-moving `regenerate_point`, both real
     # `await`s a near-simultaneous regenerate/edit could slip through, since neither request
@@ -306,6 +311,7 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
     store = deps.store(request)
     if not await store.exists(body.conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
+    await deps.require_private_open(request, body.conversation_id)
     await _after_restore(request)
     # Claimed as in regenerate, before the model resolve and `edit_point`.
     deps.claim_conversation(request, body.conversation_id)

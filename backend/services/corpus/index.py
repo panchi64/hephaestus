@@ -91,6 +91,7 @@ class CorpusIndex:
         limit: int = 8,
         visible_projects: tuple[str | None, ...] | None = None,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[CorpusHit]:
         """Fan the query out to the selected sources and RRF-fuse the results.
 
@@ -109,7 +110,8 @@ class CorpusIndex:
         general knowledge would be a worse assistant. What it excludes is the other
         direction: another project's sources, which is the contamination rule.
 
-        ``since`` drops anything written or changed before it.
+        ``since`` drops anything written or changed before it. Private threads are left out
+        unless ``include_private``; those returned are marked ``private``.
         """
         query_vec, query_model = await embed_query(self._embedder, owner_id, query)
         query_tokens = ranking.tokens(query)
@@ -136,7 +138,14 @@ class CorpusIndex:
         per_source = await asyncio.gather(
             *(
                 adapter.retrieve(
-                    owner_id, query, query_vec, query_model, query_tokens, limit=limit, since=since
+                    owner_id,
+                    query,
+                    query_vec,
+                    query_model,
+                    query_tokens,
+                    limit=limit,
+                    since=since,
+                    include_private=include_private,
                 )
                 for adapter in selected
             )
@@ -166,15 +175,17 @@ class CorpusIndex:
         gid: str,
         *,
         visible_projects: tuple[str | None, ...] | None = None,
+        include_private: bool = False,
     ) -> CorpusDocument | None:
         """One item in full by a hit's ``gid``: a surface's own record, or a whole file
-        stitched back from its chunks."""
+        stitched back from its chunks. A private thread reads as missing unless
+        ``include_private``."""
         source_id, sep, ref = gid.partition(":")
         if not sep or not ref:
             return None
         surface = self._surface_adapter(source_id)
         if surface is not None:
-            return await surface.read(owner_id, ref)
+            return await surface.read(owner_id, ref, include_private=include_private)
         if source_id in await self.out_of_scope_source_ids(owner_id, visible_projects):
             return None
         item = item_of(ref)

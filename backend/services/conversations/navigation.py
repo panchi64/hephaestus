@@ -139,6 +139,7 @@ class NavigationMixin(StoreCore):
             # A fork of a thread dropped to Manual must not come back at the default.
             permission=binding.permission,
             agent_name=binding.agent_name,
+            private=source is not None and source.private,
         )
 
         forked = self.cache_get(new_id_) or self._cache_put(new_id_, Tree())

@@ -10,6 +10,7 @@
  */
 
 import { createResource, createSignal, type Resource } from "solid-js";
+import { ensureUnlocked, withPrivateAccess } from "~/features/private";
 import { api } from "~/lib/api";
 import type { TaskItem } from "~/lib/stream";
 import {
@@ -31,7 +32,9 @@ import type {
 } from "./wire";
 
 async function fetchSession(id: string): Promise<ChatSession> {
-  const dto = await api.get<ConversationDetailDTO>(`/conversations/${id}`);
+  const dto = await withPrivateAccess(() =>
+    api.get<ConversationDetailDTO>(`/conversations/${id}`),
+  );
   return {
     id: dto.id,
     title: deriveTitle(dto),
@@ -97,6 +100,18 @@ export async function collectLateTitle(id: string): Promise<void> {
   );
   if (title) revealTitle(id, title);
   refreshSessions();
+}
+
+/** File a thread's whole spawn family in or out of the Private area,
+ *  opening the area first (or choosing a first PIN). False if the operator backed out. */
+export async function setConversationPrivate(
+  id: string,
+  value: boolean,
+): Promise<boolean> {
+  if (!(await ensureUnlocked())) return false;
+  await api.put(`/conversations/${id}/private`, { private: value });
+  refreshSessions();
+  return true;
 }
 
 export async function deleteConversation(id: string): Promise<void> {

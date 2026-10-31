@@ -17,7 +17,7 @@ import difflib
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from core.exceptions import NotFoundError
 from routes import deps
@@ -27,7 +27,9 @@ from services.home.changes import ChangeStatus, ThreadChangeFile, ThreadChanges
 from services.home.rewind import Rewinder, RewindPlan
 from services.sandbox.base import SandboxError, contained_path
 
-router = APIRouter(prefix="/conversations", tags=["projects"])
+router = APIRouter(
+    prefix="/conversations", tags=["projects"], dependencies=[Depends(deps.private_gate)]
+)
 
 
 class ChangedFileOut(CamelModel):

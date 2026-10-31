@@ -51,6 +51,8 @@ export interface ConversationSummaryDTO {
   project_id?: string | null;
   /** The custom agent the thread runs as; null is the default agent. */
   agent_name?: string | null;
+  /** Filed in the PIN-locked Private area. The listing omits these while it is locked. */
+  private?: boolean;
 }
 
 /** The REST detail and the SSE `tool.completed` event carry this identical shape, so

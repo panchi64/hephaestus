@@ -4,6 +4,7 @@ import {
   PINNED_GROUP,
   groupSessions,
   rowAge,
+  splitPrivate,
   type SessionGroup,
   type WorkspaceDirectory,
 } from "./sessionGroups";
@@ -341,5 +342,18 @@ describe("threads opened from an agent tree", () => {
       now: new Date("2026-08-30T12:00:00Z"),
     });
     expect(ids(groups[0])).toEqual(["orphan"]);
+  });
+});
+
+describe("splitPrivate", () => {
+  test("private threads leave every other section, in order", () => {
+    const { ordinary, privateRows } = splitPrivate([
+      session("a"),
+      session("taxes", { private: true, projectId: "p1" }),
+      session("b"),
+      session("medical", { private: true }),
+    ]);
+    expect(ordinary.map((s) => s.id)).toEqual(["a", "b"]);
+    expect(privateRows.map((s) => s.id)).toEqual(["taxes", "medical"]);
   });
 });
