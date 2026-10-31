@@ -6,6 +6,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from core.config import Settings
 from core.volume.base import (
     EncryptedVolume,
     VolumeError,
@@ -26,9 +27,6 @@ __all__ = [
     "open_volume",
     "select_volume",
 ]
-
-MOUNT_DIR_NAME = "volume"
-
 
 class UnavailableVolume:
     """Stands in when no backend works, so the reason reaches the unlock screen."""
@@ -62,9 +60,10 @@ def backing_paths(data_dir: Path) -> tuple[Path, ...]:
     return (data_dir / "volume.sparsebundle", data_dir / "volume.gocryptfs")
 
 
-def select_volume(data_dir: Path, *, max_size: str) -> EncryptedVolume:
-    mountpoint = data_dir / MOUNT_DIR_NAME
-    sparsebundle, cipherdir = backing_paths(data_dir)
+def select_volume(settings: Settings) -> EncryptedVolume:
+    mountpoint = settings.volume_dir
+    max_size = settings.volume_max_size
+    sparsebundle, cipherdir = backing_paths(settings.data_dir)
     if sys.platform == "darwin":
         if shutil.which("hdiutil") is None:
             return UnavailableVolume(mountpoint, "hdiutil is not on PATH")

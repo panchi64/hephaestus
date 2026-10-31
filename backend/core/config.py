@@ -331,9 +331,27 @@ class Settings(BaseSettings):
     browser_control_launch_timeout_s: float = 30.0
 
     @property
+    def volume_dir(self) -> Path:
+        """Where the encrypted volume mounts; every path below exists only while unlocked."""
+        return self.data_dir / "volume"
+
+    @property
+    def scratch_dir(self) -> Path:
+        return self.volume_dir / "sandbox" / "work"
+
+    @property
+    def plugins_install_dir(self) -> Path:
+        return self.volume_dir / "plugins" / "installed"
+
+    @property
+    def volume_tmp_dir(self) -> Path:
+        """Temp files (upload extraction, command output), emptied at every mount."""
+        return self.volume_dir / "tmp"
+
+    @property
     def browser_control_state_dir(self) -> Path:
         """Host directory holding the browser's shared login profile between sessions."""
-        return self.data_dir / "browser"
+        return self.volume_dir / "browser"
 
     # Managed web search: the backend runs its own SearXNG in the services VM, with the
     # DB-backed provider registry as an optional override. Without the VM, search degrades

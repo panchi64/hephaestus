@@ -202,6 +202,10 @@ class Vault:
         """Register a callback fired synchronously from `lock()`."""
         self._on_lock.append(cb)
 
+    def clear_lock_callbacks(self) -> None:
+        """Drop every registered callback, once the units that registered them are gone."""
+        self._on_lock.clear()
+
     def lock(self) -> None:
         if self._dek is not None:
             crypto.wipe(self._dek)

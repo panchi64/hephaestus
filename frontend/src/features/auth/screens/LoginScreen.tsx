@@ -40,9 +40,13 @@ export function LoginScreen(): JSX.Element {
       await session.unlock(password());
     } catch (err) {
       setError(
-        isApiError(err) && err.status === 401
-          ? "Incorrect password."
-          : "Unable to unlock. Check the backend connection.",
+        !isApiError(err)
+          ? "Unable to unlock. Check the backend connection."
+          : err.status === 401
+            ? "Incorrect password."
+            : err.status === 503
+              ? err.detail
+              : "Unable to unlock. Check the backend connection.",
       );
     } finally {
       setLoading(false);
@@ -120,6 +124,14 @@ export function LoginScreen(): JSX.Element {
           {(detail) => (
             <Text variant="caption" tone="alert">
               The backend answered with an error: {detail()}
+            </Text>
+          )}
+        </Show>
+
+        <Show when={session.workspaceFailure}>
+          {(detail) => (
+            <Text variant="caption" tone="alert">
+              Encrypted storage did not open: {detail()}
             </Text>
           )}
         </Show>

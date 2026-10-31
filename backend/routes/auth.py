@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from core.auth import SESSION_COOKIE, auth_attempt_limiter, client_key, token_from_headers
 from core.exceptions import RateLimitedError
+from harness.workspace import WorkspaceOpenError
 from routes import deps
 from routes.deps import OPERATOR_ID
 from services import onboarding
@@ -36,6 +37,10 @@ class AuthStatus(BaseModel):
     #: cleared `app.db` to start over, met by an unlock prompt for a key that now
     #: protects an empty workspace. Only meaningful while `initialized`.
     db_missing: bool
+    #: `closed`, `opening`, `open` or `failed`: whether the decrypted workspace is up.
+    workspace: str
+    #: Why the last open failed (no volume backend, a key that doesn't open the database).
+    workspace_failure: str | None
 
 
 class ResetSummaryOut(BaseModel):
@@ -58,14 +63,28 @@ def _issue_session(request: Request, response: Response) -> TokenResponse:
     return TokenResponse(token=token)
 
 
+async def _open_workspace(request: Request) -> None:
+    """Open the workspace under the key just unlocked; on failure re-lock and answer 503."""
+    try:
+        await deps.workspace(request).open()
+    except WorkspaceOpenError as exc:
+        deps.vault(request).lock()
+        raise HTTPException(
+            status_code=503, detail=f"the workspace could not be opened: {exc}"
+        ) from None
+
+
 @router.get("/auth/status", response_model=AuthStatus)
 async def auth_status(request: Request) -> AuthStatus:
     vault = deps.vault(request)
+    workspace = deps.workspace(request)
     return AuthStatus(
         initialized=vault.is_initialized,
         unlocked=vault.is_unlocked,
         auth_enabled=deps.settings(request).auth_enabled,
         db_missing=vault.is_initialized and not deps.workspace_db_intact(request),
+        workspace=workspace.status.value,
+        workspace_failure=workspace.failure,
     )
 
 
@@ -78,6 +97,7 @@ async def setup(body: PasswordBody, request: Request, response: Response) -> Tok
     if len(body.password) < _MIN_PASSWORD_LEN:
         raise HTTPException(status_code=422, detail="password must be at least 8 characters")
     await vault.setup(body.password)
+    await _open_workspace(request)
     # The workspace this just created lives in *this* database, so the keyfile and the
     # database are in step again — without this, a setup performed after a reset would
     # keep reporting `db_missing` for the rest of the process's life.
@@ -132,25 +152,24 @@ async def login(body: PasswordBody, request: Request, response: Response) -> Tok
         ) from None
     if not await vault.unlock(body.password):
         raise HTTPException(status_code=401, detail="invalid password")
+    await _open_workspace(request)
     return _issue_session(request, response)
 
 
 @router.post("/auth/logout")
 async def logout(request: Request, response: Response) -> dict[str, str]:
-    """End the session and lock the vault: logging out zeroes the key, never just the cookie.
+    """End the session and lock: logging out closes the workspace and zeroes the key.
 
-    The DEK is process-global for the single operator, so a session that outlived the
-    key would be able to do nothing anyway — and one that kept the key alive would let
-    "log out" leave every decrypted secret, PTY, and secret-vault session running. Both
-    endpoints therefore converge on the same teardown; `/auth/lock` is the variant that
-    keeps no cookie semantics of its own.
+    The DEK is process-global for the single operator, so "log out" that kept it alive
+    would leave every decrypted secret, PTY and mounted file running. Both endpoints
+    converge on the same teardown; `/auth/lock` keeps no cookie semantics of its own.
     """
     token = token_from_headers(
         request.headers.get("authorization"), request.cookies.get(SESSION_COOKIE)
     )
     if token:
         deps.auth_manager(request).revoke(token)
-    deps.vault(request).lock()
+    await deps.workspace(request).lock()
     deps.auth_manager(request).revoke_all()
     response.delete_cookie(SESSION_COOKIE)
     return {"status": "logged out"}
@@ -158,7 +177,7 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
 
 @router.post("/auth/lock")
 async def lock(request: Request) -> dict[str, str]:
-    """Wipe the key from memory and revoke all sessions; re-unlock requires login."""
-    deps.vault(request).lock()
+    """Close the workspace, wipe the key and revoke all sessions; re-unlock requires login."""
+    await deps.workspace(request).lock()
     deps.auth_manager(request).revoke_all()
     return {"status": "locked"}

@@ -4,11 +4,9 @@ Settings are read fresh from the environment on every ``get_settings()`` call, s
 place to pin a test-only default is the environment, before any test imports a module
 that reads one.
 
-The two patches below are installed at *import* time rather than from a fixture. Both
-targets are bound by name at module scope (``from core.db import init_db``, and
-``core.crypto``'s module-level hasher), and this file is imported before any test module
-is collected — so patching here is what reaches every caller, including the ones inside
-``app.py``.
+The patches below are installed at *import* time rather than from a fixture: their
+targets are module-level names, and this file is imported before any test module is
+collected, so patching here reaches every caller, including the ones inside ``app.py``.
 """
 
 from __future__ import annotations
@@ -19,6 +17,12 @@ from typing import TYPE_CHECKING
 
 from argon2 import PasswordHasher
 from pydantic_ai.models.test import TestModel as _TestModel
+
+import core.crypto
+import core.db
+import core.volume
+
+from . import _schema, _volume
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestParameters
@@ -37,13 +41,10 @@ _ = os.environ.setdefault("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
 # The app would otherwise build the guest image and boot machines; the VM tests fake the smol SDK.
 _ = os.environ.setdefault("HEPHAESTUS_VM_ENABLED", "false")
 
-import core.crypto  # noqa: E402 — must follow the environment default above
-import core.db  # noqa: E402
-
-from . import _schema  # noqa: E402
-
 # Every test database otherwise replays the full Alembic chain; see `_schema`.
 core.db.init_db = _schema.init_db
+# Booted test apps mount a plain directory instead of an encrypted volume; see `_volume`.
+core.volume.select_volume = _volume.select_directory_volume
 
 # Every booted test app pays two Argon2id derivations, and the tests check the scheme's
 # shape, not its cost, so the work factors drop to Argon2's floor. v1 and v2 stay distinct
