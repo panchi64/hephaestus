@@ -4,7 +4,8 @@ import type { TaskItem } from "~/lib/stream";
 import type { ContextUsage, ConversationStats } from "../model";
 import { ContextBar } from "./ContextBar";
 import { ConversationStatsPanel } from "./ConversationStatsPanel";
-import { taskSummary, TaskRows } from "./TaskRows";
+import { taskSummary } from "../taskItems";
+import { TaskRows } from "./TaskRows";
 
 export interface ConversationStatusProps {
   conversationId: () => string | null;
@@ -20,16 +21,16 @@ export interface ConversationStatus {
   /** The status bar's trailing cells: `Tasks x/y` · `Stats` · the context bar. Each is one `StatusCell`, so the caller can drop them into any
    *  `StatusBar` group. */
   items: () => JSX.Element;
-  /** The task rows `Tasks` discloses, for directly under that row. */
+  /** The task rows `Tasks` discloses, for the top of the composer's dock. */
   taskRows: () => JSX.Element;
 }
 
-/** **What this conversation is doing, at a glance**, as the end of the row under the
- *  composer — what used to be `ConversationStatusStrip`, a line of its own.
+/** **What this conversation is doing, at a glance**, as the end of the composer's
+ *  status row.
  *
  *  Two render functions rather than one component, because the pieces land in two
  *  places that share one piece of state: the `Tasks` toggle sits in the Composer's
- *  `trailing` slot, and the rows it opens sit *below* the Composer, outside it. The
+ *  `trailing` slot, and the rows it opens sit at the top of the dock, outside it. The
  *  open state is the one thing both need, so it lives here and each half reads it. A
  *  function rather than a node for each, so either can be mounted afresh — the row goes
  *  with the Composer while a run is parked and comes back with it.
@@ -67,10 +68,22 @@ export function createConversationStatus(
           onClick={() => setTasksOpen((v) => !v)}
           class="tabular-nums"
         >
-          Tasks {summary().done}/{summary().total}
+          {/* A narrow composer keeps the count, tinted info while a task runs. */}
+          <span class="@max-composer-tight/composer:hidden">Tasks</span>
+          <span
+            class={
+              summary().active
+                ? "@max-composer-tight/composer:text-info"
+                : undefined
+            }
+          >
+            {summary().done}/{summary().total}
+          </span>
           {/* Info blue, not warn amber: a running task is live data. */}
           <Show when={summary().active}>
-            <span class="text-info">· active</span>
+            <span class="text-info @max-composer-tight/composer:hidden">
+              · active
+            </span>
           </Show>
         </StatusCell>
       </Show>
@@ -97,12 +110,11 @@ export function createConversationStatus(
     </>
   );
 
-  // The rows open downward from the row that discloses them, inside the same sticky
-  // dock — so opening the list grows the dock rather than scrolling the transcript out
-  // from under it.
+  // Mounted at the top of the sticky dock, above the composer, so opening the list grows
+  // the dock instead of scrolling the transcript out from under it.
   const taskRows = (): JSX.Element => (
     <Show when={tasksOpen() && hasTasks()}>
-      <div class="pt-2">
+      <div class="pb-2">
         <TaskRows items={props.tasks} />
       </div>
     </Show>

@@ -195,13 +195,10 @@ def build_agent_toolsets(
         """Restate each tool in this catalog's names, offer it a place to say why, and stamp
         the owner its events are attributed to.
 
-        The stamp goes on every tool: a per-category list would rot, and a lifted harness
-        toolset whose events nobody owns fails mid-turn on its first mutation. It is safe
-        broadly (both `capability_id` gates require `defer_loading`, which this owner never
-        declares) and yields to a definition that names an owner (`tools/harness_events.py`).
-
-        Narration is added after the rewrite: its text is already written against the
-        namespaced catalog.
+        The stamp goes on every tool, since a per-category list would rot. That makes every
+        tool capability-owned, which is why the owner allows app events
+        (`tools/harness_events.py`). Narration is added after the rewrite because its text
+        is written against the namespaced catalog.
         """
         return [own_harness_events(_narrated(describe(tool_def, names))) for tool_def in tool_defs]
 

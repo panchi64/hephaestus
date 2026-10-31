@@ -37,6 +37,7 @@ from services.workspace_history import (
     snapshot_id_from_result,
 )
 from tools import RunDeps, build_agent_toolsets
+from tools.harness_events import harness_events_capability
 from tools.view import view_toolset
 
 
@@ -140,6 +141,8 @@ def _run(
         deps_type=RunDeps,
         toolsets=build_agent_toolsets({"view": view_toolset()}),
         output_type=[str, DeferredToolRequests],
+        # Production registers this owner and stamps every tool with it; emits must still land.
+        capabilities=[harness_events_capability()],
     )
     run = Run(id="r1", kind="chat", owner_id="operator", stream=RunStream())
     caps = ServiceContainer()

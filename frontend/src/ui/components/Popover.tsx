@@ -56,6 +56,9 @@ export interface PopoverProps {
   class?: string;
 }
 
+/** Open, Escape-dismissable panels, innermost last. */
+const escapeStack: object[] = [];
+
 /** Whether two placements would paint identically — the panel is positioned entirely
  *  from these four numbers. */
 function samePlacement(a: Placement | null, b: Placement): boolean {
@@ -199,14 +202,20 @@ export function FloatingPanel(props: FloatingPanelProps): JSX.Element {
   });
 
   // Escape closes while open (the backdrop handles outside clicks). Both are skipped
-  // for a `passive` panel, whose caller owns dismissal — see the prop.
+  // for a `passive` panel, whose caller owns dismissal — see the prop. Only the most
+  // recently opened panel answers, so a select nested in a menu closes alone.
   createEffect(() => {
     if (!props.open() || props.passive) return;
+    const token = {};
+    escapeStack.push(token);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
+      if (e.key === "Escape" && escapeStack.at(-1) === token) props.onClose();
     };
     document.addEventListener("keydown", onKey);
-    onCleanup(() => document.removeEventListener("keydown", onKey));
+    onCleanup(() => {
+      document.removeEventListener("keydown", onKey);
+      escapeStack.splice(escapeStack.indexOf(token), 1);
+    });
   });
 
   return (

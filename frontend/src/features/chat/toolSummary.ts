@@ -65,9 +65,12 @@ function display(value: unknown): string | undefined {
     return parts.length ? clamp(parts.join(", "), MAX_DETAIL) : undefined;
   }
   if (typeof value === "object") return undefined;
-  const line = String(value)
-    .split("\n")
-    .find((l) => l.trim().length > 0);
+  return firstLine(String(value));
+}
+
+/** The first non-empty line of `text`, flattened and clamped to a row's detail length. */
+export function firstLine(text: string): string | undefined {
+  const line = text.split("\n").find((l) => l.trim().length > 0);
   return line ? clamp(line, MAX_DETAIL) : undefined;
 }
 

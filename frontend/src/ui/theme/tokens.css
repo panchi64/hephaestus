@@ -350,3 +350,12 @@
     0 2px 12px -2px color-mix(in oklab, var(--accent-alert) 50%, transparent),
     0 10px 36px -10px color-mix(in oklab, var(--accent-alert) 34%, transparent);
 }
+
+/* ---- composer widths -> @max-composer-fold/composer, @max-composer-tight/composer ----
+   Declared to Tailwind directly: a container query's condition cannot read a custom
+   property, so these cannot be `var()`s mapped in tailwind-theme.css. Below `fold` the
+   secondary controls go behind a menu; below `tight` the status cells shorten. */
+@theme {
+  --container-composer-fold: 44rem;
+  --container-composer-tight: 34rem;
+}
