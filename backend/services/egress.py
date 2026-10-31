@@ -101,8 +101,12 @@ class EgressPolicy:
 
     async def allowed_for(self, key: str) -> frozenset[str]:
         """Everything the workspace behind ``key`` may reach."""
+        return self._global | await self.granted_for(key)
+
+    async def granted_for(self, key: str) -> frozenset[str]:
+        """What the workspace behind ``key`` was granted beyond the configured defaults."""
         if not key:
-            return self._global
+            return frozenset()
 
         def work(session: Session) -> set[str]:
             rows = session.exec(
@@ -112,7 +116,7 @@ class EgressPolicy:
             ).all()
             return {row.domain for row in rows}
 
-        return self._global | frozenset(await in_session(self._db, work))
+        return frozenset(await in_session(self._db, work)) - self._global
 
     async def allow(self, key: str, domains: Iterable[str]) -> frozenset[str]:
         """Grant ``domains`` to this workspace and return its whole allowlist.

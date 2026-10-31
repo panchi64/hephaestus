@@ -20,9 +20,9 @@ programs, but no value switches them off: git reads them as command lines, so an
 value is a program named "" and pinning ``diff.external=`` makes every `git diff` fail
 (git 2.50). The driver names come from the repository's `.gitattributes`, and blanking the
 attributes (``GIT_ATTR_SOURCE`` at the empty tree) would also disable git-lfs and
-end-of-line normalisation. Those keys are left to the conversation VM, which bounds what any
-spawned program may do. The pins cover what the host fence cannot: launching a poisoned
-`core.fsmonitor`, and a pager blocking on a pipe.
+end-of-line normalisation. The backend's own git (`services/projects/repo.py`) passes
+`--no-ext-diff --no-textconv` to every diff and reads only a git directory the operator's
+repository owns, so a filter or merge driver it runs is one the operator configured.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ _PINS: tuple[tuple[str, str], ...] = (
 
 
 #: Prefix for every `git` this backend runs on the host itself, outside any fence: no
-#: repository-named hook directory, fsmonitor or pager may run as part of it. Passed as
-#: `-c` arguments, which beat the repository's own config.
+#: repository-named hook directory, fsmonitor, pager or signing program may run as part of
+#: it. Passed as `-c` arguments, which beat the repository's own config.
 GIT_ARG_PINS: tuple[str, ...] = (
     "-c",
     "core.hooksPath=/dev/null",
@@ -45,6 +45,10 @@ GIT_ARG_PINS: tuple[str, ...] = (
     "core.fsmonitor=false",
     "-c",
     "core.pager=cat",
+    "-c",
+    "commit.gpgSign=false",
+    "-c",
+    "tag.gpgSign=false",
 )
 
 

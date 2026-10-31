@@ -243,8 +243,6 @@ export interface ApprovalGrantDTO {
    *  empty when it covers the whole tool. Kept as words because it also identifies the
    *  grant to the revoke endpoint and must round-trip exactly. */
   command_prefix: string[];
-  /** Whether the operator picked the whole tool; the empty prefix cannot say so alone. */
-  decisive: boolean;
   /** Whether this tool's grants are scoped to a command at all. */
   command_scoped: boolean;
   // The backend also returns `expires_at`; the strip shows only the scope, so it is not

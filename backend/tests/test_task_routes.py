@@ -223,8 +223,6 @@ async def test_run_now_creates_conversation_run_and_seeds_grants(monkeypatch: py
 
         granted = await _grants(app).list("operator", s(row["conversationId"]))
         assert {g.tool_name for g in granted} == {"platform_search", "agents_write"}
-        # Seeds must not be decisive: nobody chose a wider scope, and the thread is reopenable.
-        assert not any(g.decisive for g in granted)
 
         refreshed = obj(response_items(await client.get("/tasks"))[0])
         assert refreshed["lastRunAt"] is not None

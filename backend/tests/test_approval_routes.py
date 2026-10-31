@@ -253,8 +253,7 @@ async def test_the_wider_width_grants_the_whole_tool_and_says_so(
     monkeypatch: pytest.MonkeyPatch,
 ):
     # The operator's deliberate second option: this tool, everything it runs. It derives
-    # nothing from the command, so there is nothing that could fail to derive — and it is
-    # recorded as decisive, which is what the reviewing level reads as their answer.
+    # nothing from the command, so there is nothing that could fail to derive.
     install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
@@ -281,9 +280,9 @@ async def test_the_wider_width_grants_the_whole_tool_and_says_so(
         assert json_body(resp) == {"status": "resuming", "granted": [[]], "unscoped": []}
 
         listed = await _grants(client, conv_id)
-        assert [
-            (obj(g)["tool_name"], obj(g)["command_prefix"], obj(g)["decisive"]) for g in listed
-        ] == [("shell_run_on_host", [], True)]
+        assert [(obj(g)["tool_name"], obj(g)["command_prefix"]) for g in listed] == [
+            ("shell_run_on_host", [])
+        ]
 
 
 async def test_the_wider_width_is_still_refused_for_a_once_only_tool(

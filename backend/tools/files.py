@@ -8,8 +8,9 @@ are read from the home, so a result's path can be passed back
 as written; a path naming no folder of the home lands in the thread's own place, its
 project or else its scratch.
 
-A write into a project the thread may only read asks the operator first, and an approval
-leases that project to the thread, so the next write there does not ask again. A write
+A write into a project the thread may only read, or one its home does not mount, asks the
+operator first, and an approval leases that project to the thread, so the next write there
+does not ask again. A write
 to the operator's own folder of a project is recorded so they can put the file back
 (``services/home/changes.py``), and the first result in a project carries its instruction
 files (``tools/briefing.py``).
@@ -40,7 +41,7 @@ from .briefing import with_brief
 from .deps import RunDeps
 from .describe import registered_tools
 from .harness_events import attributable
-from .home import change_log, lease, may_lease, resolve_run_home
+from .home import change_log, lease, may_lease, resolve_run_home, unmounted_project
 from .run_home import home_of
 from .spill import UNTRUSTED_SUFFIX, is_untrusted_spill
 from .workspace import unavailable
@@ -105,7 +106,7 @@ class _HomeFiles(WrapperToolset[RunDeps]):
             return str(exc)
         if home is None:
             return unavailable(ctx.deps)
-        tool_args = _in_home_terms(name, tool_args, home)
+        tool_args = await _in_home_terms(ctx.deps, name, tool_args, home)
         path = tool_args.get("path")
         if name in WRITE_TOOLS and isinstance(path, str):
             refusal, leased = await _clear_write(ctx, home, path)
@@ -153,7 +154,7 @@ async def read_again(deps: RunDeps, path: str, *, max_chars: int) -> FileRead | 
     if home is None:
         return None
     try:
-        path = str(_in_home_terms("read_file", {"path": path}, home)["path"])
+        path = str((await _in_home_terms(deps, "read_file", {"path": path}, home))["path"])
         located = home.locate(path)
     except ModelRetry:
         return None
@@ -179,16 +180,17 @@ def _is_fenced(mount: Mount, rel: str) -> bool:
     return mount.place == SCRATCH and is_untrusted_spill(rel)
 
 
-def _in_home_terms(
-    name: str, tool_args: dict[str, object], home: RunHome | None
+async def _in_home_terms(
+    deps: RunDeps, name: str, tool_args: dict[str, object], home: RunHome | None
 ) -> dict[str, object]:
     """The call's ``path`` as the absolute home path it names.
 
     Spelled out here because the harness checks a path against ``~`` before the home sees
     it, reading ``~`` as a folder name and ``/work`` as outside it. A relative path is
     read from the thread's own place, so ``projects/x`` in a project is that project's own
-    folder, unless nothing is there and it names a place of the home: models drop the
-    ``~/``. A listing or search with no folder named walks the thread's own place.
+    folder, unless nothing is there and it names a place of the home, mounted or a project
+    a write may mount: models drop the ``~/``. A listing or search with no folder named
+    walks the thread's own place.
     """
     path = tool_args.get("path")
     if path is not None and not isinstance(path, str):
@@ -208,7 +210,10 @@ def _in_home_terms(
     if (
         head in _GROUPS
         and not _exists(home, f"{home.default.path}/{head}")
-        and home.locate(at_home) is not None
+        and (
+            home.locate(at_home) is not None
+            or await unmounted_project(deps, home, at_home) is not None
+        )
     ):
         return {**tool_args, "path": at_home}
     return {**tool_args, "path": own}
@@ -233,14 +238,18 @@ async def _clear_write(
 ) -> tuple[str | None, bool]:
     """Ask before a write into a place the thread may only read; lease it once approved.
     Returns the refusal, if any, and whether a lease was taken."""
-    place = home.place_of(path)
+    place = home.place_of(path) or await unmounted_project(ctx.deps, home, path)
     if place is None or home.writable(place):
         return None, False
     if not may_lease(ctx.deps):
         return _delegate_read_only(place.path), False
     if not ctx.tool_call_approved:
         raise ApprovalRequired()
-    _ = await lease(ctx.deps, home, place)
+    try:
+        _ = await lease(ctx.deps, home, place)
+    except WorktreeBusyError as exc:
+        # The lease stands, as the operator approved it; the remount waits for the worktree.
+        return str(exc), False
     return None, True
 
 

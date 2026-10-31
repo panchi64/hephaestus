@@ -26,7 +26,6 @@ from pydantic_ai.settings import ModelSettings
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
-from core.config import get_settings
 from core.db import get_owned, in_session
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
@@ -34,7 +33,6 @@ from models.registry import ModelEndpoint, ModelRole
 from runs import Endpoint, EndpointGate
 from services import embeddings, llm
 from services.endpoint_spec import EndpointSpec
-from services.permissions import decision_reviewer
 from services.providers import DEFAULT_PROVIDER_ID, get_provider
 from services.providers.base import ModelLimits
 
@@ -311,7 +309,7 @@ class ModelRegistry:
     ) -> None:
         """Bind ``role`` to an ordered chain. Validates each endpoint exists and
         is owned, that tool-driving roles use only tool-calling endpoints, and that an
-        ``embedding`` or ``decision`` binding's head actually serves that API.
+        ``embedding`` binding's head actually serves that API.
 
         ``model`` pins an explicit model on the bound endpoint (``None`` ⇒ the
         endpoint's default). It is the embedding role's stand-in for ``main``'s
@@ -327,15 +325,6 @@ class ModelRegistry:
                 )
         if role == "embedding":
             await self._validate_embedding_endpoints(endpoints, model)
-        if role == "decision" and endpoints:
-            try:
-                await decision_reviewer.probe(
-                    self._to_spec(endpoints[0], role, model_override=model),
-                    settings=get_settings(),
-                    client=self._http_client,
-                )
-            except DegradedCapabilityError as exc:
-                raise ValueError(str(exc)) from exc
 
         def work(session: Session) -> None:
             binding = session.exec(
@@ -698,7 +687,7 @@ class ModelRegistry:
 
     async def resolve_raw_spec(self, owner_id: str, role: str) -> EndpointSpec:
         """The head of ``role``'s chain as a raw spec, for a role served by an API other
-        than chat (embeddings, decisions) and so never built into a model.
+        than chat (embeddings) and so never built into a model.
 
         Raises ``DegradedCapabilityError`` when the role is unbound or its head is disabled.
         """

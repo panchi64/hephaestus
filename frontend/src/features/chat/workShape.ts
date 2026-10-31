@@ -65,10 +65,6 @@ export interface WorkShape {
  *  the header's glyph matches the terminal card's. */
 const HOST_TOOL = "shell_run_on_host";
 
-/** The one glyph a review row leads with, wherever it appears — the header's summary and
- *  the row itself must agree, or the fold and its contents read as two different events. */
-const REVIEW_ICON: IconName = "review";
-
 /** One block as a step, or `undefined` for a block kind that is not work the log
  *  reports (nothing else reaches a fold today, but the log's membership rules
  *  live in `blocks.ts` and this must not assume they never widen). */
@@ -94,17 +90,6 @@ function stepOf(block: AssistantBlock): WorkStep | undefined {
         icon: INJECTION_ICON,
         label: segmentLabel(block.injection.contributor),
         detail: "injected",
-      };
-    case "review":
-      // Named by the tool it judged, not by the review — a collapsed log ending on
-      // "Review · Shell · refused" says what happened; one ending on "Review"
-      // alone says only that something did.
-      return {
-        icon: REVIEW_ICON,
-        label: toolEntry(block.review.name).label,
-        detail: block.review.decision
-          ? `review: ${block.review.decision}`
-          : "reviewing",
       };
     // No View arm: a chip is a result and never folds (`isCollapsible`), so a
     // case for one here would be a summary that can't be reached.

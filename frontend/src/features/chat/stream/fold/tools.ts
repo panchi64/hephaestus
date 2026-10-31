@@ -28,7 +28,6 @@ import {
   clearPark,
   dropPreparing,
   findHost,
-  findReview,
   findTool,
   settleDecision,
   upsertHost,
@@ -186,60 +185,17 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         }
       });
       return true;
-    case "review.started":
-      // Opens on start, not on the verdict, so a model-call review reads as in flight
-      // and lands ahead of the tool row it judges.
-      patchById(assistantId, (m) => {
-        if (findReview(m, ev.tool_call_id)) return;
-        (m.blocks ?? (m.blocks = [])).push({
-          kind: "review",
-          id: `review-${ev.tool_call_id}`,
-          review: {
-            toolCallId: ev.tool_call_id,
-            name: ev.name,
-            summary: ev.summary,
-            // Undefined rather than null, so the card renders each only when present.
-            detail: ev.detail ?? undefined,
-            reach: ev.reach ?? undefined,
-            network: ev.network ?? undefined,
-          },
-        });
-      });
-      return true;
-    case "review.completed":
-      patchById(assistantId, (m) => {
-        const b = findReview(m, ev.tool_call_id);
-        if (!b) return;
-        b.review.decision = ev.decision;
-        b.review.stage = ev.stage;
-        b.review.reason = ev.reason;
-        // `tier` is the structural ground that cleared the call; `fenced` is whether
-        // this host could hold it there.
-        b.review.tier = ev.tier ?? undefined;
-        b.review.fenced = ev.fenced;
-        // Null on the wire means the model stage never ran.
-        b.review.risk = ev.risk ?? undefined;
-        b.review.authorization = ev.authorization ?? undefined;
-        b.review.correctness = ev.correctness ?? undefined;
-        b.review.scores = ev.scores ?? undefined;
-        b.review.setup = ev.setup ?? undefined;
-      });
-      return true;
     case "approval.required": {
       // `args` is typed as present but arrives as untrusted JSON; default it once here.
       const args: Record<string, unknown> = ev.args ?? {};
-      // At Auto the chassis reviewed the call first; its verdict rides onto whichever
-      // card asks (terminal or approval) so e.g. `too_destructive` shows on the prompt.
       if (isTerminalTool(ev.name)) {
         patchById(assistantId, (m) => {
-          const review = findReview(m, ev.tool_call_id)?.review;
           upsertHost(m, ev.tool_call_id, ev.name, {
             command: typeof args.command === "string" ? args.command : "",
             explanation: explanationOf(ev),
             guard: ev.guard ?? undefined,
             unconfined: ev.unconfined ?? undefined,
-            risk: review?.risk,
-            reviewReason: review?.reason,
+            autoReason: ev.auto_reason ?? undefined,
             phase: "pending",
           });
         });
@@ -255,15 +211,10 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
           )
         )
           return;
-        const review = findReview(m, ev.tool_call_id)?.review;
         (m.blocks ?? (m.blocks = [])).push({
           kind: "approval",
           id: `approval-${ev.tool_call_id}`,
-          approval: {
-            ...approvalFromEvent(ev),
-            risk: review?.risk,
-            reviewReason: review?.reason,
-          },
+          approval: approvalFromEvent(ev),
         });
       });
       return true;

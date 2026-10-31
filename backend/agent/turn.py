@@ -1,8 +1,8 @@
 """One turn, driven to its end: an answer, a park, or a stop at a bound.
 
 The loop around ``agent.iter()``: the initial model pass, then a continuation for each
-batch of deferred calls that settles without the operator, sharing one no-progress guard,
-usage accumulator and review budget. It emits the live gauge frame per response, drains
+batch of deferred calls that settles without the operator, sharing one no-progress guard
+and usage accumulator. It emits the live gauge frame per response, drains
 mid-run steering at both boundaries, and handles the stops that are state rather than
 errors (first-token timeout, loop breaker, context overflow, a call needing the operator).
 
@@ -47,7 +47,6 @@ from runs import AnswerRetracted, LimitNotice, Run
 from runs.run import StopCause
 from services.conversations import ConversationBinding, ConversationStore
 from services.notifications import NotificationService
-from services.permissions import ReviewBudget
 from tools import NO_DISABLED_TOOLS, RunDeps
 
 from .compaction_context import CompactionContext
@@ -104,8 +103,6 @@ def turn_deps(
     conversation_id: str | None = None,
     binding: ConversationBinding = DEFAULT_BINDING,
     workspace_key: str = "",
-    turn_start: TurnStart | None = None,
-    review_budget: ReviewBudget | None = None,
     ledger_prompt_message_id: str | None = None,
 ) -> RunDeps:
     """The ``RunDeps`` a turn runs its agent with.
@@ -136,10 +133,6 @@ def turn_deps(
         # Empty (an operator's turn) fills in from the conversation. A sub-agent passes the
         # launching thread's workspace or a delegated child's (`services/workspace.py`).
         workspace_key=workspace_key,
-        # What a ruling inside a tool call needs: the review transcript's boundary and the
-        # review budget (`agent/code_mode.py`).
-        turn_start=turn_start,
-        review_budget=review_budget,
         ledger_prompt_message_id=ledger_prompt_message_id,
     )
 
@@ -233,17 +226,12 @@ async def drive_turn(
 
     ``turn_start`` is the persistence boundary, where this turn's own messages begin in the
     replayed history, held as one shared mutable object because an in-turn fold moves it;
-    the persist, flush hooks, park and Auto review (``gating.py``) all read through it.
+    the persist, flush hooks and park all read through it.
 
     ``compaction`` is what this turn may fold with, ``None`` if it cannot (stateless, or
     compaction off). ``correcting`` marks a verifier re-attempt, where folding is refused:
     its drop range holds absolute pre-fold indices. ``reported`` carries a spawned agent's
     filed report into that re-attempt, which is the same turn."""
-    # One review budget for the whole turn: at Auto every hop's deferred calls are
-    # reviewed, and a model reaching past the ceiling would otherwise spend a utility-model
-    # call each, indefinitely. Past the cap calls park for the operator. It rides on the
-    # deps so `run_code` calls spend from the same counter.
-    review_budget = ReviewBudget(limit=settings.review_max_per_turn)
     deps = turn_deps(
         run,
         caps=caps,
@@ -251,8 +239,6 @@ async def drive_turn(
         conversation_id=conversation_id,
         binding=binding,
         workspace_key=workspace_key,
-        turn_start=turn_start,
-        review_budget=review_budget,
         ledger_prompt_message_id=ledger_prompt_message_id,
     )
     deps.reported = reported
@@ -479,7 +465,7 @@ async def drive_turn(
                 requests_used=usage.requests,
             )
 
-        # Rule on each deferred approval (grants, level, Auto's review) in `gating.py`.
+        # Rule on each deferred approval (guards, level, grants, Auto) in `gating.py`.
         # Questions (`output.calls`) skip it: those rulings answer "may this run".
         settled, manual = await settle_deferred(
             run,
@@ -487,13 +473,9 @@ async def drive_turn(
             caps=caps,
             conversation_id=conversation_id,
             deps=deps,
-            messages=messages,
             # The live level: `plan_enter` and an approved plan move it mid-turn
             # (`tools/plan.retarget`).
             permission=deps.permission,
-            # So the review sees the request that opened the turn however many round trips ran.
-            turn_start=turn_start,
-            budget=review_budget,
             metadata=output.metadata,
         )
         if manual or output.calls:

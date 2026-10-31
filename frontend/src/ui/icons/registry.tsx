@@ -89,7 +89,6 @@ export type IconName =
   | "library"
   | "pen"
   | "inject"
-  | "review"
   | "compare"
   | "branch"
   | "research"
@@ -176,16 +175,6 @@ export const icons: Record<IconName, IconEntry> = {
       <path d="M9.5 3H12.5a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9.5" />
       <path d="M2.5 8h5.5" />
       <path d="M6 5.5 8.5 8 6 10.5" />
-    </>
-  ),
-  // A shield with a check inside it: something was vouched for before it happened. Drawn
-  // rather than borrowed for the same reason `inject` is — the row it leads has to read
-  // as neither a tool call nor an injection, and no icon set carries "the chassis ruled
-  // on this in the operator's place".
-  review: () => (
-    <>
-      <path d="M8 2.5 3.5 4.2v3.9c0 2.4 1.8 4.1 4.5 5.4 2.7-1.3 4.5-3 4.5-5.4V4.2L8 2.5Z" />
-      <path d="M6 8.1 7.3 9.4 10 6.7" />
     </>
   ),
 

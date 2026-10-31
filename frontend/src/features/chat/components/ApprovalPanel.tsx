@@ -20,7 +20,7 @@ import { registerKeymap } from "~/lib/keymap";
 import { formatArgs } from "../data";
 import type { Approval, ApprovalDecision } from "../model";
 import { PLAN_SUBMIT_TOOL } from "../stream/approvals";
-import { CautionsAndGrant } from "./ApprovalCautions";
+import { AutoReason, CautionsAndGrant } from "./ApprovalCautions";
 import { createGrantToggle } from "./ConversationGrantToggle";
 
 /** Caps the opened call's height; `formatArgs` doesn't truncate, so a whole file's contents
@@ -149,13 +149,7 @@ export function ApprovalPanel(props: {
           return (
             // The approval pads its own body; the frame imposes none.
             <Stack gap={3} class="px-3 py-3">
-              <Show
-                when={
-                  !props.named ||
-                  approval.risk === "too_destructive" ||
-                  verdict()
-                }
-              >
+              <Show when={!props.named || verdict()}>
                 <Row gap={2} align="center" class="flex-wrap">
                   <Show when={!props.named}>
                     <Text
@@ -165,10 +159,6 @@ export function ApprovalPanel(props: {
                     >
                       {approval.name}
                     </Text>
-                  </Show>
-                  {/* The reviewer's finding travels with the call; the operator decides, it isn't refused outright. */}
-                  <Show when={approval.risk === "too_destructive"}>
-                    <StatusFlag status="alert">Cannot be undone</StatusFlag>
                   </Show>
                   <Show when={verdict()} keyed>
                     {(v) => (
@@ -221,11 +211,7 @@ export function ApprovalPanel(props: {
                 </Row>
               </Show>
 
-              <Show when={approval.risk === "too_destructive"}>
-                <Text variant="body" tone="warn" class="break-words">
-                  {approval.reviewReason}
-                </Text>
-              </Show>
+              <AutoReason reason={approval.autoReason} />
 
               {/* `formatArgs`, not `approval.summary`: the summary is elided to fit a
                   notification, and "Show call" must show the call as made. */}

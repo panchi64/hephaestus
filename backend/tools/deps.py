@@ -22,12 +22,7 @@ from runs import Run
 from services.agents.definition import UNRESTRICTED, ToolAccess
 from services.home.paths import Place
 from services.home.table import RunHome
-from services.permissions import (
-    DEFAULT_PERMISSION,
-    PermissionLevel,
-    ReviewBudget,
-    TurnBoundary,
-)
+from services.permissions import DEFAULT_PERMISSION, PermissionLevel
 from services.search import DedupeSets
 from services.workspace import RunWorkspace, scratch_key
 
@@ -104,12 +99,9 @@ class RunDeps:
     # A delegate whose work the operator approved as one act. Tools that ask the operator
     # have nobody to ask there (the conversation is the parent's) and are withheld.
     delegated_approved: bool = False
-    # Where this turn's own messages begin and the turn's cap on model reviews. They are
-    # here for the one ruling made inside a tool call, where the turn's locals cannot
-    # reach: a call a `run_code` script made (`agent/code_mode.py`). The same objects as the
-    # turn's, so a script cannot spend a review budget of its own. None on a run no turn built.
-    turn_start: TurnBoundary | None = field(default=None, repr=False, compare=False)
-    review_budget: ReviewBudget | None = field(default=None, repr=False, compare=False)
+    # Calls Auto cleared because the VM bounded them, by call id. The executing tool checks
+    # the VM still does before running one (`tools/shell.py`, `tools/code.py`).
+    env_cleared: set[str] = field(default_factory=set, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.workspace_key:

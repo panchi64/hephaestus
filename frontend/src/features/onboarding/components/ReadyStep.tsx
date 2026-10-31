@@ -59,11 +59,6 @@ export function ReadyStep(props: {
         step: "roles",
       },
       {
-        label: "Decision",
-        value: roleModel("decision", "Auto asks you"),
-        step: "roles",
-      },
-      {
         label: "Search & memory",
         value: roleModel("embedding", "keyword recall"),
         step: "roles",

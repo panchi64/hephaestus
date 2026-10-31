@@ -5,6 +5,19 @@ import type { GrantWidth } from "../commandScope";
 import type { ApprovalCautions as Cautions } from "../model";
 import { ConversationGrantToggle } from "./ConversationGrantToggle";
 
+/** Why the Auto level parked this call; nothing at other levels. */
+export function AutoReason(props: { reason: string | undefined }): JSX.Element {
+  return (
+    <Show when={props.reason}>
+      {(reason) => (
+        <Text variant="micro" tone="dim" class="break-words">
+          Auto asked because {reason()}.
+        </Text>
+      )}
+    </Show>
+  );
+}
+
 /**
  * What makes this approval different from an ordinary one. The warn-accent `meta` label
  * is followed by a dim `micro` reason (the pairing `CommandBoundary` uses for an

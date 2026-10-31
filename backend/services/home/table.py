@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from services.permissions.fence import HomeFence
 from services.projects.store import ProjectStore
 
 from .backend import HomeBackend, Mount
@@ -53,15 +52,6 @@ class RunHome:
         mounts = tuple(replace(m, writable=True) if m.place == place else m for m in self.mounts)
         return replace(self, mounts=mounts)
 
-    def fence(self, cwd: str | None = None) -> HomeFence:
-        """The home as the permission judge measures a path against it, from where the
-        thread's shell stands (its default place before its first command)."""
-        return HomeFence(
-            places=frozenset(m.place for m in self.mounts),
-            writable=frozenset(m.place for m in self.mounts if m.writable),
-            cwd=cwd or self.default.path,
-        )
-
 
 async def thread_mounts(
     *,
@@ -75,15 +65,15 @@ async def thread_mounts(
     worktree_root: Path | None = None,
     child_worktrees: Sequence[tuple[str, str, Path]] = (),
 ) -> list[Mount]:
-    """The thread's scratch, writable, then every registered project, the thread's
-    worktree of its filed project at ``~/worktrees/<slug>``, and each worktree of a
-    sub-agent it spawned, given as (project id, handle, folder), at
-    ``~/worktrees/<slug>-<handle>``.
+    """The thread's scratch, writable, then its filed project and any project its
+    ``lease_holder`` holds a lease on, the thread's worktree of its filed project at
+    ``~/worktrees/<slug>``, and each worktree of a sub-agent it spawned, given as (project
+    id, handle, folder), at ``~/worktrees/<slug>-<handle>``.
 
-    A project is writable to a thread whose ``lease_holder`` holds a lease on it, and the
-    filed project when ``filed_writable`` says so: starting a thread in a project is the
-    operator saying the agent works there. A worktree is a branch of the thread's own or
-    of its sub-agent's, so it is always writable.
+    Other registered projects are not mounted, so a thread can't read another project's
+    files. A leased project is writable, and the filed project when ``filed_writable`` says
+    so: starting a thread in a project is the operator saying the agent works there. A
+    worktree is a branch of the thread's own or of its sub-agent's, so it is always writable.
     """
     mounts = [] if scratch is None else [Mount(SCRATCH, scratch, writable=True)]
     if projects is None:
@@ -101,7 +91,10 @@ async def thread_mounts(
             continue
         place = Place("projects", slug)
         filed = project_id == filed_project_id
-        writable = (filed and filed_writable) or place_key(place) in held
+        leased = place_key(place) in held
+        if not filed and not leased:
+            continue
+        writable = (filed and filed_writable) or leased
         mounts.append(Mount(place, root, writable, project_id=project_id))
         if filed and worktree_root is not None:
             mounts.append(

@@ -19,5 +19,6 @@ export function approvalFromEvent(ev: ApprovalEvent): Approval {
     explanation: explanationOf(ev),
     guard: ev.guard ?? undefined,
     unconfined: ev.unconfined ?? undefined,
+    autoReason: ev.auto_reason ?? undefined,
   };
 }

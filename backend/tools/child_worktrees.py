@@ -161,6 +161,7 @@ async def _apply_to_checkout(
         )
     changed = await worktrees.child_changes(
         project_id=child.project_id,
+        root=root,
         conversation_id=child.holder_id,
         delegation_id=child.delegation_id,
         base_ref=child.base_ref,

@@ -108,12 +108,14 @@ async def _with_project(tmp_path: Path) -> tuple[ServiceContainer, Path, WriteLe
     return caps, root, leases
 
 
-async def test_a_sandbox_thread_reads_a_project_by_its_home_path(tmp_path: Path):
-    caps, root, _leases = await _with_project(tmp_path)
+async def test_a_sandbox_thread_reads_a_project_only_once_it_holds_it(tmp_path: Path):
+    caps, root, leases = await _with_project(tmp_path)
     _ = (root / "CLAUDE.md").write_text("Run the checks with `make check`.\n")
-    read = await _call(
-        "read_file", {"path": "~/projects/api/README.md"}, manager=ScratchDirs(tmp_path), caps=caps
-    )
+    args: dict[str, object] = {"path": "~/projects/api/README.md"}
+    with pytest.raises(ModelRetry, match="no /home/agent/projects/api"):
+        _ = await _call("read_file", args, manager=ScratchDirs(tmp_path), caps=caps)
+    await leases.lease("operator", "conv-1", Place("projects", "api"))
+    read = await _call("read_file", args, manager=ScratchDirs(tmp_path), caps=caps)
     # The first touch of the project carries how to work in it.
     assert "the api" in str(read) and "make check" in str(read)
 
@@ -141,7 +143,8 @@ async def test_the_scratch_alias_names_the_same_file(tmp_path: Path):
 
 async def test_a_relative_path_is_inside_the_threads_own_place(tmp_path: Path):
     # A folder of the thread's own named like a group of the home is still its own folder.
-    caps, _root, _leases = await _with_project(tmp_path)
+    caps, _root, leases = await _with_project(tmp_path)
+    await leases.lease("operator", "conv-1", Place("projects", "api"))
     manager = ScratchDirs(tmp_path)
     # With no such folder of its own, it is the home's: models drop the `~/`.
     dropped = await _call(
@@ -181,6 +184,17 @@ async def test_an_approved_write_leases_the_project_to_the_thread(tmp_path: Path
     again: dict[str, object] = {"path": "~/projects/api/more.md", "content": "more"}
     _ = await _call("write_file", again, manager=manager, caps=caps)
     assert (root / "more.md").read_text() == "more"
+
+
+async def test_a_relative_write_into_an_unmounted_project_asks_to_mount_it(tmp_path: Path):
+    caps, root, _leases = await _with_project(tmp_path)
+    manager = ScratchDirs(tmp_path)
+    args: dict[str, object] = {"path": "projects/api/notes.md", "content": "hi"}
+    with pytest.raises(ApprovalRequired):
+        _ = await _call("write_file", args, manager=manager, caps=caps)
+    _ = await _call("write_file", args, manager=manager, caps=caps, approved=True)
+    assert (root / "notes.md").read_text() == "hi"
+    assert not (manager.path("conv-1") / "projects").exists()
 
 
 async def test_a_delegated_agent_cannot_take_write_access(tmp_path: Path):

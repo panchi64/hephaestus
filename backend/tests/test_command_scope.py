@@ -1,0 +1,164 @@
+"""`command_prefixes`: what a standing grant on a command tool is scoped to, so that it
+covers the act on another target and never a different act."""
+
+from __future__ import annotations
+
+import pytest
+
+from services.permissions import command_prefixes
+
+
+@pytest.mark.parametrize(
+    ("command", "prefixes"),
+    [
+        ("uv run pytest tests/test_a.py -k thing", (("uv", "run", "pytest", "-k"),)),
+        ("brew install ripgrep", (("brew", "install", "ripgrep"),)),
+        ("git commit -m 'x'", (("git", "commit", "-m", "x"),)),
+        ("ls", (("ls",),)),
+    ],
+)
+def test_the_program_and_the_words_that_say_which_of_its_modes(
+    command: str, prefixes: tuple[tuple[str, ...], ...]
+):
+    assert command_prefixes(command) == prefixes
+
+
+@pytest.mark.parametrize(
+    ("command", "prefixes"),
+    [
+        ("curl -sS https://api.example/x", (("curl", "-sS", "https://api.example/x"),)),
+        ("env -i true", (("env", "-i", "true"),)),
+        ("git --version", (("git", "--version"),)),
+        ("npm -w pkg run build", (("npm", "-w", "pkg", "run"),)),
+    ],
+)
+def test_a_flag_narrows_the_prefix_instead_of_ending_it(
+    command: str, prefixes: tuple[tuple[str, ...], ...]
+):
+    # Ending at the first `-` let one yes to `curl -sS <url>` stand for `curl -d @secrets
+    # <elsewhere>`. A flag is part of the act; what the cap withholds is the target.
+    assert command_prefixes(command) == prefixes
+
+
+def test_the_cap_counts_operands_and_keeps_every_later_flag():
+    assert command_prefixes("uv run pytest -k thing tests/a.py") == (("uv", "run", "pytest", "-k"),)
+
+
+@pytest.mark.parametrize(
+    ("granted", "later"),
+    [
+        ("git push origin main", "git push origin --force main"),
+        ("git push origin main", "git push origin --delete main"),
+        ("git commit -m 'a b'", "git commit -m 'x' --amend --no-verify"),
+    ],
+)
+def test_a_flag_after_the_cap_is_a_different_act(granted: str, later: str):
+    assert command_prefixes(granted) != command_prefixes(later)
+
+
+def test_a_flag_after_the_operands_keeps_only_its_name():
+    assert command_prefixes("git commit -m 'a b' --author='x y'") == (
+        ("git", "commit", "-m", "--author"),
+    )
+
+
+def test_a_redirect_is_part_of_the_scope():
+    assert command_prefixes("cat notes.md > .git/config") == (("cat", "notes.md", ">.git/config"),)
+    assert command_prefixes("cat notes.md") != command_prefixes("cat notes.md > .git/config")
+    assert command_prefixes("uv run pytest 2>&1 | tail -n 5") == (
+        ("uv", "run", "pytest", "2>&1"),
+        ("tail", "-n", "5"),
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ls | xargs sh -c 'echo hi'",
+        "uv run sh -c 'rm -rf .'",
+        "uv run python -c 'print(1)'",
+        "npx node -e 'x'",
+    ],
+)
+def test_a_runner_handing_off_to_an_interpreter_has_no_scope(command: str):
+    assert command_prefixes(command) is None
+
+
+def test_the_working_directory_is_not_source():
+    assert command_prefixes("rg foo .") == (("rg", "foo", "."),)
+
+
+@pytest.mark.parametrize(
+    "url", ["file://localhost/etc/passwd", "FILE:///etc/passwd", "file:secret"]
+)
+def test_a_file_url_has_no_scope(url: str):
+    assert command_prefixes(f"curl -sS https://api.x -o out {url}") is None
+
+
+@pytest.mark.parametrize(
+    ("command", "prefixes"),
+    [
+        ("git diff | head -20", (("git", "diff"), ("head", "-20"))),
+        ("git add . && git commit -m x", (("git", "add", "."), ("git", "commit", "-m", "x"))),
+    ],
+)
+def test_every_stage_answers_for_itself(command: str, prefixes: tuple[tuple[str, ...], ...]):
+    assert command_prefixes(command) == prefixes
+
+
+@pytest.mark.parametrize("command", ["cat $TARGET", "ls |", "$TOOL --version", ""])
+def test_a_command_that_could_not_be_read_has_no_prefix(command: str):
+    assert command_prefixes(command) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run pytest > ~/.ssh/authorized_keys",
+        "LD_PRELOAD=/tmp/evil.so uv run pytest",
+        "cat ../outside/x",
+        "cd .. && ls",
+        "git --git-dir=/elsewhere/.git log",
+        "make OUT=/etc/x",
+        "curl file:///etc/passwd",
+        "curl -o/etc/x https://example.test",
+        "make -C../other",
+        "grep -r foo '\"/etc/passwd\"'",
+    ],
+)
+def test_a_command_that_leaves_the_working_directory_has_no_prefix(command: str):
+    # The same leading words, and not the same act.
+    assert command_prefixes(command) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sh -c 'cat /etc/passwd'",
+        "sh -c 'cat \"/etc/passwd\"'",
+        "bash -c 'rm -rf src'",
+        "python3 -c 'print(1)'",
+        "/usr/bin/node -e 'x'",
+        "env sh -c 'rm -rf src'",
+        "nice -n 5 bash script.sh",
+        "awk '{print}' f",
+        "busybox sh",
+    ],
+)
+def test_an_inline_script_has_no_prefix(command: str):
+    # `("sh", "-c")` would cover every script the shell could be handed.
+    assert command_prefixes(command) is None
+
+
+def test_a_program_name_that_is_more_than_one_word_is_not_a_name():
+    assert command_prefixes("'my prog' arg") is None
+
+
+def test_an_empty_argument_ends_the_prefix_rather_than_joining_it():
+    assert command_prefixes('git commit ""') == (("git", "commit"),)
+
+
+def test_every_word_of_a_prefix_survives_a_round_trip_through_display():
+    for command in ("uv run pytest -k x", "git commit -m 'x'", "brew install ripgrep"):
+        for prefix in command_prefixes(command) or ():
+            assert all(word and word.split() == [word] for word in prefix)

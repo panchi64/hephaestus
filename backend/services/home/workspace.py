@@ -31,8 +31,17 @@ type EgressResolver = Callable[[], Awaitable[tuple[str, ...] | None]]
 
 def machine_spec(home: RunHome, allow_hosts: tuple[str, ...] | None) -> MachineSpec:
     """What the conversation's machine mounts and reaches: every place of the home, at
-    its path, read-only where the thread may not write it."""
-    binds = [Bind(str(m.root), m.place.path, read_only=not m.writable) for m in home.mounts]
+    its path, read-only where the thread may not write it.
+
+    A writable project checkout gets its `.git` bound read-only over it. Root in the guest
+    can unmount that, so it guards against accidents only; Auto parks VM work in a thread
+    with one (``services/permissions/decide.py``).
+    """
+    binds: list[Bind] = []
+    for m in home.mounts:
+        binds.append(Bind(str(m.root), m.place.path, read_only=not m.writable))
+        if m.writable and m.place.kind == "projects" and (m.root / ".git").is_dir():
+            binds.append(Bind(str(m.root / ".git"), f"{m.place.path}/.git", read_only=True))
     scratch = home.mount(SCRATCH)
     if scratch is not None:
         binds.append(Bind(str(scratch.root), SCRATCH_ALIAS, read_only=False))

@@ -1,4 +1,4 @@
-"""Operator-in-the-loop events: approvals, questions, and Auto-level reviews."""
+"""Operator-in-the-loop events: approvals and questions."""
 
 from __future__ import annotations
 
@@ -26,6 +26,9 @@ class ApprovalRequired(Body):
     # Why a host command is about to run with no fence in force (disabled by the operator
     # or unbuildable). Additive to v1.
     unconfined: str | None = None
+    # Why the Auto level parked this call, as a clause ("it runs on the host", "the VM is
+    # unavailable"). Additive to v1.
+    auto_reason: str | None = None
 
 
 class ApprovalDecided(Body):
@@ -98,61 +101,3 @@ class QuestionAnswered(Body):
     type: Literal["question.answered"] = "question.answered"
     tool_call_id: str
     answers: list[AnsweredQuestionOut] = Field(default_factory=list)
-
-
-class ReviewStarted(Body):
-    """An action at the Auto level is being ruled on in the operator's place.
-
-    Auto gives the operator's approvals for them, acceptable only if they can see it happen
-    and read what was decided and why, so the review announces itself before running.
-
-    ``summary`` is the action's extracted worst case, in the words the reviewer judges.
-    ``detail`` is the act's own content where worth reading (a delegated task, a program,
-    the reason for opening a credential), else null. ``reach`` is ``host`` for the host
-    command tool, ``offline`` for a VM shell command, null for any other act (``network``
-    is not produced). ``network`` is whether a VM command names an address or fetches,
-    null where nothing runs in the VM.
-    Additive to v1."""
-
-    type: Literal["review.started"] = "review.started"
-    tool_call_id: str
-    name: str
-    summary: str
-    detail: str | None = None
-    reach: Literal["offline", "network", "host"] | None = None
-    network: bool | None = None
-
-
-class ReviewCompleted(Body):
-    """How the review ruled, on the three axes it ruled on.
-
-    ``decision`` is the outcome the run took: ``allow`` ran the call without a prompt,
-    ``ask`` parked it. ``block`` is no longer produced (an act judged unrecoverable parks,
-    being the one the operator most needs to see) but stays in the vocabulary because stored
-    events of earlier threads carry it. It carries more than the outcome: ``stage`` says
-    whether the structural judge or a model settled it, ``tier`` on which ground when the
-    judge did, ``fenced`` whether an OS fence held the command to what it declared, and the
-    axes what the model saw. "Allowed" alone isn't actionable; "cleared structurally, fenced
-    to the worktree" tells an over-permissive rule from a well-judged call.
-
-    The axes are null when the model stage never ran (the judge cleared it, or no reviewer
-    was available), and ``tier`` is null whenever the model settled it. Additive to v1."""
-
-    type: Literal["review.completed"] = "review.completed"
-    tool_call_id: str
-    name: str
-    decision: Literal["allow", "ask", "block"]
-    stage: Literal["judge", "reviewer"]
-    reason: str
-    tier: Literal["read", "sandbox", "workspace"] | None = None
-    #: Whether this host could confine the command at all. False is why an ordinary
-    #: contained command reached a model reviewer, and it is the operator's to fix.
-    fenced: bool = False
-    risk: Literal["low", "high", "too_destructive"] | None = None
-    authorization: Literal["explicitly_no", "neutral", "explicitly_yes"] | None = None
-    correctness: str | None = None
-    #: The decision model's probabilities behind the three axes, by question.
-    scores: dict[str, float] | None = None
-    #: Set when the model stage was needed and could not run: no decision model is
-    #: bound, or the bound one did not answer. The client offers to set one up.
-    setup: Literal["unbound", "unreachable"] | None = None

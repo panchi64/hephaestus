@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -25,7 +26,6 @@ from runs import ConversationBusyError, InboxDispatch, RunRegistry
 from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
-from services.approval_ledger import ApprovalLedger
 from services.artifacts import ArtifactStore
 from services.backup import BackupService
 from services.browser import BrowserSessionManager
@@ -112,7 +112,6 @@ class AppState(State):
         self.conversation_tasks: ConversationTasks
         self.plan_mode: PlanMode
         self.approval_grants: ApprovalGrantStore
-        self.approval_ledger: ApprovalLedger
         self.egress: EgressPolicy
         self.skills: SkillStore
         self.platform_skills: PlatformSkills
@@ -356,10 +355,6 @@ def approval_grants(request: Request) -> ApprovalGrantStore:
     return app_state(request).approval_grants
 
 
-def approval_ledger(request: Request) -> ApprovalLedger:
-    return app_state(request).approval_ledger
-
-
 def egress(request: Request) -> EgressPolicy:
     return app_state(request).egress
 
@@ -392,11 +387,18 @@ def command_store(request: Request) -> CommandStore:
     return app_state(request).command_store
 
 
+@dataclass(frozen=True)
+class ComposerTree:
+    tree: Path
+    project_root: Path
+    #: The tree is the thread's own worktree rather than the operator's checkout.
+    from_worktree: bool
+
+
 async def composer_tree(
     request: Source, project_id: str | None, conversation_id: str | None
-) -> tuple[Path | None, bool]:
-    """The checkout a composer in this thread is looking at, and whether it is the thread's
-    own worktree rather than the operator's checkout.
+) -> ComposerTree | None:
+    """The checkout a composer in this thread is looking at, and its project's root.
 
     Shared by the `@` picker, the `/` picker and the turn resolving a picked command, so all
     three agree on which tree a name came from; callers indifferent to that use
@@ -407,23 +409,26 @@ async def composer_tree(
     project is ``None``, not an error.
     """
     if not project_id:
-        return None, False
+        return None
     try:
         project = await projects(request).get(OPERATOR_ID, project_id)
     except NotFoundError:
-        return None, False
+        return None
     root = Path(project.root_path)
     if not conversation_id:
-        return root, False
-    return await worktree_root(worktrees(request).path_for(project_id), conversation_id, root)
+        return ComposerTree(root, root, from_worktree=False)
+    tree, from_worktree = await worktree_root(
+        worktrees(request).path_for(project_id), conversation_id, root
+    )
+    return ComposerTree(tree, root, from_worktree)
 
 
 async def composer_root(
     request: Source, project_id: str | None, conversation_id: str | None
 ) -> Path | None:
     """:func:`composer_tree` for the callers that only need the tree, not its provenance."""
-    root, _from_worktree = await composer_tree(request, project_id, conversation_id)
-    return root
+    found = await composer_tree(request, project_id, conversation_id)
+    return found.tree if found is not None else None
 
 
 def uploads(request: Source) -> UploadStore:

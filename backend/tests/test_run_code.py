@@ -271,8 +271,6 @@ class TestAScriptsCalls:
             ("tool.completed", "s__1"),
             ("tool.completed", "s"),
         ]
-        reviewed = [e.body for e in run.stream.replay() if e.body.type == "review.completed"]
-        assert [r.tool_call_id for r in reviewed] == ["s__1"]
 
     async def test_one_that_needs_the_operator_is_refused_with_the_way_round(self):
         calls: list[str] = []

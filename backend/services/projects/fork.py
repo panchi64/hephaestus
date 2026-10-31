@@ -82,7 +82,9 @@ async def add_checkout_child(*, root: Path, child: Path, branch: str) -> None:
     _ = await run_git_ok(root, "worktree", "add", "-b", branch, str(child), "HEAD")
     listed = await run_git_ok(root, "ls-files", "-z", "-m", "-o", "--exclude-standard")
     await asyncio.to_thread(_carry, root, child, [p for p in listed.split("\0") if p])
-    _ = await commit_worktree(child, "Starting point: the checkout's uncommitted work")
+    _ = await commit_worktree(
+        child, root=root, message="Starting point: the checkout's uncommitted work"
+    )
     await _warm(root, child)
 
 
@@ -120,25 +122,33 @@ async def merge_child_back(
     Both trees are committed first: a dirty parent is a merge git refuses outright. A
     conflict aborts the merge, so the parent's tree stays usable and the child is kept.
     """
-    _ = await commit_worktree(child, "Delegated agent changes")
-    _ = await commit_worktree(parent_path, "Agent changes (before a delegated merge)")
+    _ = await commit_worktree(child, root=root, message="Delegated agent changes")
+    _ = await commit_worktree(
+        parent_path, root=root, message="Agent changes (before a delegated merge)"
+    )
     # Three dots: what the child added since it diverged, not what the parent has done
     # meanwhile — computed before the merge, while the two are still distinguishable.
     # Deletions are counted apart from the rest, because "your file changed" and "your
     # file is gone" are not the same sentence to the operator reading the report, and the
     # merge commit carries both.
     spec = f"HEAD...{branch}"
-    files = _paths(await run_git_ok(parent_path, "diff", "--name-only", "--diff-filter=d", spec))
-    deleted = _paths(await run_git_ok(parent_path, "diff", "--name-only", "--diff-filter=D", spec))
+    files = _paths(
+        await run_git_ok(parent_path, "diff", "--name-only", "--diff-filter=d", spec, root=root)
+    )
+    deleted = _paths(
+        await run_git_ok(parent_path, "diff", "--name-only", "--diff-filter=D", spec, root=root)
+    )
 
     code, out, err = await run_git(
-        parent_path, *AUTHOR, "merge", "--no-ff", branch, "-m", f"Merged {branch}"
+        parent_path, *AUTHOR, "merge", "--no-ff", branch, "-m", f"Merged {branch}", root=root
     )
     if code != 0:
         # Read the conflicting paths *before* aborting — the abort is what clears them.
-        _code, unmerged, _err = await run_git(parent_path, "diff", "--name-only", "--diff-filter=U")
+        _code, unmerged, _err = await run_git(
+            parent_path, "diff", "--name-only", "--diff-filter=U", root=root
+        )
         conflicts = _paths(unmerged)
-        _ = await run_git(parent_path, "merge", "--abort")
+        _ = await run_git(parent_path, "merge", "--abort", root=root)
         if not conflicts:
             # Not a conflict at all — a broken ref, an unreadable tree. Say what git
             # said rather than report an empty, mystifying "nothing merged".
@@ -149,15 +159,19 @@ async def merge_child_back(
     return MergeReport(merged=True, files=files, deleted=deleted)
 
 
-async def child_changes(*, child: Path, base_ref: str) -> MergeReport:
+async def child_changes(*, root: Path, child: Path, base_ref: str) -> MergeReport:
     """What the child changed since it was cut, with its tree committed first."""
-    _ = await commit_worktree(child, "Delegated agent changes")
+    _ = await commit_worktree(child, root=root, message="Delegated agent changes")
     spec = f"{base_ref}..HEAD"
     files = _paths(
-        await run_git_ok(child, "diff", "--no-renames", "--name-only", "--diff-filter=d", spec)
+        await run_git_ok(
+            child, "diff", "--no-renames", "--name-only", "--diff-filter=d", spec, root=root
+        )
     )
     deleted = _paths(
-        await run_git_ok(child, "diff", "--no-renames", "--name-only", "--diff-filter=D", spec)
+        await run_git_ok(
+            child, "diff", "--no-renames", "--name-only", "--diff-filter=D", spec, root=root
+        )
     )
     return MergeReport(merged=False, files=files, deleted=deleted)
 
@@ -173,14 +187,20 @@ async def apply_child(*, checkout: Path, child: Path, base_ref: str) -> MergeRep
     git state is untouched. A patch that does not apply cleanly is refused whole, naming
     the files that clashed, and the child is kept.
     """
-    changed = await child_changes(child=child, base_ref=base_ref)
+    changed = await child_changes(root=checkout, child=child, base_ref=base_ref)
     if not changed.files and not changed.deleted:
         return MergeReport(merged=True, files=[])
     with tempfile.TemporaryDirectory() as scratch:
         # Written by git itself: a text file in another encoding must survive byte-exact.
         patch_file = Path(scratch) / "child.patch"
         _ = await run_git_ok(
-            child, "diff", "--no-renames", "--binary", f"--output={patch_file}", f"{base_ref}..HEAD"
+            child,
+            "diff",
+            "--no-renames",
+            "--binary",
+            f"--output={patch_file}",
+            f"{base_ref}..HEAD",
+            root=checkout,
         )
         code, out, err = await run_git(checkout, "apply", "--check", str(patch_file))
         if code != 0:

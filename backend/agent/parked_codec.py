@@ -16,7 +16,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from runs import Endpoint, Run
 from services.conversations import ConversationBinding
 
-from .gating import GrantApproved
+from .gating import EnvApproved, GrantApproved
 from .parking import ParkedTurn
 
 _REQUESTS = TypeAdapter(DeferredToolRequests)
@@ -25,10 +25,9 @@ _BINDING = TypeAdapter(ConversationBinding)
 
 class StoredDecision(BaseModel):
     call_id: str
-    kind: Literal["approved", "denied", "grant"]
+    kind: Literal["approved", "denied", "grant", "env"]
     override_args: dict[str, JsonValue] | None = None
     message: str | None = None
-    needs_whole_tool: bool = False
 
 
 class StoredEndpoint(BaseModel):
@@ -73,15 +72,15 @@ def encode_park(parked: ParkedTurn, run: Run) -> str:
         if isinstance(outcome, ToolDenied):
             settled.append(StoredDecision(call_id=call_id, kind="denied", message=outcome.message))
         else:
-            kind = "grant" if isinstance(outcome, GrantApproved) else "approved"
+            kind = (
+                "grant"
+                if isinstance(outcome, GrantApproved)
+                else "env"
+                if isinstance(outcome, EnvApproved)
+                else "approved"
+            )
             settled.append(
-                StoredDecision(
-                    call_id=call_id,
-                    kind=kind,
-                    override_args=outcome.override_args,
-                    needs_whole_tool=isinstance(outcome, GrantApproved)
-                    and outcome.needs_whole_tool,
-                )
+                StoredDecision(call_id=call_id, kind=kind, override_args=outcome.override_args)
             )
     endpoint = run.endpoint
     return ParkPayload(
@@ -128,9 +127,9 @@ def decode_park(payload: str, *, kind: str) -> tuple[ParkedTurn, Endpoint | None
                 ToolDenied(message=each.message) if each.message else ToolDenied()
             )
         elif each.kind == "grant":
-            settled[each.call_id] = GrantApproved(
-                override_args=each.override_args, needs_whole_tool=each.needs_whole_tool
-            )
+            settled[each.call_id] = GrantApproved(override_args=each.override_args)
+        elif each.kind == "env":
+            settled[each.call_id] = EnvApproved(override_args=each.override_args)
         else:
             settled[each.call_id] = ToolApproved(override_args=each.override_args)
     parked = ParkedTurn(

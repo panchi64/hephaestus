@@ -141,7 +141,6 @@ export async function fetchGrants(
   return rows.map((r) => ({
     toolName: r.tool_name,
     commandPrefix: r.command_prefix ?? [],
-    decisive: r.decisive ?? false,
     commandScoped: r.command_scoped ?? false,
   }));
 }

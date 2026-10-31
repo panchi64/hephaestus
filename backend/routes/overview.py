@@ -55,7 +55,7 @@ class Capability(BaseModel):
     what counts as nominal/degraded/down. ``critical`` marks a capability the
     workspace cannot function without (drives the overall-status flag)."""
 
-    # Stable id: "chat_model", "embeddings", "decision_model", "sandbox", "web_search",
+    # Stable id: "chat_model", "embeddings", "sandbox", "web_search",
     # "web_fetch", or a notification channel's key.
     key: str
     label: str
@@ -167,19 +167,6 @@ async def get_overview(request: Request) -> Overview:
             detail=embedding_detail,
             remediation_href=None if embedding_configured else "/models/embedding",
             remediation_label=None if embedding_configured else "CONFIGURE",
-        )
-    )
-    # Without a decision model, Auto asks the operator about every call the structural
-    # judge cannot clear.
-    decision_configured = bool(roles.get("decision"))
-    capabilities.append(
-        Capability(
-            key="decision_model",
-            label="DECISION MODEL",
-            status="nominal" if decision_configured else "warn",
-            detail="reviews Auto's actions" if decision_configured else "Auto asks you instead",
-            remediation_href=None if decision_configured else "/models",
-            remediation_label=None if decision_configured else "CONFIGURE",
         )
     )
     # Commands run in each conversation's VM, so they are available once the image is

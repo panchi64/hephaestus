@@ -17,8 +17,8 @@ import {
   useRoles,
 } from "./data";
 
-/** The four jobs a model can be given, by the backend's role id. */
-export type AssignableRole = "main" | "utility" | "embedding" | "decision";
+/** The jobs a model can be given, by the backend's role id. */
+export type AssignableRole = "main" | "utility" | "embedding";
 
 /** An unbound `utility` is not a broken state: the backend degrades background work onto
  *  the chat model, so "same as chat model" is spelled as the empty binding it already is. */

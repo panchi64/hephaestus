@@ -132,8 +132,7 @@ class RoutineFires:
         time. The routine records it as its latest.
 
         The seeds are whole-tool grants, even on a tool that runs commands: only a tool name
-        was approved, with no command to scope to. A seed is undecisive: at the reviewing
-        level it informs the review rather than answering for it, as nobody watches the run."""
+        was approved, with no command to scope to."""
         conversation_id = await self._conversations.create_conversation(
             view.owner_id, title=view.title, agent_name=view.agent_name
         )

@@ -26,8 +26,7 @@ export interface EndpointInput {
 }
 
 /** Roles that resolve against an ordered fallback chain (ordered in
- *  `FallbackChainsSection`). `main` is absent: it is single-endpoint. `decision` is
- *  absent: only the head of its chain is asked. The binding shape
+ *  `FallbackChainsSection`). `main` is absent: it is single-endpoint. The binding shape
  *  (`RoleBinding`/`RoleBindings`) lives in `~/lib/stores/models`. */
 export const BINDABLE_ROLES = ["utility", "embedding"] as const;
 

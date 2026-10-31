@@ -1,9 +1,9 @@
 import { For, Show, createSignal, type JSX } from "solid-js";
-import { ActionButtons, ActionFrame, Row, Stack, StatusFlag, Text } from "~/ui";
+import { ActionButtons, ActionFrame, Row, Stack, Text } from "~/ui";
 import { duration } from "~/lib/format";
 import { grantKey, type GrantWidth } from "../commandScope";
 import type { ApprovalDecision, HostCommand, HostCommandPhase } from "../model";
-import { CautionsAndGrant } from "./ApprovalCautions";
+import { AutoReason, CautionsAndGrant } from "./ApprovalCautions";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
 import { createGrantToggle } from "./ConversationGrantToggle";
 import { createAdoptedOpen } from "./ProcessRow";
@@ -170,16 +170,7 @@ function Terminal(props: {
             {c().explanation}
           </Text>
         </Show>
-        {/* The Auto review hands a `too_destructive` command to the operator, so the
-            finding must arrive with the command rather than on a collapsed row above. */}
-        <Show when={c().risk === "too_destructive"}>
-          <Row gap={2} align="center">
-            <StatusFlag status="alert">Cannot be undone</StatusFlag>
-            <Text variant="micro" tone="warn" class="break-words">
-              {c().reviewReason}
-            </Text>
-          </Row>
-        </Show>
+        <AutoReason reason={c().autoReason} />
         <Show
           when={!decidedPending()}
           fallback={
