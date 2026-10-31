@@ -156,13 +156,8 @@ export interface Approval extends ApprovalCautions {
   summary: string;
   /** Longer plain-language explanation, when the tool provides one. */
   explanation?: string;
-  /** What a review made of this call, copied off the matching `review.completed`. Present
-   *  only at the Auto level. `too_destructive` is carried so the reviewer's warning about
-   *  an irreversible act reaches the card where the operator is deciding. */
-  risk?: "low" | "high" | "too_destructive";
-  /** The review's account of its verdict: the axes it scored and, when a standing grant
-   *  supplied the authorization, that it did. */
-  reviewReason?: string;
+  /** Why the Auto level parked this call ("runs on the host"). Absent at other levels. */
+  autoReason?: string;
   /** True once a decision for this approval 409'd: the run had already resumed elsewhere
    *  (a second tab, a retried request). Non-interactive; a refetch reconciles the
    *  transcript with the winning decision. */
@@ -268,10 +263,8 @@ export interface HostCommand extends CommandBoundaryFacts, ApprovalCautions {
   command: string;
   /** Plain-language description of the effect, shown for the approval decision. */
   explanation?: string;
-  /** Same two review fields as `Approval`; `too_destructive` mostly shows up on shell
-   *  commands (`git commit --amend`, `rm -rf build`). */
-  risk?: "low" | "high" | "too_destructive";
-  reviewReason?: string;
+  /** As on `Approval`. */
+  autoReason?: string;
   phase: HostCommandPhase;
   /** Captured output, present once the command has run. `exitCode` null means it timed
    *  out (never exited), which differs from not having run (undefined). */
@@ -344,7 +337,6 @@ export type AssistantBlock =
   | TextBlock
   | ToolBlock
   | ContextBlock
-  | ReviewBlock
   | HostCommandBlock
   | ApprovalBlock
   | QuestionBlock
@@ -411,56 +403,6 @@ export interface CompactionProgress {
    *  The operator keeps the parsed summary on the compaction turn. */
   summary?: string;
   done?: boolean;
-}
-
-/** An action the chassis ruled on in the operator's place at the Auto level
- *  (`review.started` / `review.completed`), shown immediately ahead of the call it
- *  judged. Without it, a call the operator never approved is indistinguishable from a
- *  gate that failed open. */
-export interface ReviewBlock {
-  kind: "review";
-  id: string;
-  review: Review;
-}
-
-/** One review: the action's worst case, how it was ruled on and, when the model rather
- *  than the deterministic judge ruled, the three axes it scored.
- *
- *  `decision` is undefined only while the review is in flight; the row appears when the
- *  review starts so a model-call pause reads as "being checked", not a stall. */
-export interface Review {
-  toolCallId: string;
-  /** The namespaced tool the model asked for. */
-  name: string;
-  /** The action's worst case, in the words the reviewer judged. */
-  summary: string;
-  /** The act's own content where worth reading (a delegated task, a skill rewrite, a
-   *  credential-open reason), so the decision is reviewable on the material the reviewer
-   *  saw. Undefined for most tools. */
-  detail?: string;
-  /** How far a shell command said it needs to go. Undefined means it declared nothing,
-   *  not the widest reach. */
-  reach?: CommandReach;
-  /** Whether the command will run with the network; an install or a named address gets
-   *  it despite an `offline` declaration. */
-  network?: boolean;
-  decision?: "allow" | "ask" | "block";
-  /** Which stage settled it: the structural judge, or the model. */
-  stage?: "judge" | "reviewer";
-  /** On which ground the judge cleared it, when it did. */
-  tier?: "read" | "sandbox" | "workspace";
-  /** Whether an OS fence was available to hold the command to its declaration. False is
-   *  why a contained command reached a reviewer, and the operator can fix it, so it is
-   *  shown rather than inferred from a missing tier. */
-  fenced?: boolean;
-  reason?: string;
-  risk?: "low" | "high" | "too_destructive";
-  authorization?: "explicitly_no" | "neutral" | "explicitly_yes";
-  correctness?: string;
-  /** The decision model's probabilities behind the axes, by question. */
-  scores?: Record<string, number>;
-  /** Set when the call needed the decision model and none could answer. */
-  setup?: "unbound" | "unreachable";
 }
 
 /** A host-machine command, rendered as a persistent terminal. */
@@ -722,9 +664,9 @@ export const PERMISSION_LEVELS: readonly PermissionLevelSpec[] = [
   },
   {
     id: "auto",
-    label: "Auto-review",
+    label: "Auto",
     description:
-      "Acts on its own inside the worktree, reviewed beyond it, asks only on doubt.",
+      "Acts on its own inside the offline VM; asks before the host or the network.",
   },
   // The one description that is a warning, not a summary: the last thing an operator
   // reads before choosing it.
@@ -836,10 +778,6 @@ export interface ApprovalGrant {
    *  Tells apart several grants on one tool, in the chip and the revoke. Kept as words
    *  because the revoke sends it straight back; joining is for the chip label. */
   commandPrefix: string[];
-  /** The operator's wider pick for the whole tool, which the reviewing level takes as
-   *  the authorization rather than weighing. Needed because an empty `commandPrefix`
-   *  cannot distinguish it from a non-command tool's grant or a scheduled task's seed. */
-  decisive: boolean;
   /** Whether this tool's grants are scoped to a command at all; otherwise "any command"
    *  is not a contrast and names commands that do not exist. */
   commandScoped: boolean;

@@ -16,9 +16,9 @@ import { EmbeddingRoleControls } from "./EmbeddingRoleControls";
 import { ModelRoleCard } from "./ModelRoleCard";
 
 /** The role cards, named by job rather than by role id: the model that answers you
- *  (`main`), the cheap one for background work (`utility`), the one behind recall
- *  (`embedding`), and Auto's reviewer (`decision`). Each offers the same discovery
- *  groups the composer's model picker reads. */
+ *  (`main`), the cheap one for background work (`utility`), and the one behind recall
+ *  (`embedding`). Each offers the same discovery groups the composer's model picker
+ *  reads. */
 export function ModelAssignments(): JSX.Element {
   const a = useModelAssignments();
   const roleWindow = (role: AssignableRole): number | null =>
@@ -82,17 +82,6 @@ export function ModelAssignments(): JSX.Element {
           bound={a.roleEndpoint("embedding") !== undefined}
         />
       </ModelRoleCard>
-
-      <ModelRoleCard
-        label="Decision model"
-        description="Rules on Auto's actions without asking you. Needs a decision endpoint: llama-server's /v1/systemone, or OpenRouter's decision models."
-        groups={modelPickerGroups()}
-        value={a.roleValue("decision")}
-        onChange={(v) => void a.bindPicked("decision", "Decision model", v)}
-        onOpen={a.rediscover}
-        placeholder="Not set — Auto asks you instead"
-        endpoint={a.roleEndpoint("decision")}
-      />
     </Stack>
   );
 }

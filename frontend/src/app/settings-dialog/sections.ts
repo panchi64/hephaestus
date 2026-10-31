@@ -93,7 +93,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
           "openai",
           "anthropic",
           "embedding",
-          "decision model",
           "fallback",
           "context window",
           "api key",

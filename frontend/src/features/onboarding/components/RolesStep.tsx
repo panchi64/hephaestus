@@ -19,7 +19,7 @@ import {
 import { ChoiceRow, DEFAULT_PICK, type RowOption } from "./ChoiceRow";
 import { StepShell } from "./StepShell";
 
-/** Roles: background, decision, and search & memory, one line each with a dropdown on
+/** Roles: background, and search & memory, one line each with a dropdown on
  *  its current pick. Nothing is bound here unless the operator picks it. */
 export function RolesStep(props: {
   servers: LocalServer[];
@@ -109,19 +109,6 @@ export function RolesStep(props: {
           value={current("utility")}
           options={toOptions(chatModels(), (sel) => modelReason(scanned(sel)))}
           onPick={pick("utility", "Background model")}
-        />
-        <ChoiceRow
-          label="Decision"
-          purpose="Reviews tool actions when you run in Auto."
-          defaultTitle="Ask me instead"
-          defaultMeaning="Auto pauses and asks you before anything sensitive."
-          value={current("decision")}
-          options={toOptions(
-            chatModels(),
-            () =>
-              "Must serve a decision API: llama-server's /v1/systemone, or OpenRouter.",
-          )}
-          onPick={pick("decision", "Decision model")}
         />
         <ChoiceRow
           label="Search & memory"

@@ -38,12 +38,6 @@ function activeLabel(blocks: AssistantBlock[] | undefined): string {
     // could only guess at, now that it has something to point to.
     case "context":
       return "Assembling context";
-    // A review at the tail is one still being ruled on: it lands ahead of the call it
-    // judges, so anything that follows replaces it. Worth its own word rather than
-    // "Working", because it is the one pause in a turn where nothing the *model* asked
-    // for is happening — the chassis is deciding whether to let it.
-    case "review":
-      return "Checking permission";
     case "host_command":
       return last.command.phase === "pending"
         ? "Awaiting approval"

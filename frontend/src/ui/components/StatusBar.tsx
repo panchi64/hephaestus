@@ -11,7 +11,7 @@ import { Icon } from "../primitives/Icon";
  *  Mono and snapping (§8): every cell is a value or a setting in the machine's own
  *  line, so the tone change on hover is a cut, not a fade. `lowercase` is the bar's
  *  voice — the text beneath the card is a line of telemetry, and a sentence-case
- *  label there ("Auto-review", "Stats") reads as a heading over the row. */
+ *  label there ("Ask first", "Stats") reads as a heading over the row. */
 export const STATUS_CELL_CLASS =
   "heph-status-cell flex h-6 items-center gap-1.5 px-2.5 font-mono text-meta lowercase whitespace-nowrap transition-none";
 

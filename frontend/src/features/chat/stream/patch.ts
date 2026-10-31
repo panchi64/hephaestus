@@ -17,7 +17,6 @@ import type {
   ChatMessage,
   HostCommand,
   HostCommandBlock,
-  ReviewBlock,
   ToolInvocation,
 } from "../model";
 import { findToolCall } from "../toolTree";
@@ -157,19 +156,6 @@ export function settleDecision(
     return false;
   clearPark(m, toolCallId);
   return true;
-}
-
-/** The review row for one call, keyed by tool_call_id — `review.started` opens it and
- *  `review.completed` fills in the verdict on the same block, so the row the operator
- *  saw appear is the row that ends up carrying the answer. */
-export function findReview(
-  m: ChatMessage,
-  toolCallId: string,
-): ReviewBlock | undefined {
-  return m.blocks?.find(
-    (b): b is ReviewBlock =>
-      b.kind === "review" && b.review.toolCallId === toolCallId,
-  );
 }
 
 /** Drop the prompt one call parked on — `approval.required` / `question.asked` open it,

@@ -454,6 +454,9 @@ export interface ApprovalRequired extends Base {
   guard?: string | null;
   /** Set on a host command about to run with no fence in force, saying why. */
   unconfined?: string | null;
+  /** Why the Auto level parked this call ("runs on the host", "the VM can reach the
+   *  network"). Absent at other levels. */
+  auto_reason?: string | null;
 }
 /** The operator settled a parked approval. A replay carries the card's `approval.required`
  *  but not the click, so this is what retires the card when the call is still running. */
@@ -497,55 +500,6 @@ export interface QuestionAnswered extends Base {
   type: "question.answered";
   tool_call_id: string;
   answers: AnsweredQuestion[];
-}
-/** An action at the Auto permission level is being ruled on in the operator's place.
- *  Announced before the ruling so a review that takes a model call reads as work in
- *  progress. `summary` is the action's worst case, the same words the reviewer judges.
- *
- *  `detail` is the act's own content where the tool has some worth reading (a sub-agent's
- *  task, a skill's rewritten text, the reason for opening a credential); null for most
- *  tools. It is what the reviewer ruled on beyond the summary.
- *
- *  `reach` is how far a shell command declared it needs to go: the worktree, the network,
- *  or the operator's machine. Null for acts that declare nothing (a mail send, a file
- *  write), which is not the same as declaring the widest reach. */
-export interface ReviewStarted extends Base {
-  type: "review.started";
-  tool_call_id: string;
-  name: string;
-  summary: string;
-  detail: string | null;
-  reach: "offline" | "network" | "host" | null;
-  /** Whether a VM command will run with egress, which an `offline` declaration can
-   *  differ from. Null where nothing runs in the VM. */
-  network?: boolean | null;
-}
-/** How the review ruled, and on what.
- *
- *  `decision`: `allow` ran the call with no prompt, `ask` parked it for the operator.
- *  `block` is no longer produced (an unrecoverable act goes to the operator like any
- *  other it will not clear) but stays because stored events of older threads carry it.
- *  `stage` says whether the structural judge or a model settled it, `tier` on which
- *  ground when the judge did, `fenced` whether an OS fence held the command to what it
- *  declared, and the three axes what the model saw.
- *
- *  The axes are null when the model stage never ran (the judge cleared it, or there was
- *  nothing to review with); `tier` is null whenever the model settled it. */
-export interface ReviewCompleted extends Base {
-  type: "review.completed";
-  tool_call_id: string;
-  name: string;
-  decision: "allow" | "ask" | "block";
-  stage: "judge" | "reviewer";
-  reason: string;
-  tier: "read" | "sandbox" | "workspace" | null;
-  fenced: boolean;
-  risk: "low" | "high" | "too_destructive" | null;
-  authorization: "explicitly_no" | "neutral" | "explicitly_yes" | null;
-  correctness: string | null;
-  /** Optional: a replayed older event carries neither field. */
-  scores?: Record<string, number> | null;
-  setup?: "unbound" | "unreachable" | null;
 }
 /** Who a queued message is from. `operator` is someone typing during a run; `subagent` is
  *  a report from an agent the thread launched; `agent` is one agent in the tree messaging
@@ -714,8 +668,6 @@ export type RunEvent =
   | ApprovalDecided
   | QuestionAsked
   | QuestionAnswered
-  | ReviewStarted
-  | ReviewCompleted
   | MessageQueued
   | MessageEdited
   | MessageHeld

@@ -77,7 +77,7 @@ export function OnboardingScreen(): JSX.Element {
     STEPS.slice(0, stepIndex(id)).every((s) => !s.required || isDone(s.id));
 
   const boundCount = (): number =>
-    (["utility", "decision", "embedding"] as const).filter(
+    (["utility", "embedding"] as const).filter(
       (r) => (settled(roles)?.[r]?.endpointIds.length ?? 0) > 0,
     ).length;
 

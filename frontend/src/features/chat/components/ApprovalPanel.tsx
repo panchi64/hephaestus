@@ -149,13 +149,7 @@ export function ApprovalPanel(props: {
           return (
             // The approval pads its own body; the frame imposes none.
             <Stack gap={3} class="px-3 py-3">
-              <Show
-                when={
-                  !props.named ||
-                  approval.risk === "too_destructive" ||
-                  verdict()
-                }
-              >
+              <Show when={!props.named || verdict()}>
                 <Row gap={2} align="center" class="flex-wrap">
                   <Show when={!props.named}>
                     <Text
@@ -165,10 +159,6 @@ export function ApprovalPanel(props: {
                     >
                       {approval.name}
                     </Text>
-                  </Show>
-                  {/* The reviewer's finding travels with the call; the operator decides, it isn't refused outright. */}
-                  <Show when={approval.risk === "too_destructive"}>
-                    <StatusFlag status="alert">Cannot be undone</StatusFlag>
                   </Show>
                   <Show when={verdict()} keyed>
                     {(v) => (
@@ -221,10 +211,12 @@ export function ApprovalPanel(props: {
                 </Row>
               </Show>
 
-              <Show when={approval.risk === "too_destructive"}>
-                <Text variant="body" tone="warn" class="break-words">
-                  {approval.reviewReason}
-                </Text>
+              <Show when={approval.autoReason}>
+                {(reason) => (
+                  <Text variant="micro" tone="dim" class="break-words">
+                    Auto asked because it {reason()}.
+                  </Text>
+                )}
               </Show>
 
               {/* `formatArgs`, not `approval.summary`: the summary is elided to fit a
