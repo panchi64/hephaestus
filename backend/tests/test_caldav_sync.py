@@ -1,17 +1,15 @@
-"""CalDAV sync (`CAL-2`) — reconcile behaviour, SSRF guarding, and off-the-loop I/O.
+"""CalDAV sync (`CAL-2`): reconcile behaviour and SSRF guarding, over a faked collection.
 
-The `caldav` package is synchronous, so the remote is faked here through the same narrow
-connector seam the real client plugs into: the reconcile logic is what's under test, not
-someone else's HTTP stack.
+The protocol client itself is covered in `test_caldav_client.py`.
 """
 
 from __future__ import annotations
 
 import tempfile
-import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import override
+from types import TracebackType
+from typing import Self, override
 
 import pytest
 
@@ -20,6 +18,7 @@ from core.exceptions import SSRFError
 from core.vault import Vault
 from services.calendar import CalendarService
 from services.calendar.caldav import CalDavSync, RemoteCalendar
+from services.calendar.dav import DavError, RemoteListing
 from services.calendar.ics import export_ics
 
 OWNER = "operator"
@@ -42,34 +41,43 @@ class FakeRemoteObject:
 
 
 class FakeRemoteCalendar(RemoteCalendar):
-    """A stand-in CalDAV collection. Records the credentials it was opened with and the
-    thread it ran on, so the tests can assert both without a server."""
+    """A stand-in CalDAV collection that records the credentials it was opened with."""
 
     def __init__(self, objects: list[FakeRemoteObject]) -> None:
-        self.objects: list[FakeRemoteObject] = objects
+        self.stored: list[FakeRemoteObject] = objects
         self.opened_with: list[tuple[str, str | None, str | None]] = []
-        self.threads: set[int] = set()
 
-    def connector(self, url: str, username: str | None, password: str | None) -> FakeRemoteCalendar:
+    def connector(self, url: str, username: str | None, password: str | None) -> Self:
         self.opened_with.append((url, username, password))
-        self.threads.add(threading.get_ident())
         return self
 
-    @override
-    def events(self) -> list[FakeRemoteObject]:
-        return list(self.objects)
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        return None
 
     @override
-    def save_event(self, ical: str) -> FakeRemoteObject:
-        saved = FakeRemoteObject(ical, f"{REMOTE_URL}{len(self.objects)}.ics", "etag-pushed")
-        self.objects.append(saved)
-        return saved
+    async def objects(self, limit: int) -> RemoteListing:
+        listed = [(obj.data, obj.url, obj.etag) for obj in self.stored]
+        return RemoteListing(listed[:limit], truncated=len(listed) > limit)
+
+    @override
+    async def put(self, uid: str, ics: str) -> tuple[str, str | None]:
+        saved = FakeRemoteObject(ics, f"{REMOTE_URL}{uid}.ics", "etag-pushed")
+        self.stored.append(saved)
+        return saved.url, saved.etag
 
 
 class RefusingRemoteCalendar(FakeRemoteCalendar):
     @override
-    def save_event(self, ical: str) -> FakeRemoteObject:
-        raise RuntimeError("the server said no")
+    async def put(self, uid: str, ics: str) -> tuple[str, str | None]:
+        raise DavError("the server said no")
 
 
 def _remote_document(uid: str, summary: str, hour: int = 9) -> str:
@@ -114,20 +122,20 @@ async def test_pull_creates_local_events(monkeypatch: pytest.MonkeyPatch):
     assert stored[0].remote_etag == "etag-1"
 
 
-async def test_the_remote_is_opened_with_the_decrypted_credentials_off_the_event_loop(
+async def test_the_remote_is_opened_once_with_the_decrypted_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ):
     service = await _service()
     calendar = await _bound_calendar(service)
     remote = FakeRemoteCalendar([])
     monkeypatch.setattr("services.calendar.caldav.assert_public_url", _allow)
+    _ = await service.create_event(
+        OWNER, calendar.id, title="Local only", starts_at=datetime(2026, 6, 8, 9, tzinfo=UTC)
+    )
 
     _ = await CalDavSync(service, connector=remote.connector).sync(OWNER, calendar.id)
 
-    assert remote.opened_with[0] == (REMOTE_URL, "operator", "hunter2")
-    # The `caldav` package blocks; every call must land on a worker thread, never the
-    # event loop's own.
-    assert remote.threads and threading.get_ident() not in remote.threads
+    assert remote.opened_with == [(REMOTE_URL, "operator", "hunter2")]
 
 
 async def test_a_second_sync_skips_objects_whose_etag_is_unchanged(monkeypatch: pytest.MonkeyPatch):
@@ -180,7 +188,7 @@ async def test_local_events_are_pushed_once_and_then_recognized(monkeypatch: pyt
 
     second = await sync.sync(OWNER, calendar.id)
     assert second.pushed == 0
-    assert len(remote.objects) == 1
+    assert len(remote.stored) == 1
 
 
 async def test_a_read_only_calendar_never_pushes(monkeypatch: pytest.MonkeyPatch):
@@ -195,7 +203,7 @@ async def test_a_read_only_calendar_never_pushes(monkeypatch: pytest.MonkeyPatch
     result = await CalDavSync(service, connector=remote.connector).sync(OWNER, calendar.id)
 
     assert result.pushed == 0
-    assert remote.objects == []
+    assert remote.stored == []
 
 
 async def test_an_event_the_server_dropped_is_removed_locally(monkeypatch: pytest.MonkeyPatch):
@@ -207,7 +215,7 @@ async def test_an_event_the_server_dropped_is_removed_locally(monkeypatch: pytes
     sync = CalDavSync(service, connector=remote.connector)
     _ = await sync.sync(OWNER, calendar.id)
 
-    remote.objects.clear()
+    remote.stored.clear()
     result = await sync.sync(OWNER, calendar.id)
 
     assert result.removed_locally == 1
@@ -291,7 +299,7 @@ async def test_a_pushed_event_round_trips_through_the_ics_layer(monkeypatch: pyt
 
     _ = await CalDavSync(service, connector=remote.connector).sync(OWNER, calendar.id)
 
-    uploaded = remote.objects[0].data
+    uploaded = remote.stored[0].data
     assert "RRULE:FREQ=DAILY" in uploaded
     assert "TZID=Europe/Madrid" in uploaded
     assert export_ics([event]).decode().splitlines()[0] == uploaded.splitlines()[0]

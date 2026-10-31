@@ -44,10 +44,7 @@ dependencies = [
     "authlib>=1.9.1",
     "email-reply-parser>=0.5.12",
     "icalendar>=7.3.0",
-    # Sync API: call it through anyio.to_thread.
-    "caldav>=3.7.0",
-    # Held below 3.0: caldav's recurring-ical-events requires python-dateutil<3.
-    "python-dateutil>=2.9.0.post0",
+    "python-dateutil>=3.0.0",
     # Shell commands are classified on the real bash grammar, which survives parse errors;
     # a regex misreads quoting and `$(…)`.
     "tree-sitter>=0.26.0",
@@ -88,6 +85,7 @@ select = ["E", "F", "I", "UP", "B", "BLE", "RUF100"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["."]
 testpaths = ["tests"]
 # `-n auto` fans the suite across every core: it is ~2200 mostly-independent tests, each
