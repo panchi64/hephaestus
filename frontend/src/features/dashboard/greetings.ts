@@ -10,33 +10,48 @@ export interface Greeting {
 }
 
 export const GREETINGS: readonly Greeting[] = [
-  { when: "morning", text: "Good morning. What are we working on?" },
-  { when: "morning", text: "Morning. What's on the list?" },
+  { when: "morning", text: "Good morning. Shall we begin?" },
+  {
+    when: "morning",
+    text: "Morning. Coffee is your department; the rest is mine.",
+  },
   { when: "morning", text: "Good morning. Where would you like to start?" },
-  { when: "morning", text: "Morning. What's first?" },
-  { when: "afternoon", text: "Good afternoon. What needs doing?" },
-  { when: "afternoon", text: "Afternoon. What's next?" },
+  { when: "morning", text: "Morning. What's first on the list?" },
+  { when: "afternoon", text: "Good afternoon. What shall we take on?" },
   {
     when: "afternoon",
     text: "Good afternoon. Pick up where we left off, or start fresh?",
   },
   { when: "afternoon", text: "Afternoon. What can I take off your plate?" },
+  {
+    when: "afternoon",
+    text: "Good afternoon. Is the morning's plan still the plan?",
+  },
   { when: "evening", text: "Good evening. What's on your mind?" },
+  {
+    when: "evening",
+    text: "Good evening. Something small, or something ambitious?",
+  },
   { when: "evening", text: "Evening. What are we looking at?" },
   { when: "evening", text: "Good evening. One more thing, or a new one?" },
-  { when: "evening", text: "Evening. Where shall we start?" },
-  { when: "late", text: "Working late. I'm here when you're ready." },
+  { when: "late", text: "Still at it. What's the last thing tonight?" },
+  { when: "late", text: "It's late. Shall we keep this one brief?" },
   { when: "late", text: "Still up. What are we looking at?" },
-  { when: "late", text: "It's late. Let's keep this one short." },
-  { when: "late", text: "The quiet hours. What do you need?" },
+  {
+    when: "late",
+    text: "The quiet hours. Ideal for thinking, or for regrettable commits.",
+  },
+  { when: "any", text: "At your service." },
   { when: "any", text: "Ready when you are." },
-  { when: "any", text: "What are we building?" },
+  { when: "any", text: "What shall we build?" },
+  {
+    when: "any",
+    text: "What are we making? I'll have the objections ready.",
+  },
   { when: "any", text: "Where would you like to start?" },
+  { when: "any", text: "Go ahead. I'm listening." },
   { when: "any", text: "What needs doing?" },
   { when: "any", text: "Tell me what you need." },
-  { when: "any", text: "What's the task?" },
-  { when: "any", text: "Go ahead. I'm listening." },
-  { when: "any", text: "Let's get to it." },
 ];
 
 /** 05–11 morning, 12–16 afternoon, 17–21 evening, 22–04 late, by local hour. */
