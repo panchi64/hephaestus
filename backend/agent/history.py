@@ -150,7 +150,7 @@ class TurnStart:
     ``prompt_message_id`` is the store's id for the operator's prompt when the turn wrote it
     down as it started — the first message :meth:`slice` yields is then already persisted,
     and everything that records the turn records only what follows it
-    (:func:`after_recorded_prompt`). It rides the boundary rather than the persistence
+    (:func:`split_recorded_opening`). It rides the boundary rather than the persistence
     context because the two are one fact: *where the turn begins* and *how much of it is
     already on record* are both questions about its opening message. ``None`` for a turn
     that opens on a request already in the tree (a regenerate) or has nowhere to persist.
@@ -170,33 +170,38 @@ class TurnStart:
         return [replace(turn[0], parts=kept), *turn[1:]]
 
 
-def after_recorded_prompt(turn: list[ModelMessage]) -> list[ModelMessage]:
-    """``turn`` — a :meth:`TurnStart.slice` — without its opening request, which the store
-    already holds from the moment the turn began.
+def split_recorded_opening(
+    turn: list[ModelMessage],
+) -> tuple[list[ModelRequestPart], list[ModelMessage]]:
+    """``turn`` — a :meth:`TurnStart.slice` — split around its opening request, which the
+    store already holds from the moment the turn began: the parts to amend onto that
+    stored prompt, and the messages to record after it.
 
-    Not a plain ``turn[1:]``. Steering queued before the model's first request is amended
-    onto *that* request (`drive_turn`'s ``_inject_queued`` rebinds its parts), so the
-    opening message can carry user parts the early write never saw. Each one past the
-    prompt's own part is handed back as a request of its own — the shape
-    :func:`split_injected_requests` gives a mid-run aside — so a message the operator typed
-    while the turn was starting is recorded exactly once, right behind the prompt it
-    followed."""
+    The opening request can carry parts the early write never saw: steering queued before
+    the model's first request (`drive_turn`'s ``_inject_queued``) and the parts the library
+    records as it sends (:data:`_RECORDED_ON_SEND`; without them the next turn finds no
+    instruction baseline and rewrites the cached head). The run of library parts right
+    behind the prompt is amended onto it; from the first steering message on, the parts are
+    recorded as requests in their sent order, so replay merges them back byte for byte."""
     if not turn:
-        return turn
+        return [], turn
     opening, rest = turn[0], turn[1:]
     if not isinstance(opening, ModelRequest):
-        return rest
-    parts = [p for p in opening.parts if isinstance(p, UserPromptPart)]
-    return [*(ModelRequest(parts=[part]) for part in parts[1:]), *rest]
-
-
-def recorded_on_send(turn: list[ModelMessage]) -> list[ModelRequestPart]:
-    """The parts the library added to ``turn``'s opening request as it sent it, which the
-    prompt written at the start of the turn never had. Without them the next turn finds no
-    instruction baseline and rewrites the cached head."""
-    if not turn or not isinstance(turn[0], ModelRequest):
-        return []
-    return [p for p in turn[0].parts if isinstance(p, _RECORDED_ON_SEND)]
+        return [], rest
+    prompt_at = next(
+        (i for i, p in enumerate(opening.parts) if isinstance(p, UserPromptPart)), None
+    )
+    if prompt_at is None:
+        return [], rest
+    after: list[ModelRequestPart] = [
+        p
+        for p in opening.parts[prompt_at + 1 :]
+        if isinstance(p, (UserPromptPart, *_RECORDED_ON_SEND))
+    ]
+    steering_at = next(
+        (i for i, p in enumerate(after) if isinstance(p, UserPromptPart)), len(after)
+    )
+    return after[:steering_at], [*_in_sent_order(after[steering_at:]), *rest]
 
 
 def split_injected_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -205,23 +210,38 @@ def split_injected_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
     Mid-run steering appends ``UserPromptPart``s onto the tool-return request the
     model was about to receive (`drive_turn`'s ``_inject_queued``). Persisting that
     merged request as-is would bury the operator's message inside a tool exchange —
-    no tree node of its own, so no user bubble, no edit/regenerate anchor. Split it:
-    the tool returns keep their request, and each injected part becomes its own
-    ``ModelRequest`` right after. Replay stays wire-identical — the library re-merges
-    consecutive requests (tool returns first) when preparing the model's input."""
+    no tree node of its own, so no user bubble, no edit/regenerate anchor. Split it in
+    sent order (:func:`_in_sent_order`), so replay re-merges it byte for byte."""
     out: list[ModelMessage] = []
     for message in messages:
         if not isinstance(message, ModelRequest):
             out.append(message)
             continue
-        user_parts = [p for p in message.parts if isinstance(p, UserPromptPart)]
-        tool_parts = [p for p in message.parts if isinstance(p, ToolReturnPart)]
-        if not user_parts or not tool_parts:
+        has_user = any(isinstance(p, UserPromptPart) for p in message.parts)
+        has_return = any(isinstance(p, ToolReturnPart) for p in message.parts)
+        if not has_user or not has_return:
             out.append(message)
             continue
-        rest = [p for p in message.parts if not isinstance(p, UserPromptPart)]
-        out.append(replace(message, parts=rest))
-        out.extend(ModelRequest(parts=[part]) for part in user_parts)
+        first, *later = _in_sent_order(message.parts)
+        out.extend([replace(message, parts=first.parts), *later])
+    return out
+
+
+def _in_sent_order(parts: Sequence[ModelRequestPart]) -> list[ModelRequest]:
+    """``parts`` as consecutive requests in their original order: each operator message on
+    its own, every run of other parts together. Merging them back gives ``parts`` as sent."""
+    out: list[ModelRequest] = []
+    pending: list[ModelRequestPart] = []
+    for part in parts:
+        if not isinstance(part, UserPromptPart):
+            pending.append(part)
+            continue
+        if pending:
+            out.append(ModelRequest(parts=pending))
+            pending = []
+        out.append(ModelRequest(parts=[part]))
+    if pending:
+        out.append(ModelRequest(parts=pending))
     return out
 
 
