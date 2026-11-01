@@ -6,13 +6,12 @@ uv run python -m evals.voice.check <group>/<letter> [...]
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from pydantic import ValidationError
 
 from .grading import Grades, load_grades
 from .record import Run, load_run
-from .spec import RUNS_DIR, Scenario, load_scenarios
+from .spec import Scenario, load_scenarios, run_path
 
 
 def problems(grades: Grades, run: Run, scenarios: list[Scenario]) -> list[str]:
@@ -66,7 +65,7 @@ def main(argv: list[str]) -> int:
     scenarios = load_scenarios()
     failed = False
     for raw in argv:
-        run_dir = Path(raw) if Path(raw).exists() else RUNS_DIR / raw
+        run_dir = run_path(raw)
         try:
             grades = load_grades(run_dir)
         except (OSError, ValidationError) as exc:

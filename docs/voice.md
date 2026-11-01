@@ -362,4 +362,9 @@ The interface's own copy follows `design-system.md`, but it names the forge's ca
 3. Check it against §9. Every banned habit you'd have to tell a model to avoid is a sign it was invited by the prompt's own wording.
 4. Render it (`cd backend && uv run python -m devkit.prompts <target>`, or `list` for the targets) and read the whole thing as the model will see it.
 5. If it changes how an agent sounds, add or update a calibration sample in §13.
-6. Measure it: run `cd backend && uv run python -m evals.voice.collect --models <model>` against the dev instance, have a separate session grade the transcript by `backend/evals/voice/GRADING.md`, and `evals.voice.compare` it with the last graded run.
+6. Measure it:
+   - Run `cd backend && uv run python -m evals.voice.collect --models <model>` against the dev instance.
+   - Add `--provider anthropic` to run a Claude model, keyed from `backend/evals/voice/.env`.
+   - Add `--profile lived-in` to check the voice holds with a full workspace around it.
+   - Grade the run with the two-pass flow in `backend/evals/voice/GRADING.md`.
+   - Run `evals.voice.compare` against the last graded run, and `evals.voice.history` for the trend.

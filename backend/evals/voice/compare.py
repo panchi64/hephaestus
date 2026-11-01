@@ -29,7 +29,7 @@ from .grading import (
     voice_score,
 )
 from .record import BARE, load_run
-from .spec import KEY_FILE, RUNS_DIR, load_scenarios
+from .spec import KEY_FILE, load_scenarios, run_path
 
 #: A scenario mean that moves this much between two runs is listed with its quotes.
 MOVED = 1.0
@@ -44,11 +44,6 @@ class Graded:
     profile: str = BARE
 
 
-def _resolve(raw: str) -> Path:
-    path = Path(raw)
-    return path if path.is_absolute() or path.exists() else RUNS_DIR / raw
-
-
 def _named(run_dir: Path) -> str:
     """``group/A (model)`` when the group's key names the model, else ``group/A``."""
     key = run_dir.parent / KEY_FILE
@@ -59,10 +54,10 @@ def _named(run_dir: Path) -> str:
 
 def load_runs(args: list[str]) -> list[Graded]:
     if len(args) == 1:
-        group = _resolve(args[0])
+        group = run_path(args[0])
         dirs = sorted(d for d in group.iterdir() if (d / GRADES_FILE).is_file())
     else:
-        dirs = [_resolve(arg) for arg in args]
+        dirs = [run_path(arg) for arg in args]
     graded: list[Graded] = []
     for run_dir in dirs:
         run = load_run(run_dir)

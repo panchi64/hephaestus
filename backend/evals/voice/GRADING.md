@@ -128,9 +128,7 @@ Score on every sample. When neither a title nor a summary was produced, score 0 
 
 ## What you write
 
-Write two files into the run directory you graded.
-
-**`grades.json`** must validate against `Grades` in `evals/voice/grading.py`:
+Write `grades.json` into the run directory you graded. It must validate against `Grades` in `evals/voice/grading.py`:
 
 ```json
 {
@@ -177,16 +175,30 @@ Check it against the schema, the run and the scenarios, and fix whatever it repo
 cd backend && uv run python -m evals.voice.check <group>/<letter>
 ```
 
-**`grades.md`** is for the operator: the per-dimension means and the voice score (from `grading.py`'s aggregates), the humor tally (`humor_tally`), the worst replies quoted with their reasons, and the patterns from `notes`.
+Don't write `grades.md`. `evals.voice.summary` renders it from `grades.json`, so every summary has the same shape.
 
-Once every run in the group is graded, compare them:
+## Two-pass grading
+
+Every run is graded twice:
+
+1. **Grade.** A Sonnet grader follows this file and writes `grades.json`.
+2. **Review.** An Opus reviewer follows `REVIEW.md` and writes `review.json`, correcting only what breaks this rubric.
+3. **Apply.** `evals.voice.review` applies the corrections:
+   - it keeps the first pass as `grades.first.json`;
+   - it rewrites `grades.json` and `grades.md`;
+   - it writes `review.md`, with the share of first-pass scores the review kept.
+4. **Calibrate.** One Opus pass over every review so far writes `calibration.md` into the group, with proposed edits to this file for the gaps that keep causing misgrades. Nothing is changed until the operator adopts an edit.
+
+The saved `voice-grade` workflow runs all four steps. Ask the session: "run the voice-grade workflow on `<group>`". Then:
 
 ```bash
-cd backend && uv run python -m evals.voice.compare <group>
+cd backend && uv run python -m evals.voice.compare <group>   # when the group has several runs
+cd backend && uv run python -m evals.voice.history           # every graded run, oldest first
 ```
 
-## Opening a grading session
+Without the workflow, run the same steps by hand:
+1. A session grades by this file.
+2. A second session reviews by `REVIEW.md`.
+3. Run `evals.voice.review <group>/<letter>`.
 
-Paste this into a new session started in the repository:
-
-> Grade the voice run group `backend/evals/voice/runs/<group>/`. Follow `backend/evals/voice/GRADING.md` exactly: read it and `docs/voice.md` §4–§13 first, grade each run directory blind from its `transcript.md`, write `grades.json` and `grades.md` into each, run `evals.voice.check` on each until it passes, then run `evals.voice.compare` on the group and show me the result.
+Grader agreement in `history` is the measure of how far a Sonnet first pass can be trusted. If it stays high over several groups, the review can be spot-checked instead of run every time.

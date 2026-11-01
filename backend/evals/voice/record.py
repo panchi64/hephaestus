@@ -136,6 +136,9 @@ class Run(_Model):
     stub: bool
     #: The workspace profile the run had around it.
     profile: str = BARE
+    #: The endpoint's provider adapter, kept out of the transcript so grading stays blind.
+    #: None on runs recorded before it was kept.
+    provider: str | None = None
     samples: list[Sample] = Field(default_factory=list)
 
     def replies(self) -> dict[tuple[str, int], int]:

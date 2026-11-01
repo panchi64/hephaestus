@@ -1,14 +1,17 @@
 """Run the voice scenarios on each model and write one blind transcript per model.
 
     uv run python -m evals.voice.collect --models M [M ...] [--only ID ...] [--label NAME]
-        [--samples N] [--summary-wait S]
+        [--samples N] [--summary-wait S] [--profile NAME] [--provider anthropic]
 
 The dev instance must be up (``dev_instance.py up --detach --with-vm``) with its ``main``
-role bound to the endpoint serving the models. Each model's pass rebinds ``main`` and
-``utility`` to it, so the voice under test also writes the titles and summaries; the
-original bindings are restored at the end. Output lands in ``evals/voice/runs/<label>/``:
-``A/``, ``B/``… each with ``transcript.md`` and ``run.json``, ``key.json`` naming the model
-behind each letter, and ``prompt.md``, the Talos prompt the run used.
+role bound to the endpoint serving the models, or ``--provider`` given: the run then adds
+a temporary endpoint keyed from the environment or ``evals/voice/.env`` and deletes it at
+the end. The label defaults to the UTC start time and the profile. Each model's pass
+rebinds ``main`` and ``utility`` to it, so the voice under test also writes the titles and
+summaries; the original bindings are restored at the end. Output lands in
+``evals/voice/runs/<label>/``: ``A/``, ``B/``… each with ``transcript.md`` and ``run.json``,
+``key.json`` naming the model behind each letter, and ``prompt.md``, the Talos prompt the
+run used.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from evals.tasks.client import DevClient, Settler
 from runs.events.approvals import ApprovalRequired, QuestionAsked
 
 from .document import render
+from .keys import ENV_FILE, provider_key
 from .profile import Applied, available, load_profile
 from .profile import apply as apply_profile
 from .profile import remove as remove_profile
@@ -59,6 +63,22 @@ class _Binding(BaseModel):
 class _Endpoint(BaseModel):
     id: str
     base_url: str
+    provider: str
+
+
+class Hosted(BaseModel):
+    """A hosted provider ``--provider`` can run on: where it lives and its key's name."""
+
+    provider: str
+    base_url: str
+    key: str
+
+
+HOSTED = {
+    "anthropic": Hosted(
+        provider="anthropic", base_url="https://api.anthropic.com", key="ANTHROPIC_API_KEY"
+    )
+}
 
 
 class _Memory(BaseModel):
@@ -132,6 +152,19 @@ class Collector:
 
     async def endpoint(self, endpoint_id: str) -> _Endpoint:
         return _read(await self.http.get(f"/models/endpoints/{endpoint_id}"), _Endpoint)
+
+    async def add_endpoint(self, hosted: Hosted, api_key: str) -> _Endpoint:
+        body = {
+            "name": f"voice-eval {hosted.provider}",
+            "provider": hosted.provider,
+            "base_url": hosted.base_url,
+            "api_key": api_key,
+            "vision": True,
+        }
+        return _read(await self.http.post("/models/endpoints", json=body), _Endpoint)
+
+    async def remove_endpoint(self, endpoint_id: str) -> None:
+        _ = (await self.http.delete(f"/models/endpoints/{endpoint_id}")).raise_for_status()
 
     async def point(self, endpoint_id: str, base_url: str) -> None:
         """Change only the endpoint's address; its key is left as it is."""
@@ -321,6 +354,7 @@ class _Args(argparse.Namespace):
     samples: int = 2
     summary_wait: float = 600.0
     profile: str | None = None
+    provider: str | None = None
 
 
 def _save(run: Run, run_dir: Path, scenarios: list[Scenario]) -> None:
@@ -365,11 +399,21 @@ async def main(argv: list[str]) -> int:
     _ = parser.add_argument(
         "--profile", help=f"workspace profile to run in: {', '.join(available())}"
     )
+    _ = parser.add_argument(
+        "--provider",
+        choices=sorted(HOSTED),
+        help=f"run on a temporary endpoint for this provider, keyed from env or {ENV_FILE}",
+    )
     args = parser.parse_args(argv, namespace=_Args())
     try:
         profile = load_profile(args.profile) if args.profile else None
     except ValueError as exc:
         print(exc)
+        return 2
+    hosted = HOSTED[args.provider] if args.provider else None
+    api_key = provider_key(hosted.key) if hosted else None
+    if hosted and not api_key:
+        print(f"No {hosted.key}: set it in the environment or in {ENV_FILE}")
         return 2
 
     instance = resolve()
@@ -401,17 +445,22 @@ async def main(argv: list[str]) -> int:
     client = DevClient(instance.backend_url)
     collector = Collector(client, instance)
     original = await collector.bindings()
-    if "main" not in original or not original["main"].endpoint_ids:
+    if not hosted and ("main" not in original or not original["main"].endpoint_ids):
         print("The instance has no main binding to run on.")
         return 2
-    endpoint = await collector.endpoint(original["main"].endpoint_ids[0])
-    stub = urlparse(endpoint.base_url).port == instance.stub_port
     idle_before = await collector.idle_minutes()
     group_dir.mkdir(parents=True)
     _ = (group_dir / "prompt.md").write_text(f"`{fingerprint}`\n\n{prompt}\n")
     _ = (group_dir / KEY_FILE).write_text(json.dumps(letters, indent=2) + "\n")
-    proxy = RecordingProxy(endpoint.base_url)
     applied = Applied()
+    if hosted and api_key:
+        endpoint = await collector.add_endpoint(hosted, api_key)
+        temporary = True
+    else:
+        endpoint = await collector.endpoint(original["main"].endpoint_ids[0])
+        temporary = False
+    stub = urlparse(endpoint.base_url).port == instance.stub_port
+    proxy = RecordingProxy(endpoint.base_url)
     try:
         await proxy.start()
         await collector.point(endpoint.id, proxy.base_url)
@@ -424,7 +473,7 @@ async def main(argv: list[str]) -> int:
             binding = _Binding(endpoint_ids=[endpoint.id], model=model)
             await collector.bind("main", binding)
             await collector.bind("utility", binding)
-            if not stub:
+            if not stub and not temporary:
                 await _warm(endpoint.base_url, model)
             run = Run(
                 group=label,
@@ -433,6 +482,7 @@ async def main(argv: list[str]) -> int:
                 prompt_fingerprint=fingerprint,
                 stub=stub,
                 profile=profile_name,
+                provider=endpoint.provider,
             )
             run_dir = group_dir / letter
             run_dir.mkdir()
@@ -449,11 +499,14 @@ async def main(argv: list[str]) -> int:
     finally:
         for problem in await remove_profile(collector.http, applied):
             print(f"Could not undo: {problem}")
-        await collector.point(endpoint.id, endpoint.base_url)
+        if not temporary:
+            await collector.point(endpoint.id, endpoint.base_url)
         await proxy.stop()
         for role in ("main", "utility"):
             if role in original:
                 await collector.bind(role, original[role])
+        if temporary:
+            await collector.remove_endpoint(endpoint.id)
         _ = await collector.idle_minutes(idle_before)
         await client.aclose()
     print(f"\nRun group: {group_dir}\nGrade each transcript by evals/voice/GRADING.md.")

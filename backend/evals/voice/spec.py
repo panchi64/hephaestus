@@ -23,6 +23,12 @@ KEY_FILE = "key.json"
 PROJECT_TOKEN = "{project}"
 
 
+def run_path(raw: str) -> Path:
+    """A run-group or run directory, absolute or relative to :data:`RUNS_DIR`."""
+    path = Path(raw)
+    return path if path.is_absolute() or path.exists() else RUNS_DIR / raw
+
+
 class _Strict(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
