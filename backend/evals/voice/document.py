@@ -117,6 +117,7 @@ def render(run: Run, scenarios: list[Scenario]) -> str:
         "",
         f"- started: {run.started_at}",
         f"- prompt fingerprint: `{run.prompt_fingerprint}`",
+        f"- workspace profile: `{run.profile}`",
         f"- samples per scenario: {max((s.sample for s in run.samples), default=0)}",
     ]
     if run.stub:

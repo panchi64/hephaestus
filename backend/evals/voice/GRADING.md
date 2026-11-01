@@ -8,6 +8,7 @@ This is the standard every grading session follows, so a score means the same th
 2. Read this file in full.
 3. Grade one run directory (`runs/<group>/<letter>/`) at a time, from its `transcript.md`. Don't open the group's `key.json` or `prompt.md`, and don't read another run's `grades.json`, until every run in the group is graded. Grading is blind to the model and the prompt.
 4. A transcript whose header says the model is the dev stub is a plumbing check. Don't grade it for voice.
+5. The header names the workspace profile the run had around it (`bare`, or a made-up operator's workspace from `profiles/`, applied with `collect --profile`). It is context, not something to grade: score the replies the same way under any profile. A memory or skill from the profile that a reply uses well is fine; one dragged in where it doesn't belong costs `directness` or `character`. `context/<scenario>.json` in the run directory holds the exact request Talos received for each scenario's first sample.
 
 ## How to score
 

@@ -18,6 +18,9 @@ from runs.events.union import EventBody
 #: How much of a tool's arguments or result the document shows.
 _EXCERPT = 400
 
+#: The profile a run records when none was applied.
+BARE = "bare"
+
 
 class _Model(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
@@ -131,6 +134,8 @@ class Run(_Model):
     started_at: str
     prompt_fingerprint: str
     stub: bool
+    #: The workspace profile the run had around it.
+    profile: str = BARE
     samples: list[Sample] = Field(default_factory=list)
 
     def replies(self) -> dict[tuple[str, int], int]:
@@ -139,6 +144,8 @@ class Run(_Model):
 
 
 RUN_FILE = "run.json"
+#: Inside a run directory: the exact request Talos received, one file per scenario.
+CONTEXT_DIR = "context"
 
 
 def load_run(run_dir: Path) -> Run:

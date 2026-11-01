@@ -28,7 +28,7 @@ from .grading import (
     scenario_means,
     voice_score,
 )
-from .record import load_run
+from .record import BARE, load_run
 from .spec import KEY_FILE, RUNS_DIR, load_scenarios
 
 #: A scenario mean that moves this much between two runs is listed with its quotes.
@@ -41,6 +41,7 @@ class Graded:
     grades: Grades
     #: Each sample's Talos reply count, from the run's ``run.json``.
     replies: Mapping[tuple[str, int], int]
+    profile: str = BARE
 
 
 def _resolve(raw: str) -> Path:
@@ -62,7 +63,12 @@ def load_runs(args: list[str]) -> list[Graded]:
         dirs = sorted(d for d in group.iterdir() if (d / GRADES_FILE).is_file())
     else:
         dirs = [_resolve(arg) for arg in args]
-    return [Graded(_named(d), load_grades(d), load_run(d).replies()) for d in dirs]
+    graded: list[Graded] = []
+    for run_dir in dirs:
+        run = load_run(run_dir)
+        name = _named(run_dir) + ("" if run.profile == BARE else f" [{run.profile}]")
+        graded.append(Graded(name, load_grades(run_dir), run.replies(), run.profile))
+    return graded
 
 
 def _fmt(value: float | None) -> str:
@@ -94,7 +100,13 @@ def _warnings(runs: list[Graded], *, same_prompt_expected: bool) -> list[str]:
     prints = {run.grades.prompt_fingerprint for run in runs}
     if same_prompt_expected and len(prints) > 1:
         out.append("The runs used different prompts; this compares models and prompts at once.")
-    if not same_prompt_expected and len(prints) == 1:
+    profiles = {run.profile for run in runs}
+    if len(profiles) > 1:
+        out.append(
+            "The runs had different workspace profiles; any difference is the context, "
+            + "the model or sampling noise."
+        )
+    elif not same_prompt_expected and len(prints) == 1:
         out.append("The runs used the same prompt; any difference is the model or sampling noise.")
     return out
 

@@ -36,7 +36,11 @@ from evals.tasks.client import DevClient, Settler
 from runs.events.approvals import ApprovalRequired, QuestionAsked
 
 from .document import render
-from .record import RUN_FILE, Run, Sample, SubagentRecord, Timeline, Turn
+from .profile import Applied, available, load_profile
+from .profile import apply as apply_profile
+from .profile import remove as remove_profile
+from .proxy import RecordingProxy
+from .record import BARE, CONTEXT_DIR, RUN_FILE, Run, Sample, SubagentRecord, Timeline, Turn
 from .spec import FIXTURES_DIR, KEY_FILE, PROJECT_TOKEN, RUNS_DIR, Scenario, load_scenarios
 
 _POLL_S = 15.0
@@ -128,6 +132,13 @@ class Collector:
 
     async def endpoint(self, endpoint_id: str) -> _Endpoint:
         return _read(await self.http.get(f"/models/endpoints/{endpoint_id}"), _Endpoint)
+
+    async def point(self, endpoint_id: str, base_url: str) -> None:
+        """Change only the endpoint's address; its key is left as it is."""
+        response = await self.http.patch(
+            f"/models/endpoints/{endpoint_id}", json={"base_url": base_url}
+        )
+        _ = response.raise_for_status()
 
     async def idle_minutes(self, minutes: int | None = None) -> int:
         """The work-summary idle window; sets it first when ``minutes`` is given."""
@@ -309,6 +320,7 @@ class _Args(argparse.Namespace):
     label: str | None = None
     samples: int = 2
     summary_wait: float = 600.0
+    profile: str | None = None
 
 
 def _save(run: Run, run_dir: Path, scenarios: list[Scenario]) -> None:
@@ -324,11 +336,14 @@ async def _pass(
     *,
     samples: int,
     summary_wait: float,
+    proxy: RecordingProxy,
 ) -> None:
     """Every sample of every scenario, saved after each so a crash keeps what ran."""
     for scenario in scenarios:
         for number in range(1, samples + 1):
             print(f"  {scenario.id} #{number} …", flush=True)
+            if number == 1:
+                proxy.arm(run_dir / CONTEXT_DIR / f"{scenario.id}.json")
             record = await collector.sample(scenario, number)
             run.samples.append(record)
             _save(run, run_dir, scenarios)
@@ -347,7 +362,15 @@ async def main(argv: list[str]) -> int:
     _ = parser.add_argument("--label", help="name of the run group")
     _ = parser.add_argument("--samples", type=int, default=2)
     _ = parser.add_argument("--summary-wait", type=float, default=600.0)
+    _ = parser.add_argument(
+        "--profile", help=f"workspace profile to run in: {', '.join(available())}"
+    )
     args = parser.parse_args(argv, namespace=_Args())
+    try:
+        profile = load_profile(args.profile) if args.profile else None
+    except ValueError as exc:
+        print(exc)
+        return 2
 
     instance = resolve()
     scenarios = load_scenarios()
@@ -363,7 +386,8 @@ async def main(argv: list[str]) -> int:
         if skipped:
             print(f"No VM on this instance; skipping {', '.join(skipped)}")
 
-    label = args.label or f"{datetime.now(UTC):%Y-%m-%d-%H%M}"
+    profile_name = profile.name if profile else BARE
+    label = args.label or f"{datetime.now(UTC):%Y-%m-%d-%H%M}-{profile_name}"
     group_dir = RUNS_DIR / label
     if group_dir.exists():
         print(f"{group_dir} already exists; pick another --label")
@@ -386,7 +410,14 @@ async def main(argv: list[str]) -> int:
     group_dir.mkdir(parents=True)
     _ = (group_dir / "prompt.md").write_text(f"`{fingerprint}`\n\n{prompt}\n")
     _ = (group_dir / KEY_FILE).write_text(json.dumps(letters, indent=2) + "\n")
+    proxy = RecordingProxy(endpoint.base_url)
+    applied = Applied()
     try:
+        await proxy.start()
+        await collector.point(endpoint.id, proxy.base_url)
+        if profile:
+            print(f"Applying the {profile.name} profile …", flush=True)
+            await apply_profile(collector.http, instance.data_dir, profile, applied)
         _ = await collector.idle_minutes(1)
         for letter, model in letters.items():
             print(f"→ run {letter}", flush=True)
@@ -401,6 +432,7 @@ async def main(argv: list[str]) -> int:
                 started_at=f"{datetime.now(UTC):%Y-%m-%d %H:%M} UTC",
                 prompt_fingerprint=fingerprint,
                 stub=stub,
+                profile=profile_name,
             )
             run_dir = group_dir / letter
             run_dir.mkdir()
@@ -411,9 +443,14 @@ async def main(argv: list[str]) -> int:
                 scenarios,
                 samples=args.samples,
                 summary_wait=args.summary_wait,
+                proxy=proxy,
             )
             print(f"  wrote {run_dir / 'transcript.md'}", flush=True)
     finally:
+        for problem in await remove_profile(collector.http, applied):
+            print(f"Could not undo: {problem}")
+        await collector.point(endpoint.id, endpoint.base_url)
+        await proxy.stop()
         for role in ("main", "utility"):
             if role in original:
                 await collector.bind(role, original[role])
