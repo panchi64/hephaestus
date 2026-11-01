@@ -10,7 +10,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from evals.drive.instance import Binding, Endpoint, Instance, read
 
-from .spec import Choice, Pin, Routing
+from .spec import Choice, Pin, Routing, fill
 
 
 class RefError(ValueError):
@@ -43,12 +43,6 @@ def split_ref(ref: str) -> tuple[str, str]:
     if not slash or not name or not model:
         raise RefError(f"{ref!r} is not <endpoint name>/<model>")
     return name, model
-
-
-def fill(text: str, tokens: dict[str, str]) -> str:
-    for token, value in tokens.items():
-        text = text.replace(token, value)
-    return text
 
 
 @dataclass(slots=True)
@@ -164,6 +158,8 @@ class Router:
     def resolvable(self, routing: Routing | None) -> str | None:
         """Why ``routing`` can't run here, or None when every ref it names resolves."""
         for ref in routing.refs() if routing else []:
+            if ref in self.tokens and not self.tokens[ref]:
+                return f"needs --{ref.strip('{}')}"
             try:
                 _ = self.endpoint_id(ref)
             except RefError as exc:

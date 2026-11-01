@@ -85,6 +85,24 @@ async def test_actions_fire_once_on_their_trigger(tmp_path: Path) -> None:
     ]
 
 
+async def test_an_action_on_a_turn_that_already_ended_is_logged_not_raised(
+    tmp_path: Path,
+) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "run already done"})
+
+    client = DevClient("http://dev", transport=httpx.MockTransport(handle))
+    driver = Instance(client, DevInstance(name="t", slot=1, root=tmp_path, password=""))
+    log: list[str] = []
+    actor = Actor(driver, [Action(at="first_tool", do="cancel")], "c1", log)
+    actor.start("r1")
+    await actor.on_frame(ToolStarted(tool_call_id="a", name="files_write_file"))
+    actor.stop()
+    await client.aclose()
+    assert not actor.cancelled
+    assert log and log[0].startswith("cancel at first_tool failed")
+
+
 @pytest.fixture(autouse=True)
 def _no_poll_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("evals.drive.instance._DELIVERY_POLL_S", 0.0)

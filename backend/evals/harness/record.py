@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from evals.drive.timeline import SubagentRecord, Turn
 from evals.drive.usage import Kind, Usage, total
 
-from .checks import CheckResult, ProxiedRequest
+from .evidence import ProxiedRequest
+from .implicit import CheckResult
 
 RUN_FILE = "run.json"
 TRANSCRIPT_FILE = "transcript.md"

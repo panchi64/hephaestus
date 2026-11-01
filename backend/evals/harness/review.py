@@ -10,13 +10,21 @@ that copy, so rerunning after the reviewer edits ``review.json`` never stacks co
 
 from __future__ import annotations
 
-import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import Field, ValidationError
+
+from evals.drive.review import (
+    FIRST_FILE,
+    REPORT_FILE,
+    REVIEW_FILE,
+    ExpectFix,
+    first_pass,
+    review_main,
+)
+from evals.drive.spec import Strict as _Strict
 
 from .check import problems
 from .grading import (
@@ -32,13 +40,7 @@ from .grading import (
 from .record import load_run
 from .spec import Scenario, load_scenarios, run_path
 
-REVIEW_FILE = "review.json"
-FIRST_FILE = "grades.first.json"
-REPORT_FILE = "review.md"
-
-
-class _Strict(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+__all__ = ["FIRST_FILE", "REPORT_FILE", "REVIEW_FILE", "ExpectFix", "Review", "apply_review"]
 
 
 class DimensionFix(_Strict):
@@ -47,16 +49,6 @@ class DimensionFix(_Strict):
     dimension: Dimension
     score: int = Field(ge=0, le=3)
     evidence: str = ""
-    reason: str = Field(min_length=1)
-
-
-class ExpectFix(_Strict):
-    scenario: str
-    sample: int = Field(ge=1)
-    #: The expect item, from 1, in the scenario's order.
-    item: int = Field(ge=1)
-    passed: bool
-    note: str = ""
     reason: str = Field(min_length=1)
 
 
@@ -222,10 +214,7 @@ def review_run(run_dir: Path, scenarios: list[Scenario]) -> list[str]:
         review = Review.model_validate_json((run_dir / REVIEW_FILE).read_text())
     except (OSError, ValidationError) as exc:
         return [f"{REVIEW_FILE}: {exc}"]
-    first_path = run_dir / FIRST_FILE
-    if not first_path.is_file():
-        _ = shutil.copyfile(run_dir / GRADES_FILE, first_path)
-    first = load_grades(first_path)
+    first = load_grades(first_pass(run_dir, GRADES_FILE))
     try:
         final = apply_review(first, review)
     except (ValueError, ValidationError) as exc:
@@ -239,19 +228,8 @@ def review_run(run_dir: Path, scenarios: list[Scenario]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    if not argv:
-        print(__doc__)
-        return 2
-    scenarios = load_scenarios()
-    failed = False
-    for raw in argv:
-        run_dir = run_path(raw)
-        found = review_run(run_dir, scenarios)
-        failed = failed or bool(found)
-        print(f"{run_dir}: {'reviewed' if not found else f'{len(found)} problems'}")
-        for problem in found:
-            print(f"  - {problem}")
-    return 1 if failed else 0
+    scenarios = load_scenarios() if argv else []
+    return review_main(argv, __doc__, lambda run_dir: review_run(run_dir, scenarios), run_path)
 
 
 if __name__ == "__main__":

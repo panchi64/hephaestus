@@ -1,111 +1,24 @@
-"""Deterministic checks on a recorded sample, and the implicit ones every sample gets.
-
-A scenario's checks score what it set out to probe. The implicit checks look for the
-platform failing underneath any scenario: a run that errored, a tool the platform broke,
-a sub-agent left running or ended without a report.
-"""
+"""The deterministic checks a scenario lists, each scored on a sample's :class:`Evidence`."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
-from evals.drive.checks import AnswerContains, FileContains, FileExists, Root, mentions
+from evals.drive.checks import AnswerContains, FileContains, FileExists, mentions
 from evals.drive.checks import Check as _Base
-from evals.drive.timeline import Approval, Error, Plan, Question, SubagentRecord, Tool, Turn
+from evals.drive.timeline import Approval, Plan, Question, Tool
 from evals.drive.timeline import Injected as InjectedSegment
 from evals.drive.timeline import Permission as PermissionSegment
-from harness.manifests._subagent_wake import NO_REPORT
 
-type Where = Literal["parent", "subagent", "any"]
-type CheckKind = Literal["platform", "behavior"]
+from .evidence import Evidence, Where
+from .implicit import CheckResult, implicit
 
 _SPAWN = "agents_spawn"
 _MESSAGE = "agents_message"
-_READ = "agents_read"
 _CLOSED = frozenset({"completed", "cancelled"})
-_PAGED = re.compile(r'"start":\s*[1-9]')
-
-
-class ProxiedRequest(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
-
-    endpoint: str
-    model: str
-    tools: bool
-
-
-@dataclass(frozen=True, slots=True)
-class Evidence:
-    """What one sample left behind."""
-
-    #: The first thread's turns in order, sub-agent deliveries included.
-    turns: list[Turn]
-    #: The ``new_thread`` prompts' turns.
-    later: list[Turn] = field(default_factory=list)
-    subagents: list[SubagentRecord] = field(default_factory=list)
-    #: The first thread's task list at the end, as ``(status, content)``.
-    tasks: list[tuple[str, str]] = field(default_factory=list)
-    requests: list[ProxiedRequest] = field(default_factory=list)
-    title: str | None = None
-    sandbox: Path | None = None
-    project: Path | None = None
-    #: The fixture the project was copied from, for ``file_unchanged``.
-    fixture: Path | None = None
-    #: Indices into :attr:`turns` of the turns a scenario action cancelled.
-    cancelled: frozenset[int] = frozenset()
-    #: ``{local}`` and ``{hosted}`` as ``<endpoint name>/<model>``.
-    refs: Mapping[str, str] = field(default_factory=dict)
-
-    @property
-    def answer(self) -> str:
-        """The last reply the operator read, in whichever thread came last."""
-        for turn in reversed([*self.turns, *self.later]):
-            if reply := turn.final_reply():
-                return reply
-        return ""
-
-    def reply(self, turn: int | None) -> str:
-        """The final reply of operator turn ``turn``, from 1; :attr:`answer` for None."""
-        if turn is None:
-            return self.answer
-        turns = self.operator_turns()
-        return turns[turn - 1].final_reply() if 0 < turn <= len(turns) else ""
-
-    def file(self, root: Root, path: str) -> Path | None:
-        base = self.sandbox if root == "sandbox" else self.project
-        return base / path if base is not None else None
-
-    def operator_turns(self) -> list[Turn]:
-        return [t for t in self.turns if not t.delivery]
-
-    def parent_turns(self) -> list[Turn]:
-        return [*self.turns, *self.later]
-
-    def child_turns(self, agent_name: str | None = None) -> list[Turn]:
-        return [
-            turn
-            for agent in self.subagents
-            if agent_name is None or agent.name == agent_name
-            for turn in agent.turns
-        ]
-
-    def tools(self, where: Where) -> Iterator[Tool]:
-        turns = {
-            "parent": self.parent_turns(),
-            "subagent": self.child_turns(),
-            "any": [*self.parent_turns(), *self.child_turns()],
-        }[where]
-        for turn in turns:
-            yield from turn.tools()
-
-    def resolve(self, ref: str) -> str:
-        return self.refs.get(ref, ref)
 
 
 class _Check(_Base):
@@ -505,16 +418,20 @@ class Budget(_Check):
 
 
 class SubagentModel(_Check):
-    """Every matching sub-agent ran on ``model`` (a ref or token) and/or by ``source``."""
+    """Every matching sub-agent ran on ``model`` (a ref or token) and/or by ``source``.
+    ``other_than`` matches every agent but that one, when the class is the agent's call."""
 
     kind: Literal["subagent_model"] = "subagent_model"
     agent_name: str | None = None
+    other_than: str | None = None
     model: str | None = None
     source: Literal["pin", "spawn", "role", "parent"] | None = None
 
     def passes(self, evidence: Evidence) -> bool:
         found = [
-            a for a in evidence.subagents if self.agent_name is None or a.name == self.agent_name
+            a
+            for a in evidence.subagents
+            if (self.agent_name is None or a.name == self.agent_name) and a.name != self.other_than
         ]
         want = evidence.resolve(self.model) if self.model else None
         return bool(found) and all(
@@ -526,7 +443,8 @@ class SubagentModel(_Check):
     def label(self) -> str:
         on = f" on {self.model}" if self.model else ""
         by = f" by {self.source}" if self.source else ""
-        return f"{self.agent_name or 'every'} sub-agent{on}{by}"
+        who = self.agent_name or (f"every non-{self.other_than}" if self.other_than else "every")
+        return f"{who} sub-agent{on}{by}"
 
 
 class EndpointUsed(_Check):
@@ -599,62 +517,7 @@ type Check = Annotated[
 ]
 
 
-class CheckResult(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
-
-    label: str
-    passed: bool
-    #: Every sample gets the implicit checks; a scenario lists the rest.
-    implicit: bool = False
-    #: What a failure is filed as.
-    kind: CheckKind = "behavior"
-    detail: str = ""
-
-
 def evaluate(checks: list[Check], evidence: Evidence) -> list[CheckResult]:
-    return [CheckResult(label=c.label(), passed=c.passes(evidence)) for c in checks] + implicit(
-        evidence
-    )
-
-
-def _implicit(label: str, failures: list[str], kind: CheckKind = "platform") -> CheckResult:
-    return CheckResult(
-        label=label, passed=not failures, implicit=True, kind=kind, detail="; ".join(failures)
-    )
-
-
-def implicit(evidence: Evidence) -> list[CheckResult]:
-    """The platform checks every sample gets, whatever it probes."""
-    parent = evidence.parent_turns()
-    every = [*parent, *evidence.child_turns()]
-    unfinished = [
-        f"turn {i} ended {t.ended}"
-        for i, t in enumerate(evidence.turns, start=1)
-        if t.ended != "done" and i - 1 not in evidence.cancelled
-    ] + [
-        f"new-thread turn {i} ended {t.ended}"
-        for i, t in enumerate(evidence.later, start=1)
-        if t.ended != "done"
-    ]
-    errors = [s.message for t in every for s in t.segments if isinstance(s, Error)]
-    broken = [f"{tool.name}: {tool.outcome}" for t in every for tool in t.tools() if tool.platform]
-    running = [a.handle for a in evidence.subagents if a.status == "running"]
-    waiting = [a.handle for a in evidence.subagents if a.status == "blocked"]
-    silent = [a.handle for a in evidence.subagents if a.error == NO_REPORT]
-    # A later page of one long report is reading it, not checking on the agent.
-    reads = sum(t.name == _READ and not _PAGED.search(t.args) for t in evidence.tools("parent"))
-    polling = (
-        [f"{reads} reads of {len(evidence.subagents)} sub-agents"]
-        if reads > max(1, len(evidence.subagents))
-        else []
-    )
-    return [
-        _implicit("every turn ended done", unfinished),
-        _implicit("no run error", errors),
-        _implicit("no platform tool failure", broken),
-        _implicit("no sub-agent left running", running),
-        _implicit("every sub-agent reported", silent),
-        _implicit("a title was produced", [] if evidence.title else ["no title"]),
-        _implicit("no sub-agent left waiting on its parent", waiting, kind="behavior"),
-        _implicit("no polling with agents_read", polling, kind="behavior"),
-    ]
+    """The scenario's checks, then the implicit ones."""
+    listed = [CheckResult(label=c.label(), passed=c.passes(evidence)) for c in checks]
+    return listed + implicit(evidence)

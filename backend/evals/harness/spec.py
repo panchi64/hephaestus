@@ -6,27 +6,51 @@ import json
 import re
 import tomllib
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import Field, TypeAdapter, model_validator
+
+from evals.drive.spec import KEY_FILE, PROJECT_TOKEN, Level, Memory, resolve_run_path
+from evals.drive.spec import Strict as _Strict
 
 from .checks import Check
 from .grading import DIMENSIONS, IMPLICIT, Dimension
 
+__all__ = [
+    "FIXTURES_DIR",
+    "HOSTED_TOKEN",
+    "KEY_FILE",
+    "LOCAL_TOKEN",
+    "PROJECT_TOKEN",
+    "RUNS_DIR",
+    "SCENARIOS_PATH",
+    "Action",
+    "Area",
+    "Choice",
+    "Level",
+    "Memory",
+    "Pin",
+    "Requirement",
+    "Routing",
+    "Scenario",
+    "ScenarioFile",
+    "StubCall",
+    "StubReply",
+    "fill",
+    "load_scenarios",
+    "run_path",
+]
+
 type Area = Literal[
     "main", "tools", "delegation", "intercom", "subagent", "models", "solving", "flow"
 ]
-type Level = Literal["plan", "manual", "edit", "auto", "yolo"]
 #: ``search`` needs the VM as well: web search is SearXNG in the services VM.
 type Requirement = Literal["vm", "search"]
 
 SCENARIOS_PATH = Path(__file__).with_name("scenarios.toml")
 FIXTURES_DIR = Path(__file__).with_name("fixtures")
 RUNS_DIR = Path(__file__).with_name("runs")
-KEY_FILE = "key.json"
 
-#: Replaced in prompts and stub scripts by the fixture project's home path.
-PROJECT_TOKEN = "{project}"
 #: Replaced in routing settings by the run's ``--local`` and ``--hosted`` models.
 LOCAL_TOKEN = "{local}"
 HOSTED_TOKEN = "{hosted}"
@@ -34,20 +58,15 @@ HOSTED_TOKEN = "{hosted}"
 _TRIGGER = re.compile(r"^(first_tool|tool:[a-z_]+|seconds:\d+(\.\d+)?)$")
 
 
+def fill(text: str, tokens: dict[str, str]) -> str:
+    for token, value in tokens.items():
+        text = text.replace(token, value)
+    return text
+
+
 def run_path(raw: str) -> Path:
     """A run-group or run directory, absolute or relative to :data:`RUNS_DIR`."""
-    path = Path(raw)
-    return path if path.is_absolute() or path.exists() else RUNS_DIR / raw
-
-
-class _Strict(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
-
-
-class Memory(_Strict):
-    content: str
-    description: str
-    pinned: bool = True
+    return resolve_run_path(raw, RUNS_DIR)
 
 
 class Action(_Strict):
@@ -91,24 +110,18 @@ class StubReply(_Strict):
 
         ``index`` is the reply's place in the script; it keeps each call's id unique, since
         a run keys its tool cards by id."""
-
-        def fill(text: str) -> str:
-            for token, value in tokens.items():
-                text = text.replace(token, value)
-            return text
-
         out = self.model_dump(exclude={"tool_calls"}, exclude_none=True)
         out["tool_calls"] = [
             {
                 "name": call.name,
                 "id": f"call_{index}_{n}",
-                "arguments": fill(json.dumps(call.arguments)),
+                "arguments": fill(json.dumps(call.arguments), tokens),
             }
             for n, call in enumerate(self.tool_calls)
         ]
         if self.match is not None:
-            out["match"] = fill(self.match)
-        out["text"] = fill(self.text)
+            out["match"] = fill(self.match, tokens)
+        out["text"] = fill(self.text, tokens)
         return out
 
 

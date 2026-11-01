@@ -5,9 +5,11 @@ the tracked backlog every run group feeds.
     uv run python -m evals.harness.issues set H-004 fixed --note "fixed in a1b2c3d"
 
 The first form writes ``runs/<group>/issues.md`` and merges the group into
-``backlog.json``, re-rendering ``ISSUES.md``; a group recorded on the dev stub writes its
-``issues.md`` only. An issue already in the backlog counts another occurrence, and one
-marked ``fixed`` that recurs is reopened as ``regressed``.
+``backlog.json``, re-rendering ``ISSUES.md``. A group recorded on the dev stub, or not yet
+reviewed in full, writes its ``issues.md`` only: until a reviewer has classified them, a
+failed scenario check may be the suite's fault rather than the product's. An issue already
+in the backlog counts another occurrence, and one marked ``fixed`` that recurs is reopened
+as ``regressed``.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import re
 import sys
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar, Literal
@@ -23,8 +26,9 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from evals.drive.timeline import redact_home
 
-from .grading import GRADES_FILE, SEVERITIES, Issue, IssueKind, Severity, load_grades
+from .grading import SEVERITIES, Issue, IssueKind, Severity, load_grades
 from .record import RUN_FILE, load_run
+from .review import REPORT_FILE
 from .spec import load_scenarios, run_path
 
 BACKLOG_PATH = Path(__file__).with_name("backlog.json")
@@ -113,17 +117,33 @@ def _merge(found: Iterable[Found]) -> list[Found]:
     return sorted(out.values(), key=lambda f: (SEVERITIES.index(f.severity), f.area, f.title))
 
 
-def collect(group_dir: Path) -> tuple[list[Found], bool]:
-    """Every issue a group's runs show, deduplicated, and whether any run was on the stub."""
+@dataclass(frozen=True, slots=True)
+class Collected:
+    found: list[Found]
+    #: Some run was recorded on the dev stub.
+    stub: bool
+    #: Every run has a reviewed grade.
+    reviewed: bool
+
+
+def collect(group_dir: Path) -> Collected:
+    """Every issue a group's runs show, deduplicated."""
     areas = {s.id: s.area for s in load_scenarios()}
     found: list[Found] = []
     stub = False
+    reviewed = True
     for run_dir in sorted(p for p in group_dir.iterdir() if (p / RUN_FILE).is_file()):
         run = load_run(run_dir)
         stub = stub or run.stub
+        # A reviewed grader files a failed scenario check under the kind it really is (an
+        # eval fault, the agent's, the product's); unreviewed, the check stands for itself.
+        graded = (run_dir / REPORT_FILE).is_file()
+        reviewed = reviewed and graded
         for sample in run.samples:
             area = areas.get(sample.scenario, "unknown")
             for check in sample.failed_checks():
+                if graded and not check.implicit:
+                    continue
                 label = f"{sample.scenario}: {check.label}" if not check.implicit else check.label
                 found.append(
                     Found(
@@ -136,9 +156,9 @@ def collect(group_dir: Path) -> tuple[list[Found], bool]:
                         source="check",
                     )
                 )
-        if (run_dir / GRADES_FILE).is_file():
+        if graded:
             found += [_from_grader(issue, areas) for issue in load_grades(run_dir).issues]
-    return _merge(found), stub
+    return Collected(_merge(found), stub=stub, reviewed=reviewed)
 
 
 def _from_grader(issue: Issue, areas: dict[str, str]) -> Found:
@@ -279,14 +299,19 @@ def main(argv: list[str]) -> int:
         return _set(argv[1:])
     group_dir = run_path(argv[0])
     try:
-        found, stub = collect(group_dir)
+        collected = collect(group_dir)
     except (OSError, ValidationError) as exc:
         print(f"{group_dir}: {exc}")
         return 1
-    _ = (group_dir / GROUP_FILE).write_text(render_group(group_dir.name, found, stub))
+    found = collected.found
+    rendered = render_group(group_dir.name, found, stub=collected.stub)
+    _ = (group_dir / GROUP_FILE).write_text(rendered)
     print(f"wrote {group_dir / GROUP_FILE}: {len(found)} issues")
-    if stub:
+    if collected.stub:
         print("A stub run; the backlog is left as it is.")
+        return 0
+    if not collected.reviewed:
+        print("Not every run is reviewed yet; the backlog is left as it is.")
         return 0
     backlog = load_backlog()
     group = group_dir.name

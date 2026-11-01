@@ -18,12 +18,14 @@ from runs.events.tools import ToolStarted
 from runs.events.union import EventBody
 from services.sandbox.base import safe_key
 
-from .checks import Evidence, ProxiedRequest, evaluate
+from .checks import evaluate
+from .evidence import Evidence, ProxiedRequest
 from .record import Sample
-from .routing import Router, fill
-from .spec import FIXTURES_DIR, PROJECT_TOKEN, Action, Scenario
+from .routing import Router
+from .spec import FIXTURES_DIR, PROJECT_TOKEN, Action, Scenario, fill
 
 _WATCH_POLL_S = 2.0
+_LIVE = frozenset({"running", "blocked"})
 _TITLE_WAIT_S = 30.0
 
 
@@ -98,12 +100,17 @@ class Actor:
         if action not in self._pending:
             return
         self._pending.remove(action)
-        if action.do == "cancel":
-            await self._driver.client.cancel(self.run_id)
-            self.cancelled = True
-            self._log.append(f"cancelled the turn at {action.at}")
+        # The turn can end between the trigger and the request; that is logged, not fatal.
+        try:
+            if action.do == "cancel":
+                await self._driver.client.cancel(self.run_id)
+                self.cancelled = True
+                self._log.append(f"cancelled the turn at {action.at}")
+                return
+            sent = await self._driver.client.post(action.text, self._conversation_id)
+        except httpx.HTTPError as exc:
+            self._log.append(f"{action.do} at {action.at} failed: {exc}")
             return
-        sent = await self._driver.client.post(action.text, self._conversation_id)
         landed = "queued into the running turn" if isinstance(sent, Queued) else "started a turn"
         self._log.append(f"steered at {action.at}: {action.text!r} ({landed})")
 
@@ -123,6 +130,7 @@ class Watcher:
     roots: set[str] = field(default_factory=set)
     turns: dict[str, list[tuple[float, Turn]]] = field(default_factory=dict)
     _followed: set[str] = field(default_factory=set)
+    _children: set[str] = field(default_factory=set)
     _follows: list[asyncio.Task[Turn]] = field(default_factory=list)
     _loop: asyncio.Task[None] | None = None
 
@@ -137,12 +145,15 @@ class Watcher:
                 await self.scan()
             await asyncio.sleep(_WATCH_POLL_S)
 
-    async def scan(self) -> None:
-        children = {
-            agent.conversation_id
-            for root in list(self.roots)
-            for agent in await self.driver.subagents(root)
-        }
+    async def scan(self, *, full: bool = False) -> None:
+        """Follow child runs not followed yet. The instance's whole run list is read only
+        when a child is new or live, or for ``full``: a settled tree starts no runs."""
+        cards = [card for root in list(self.roots) for card in await self.driver.subagents(root)]
+        children = {card.conversation_id for card in cards}
+        changed = children != self._children or any(c.status in _LIVE for c in cards)
+        self._children = children
+        if not (changed or full):
+            return
         for run in await self.driver.runs():
             if run.conversation_id in children and run.id not in self._followed:
                 self._followed.add(run.id)
@@ -156,7 +167,7 @@ class Watcher:
         if self._loop is not None:
             _ = self._loop.cancel()
         with contextlib.suppress(httpx.HTTPError, ValidationError):
-            await self.scan()
+            await self.scan(full=True)
         _ = await asyncio.gather(*self._follows, return_exceptions=True)
         return {
             cid: [t for _, t in sorted(runs, key=lambda r: r[0])]
@@ -206,18 +217,18 @@ class Harness(Instance):
         conversation_id: str | None = None
         for number, raw in enumerate(prompts, start=1):
             text = fill(raw, tokens)
+            if conversation_id is not None:
+                await self._idle(conversation_id, policy, scenario.timeout_s, into)
             sent = await self.client.post(
                 text,
                 conversation_id,
                 permission_level=scenario.permission_level,
                 project_id=project_id if conversation_id is None else None,
             )
-            # A sub-agent's report can start a wake run just as the next prompt is sent; the
-            # prompt then joins that run, which is followed as this turn.
-            run_id = sent.run_id
-            if run_id is None:
-                record.problem = f"turn {number} was held: no run took it"
+            if isinstance(sent, Queued):
+                record.problem = f"turn {number} was queued behind a run that started meanwhile"
                 break
+            run_id = sent.run_id
             conversation_id = sent.conversation_id
             watcher.watch(conversation_id)
             actions = [a for a in scenario.actions if a.turn == number and into is record.turns]
@@ -252,6 +263,22 @@ class Harness(Instance):
                 record.problem = found.problem
         return conversation_id
 
+    async def _idle(
+        self, conversation_id: str, policy: Policy, timeout_s: float, into: list[Turn]
+    ) -> None:
+        """Follow whatever runs on the thread before the next prompt is sent, so it lands
+        as a turn of its own: a sub-agent's report can start a wake run in between."""
+        deadline = time.monotonic() + timeout_s
+        while (run_id := (await self.inbox(conversation_id)).run_id) is not None:
+            if time.monotonic() > deadline:
+                return
+            if run_id in {t.run_id for t in into}:
+                # Already followed to its end; the thread just hasn't cleared it yet.
+                await asyncio.sleep(0.5)
+                continue
+            delivery = Turn(prompt="", delivery=True)
+            into.append(await self.follow(run_id, delivery, policy, timeout_s=timeout_s))
+
     async def _event_ids(self) -> set[str]:
         return {e.id for e in read(await self.http.get("/calendar/events"), _Events).items}
 
@@ -267,13 +294,15 @@ class Harness(Instance):
         self, scenario: Scenario, number: int, context: Context
     ) -> tuple[Sample, Evidence]:
         record = Sample(scenario=scenario.id, sample=number)
-        before = await self.memory_ids()
-        events_before = await self._event_ids()
+        memories_before: set[str] | None = None
+        events_before: set[str] | None = None
         copy: Fixture | None = None
         cancelled: set[int] = set()
         watcher = Watcher(self, policy_of(scenario), scenario.timeout_s)
         child_turns: dict[str, list[Turn]] = {}
         try:
+            memories_before = await self.memory_ids()
+            events_before = await self._event_ids()
             if scenario.routing:
                 await context.router.apply(scenario.routing)
             for memory in scenario.memories:
@@ -316,11 +345,17 @@ class Harness(Instance):
             record.problem = f"{type(exc).__name__}: {exc}"
             child_turns = await watcher.finish()
         finally:
-            # What the sample seeded or the agent saved would leak into later samples.
-            for memory_id in await self.memory_ids() - before:
-                _ = await self.http.delete(f"/memory/{memory_id}")
-            for event_id in await self._event_ids() - events_before:
-                _ = await self.http.delete(f"/calendar/events/{event_id}")
+            # What the sample seeded or the agent saved would leak into later samples. Each
+            # step on its own, so one failing leaves the rest done and the problem recorded.
+            try:
+                if memories_before is not None:
+                    for memory_id in await self.memory_ids() - memories_before:
+                        _ = await self.http.delete(f"/memory/{memory_id}")
+                if events_before is not None:
+                    for event_id in await self._event_ids() - events_before:
+                        _ = await self.http.delete(f"/calendar/events/{event_id}")
+            except httpx.HTTPError as exc:
+                record.problem = record.problem or f"cleanup failed: {exc}"
             if scenario.routing:
                 await context.router.reset()
         for agent in record.subagents:

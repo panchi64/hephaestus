@@ -384,6 +384,29 @@ class TestLaunch:
             assert (card["model"], card["model_source"]) == ("main:None/None", "parent")
             await settle_run(app, started.run_id)
 
+    async def test_a_role_chain_of_several_endpoints_stays_a_role(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _ = _record_resolution(monkeypatch)
+
+        async def chained(
+            self: ModelRegistry, owner_id: str, role: str
+        ) -> tuple[list[str], str | None]:
+            return (["local", "cloud"], None) if role == "subagent" else ([], None)
+
+        monkeypatch.setattr(ModelRegistry, "get_role_binding", chained)
+        async with client_app() as (_client, app):
+            started = await launcher_of(app).launch(
+                OWNER,
+                EXPLORER,
+                "look into it",
+                handle="reader",
+                parent=SubagentParent(conversation_id=await _root(app)),
+            )
+            binding = await app_state(app).conversations.binding(started.conversation_id)
+            assert binding.model_choice == ModelChoice(role="subagent")
+            await settle_run(app, started.run_id)
+
     async def test_the_subagent_role_when_bound(self, monkeypatch: pytest.MonkeyPatch):
         calls = _record_resolution(monkeypatch, subagent_bound=True)
         async with client_app() as (_client, app):
@@ -429,6 +452,27 @@ class TestLaunch:
             calls.clear()
             _ = await composer_of(app).resolve(OWNER, started.conversation_id)
             assert calls[0] == ("main", "local", "small")
+
+    async def test_the_operator_sending_into_the_childs_thread_keeps_its_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        calls = _record_resolution(monkeypatch)
+        async with client_app() as (client, app):
+            started = await launcher_of(app).launch(
+                OWNER,
+                EXPLORER,
+                "look into it",
+                handle="reader",
+                parent=SubagentParent(conversation_id=await _root(app)),
+                model=ChoosableModel(endpoint_id="local", model="small"),
+            )
+            await settle_run(app, started.run_id)
+            calls.clear()
+            body = {"prompt": "and the tests?", "conversation_id": started.conversation_id}
+            response = await client.post("/chat", json=body)
+            assert response.status_code == 202
+            assert calls[0] == ("main", "local", "small")
+            await settle_run(app, str(obj(json_body(response))["run_id"]))
 
     async def test_a_pinned_agent_ignores_a_requested_model(self, monkeypatch: pytest.MonkeyPatch):
         calls = _record_resolution(monkeypatch)

@@ -22,7 +22,9 @@ from evals.drive.timeline import (
     Tool,
     Turn,
 )
-from evals.harness.checks import Check, Evidence, ProxiedRequest, evaluate, implicit
+from evals.harness.checks import Check, evaluate
+from evals.harness.evidence import Evidence, ProxiedRequest
+from evals.harness.implicit import implicit
 from harness.manifests._subagent_wake import NO_REPORT
 from runs.events.lifecycle import LimitNotice, StepStarted
 from runs.events.messages import MessageInjected
@@ -213,6 +215,24 @@ def test_subagent_checks() -> None:
     assert _passes({"kind": "delivery_relayed"}, evidence)
     assert _passes({"kind": "subagent_model", "model": "{local}", "source": "spawn"}, evidence)
     assert not _passes({"kind": "subagent_model", "source": "pin"}, evidence)
+
+
+def test_a_routing_check_can_cover_every_agent_but_one() -> None:
+    evidence = Evidence(
+        turns=[],
+        subagents=[
+            _agent("reviewer", model="cloud/big", model_source="spawn"),
+            _agent("worker", model="local/m", model_source="spawn"),
+        ],
+        refs={"{local}": "local/m"},
+    )
+    check: dict[str, object] = {
+        "kind": "subagent_model",
+        "other_than": "reviewer",
+        "model": "{local}",
+    }
+    assert _passes(check, evidence)
+    assert not _passes({"kind": "subagent_model", "model": "{local}"}, evidence)
 
 
 def test_spawns_in_separate_steps_are_not_parallel() -> None:

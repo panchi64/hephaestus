@@ -94,7 +94,7 @@ class RecordingProxy:
         self._bucket: str = ""
         self._usage: dict[str, dict[Kind, Usage]] = {}
         self._tag: str = tag
-        self.log: list[Proxied] = []
+        self._log: dict[str, list[Proxied]] = {}
         self.window: TokenWindow = window or TokenWindow(tokens_per_minute or sys.maxsize)
         self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=None)
         self._port: int = _free_port()
@@ -119,6 +119,10 @@ class RecordingProxy:
         """``bucket``'s tally so far, removed from the proxy."""
         return self._usage.pop(bucket, {})
 
+    def take_requests(self, bucket: str) -> list[Proxied]:
+        """The requests forwarded under ``bucket`` so far, removed from the proxy."""
+        return self._log.pop(bucket, [])
+
     async def start(self) -> None:
         self._task = asyncio.create_task(self._server.serve())
         while not self._server.started:
@@ -136,7 +140,8 @@ class RecordingProxy:
         body = await request.body()
         parsed = _read(body)
         tools = bool(parsed.tools)
-        self.log.append(Proxied(self._bucket, self._tag, parsed.model, tools))
+        entry = Proxied(self._bucket, self._tag, parsed.model, tools)
+        self._log.setdefault(self._bucket, []).append(entry)
         if self._armed is not None and tools:
             self._armed.parent.mkdir(parents=True, exist_ok=True)
             text = json.dumps(json.loads(body), indent=2) + "\n"

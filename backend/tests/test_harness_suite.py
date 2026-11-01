@@ -12,9 +12,9 @@ from pydantic import ValidationError
 from evals.drive.timeline import Text, Turn
 from evals.harness import issues
 from evals.harness.check import problems
-from evals.harness.checks import CheckResult
 from evals.harness.document import render
 from evals.harness.grading import DIMENSIONS, Grades, Issue
+from evals.harness.implicit import CheckResult
 from evals.harness.issues import Backlog, Found, merge_backlog, render_backlog
 from evals.harness.record import Run, Sample
 from evals.harness.review import Review, apply_review
@@ -261,6 +261,36 @@ def test_the_backlog_counts_recurrences_and_reopens_a_fixed_issue() -> None:
         ("H-002", "open"),
     ]
     assert "## Regressed" in render_backlog(backlog)
+
+
+def test_a_reviewed_run_files_its_grader_issues_in_place_of_scenario_checks(
+    tmp_path: Path,
+) -> None:
+    scenario = _scenario()
+    run = _run(
+        scenario,
+        CheckResult(label="answer matches /x/", passed=False),
+        CheckResult(label="no run error", passed=False, implicit=True, kind="platform"),
+    )
+    run_dir = tmp_path / "g" / "A"
+    run_dir.mkdir(parents=True)
+    _ = (run_dir / "run.json").write_text(run.model_dump_json())
+
+    unreviewed = issues.collect(tmp_path / "g")
+    assert not unreviewed.reviewed
+    assert {f.title for f in unreviewed.found} == {
+        "Check failed: s: answer matches /x/",
+        "Check failed: no run error",
+    }
+
+    _ = (run_dir / "grades.json").write_text(_grades().model_dump_json())
+    _ = (run_dir / "review.md").write_text("# Review\n")
+    reviewed = issues.collect(tmp_path / "g")
+    assert reviewed.reviewed
+    assert {f.title for f in reviewed.found} == {
+        "Check failed: no run error",
+        "Reads the file twice",
+    }
 
 
 def test_the_set_command_edits_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

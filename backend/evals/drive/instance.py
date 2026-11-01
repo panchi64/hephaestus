@@ -97,7 +97,7 @@ class _InboxMessage(BaseModel):
     held: bool = False
 
 
-class _Inbox(BaseModel):
+class Inbox(BaseModel):
     messages: list[_InboxMessage] = Field(default_factory=list)
     agents_paused: bool = False
     #: The run live on the thread, if any.
@@ -271,6 +271,9 @@ class Instance:
         turn.wall_s = round(time.monotonic() - started, 1)
         return turn
 
+    async def inbox(self, conversation_id: str) -> Inbox:
+        return read(await self.http.get(f"/conversations/{conversation_id}/inbox"), Inbox)
+
     async def subagents(self, conversation_id: str) -> list[SubagentRecord]:
         cards = read(await self.http.get(f"/conversations/{conversation_id}/subagents"), _Cards)
         return [
@@ -315,7 +318,7 @@ class Instance:
         quiet = 0
         while True:
             out.subagents = await self.subagents(conversation_id)
-            inbox = read(await self.http.get(f"/conversations/{conversation_id}/inbox"), _Inbox)
+            inbox = await self.inbox(conversation_id)
             wakes = sorted(
                 (
                     run
@@ -345,9 +348,10 @@ class Instance:
                 return out
             else:
                 # Twice: a finished child's card settles a moment before its report is
-                # queued, so one quiet read can fall in between.
+                # queued, so one quiet read can fall in between. With no child there is no
+                # report to wait for.
                 quiet += 1
-                if quiet >= 2:
+                if quiet >= 2 or not out.subagents:
                     return out
             if time.monotonic() > deadline:
                 out.problem = f"sub-agents still live after {timeout_s:.0f}s"
@@ -388,8 +392,8 @@ class Session:
                 out.setdefault(kind, Usage()).merge(usage)
         return out
 
-    def requests(self, bucket: str) -> list[Proxied]:
-        return [r for p in self.proxies.values() for r in p.log if r.bucket == bucket]
+    def take_requests(self, bucket: str) -> list[Proxied]:
+        return [r for p in self.proxies.values() for r in p.take_requests(bucket)]
 
 
 @asynccontextmanager

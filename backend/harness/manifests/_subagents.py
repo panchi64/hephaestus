@@ -31,7 +31,7 @@ from harness.manifest import HarnessContext
 from harness.turns import UnattendedTurns
 from models.subagent import SubagentRecord
 from prompts.voice import CLASSES
-from routes.chat import resolve_choice
+from routes.chat import TurnModels, resolve_choice
 from routes.chat.thread_composer import ThreadComposer
 from runs import RunRegistry, RunStatus
 from runs.run import StopCause
@@ -220,11 +220,7 @@ class ConversationSubagents(SubagentLauncher):
             models = await resolve_choice(self._models, chosen.choice, owner_id=owner_id)
         except Exception as exc:
             raise SubagentUnavailableError(f"No usable model is configured: {exc}") from exc
-        # A role or the parent's choice can name a role, which a later rebind would move;
-        # the child keeps the model it launched on.
-        choice = chosen.choice
-        if chosen.source in ("role", "parent") and models.endpoint is not None:
-            choice = ModelChoice(endpoint_id=models.endpoint.id, model=models.model_name)
+        choice = await self._fixed(owner_id, chosen.choice, models)
 
         # Capped by the spawning thread: one approved launch must not buy an unchosen level.
         permission = permission_level(agent.permission_ceiling or DEFAULT_PERMISSION)
@@ -356,6 +352,17 @@ class ConversationSubagents(SubagentLauncher):
             agent_class=agent.agent_class,
             task=task,
         )
+
+    async def _fixed(self, owner_id: str, choice: ModelChoice, models: TurnModels) -> ModelChoice:
+        """What the child saves: a choice naming only a role becomes the model it resolved
+        to, so a later rebind can't move the child. A role bound to a chain of several
+        endpoints stays a role, since fixing one would drop the operator's failover."""
+        if choice.endpoint_id is not None or models.endpoint is None:
+            return choice
+        chain, _ = await self._models.get_role_binding(owner_id, choice.role)
+        if len(chain) > 1:
+            return choice
+        return ModelChoice(endpoint_id=models.endpoint.id, model=models.model_name)
 
     def _check_depth(self, spawner: AgentDefinition, position: _Position) -> None:
         if not spawner.can_delegate:

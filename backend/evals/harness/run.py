@@ -54,8 +54,8 @@ from evals.drive.instance import (
 from evals.drive.keys import ENV_FILE, provider_key
 from evals.drive.timeline import redact_home
 
-from .checks import ProxiedRequest
 from .document import render
+from .evidence import ProxiedRequest
 from .record import CONTEXT_DIR, RUN_FILE, TRANSCRIPT_FILE, Routing, Run
 from .routing import RefError, Router, split_ref
 from .sample import Context, Harness, score
@@ -172,7 +172,7 @@ async def _pass(
             record.usage = live.take(bucket)
             requests = [
                 ProxiedRequest(endpoint=r.endpoint, model=r.model, tools=r.tools)
-                for r in live.requests(bucket)
+                for r in live.take_requests(bucket)
             ]
             score(scenario, record, evidence, requests)
             run.samples.append(record)
@@ -266,8 +266,11 @@ async def main(argv: list[str]) -> int:
                         await warm(live.endpoint.base_url, model)
                 under_test = model or (main_binding.model if main_binding else None)
                 under_test = under_test or live.endpoint.model or ""
-                local = args.local or (f"{STUB_LOCAL}/{under_test}" if added else "")
-                hosted_ref = args.hosted or f"{live.endpoint.name}/{under_test}"
+                # Empty when unknown, which skips the scenarios that need it.
+                local = args.local or (f"{STUB_LOCAL}/{under_test}" if added and under_test else "")
+                hosted_ref = args.hosted or (
+                    f"{live.endpoint.name}/{under_test}" if under_test else ""
+                )
                 router.tokens = {LOCAL_TOKEN: local, HOSTED_TOKEN: hosted_ref}
                 await router.run_defaults()
                 stub_url = f"http://127.0.0.1:{instance.stub_port}" if live.stub else None
