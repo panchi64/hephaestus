@@ -1,11 +1,12 @@
 import { Show, children, type JSX } from "solid-js";
 import { Icon } from "../../primitives/Icon";
+import { ACTION_TONES, type ActionTone } from "../ActionFrame";
 import { SEND_CHORD } from "./sendChord";
 
 export interface ComposerHeaderProps {
   recalling: boolean;
   recallLabel: string | undefined;
-  waiting: { label: string; onJump?: () => void } | null | undefined;
+  waiting: { tone: ActionTone; onJump?: () => void } | null | undefined;
   title: string | undefined;
   headerStart: JSX.Element;
   headerEnd: JSX.Element;
@@ -76,9 +77,15 @@ export function ComposerHeader(props: ComposerHeaderProps): JSX.Element {
   return (
     <Show when={!props.recalling && props.waiting} fallback={plate}>
       {(waiting) => (
-        <div class="heph-composer-wait" role="status">
+        <div
+          class="heph-composer-wait"
+          data-tone={waiting().tone}
+          role="status"
+        >
           <span class="heph-action-pulse" aria-hidden="true" />
-          <span class="min-w-0 truncate">{waiting().label}</span>
+          <span class="min-w-0 truncate">
+            {ACTION_TONES[waiting().tone].strip}
+          </span>
           <Show when={waiting().onJump}>
             {(jump) => (
               <button type="button" onClick={() => jump()()}>

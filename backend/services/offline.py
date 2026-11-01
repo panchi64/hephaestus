@@ -1,6 +1,6 @@
 """Offline mode — suspend the web services when there's no internet to use them.
 
-The agent's two web capabilities each run a long-lived service in the platform VM: the
+The agent's two web capabilities each run a long-lived service in the services VM: the
 managed SearXNG (:class:`services.searxng.ManagedSearxng`) and the headless browser
 (:class:`services.webfetch.browser.ManagedBrowser`). With no connectivity they
 burn RAM/CPU producing nothing, so this service watches the link and **stops them

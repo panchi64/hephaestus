@@ -29,14 +29,15 @@ from models.approval_grant import ApprovalGrant
 from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import (
     COMMAND_SCOPED_TOOLS,
+    ONCE_ONLY_TOOLS,
     ApprovalGrantStore,
     GrantInfo,
     covered_by_grant,
     grant_scopes,
-    grant_width,
 )
 from services.conversations import ConversationBinding
 from services.permissions import DEFAULT_PERMISSION, PERMISSION_LEVELS, PermissionLevel
+from services.plan_mode import PLAN_SUBMIT_TOOL
 from tools import RunDeps, build_agent_toolsets
 from tools.corpus import corpus_toolset
 from tools.memory import memory_toolset
@@ -65,41 +66,6 @@ async def test_grant_then_list():
     assert [(g.tool_name, g.command_prefix) for g in listed] == [("corpus_retrieve", ())]
     # A grant is scoped to its conversation — another thread is unaffected.
     assert await s.list(OWNER, "other-conv") == []
-
-
-async def test_a_grant_records_which_width_the_operator_chose():
-    s = _store(3600)
-    _ = await s.grant(OWNER, CONV, "corpus_retrieve")
-    assert [g.decisive for g in await s.list(OWNER, CONV)] == [False]
-    _ = await s.grant(OWNER, CONV, "mail_send", decisive=True)
-    assert {g.tool_name: g.decisive for g in await s.list(OWNER, CONV)} == {
-        "corpus_retrieve": False,
-        "mail_send": True,
-    }
-
-
-async def test_a_refresh_never_narrows_a_width_the_operator_chose():
-    # A write that does not ask for the wider width is not the operator withdrawing it —
-    # it is a refresh, or the other half of a batch that settled two calls to one tool,
-    # where the row written last would otherwise decide how far the grant reaches.
-    # Narrowing is something they do on purpose, by revoking the chip.
-    s = _store(3600)
-    _ = await s.grant(OWNER, CONV, "mail_send", decisive=True)
-    _ = await s.grant(OWNER, CONV, "mail_send")
-    assert [g.decisive for g in await s.list(OWNER, CONV)] == [True]
-
-
-async def test_choosing_the_wider_width_promotes_the_grant_already_there():
-    # The width rides outside the unique index, so a re-grant moves the row the operator
-    # can already see rather than standing a second one beside it — two grants over one
-    # scope disagreeing about how far it reaches is not a state worth being able to hold.
-    s = _store(3600)
-    _ = await s.grant(OWNER, CONV, "shell_run_command")
-    _ = await s.grant(OWNER, CONV, "shell_run_command", decisive=True)
-    listed = await s.list(OWNER, CONV)
-    assert [(g.tool_name, g.command_prefix, g.decisive) for g in listed] == [
-        ("shell_run_command", (), True)
-    ]
 
 
 async def test_expired_grant_is_not_listed():
@@ -162,6 +128,16 @@ async def test_a_whole_tool_grant_re_grants_rather_than_duplicating():
     _ = await s.grant(OWNER, CONV, "corpus_retrieve")
     _ = await s.grant(OWNER, CONV, "corpus_retrieve")
     assert len(await s.list(OWNER, CONV)) == 1
+
+
+async def test_no_grant_covers_a_plan_approval():
+    # A row that got written anyway must neither cover the call nor be listed as in force.
+    assert PLAN_SUBMIT_TOOL in ONCE_ONLY_TOOLS
+    granted = [GrantInfo(tool_name=PLAN_SUBMIT_TOOL, expires_at=utcnow() + timedelta(hours=1))]
+    assert not covered_by_grant(PLAN_SUBMIT_TOOL, {}, granted)
+    s = _store(3600)
+    _ = await s.grant(OWNER, CONV, PLAN_SUBMIT_TOOL)
+    assert await s.list(OWNER, CONV) == []
 
 
 # --- the engine auto-approves a granted tool --------------------------------
@@ -383,15 +359,6 @@ def _grants(*scopes: tuple[str, tuple[str, ...]]) -> list[GrantInfo]:
     ]
 
 
-def _decisive(*scopes: tuple[str, tuple[str, ...]]) -> list[GrantInfo]:
-    """The same, at the width the operator picks deliberately."""
-    later = utcnow() + timedelta(hours=1)
-    return [
-        GrantInfo(tool_name=tool, expires_at=later, command_prefix=prefix, decisive=True)
-        for tool, prefix in scopes
-    ]
-
-
 def test_covered_by_grant_is_the_single_rule():
     held = _grants(("corpus_retrieve", ()))
     assert covered_by_grant("corpus_retrieve", {}, held) is True
@@ -400,34 +367,9 @@ def test_covered_by_grant_is_the_single_rule():
     assert covered_by_grant("corpus_retrieve", {}, []) is False
 
 
-class TestHowFarAGrantReaches:
-    """`grant_width` — the one reading both the park-time split and the review run on.
-
-    Coverage and width are different questions, and the levels that ask outright only want
-    the first. The second separates a yes to one act from the operator's yes to the whole
-    tool, and it is never inferred from an empty scope: that shape is also what a
-    non-command tool's ordinary grant and a scheduled task's seed take.
-    """
-
-    def test_nothing_covering_the_call_is_no_width_at_all(self):
-        assert grant_width("corpus_retrieve", {}, []) == "none"
-        assert grant_width(None, {}, _grants(("corpus_retrieve", ()))) == "none"
-
-    def test_an_undecisive_whole_tool_grant_only_informs(self):
-        held = _grants(("corpus_retrieve", ()))
-        assert grant_width("corpus_retrieve", {}, held) == "command"
-
-    def test_the_operators_wider_pick_answers(self):
-        held = _decisive(("shell_run_command", ()))
-        # Any command, which is the whole of what that width says.
-        assert grant_width("shell_run_command", {"command": "rm -rf build"}, held) == "tool"
-        assert grant_width("shell_run_command", {"command": "uv run pytest"}, held) == "tool"
-
-    def test_a_command_scoped_grant_never_answers_however_it_was_recorded(self):
-        # It names one act, so it is not an answer about every call the tool could make.
-        held = _decisive(("shell_run_command", ("uv", "run", "pytest")))
-        assert grant_width("shell_run_command", {"command": "uv run pytest"}, held) == "command"
-        assert grant_width("shell_run_command", {"command": "uv run ruff"}, held) == "none"
+def test_a_whole_tool_grant_covers_any_command():
+    held = _grants(("shell_run_command", ()))
+    assert covered_by_grant("shell_run_command", {"command": "rm -rf build"}, held)
 
 
 class TestACommandScopedGrant:
@@ -448,7 +390,6 @@ class TestACommandScopedGrant:
         [
             "uv run pytest",
             "uv run pytest tests/test_a.py",  # the same act on a different target
-            "uv run pytest -k thing",
         ],
     )
     def test_it_covers_the_act_it_was_granted_for(self, command: str):
@@ -458,6 +399,8 @@ class TestACommandScopedGrant:
         "command",
         [
             "uv run ruff check .",  # a sibling mode of the same program
+            "uv run pytest -k thing",  # a flag is part of the act
+            "uv run pytest > src/main.py",  # so is a redirect inside the worktree
             "rm -rf build",
             "uv",  # shorter than the scope: nothing says which act this is
             "cat $TARGET",  # unreadable, so nothing may be inferred
@@ -478,33 +421,17 @@ class TestACommandScopedGrant:
         # being one the fence can hold — and the leading words say nothing about either.
         assert self._covers(command) is False
 
-    @pytest.mark.parametrize("reach", ["host", "network"])
-    def test_the_same_words_declaring_a_wider_reach_are_not_the_same_act(self, reach: str):
-        # `reach` is what decides the fence the tool wraps the process in: `host` runs it
-        # unwrapped. The operator ticked a box under a fenced run.
-        assert (
-            covered_by_grant(
-                "shell_run_command",
-                {"command": "uv run pytest", "reach": reach},
-                self.held,
-            )
-            is False
-        )
-
-    def test_a_grant_recorded_under_a_wider_reach_covers_that_reach_and_no_other(self):
-        # The one that makes grants usable at Auto at all: `brew install wget` declared
-        # `host` parks, the operator ticks the box, and the next identical call is covered
-        # — while the same words fenced, or declared `network`, are asked about again.
+    def test_a_grant_stored_with_a_retired_reach_marker_loads_and_covers_nothing_now(self):
+        # Scopes written before the reach argument was removed lead with `@host` or
+        # `@network`; they stay readable and match no command.
         held = _grants(("shell_run_command", ("@host", "brew", "install", "wget")))
+        for args in ({"command": "brew install wget"}, {"command": "@host brew install wget"}):
+            assert covered_by_grant("shell_run_command", args, held) is False
 
-        def covers(reach: str) -> bool:
-            return covered_by_grant(
-                "shell_run_command", {"command": "brew install wget", "reach": reach}, held
-            )
-
-        assert covers("host") is True
-        assert covers("workspace") is False
-        assert covers("network") is False
+    def test_a_grant_on_the_vm_tool_does_not_cover_the_host_tool(self):
+        held = _grants(("shell_run_command", ("git", "status")))
+        assert covered_by_grant("shell_run_command", {"command": "git status"}, held) is True
+        assert covered_by_grant("shell_run_on_host", {"command": "git status"}, held) is False
 
     def test_a_scope_covers_its_own_words_and_not_what_follows_them(self):
         # A scope is only as long as the approved command's own leading words, so matching
@@ -582,7 +509,7 @@ class TestTheScopeAnApprovalRecords:
         assert grant_scopes("mail_send", {"to": "a@b.c"}) == [()]
 
     def test_a_command_tool_records_the_words_the_command_leads_with(self):
-        assert grant_scopes("shell_run_command", {"command": "uv run pytest -k x"}) == [
+        assert grant_scopes("shell_run_command", {"command": "uv run pytest tests/a.py"}) == [
             ("uv", "run", "pytest")
         ]
 
@@ -597,7 +524,7 @@ class TestTheScopeAnApprovalRecords:
         # Twice on different targets, because that is what the cap makes one act — a
         # differently *flagged* stage is a different act and records its own scope.
         assert grant_scopes(
-            "code_run_host_command",
+            "shell_run_on_host",
             {"command": "uv run pytest tests/a.py && uv run pytest tests/b.py"},
         ) == [("uv", "run", "pytest")]
 
@@ -610,27 +537,13 @@ class TestTheScopeAnApprovalRecords:
         # nothing should have written down, and the operator's chip would misdescribe it.
         assert grant_scopes("shell_run_command", {"command": command}) is None
 
-    @pytest.mark.parametrize("reach", ["host", "network"])
-    def test_a_command_declaring_a_wider_reach_records_the_reach_in_its_scope(self, reach: str):
-        # At Auto these are the only shell calls that ever park, so a scoping that refused
-        # them would leave "allow for this conversation" with nothing to apply to. The
-        # reach leads the scope instead, so the grant stands for *that* run and no other.
-        assert grant_scopes("shell_run_command", {"command": "uv run pytest", "reach": reach}) == [
-            (f"@{reach}", "uv", "run", "pytest")
+    def test_a_vm_command_records_its_own_words(self):
+        assert grant_scopes("shell_run_command", {"command": "uv run pytest"}) == [
+            ("uv", "run", "pytest")
         ]
 
-    def test_the_tools_own_reach_is_not_written_into_the_scope(self):
-        assert grant_scopes(
-            "shell_run_command", {"command": "uv run pytest", "reach": "workspace"}
-        ) == [("uv", "run", "pytest")]
-
-    def test_a_host_tool_still_records_its_own_reach(self):
-        # `code_run_host_command` reaches the host by construction and carries no `reach`
-        # argument to widen, so measuring it against a value it can never declare would
-        # retire its grants rather than scope them.
-        assert grant_scopes("code_run_host_command", {"command": "git status"}) == [
-            ("git", "status")
-        ]
+    def test_a_host_tool_records_its_own_words(self):
+        assert grant_scopes("shell_run_on_host", {"command": "git status"}) == [("git", "status")]
 
     @pytest.mark.parametrize("command", ["cat $TARGET", "ls |", ""])
     def test_an_unreadable_command_records_nothing(self, command: str):
@@ -646,7 +559,7 @@ class TestTheScopeAnApprovalRecords:
         # here — a new executing tool must not quietly inherit a whole-tool grant.
         from tools.shell import GATED_TOOLS
 
-        assert COMMAND_SCOPED_TOOLS == GATED_TOOLS | {"code_run_host_command"}
+        assert COMMAND_SCOPED_TOOLS == GATED_TOOLS | {"shell_run_on_host"}
 
 
 async def test_expired_grants_are_pruned_on_read():

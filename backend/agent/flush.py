@@ -89,7 +89,7 @@ class TurnFlush:
 
     def disarm(self) -> None:
         """Called once the turn is recorded. The hooks fire from outside this task, so
-        leaving them armed through the post-answer window (titling, say) would let a late
+        leaving them armed through the post-answer awaits would let a late
         bound re-record a turn that already completed."""
         self.run.on_timeout = None
         self.run.on_cancel = None

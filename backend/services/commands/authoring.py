@@ -103,8 +103,3 @@ def validate_line(raw: str, *, field: str, limit: int, required: bool = False) -
     if len(value) > limit:
         raise CommandValidationError(field, f"the {field} is over {limit} characters")
     return value
-
-
-def clip(value: str, limit: int) -> str:
-    """As much of a field as is kept when nobody is there to be told it was too long."""
-    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"

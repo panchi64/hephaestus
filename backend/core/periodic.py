@@ -19,7 +19,7 @@ against a process with nothing in it yet, and a summariser that did would run th
 app comes up against every thread at once. ``first_delay_s`` overrides the first sleep for
 the caller that genuinely wants a different lead-in.
 
-**The task scheduler is deliberately not on this** (:mod:`services.scheduler`). It looks
+**The task scheduler is deliberately not on this** (:mod:`plugins.routines.scheduler`). It looks
 like a fourth copy and is not one: it sleeps to the *earliest due task*, recomputed after
 every tick and interruptible by a wake, so its period is a property of the data rather than
 a constant. Folding a due-time queue into a fixed-interval timer would mean either polling

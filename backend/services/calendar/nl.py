@@ -115,7 +115,7 @@ class CalendarNaturalLanguage:
 
         try:
             model, settings = await self._resolve_model()
-        except Exception as exc:  # noqa: BLE001 — an unbound/degraded role is not our error
+        except Exception as exc:  # an unbound/degraded role is not our error
             raise DegradedCapabilityError(
                 "natural-language event entry needs a utility model to be configured"
             ) from exc
@@ -130,7 +130,7 @@ class CalendarNaturalLanguage:
             result = await asyncio.wait_for(
                 agent.run(prompt, model_settings=settings), self._timeout_s
             )
-        except Exception as exc:  # noqa: BLE001 — timeout/model error ⇒ degrade, never guess
+        except Exception as exc:  # timeout/model error ⇒ degrade, never guess
             logger.warning("calendar: natural-language parse failed: %s", exc)
             raise DegradedCapabilityError(f"could not parse {text!r} into an event") from exc
 

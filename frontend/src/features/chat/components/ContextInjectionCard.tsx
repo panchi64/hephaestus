@@ -7,13 +7,15 @@ import { ProcessRow, Sep, createAdoptedOpen } from "./ProcessRow";
 
 /** Where in the request a block landed, in the operator's words.
  *
- *  Worth a word on the row because the two placements cost differently and the operator
- *  can act on the difference: a block at the head is re-sent ahead of the whole history
- *  every turn, so churn there invalidates the inference engine's prompt-prefix cache from
- *  byte 0; one at the tail leaves that prefix byte-stable. */
+ *  Worth a word on the row because the placements cost differently and the operator can
+ *  act on the difference: a block at the head is re-sent ahead of the whole history every
+ *  turn, so churn there invalidates the inference engine's prompt-prefix cache from byte
+ *  0; one at the tail leaves that prefix byte-stable; one on a compaction summary is
+ *  stored with the checkpoint and replayed until the next fold. */
 const PLACEMENT: Record<ContextInjection["placement"], string> = {
   instructions: "at the prompt head",
   prompt: "at the turn's tail",
+  summary: "on the compaction summary",
 };
 
 /** One block of context the chassis put in front of the model — a project's instruction
@@ -23,7 +25,7 @@ const PLACEMENT: Record<ContextInjection["placement"], string> = {
  *  something the model *did*. This is the opposite kind of fact: nobody in the
  *  conversation wrote it and the model did not ask for it — we put it there. So it keeps
  *  `ProcessRow` (the column only reads as one sequence if its rows share an anatomy, §7)
- *  but hangs off the trunk by a dashed elbow into a dashed socket (`Branch chassis`),
+ *  but hangs off the trunk by a dashed elbow into a dashed diamond (`Branch chassis`),
  *  and takes no hover fill. Glyph, tone and the dashed trace all say the same thing at a
  *  glance, which is what the separation has to survive on: an operator scanning a turn
  *  should never have to read a row to know whether the model or the chassis is speaking.
@@ -54,7 +56,8 @@ export function ContextInjectionCard(props: {
         open={open()}
         onToggle={toggle}
         icon={INJECTION_ICON}
-        iconClass="border-dashed text-dim"
+        frame="diamond"
+        dashed
         label={segmentLabel(props.injection.contributor)}
         title={`Context injected by ${props.injection.contributor}`}
         trailing={

@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import override
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
@@ -15,6 +15,7 @@ from models.conversation import Conversation
 from models.thread_worktree import ThreadWorktree
 from runs.overhead import TurnOverhead
 from services.permissions import PermissionLevel, permission_level
+from services.reasoning import parse_effort
 from services.sealing import open_sealed
 from services.workspace import DELEGATION_SEP
 
@@ -153,6 +154,7 @@ class MetadataMixin(StoreCore):
                 checkout_read_only=leases_from is not None and _has_worktree(session, leases_from),
                 permission=permission_level(conversation.permission_level),
                 agent_name=conversation.agent_name,
+                effort=parse_effort(conversation.effort),
                 workspace_key=conversation.workspace_key or "",
                 spawned=conversation.parent_id is not None,
             )
@@ -235,6 +237,17 @@ class MetadataMixin(StoreCore):
         await in_session(self._engine, work)
         return resolved
 
+    async def set_effort(self, conversation_id: str, effort: str | None) -> None:
+        """Run this thread's chat turns at ``effort`` from its next turn; None falls back to
+        the endpoint's. Like the level, a choice about what runs next, not activity."""
+
+        def work(session: Session) -> None:
+            conversation = session.get(Conversation, conversation_id)
+            if conversation is not None:
+                conversation.effort = effort
+
+        await in_session(self._engine, work)
+
     async def set_agent_name(self, conversation_id: str, agent_name: str | None) -> None:
         """Run ``agent_name`` on this thread from its next turn. None is the default agent.
         Like the level, a choice about what runs next rather than activity in the thread."""
@@ -245,6 +258,56 @@ class MetadataMixin(StoreCore):
                 conversation.agent_name = agent_name
 
         await in_session(self._engine, work)
+
+    async def is_private(self, conversation_id: str) -> bool:
+        """Whether the thread is filed in the Private area; False for one that doesn't exist."""
+
+        def work(session: Session) -> bool:
+            conversation = session.get(Conversation, conversation_id)
+            return conversation is not None and conversation.private
+
+        return await in_session(self._engine, work)
+
+    async def private_among(self, conversation_ids: list[str]) -> frozenset[str]:
+        """Which of these threads are filed in the Private area."""
+        if not conversation_ids:
+            return frozenset()
+
+        def work(session: Session) -> frozenset[str]:
+            return frozenset(
+                session.exec(
+                    select(Conversation.id).where(
+                        col(Conversation.id).in_(conversation_ids),
+                        col(Conversation.private).is_(True),
+                    )
+                ).all()
+            )
+
+        return await in_session(self._engine, work)
+
+    async def set_private(self, conversation_id: str, private: bool) -> set[str]:
+        """File the thread's whole spawn family, from its root down, in or out of the
+        Private area. Returns the family's ids.
+
+        A parent holds its children's tasks and reports, and a child of a private thread
+        must stay private, so a family never splits across the area.
+        """
+
+        def work(session: Session) -> set[str]:
+            family = _family(session, conversation_id)
+            for member in family:
+                member.private = private
+            return {member.id for member in family}
+
+        return await in_session(self._engine, work)
+
+    async def family_ids(self, conversation_id: str) -> set[str]:
+        """The thread's whole spawn family, from its root down; empty if it doesn't exist."""
+
+        def work(session: Session) -> set[str]:
+            return {member.id for member in _family(session, conversation_id)}
+
+        return await in_session(self._engine, work)
 
     async def open_child(self, conversation_id: str, owner_id: str) -> str:
         """List a spawned agent's thread beside its parent's. Returns the parent's id."""
@@ -314,3 +377,28 @@ class MetadataMixin(StoreCore):
                 conversation.context_overhead = overhead.as_dict()
 
         await in_session(self._engine, work)
+
+
+def _family(session: Session, conversation_id: str) -> list[Conversation]:
+    """The thread's spawn family: walk up to its root, then down every child."""
+    root = session.get(Conversation, conversation_id)
+    seen: set[str] = set()
+    while root is not None and root.parent_id is not None and root.id not in seen:
+        seen.add(root.id)
+        root = session.get(Conversation, root.parent_id)
+    if root is None:
+        return []
+    family = [root]
+    seen = {root.id}
+    frontier: list[str] = [root.id]
+    while frontier:
+        children = session.exec(
+            select(Conversation).where(col(Conversation.parent_id).in_(frontier))
+        ).all()
+        frontier = []
+        for child in children:
+            if child.id not in seen:
+                seen.add(child.id)
+                family.append(child)
+                frontier.append(child.id)
+    return family

@@ -33,19 +33,25 @@ import {
   type Accessor,
 } from "solid-js";
 import {
-  setAwaitingInput,
+  setAwaitingKind,
   setChatBusy,
+  setChatThreadId,
   setRunErrored,
 } from "~/lib/stores/chatActivity";
 import { markConversationRead } from "~/lib/stores/notifications";
 import { moveDraft } from "~/ui";
 import { agentToSend } from "~/features/agents/model";
+import { toWindowSpec } from "~/features/plugins/windows";
+import { windowActions } from "~/lib/stores/pluginWindows";
+import { setStagedPrivate, stagedPrivate } from "~/features/private";
 import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { refreshSessions } from "./data/sessions";
+import { effortToSend, seatEffort } from "./effortSeat";
 import { createHistoryLoad, watchLateRuns } from "./historyLoad";
 import type { HistoryStatus } from "./historyStatus";
 import { DEFAULT_PERMISSION_LEVEL, type PermissionLevel } from "./model";
 import { seatPermission } from "./permissionSeat";
+import { createReadOnView } from "./readOnView";
 import { createChatStream } from "./stream/chatStream";
 
 export interface MainChat {
@@ -91,6 +97,10 @@ export interface MainChat {
    *  `provisional`). The composer renders the control as pending on it rather than
    *  asserting the placeholder as the thread's level. */
   permissionPending: Accessor<boolean>;
+  /** The open thread's effort level ("" runs at the endpoint's), seated from the loaded
+   *  thread and named by the next send once the operator picks one (`effortSeat.ts`). */
+  effort: Accessor<string>;
+  setEffort: (level: string) => void;
   /** The agent the operator picked for the thread on screen and has not yet had
    *  confirmed by a send — undefined until they pick one. The composer shows this
    *  over the thread's stored agent, and the next send names it. */
@@ -127,6 +137,13 @@ export function mainChat(): MainChat {
       permissionOwner = currentId();
       setLevel(level);
     };
+    const [effort, setEffortValue] = createSignal("");
+    // The thread the effort above was picked on (`effortSeat.ts`).
+    let effortOwner: string | null = null;
+    const setEffort = (level: string): void => {
+      effortOwner = currentId();
+      setEffortValue(level);
+    };
     const [agentChoice, setChoice] = createSignal<string | undefined>(
       undefined,
     );
@@ -153,6 +170,7 @@ export function mainChat(): MainChat {
           // thread whose level is unknown and drop the control to the default,
           // mid-turn, on the very thread that was created with it.
           permissionOwner = id;
+          effortOwner = id;
           agentOwner = id;
           // So does whatever the operator typed while the first turn ran. The
           // composer's draft is keyed by thread, and the seat below re-keys it: left
@@ -162,6 +180,9 @@ export function mainChat(): MainChat {
           // because this is the one place that knows the flip is an adoption and not a
           // navigation, and it still happens with the room unmounted.
           moveDraft(chatDraftKey(null), chatDraftKey(id));
+          // Filing in Private is chosen per new thread, unlike the project scope, so a
+          // later new thread started from anywhere else is not filed there too.
+          setStagedPrivate(false);
           setCurrentId(id);
         },
         onTurnComplete: () => refreshSessions(),
@@ -173,12 +194,20 @@ export function mainChat(): MainChat {
         // Same lockstep: the in-flight run of the loaded thread, for a cold-read
         // reattach (a page reload mid-stream).
         activeRun: fromLoaded((s) => s.activeRun),
+        untitled: fromLoaded((s) => s.untitled),
         // Same lockstep: the loaded thread's git-style snapshot history.
         initialSnapshots: fromLoaded((s) => s.snapshots),
         // Read only when a send creates the conversation.
         projectId: stagedProjectId,
+        private: stagedPrivate,
         // Read on every send — the level is the one binding fact that moves.
         permission,
+        effort: () =>
+          effortToSend({
+            choice: effort(),
+            owner: effortOwner,
+            currentId: currentId(),
+          }),
         // Named only when the operator changed it and a send has not yet carried it.
         agent: (isNewThread) =>
           agentToSend({
@@ -193,12 +222,27 @@ export function mainChat(): MainChat {
         // over the one the thread is actually at. Never provisional — this is the thread
         // saying so, not a placeholder for a value still in flight.
         onBrowserOpened: () => setBrowserOpenedSeq((n) => n + 1),
+        onPluginWindowOpened: (opened) =>
+          windowActions.open(toWindowSpec(opened), {
+            width: window.innerWidth,
+            height: window.innerHeight,
+          }),
         onPermissionChanged: (level) => {
           setPermission(level);
           setPermissionPending(false);
         },
       },
     );
+    createEffect(() => {
+      const seat = seatEffort({
+        currentId: currentId(),
+        owner: effortOwner,
+        stored: loaded()?.effort,
+      });
+      if (seat === null) return;
+      effortOwner = seat.owner;
+      setEffortValue(seat.value);
+    });
     createEffect(() => {
       const id = currentId();
       if (id === agentOwner) return;
@@ -242,8 +286,12 @@ export function mainChat(): MainChat {
         void stream.reattachRun(runId, { fromSeq: stream.lastSeq() });
       }
     };
+    const [pageVisible, setPageVisible] = createSignal(
+      document.visibilityState === "visible",
+    );
     const onVisible = () => {
-      if (document.visibilityState === "visible") resume();
+      setPageVisible(document.visibilityState === "visible");
+      if (pageVisible()) resume();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("online", resume);
@@ -255,6 +303,7 @@ export function mainChat(): MainChat {
     // so the Chat item shows a live indicator while a turn runs — even from another
     // section. Only the main room drives it (compare panes are ephemeral).
     createEffect(() => setChatBusy(stream.sending()));
+    createEffect(() => setChatThreadId(currentId()));
     // A turn *starting* changes the list as much as one finishing: each row's
     // activity edge is server-derived, so the list has to be re-read for the
     // running thread to light up. `onTurnComplete` above covers the other edge.
@@ -272,25 +321,12 @@ export function mainChat(): MainChat {
     createEffect(() => setRunErrored(stream.errored()));
     // Same mirror for the awaiting-approval echo, so the nav rail and favicon can flag
     // a parked run needing a decision from any screen, not just while on /chat.
-    createEffect(() => setAwaitingInput(stream.awaitingInput()));
-    // Read-on-view: the one place a thread selection lands, regardless of whether it
-    // came from the RECENTS rail, the chat screen's warm-resume, or a notification's
-    // deep-link — so opening a conversation always clears its unread notifications
-    // without every caller having to remember to do it. It re-runs as the list changes,
-    // so one arriving while the thread is open is read too; each id is marked once per
-    // visit, so one the operator marks unread again stays unread.
-    let readFor: string | null = null;
-    let autoRead = new Set<string>();
-    createEffect(() => {
-      const id = currentId();
-      if (id !== readFor) {
-        readFor = id;
-        autoRead = new Set();
-      }
-      if (!id) return;
-      for (const marked of markConversationRead(id, autoRead))
-        autoRead.add(marked);
-    });
+    createEffect(() => setAwaitingKind(stream.awaitingKind()));
+    // The one place a thread selection lands, whether from the RECENTS rail, the chat
+    // screen's warm-resume or a notification's deep-link, so every caller gets it.
+    const openId = () => currentId() ?? stream.conversationId();
+    const readOnView = createReadOnView(markConversationRead);
+    createEffect(() => readOnView(openId(), pageVisible()));
     // Runs begun out of sight (another tab, a scheduled task) are
     // found by re-reading the open thread — see `watchLateRuns`.
     watchLateRuns({
@@ -315,13 +351,15 @@ export function mainChat(): MainChat {
       },
       history,
       reloadHistory,
-      openId: () => currentId() ?? stream.conversationId(),
+      openId,
       stream,
       warmResolved,
       markWarmResolved: () => setWarmResolved(true),
       permission,
       setPermission,
       permissionPending,
+      effort,
+      setEffort,
       agentChoice,
       setAgentChoice,
     } satisfies MainChat;

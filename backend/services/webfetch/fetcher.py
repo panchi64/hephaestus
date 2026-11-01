@@ -5,7 +5,7 @@ Replaces the old static httpx+trafilatura fetch: the page is loaded in Chromium 
 JavaScript runs and client-rendered content is present, then the rendered DOM is handed
 to the extractor (:mod:`services.webfetch.extract`). The entry URL is pre-flighted
 (:func:`core.ssrf.assert_public_url`) before a context opens, and every request the browser
-then makes is gated by the VM's egress gateway (:mod:`services.vm.egress`). Output is
+then makes leaves a services VM that reaches public addresses only. Output is
 untrusted-wrapped — web content is data, never instructions.
 
 Domain errors only (so the service stays reusable by non-agent callers): ``SSRFError`` for
@@ -34,7 +34,7 @@ from core.untrusted import wrap_untrusted
 from .distill import WebDistiller
 from .extract import extract
 from .pdf import fetch_pdf_text
-from .status import status_hint
+from .status import ERROR_BODY_BYTES, served_by_cloudflare, status_hint
 from .throttle import DomainThrottle
 
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
@@ -45,6 +45,11 @@ class RenderResponse(Protocol):
 
     @property
     def status(self) -> int: ...
+
+    @property
+    def headers(self) -> dict[str, str]: ...
+
+    async def body(self) -> bytes: ...
 
 
 class SnapshotPage(Protocol):
@@ -267,8 +272,8 @@ class BrowserFetcher:
 
     async def _render(self, url: str) -> tuple[str, str, str]:
         """Load the page in an isolated context and capture the rendered HTML, the rendered
-        innerText, and the final URL. SSRF is enforced out-of-browser by the VM's egress gateway
-        (it refuses non-public destinations on every request, including redirects); a request
+        innerText, and the final URL. SSRF is enforced out-of-browser by the services VM, which
+        reaches public addresses only on every request, including redirects; a request
         it refuses surfaces here as a load failure, which degrades to a recoverable error —
         the synchronous pre-flight in :meth:`fetch` is what yields the hard SSRF refusal."""
         try:
@@ -293,7 +298,10 @@ class BrowserFetcher:
                 if response is not None and response.status >= 400:
                     raise WebFetchError(
                         f"{page.url!r} returned HTTP {response.status}",
-                        hint=status_hint(response.status),
+                        hint=status_hint(
+                            response.status,
+                            cloudflare_body=await self._cloudflare_body(response),
+                        ),
                     )
                 final_url, html, text = await self.capture(url, page)
         except WebFetchError:
@@ -308,6 +316,17 @@ class BrowserFetcher:
         # full page; this just keeps an outsized DOM
         # from ballooning the extractor's input. trafilatura/lxml recover from a mid-tag cut.
         return html[: self._max_bytes], (text or "")[: self._max_bytes], final_url
+
+    async def _cloudflare_body(self, response: RenderResponse) -> str:
+        """The head of a Cloudflare error page, or "" for another server or an unreadable body."""
+        if not served_by_cloudflare(response.headers):
+            return ""
+        try:
+            # body() waits for the whole response, which an unfinished error page never ends.
+            raw = await asyncio.wait_for(response.body(), timeout=self._timeout_ms / 1000)
+        except PlaywrightError, TimeoutError:
+            return ""
+        return raw[:ERROR_BODY_BYTES].decode(errors="replace")
 
     async def capture(self, url: str, page: SnapshotPage) -> tuple[str, str, str]:
         """Snapshot the page, and if it reads as a bot-wall interstitial, wait for it to

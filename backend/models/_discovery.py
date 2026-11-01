@@ -10,12 +10,19 @@ its registration.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import pkgutil
 
 import models
+import plugins
 
 
 def import_all_models() -> None:
+    """Core's ``models/*`` and each built-in plugin's ``plugins/<name>/models.py``."""
     for info in pkgutil.iter_modules(models.__path__):
         if not info.name.startswith("_"):
             _ = importlib.import_module(f"{models.__name__}.{info.name}")
+    for info in pkgutil.iter_modules(plugins.__path__):
+        module = f"{plugins.__name__}.{info.name}.models"
+        if info.ispkg and importlib.util.find_spec(module) is not None:
+            _ = importlib.import_module(module)

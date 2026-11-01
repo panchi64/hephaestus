@@ -36,6 +36,7 @@ class _Payload(BaseModel):
     model: str | None = None
     permission_level: str | None = None
     agent: str | None = None
+    effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,7 @@ class SealedInboxJournal(InboxJournal):
                 model=parsed.model,
                 permission_level=parsed.permission_level,
                 agent=parsed.agent,
+                effort=parsed.effort,
             )
         return QueuedMessage(
             id=row.id,
@@ -177,6 +179,7 @@ class SealedInboxJournal(InboxJournal):
                         model=message.payload.model,
                         permission_level=message.payload.permission_level,
                         agent=message.payload.agent,
+                        effort=message.payload.effort,
                     ).model_dump_json()
                 )
             )

@@ -67,17 +67,18 @@ class PersistJob:
       parents) and reseat the active leaf.
     """
 
-    kind: str  # "messages" | "active_leaf" | "delete" | "pin" | "unblock" | "block"
+    kind: str  # "messages" | "active_leaf" | "delete" | "pin" | "unblock" | "block" | "amend"
     conversation_id: str
     active_leaf_id: str | None = None
     rows: list[Row] = field(default_factory=list)
     deleted_ids: list[str] = field(default_factory=list)
     # For "pin": the message to (un)pin and the value to set. "unblock" reuses
-    # ``message_id`` — the turn whose stop marker the operator resolved — and "block"
-    # sets ``blocked_reason`` on it.
+    # ``message_id`` — the turn whose stop marker the operator resolved — "block"
+    # sets ``blocked_reason`` on it, and "amend" replaces its ``blob`` (plaintext).
     message_id: str | None = None
     pinned: bool = False
     blocked_reason: str | None = None
+    blob: str | None = None
     # The active path's last-used model at queue time — written denormalized onto
     # the Conversation alongside its active_leaf_id, so the listing reads it without
     # opening a blob. Computed where the leaf moves, never in the drainer (the tree

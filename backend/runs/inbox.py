@@ -51,8 +51,9 @@ STOP_NOTICE = "The operator stopped your previous turn before it finished."
 @dataclass(frozen=True)
 class TurnPayload:
     """What an operator message carries beyond its text. ``command`` is the recorded
-    invocation as JSON, which only the route layer reads back. The model, level and agent
-    are what the operator picked for this send, applied when its turn opens."""
+    invocation as JSON, which only the route layer reads back. The model, level, agent and
+    effort are what the operator picked for this send, applied when its turn opens; an
+    empty ``effort`` clears the thread's back to the endpoint's."""
 
     attachment_ids: tuple[str, ...] = ()
     file_refs: tuple[str, ...] = ()
@@ -61,6 +62,7 @@ class TurnPayload:
     model: str | None = None
     permission_level: str | None = None
     agent: str | None = None
+    effort: str | None = None
 
 
 @dataclass(frozen=True)

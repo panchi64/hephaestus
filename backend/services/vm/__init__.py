@@ -1,21 +1,25 @@
-"""The platform VM: where agent commands, previews and the web services run."""
+"""The VMs: one machine per conversation, and one for the web services."""
 
 from __future__ import annotations
 
-from .driver import ExecResult, VMDriver, VMError
-from .egress import DENIED_MARKER, EgressGateway
-from .platform import GuestLayout, PlatformVM
-from .tunnel import PreviewPort
-from .workspace import GuestWorkspace
+from .errors import ImageBuildError, MachineUnavailableError, VMError
+from .host import ServiceHost
+from .image import GuestImage
+from .machines import ConversationMachines
+from .platform import Platform
+from .preview import PreviewHandle
+from .previews import Previews
+from .services import ServicesMachine
 
 __all__ = [
-    "DENIED_MARKER",
-    "EgressGateway",
-    "ExecResult",
-    "GuestLayout",
-    "GuestWorkspace",
-    "PlatformVM",
-    "PreviewPort",
-    "VMDriver",
+    "ConversationMachines",
+    "GuestImage",
+    "ImageBuildError",
+    "MachineUnavailableError",
+    "Platform",
+    "PreviewHandle",
+    "Previews",
+    "ServiceHost",
+    "ServicesMachine",
     "VMError",
 ]

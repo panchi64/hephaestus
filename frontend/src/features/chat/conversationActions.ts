@@ -1,38 +1,25 @@
 /**
- * What the operator can do to the *thread* — as opposed to a turn inside it.
+ * What the operator can do to the *thread*, as opposed to a turn inside it: retitle, fork,
+ * copy, open the thread's browser, and the two deletes.
  *
- * Rename lives in its own modal, but the rest of the session menu ends up here: retitle,
- * fork, copy, open the thread's browser, and the two deletes. Each is a confirm-or-probe,
- * a call, and a toast, and none of them belongs in the screen that lays out the
- * conversation — the screen was carrying a third of its length in error handling for
- * actions it does not render.
+ * The exported `retitleConversation` / `deleteConversationFlow` take an id, so the rail's
+ * per-row menu can act on a thread that isn't open. `createConversationActions` wraps them
+ * for the room, adding what is about the room: the retitle throbber and restaging the
+ * composer once the open thread is gone.
  *
- * **Two layers, and the split is which conversation is being acted on.** The exported
- * `retitleConversation` / `deleteConversationFlow` take an id, so the rail's per-row
- * menu can use them on a thread that isn't open. `createConversationActions` wraps them
- * for the room, adding only what is genuinely about the room: the retitle throbber,
- * stopping a live run, restaging the composer once the open thread is gone.
+ * A delete also removes the image uploads it leaves unreferenced; the backend decides
+ * which, since an image may still be attached elsewhere.
  *
- * **A delete has to ask a second question first.** Images are shared: the same attachment
- * can be referenced from more than one place, so deleting the thread that happens to hold
- * one may strand it or may not. The backend is asked which images *this* delete would
- * orphan, and only when there are any does the operator get the three-way keep/purge
- * prompt — a plain confirm otherwise. A failed probe falls back to the plain confirm and
- * keeps the images: an unreachable answer is not a licence to delete more.
- *
- * **A thread with a live run is not deleted.** Aborting the local SSE does not stop the
- * run server-side, so a thread deleted mid-turn would keep generating into a conversation
- * that no longer exists. The menus disable the row ("Stop the turn first") rather than
- * stopping the run on the operator's behalf.
+ * A thread with a live run is not deleted: aborting the local SSE does not stop the run
+ * server-side. The menus disable the row ("Stop the turn first") instead.
  */
 
 import { createSignal, type Accessor } from "solid-js";
 import { isApiError } from "~/lib/api";
-import { confirm, confirmChoice, copyToClipboard, toast } from "~/ui";
-import { assembleTranscript } from "./blocks";
+import { confirm, copyToClipboard, toast } from "~/ui";
+import { buildConversationTranscript } from "./transcriptExport";
 import {
   deleteConversation,
-  fetchOrphanImageAttachments,
   forkConversation,
   openBrowser,
   regenerateTitle,
@@ -40,90 +27,13 @@ import {
 import type { BrowserState } from "./browserState";
 import type { ChatMessage } from "./model";
 
-/** Flatten the whole thread to plain text for COPY CONVERSATION — each turn's
- *  role and content in order, assistant turns including their tool calls/
- *  results via `assembleTranscript` (same shaping as per-message COPY
- *  MESSAGE), separated by rules so the export reads as a transcript. */
-export function buildConversationTranscript(messages: ChatMessage[]): string {
-  return messages
-    .map((m) => {
-      // A compaction divider is neither party's words — label it as the chassis note it
-      // is rather than attributing the summary to the assistant.
-      const label =
-        m.role === "user"
-          ? "Operator"
-          : m.role === "compaction"
-            ? "Context compacted"
-            : "Talos";
-      const body =
-        m.role === "assistant" ? assembleTranscript(m.blocks) : m.content;
-      return `${label} · ${m.createdAt}\n${body}`;
-    })
-    .join("\n\n---\n\n");
+function confirmDelete(title: string, detail: string): Promise<boolean> {
+  return confirm({ title, detail, confirmLabel: "Delete", tone: "alert" });
 }
 
-/** Gate a delete that may strand image attachments. Probes the backend for the
- *  images this delete would orphan; if any, raises the 3-way keep/purge prompt,
- *  otherwise the plain confirm. Returns the chosen `purgeImages`, or null to
- *  abort. A failed probe falls back to the plain confirm (keep images) so the
- *  delete stays usable. */
-async function resolveDeleteChoice(
-  conversationId: string,
-  title: string,
-  baseDetail: string,
-  messageId?: string,
-): Promise<boolean | null> {
-  let orphans: string[] = [];
-  try {
-    orphans = await fetchOrphanImageAttachments(conversationId, messageId);
-  } catch {
-    // Probe failed — fall through to the plain confirm below.
-  }
-  if (orphans.length === 0) {
-    const ok = await confirm({
-      title,
-      detail: baseDetail,
-      confirmLabel: "Delete",
-      tone: "alert",
-    });
-    return ok ? false : null;
-  }
-  const n = orphans.length;
-  const choice = await confirmChoice({
-    title,
-    detail: `${baseDetail} ${n} image attachment${
-      n > 1 ? "s" : ""
-    } would be left unused — delete them too, or keep them?`,
-    confirmLabel: "Delete images",
-    secondaryLabel: "Keep images",
-    cancelLabel: "Cancel",
-    tone: "alert",
-  });
-  if (choice === "cancel") return null;
-  return choice === "primary";
-}
-
-/* ── Acting on a thread by id ─────────────────────────────────────────────────
- *
- * The two below take the conversation they act on as an argument, because two
- * surfaces now reach for them: the open thread's own header, and any row in the
- * rail's context menu. They used to read the open thread's id from the room's
- * closure, which is exactly what made them unusable from a list — acting on a row
- * meant opening it first.
- *
- * `createConversationActions` still wraps them, and keeps everything that is
- * genuinely about *the room*: the retitle throbber, restaging an empty composer. Nothing of that belongs to a row in a list. */
-
-/** The threads whose titles the backend is naming right now, keyed by id.
- *
- *  **A throbber belongs to the thread, not to the surface showing it.** It used to be a
- *  boolean the room held, so regenerating a title and then opening some other thread
- *  moved the spinner onto *that* thread's name — the room only knew "a retitle is in
- *  flight", never which conversation it was for. Retitling is also startable from a rail
- *  row for a thread that isn't open, which a room-scoped flag cannot represent at all.
- *
- *  Module-level, like the other app-lifetime stores: there is one operator, and a
- *  retitle outlives the menu that started it. */
+/** The threads whose titles the backend is naming right now. Keyed by thread rather than
+ *  held by the room, so the throbber stays on the thread being named whichever thread is
+ *  open, and module-level because a retitle outlives the menu that started it. */
 const [retitlingIds, setRetitlingIds] = createSignal<ReadonlySet<string>>(
   new Set(),
 );
@@ -165,14 +75,13 @@ export async function retitleConversation(
 export async function deleteConversationFlow(
   conversationId: string,
 ): Promise<boolean> {
-  const purgeImages = await resolveDeleteChoice(
-    conversationId,
+  const ok = await confirmDelete(
     "Delete this conversation?",
-    "This permanently removes the thread and its history.",
+    "This permanently removes the thread, its history and its images.",
   );
-  if (purgeImages === null) return false;
+  if (!ok) return false;
   try {
-    await deleteConversation(conversationId, purgeImages);
+    await deleteConversation(conversationId);
     toast.success("Conversation deleted");
     return true;
   } catch {
@@ -186,10 +95,12 @@ export interface ConversationActionDeps {
   conversationId: () => string | null;
   /** The transcript, for the clipboard export. */
   messages: ChatMessage[];
+  /** The name the export gives the agent's turns. */
+  speaker: () => string;
   /** Whether a turn is in flight, which switches off every act that rewrites or
    *  removes the thread. */
   sending: () => boolean;
-  removeMessage: (messageId: string, purgeImages: boolean) => Promise<void>;
+  removeMessage: (messageId: string) => Promise<void>;
   /** The thread's browser, which an open marks as running. */
   browser: BrowserState;
   /** Put the browser panel on screen. */
@@ -281,14 +192,12 @@ export function createConversationActions(
   async function removeMessage(messageId: string): Promise<void> {
     const id = deps.conversationId();
     if (!id || deps.sending()) return;
-    const purgeImages = await resolveDeleteChoice(
-      id,
+    const ok = await confirmDelete(
       "Delete this message?",
-      "This removes it and everything after it.",
-      messageId,
+      "This removes it, everything after it, and their images.",
     );
-    if (purgeImages === null) return;
-    await deps.removeMessage(messageId, purgeImages);
+    if (!ok) return;
+    await deps.removeMessage(messageId);
     toast.success("Message deleted");
   }
 
@@ -301,7 +210,7 @@ export function createConversationActions(
     removeMessage,
     copyTranscript: () =>
       copyToClipboard(
-        buildConversationTranscript(deps.messages),
+        buildConversationTranscript(deps.messages, deps.speaker()),
         "Conversation",
       ),
   };

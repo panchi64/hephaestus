@@ -19,13 +19,13 @@ from sqlmodel import Session
 
 from core.db import in_session, init_db, make_engine
 from core.vault import Vault
-from models.mail import AUTH_OAUTH, PROVIDER_GMAIL, MailAccount
+from plugins.mail.models import AUTH_OAUTH, PROVIDER_GMAIL, MailAccount
+from plugins.mail.services import service as mail_service
+from plugins.mail.services.models import AccountSpec
+from plugins.mail.services.oauth import OAuthProvider, TokenBundle
+from plugins.mail.services.service import MailService
+from plugins.mail.services.transport import MailTransport
 from services.credential_store import CredentialStore
-from services.mail import service as mail_service
-from services.mail.models import AccountSpec
-from services.mail.oauth import OAuthProvider, TokenBundle
-from services.mail.service import MailService
-from services.mail.transport import MailTransport
 from tests.mail_fakes import FakeTransport, install_transport
 
 EXPIRED = 1_000_000_000.0  # long past — `open_access` judges expiry against the real clock
@@ -112,7 +112,7 @@ async def test_a_live_token_reuses_the_cached_transport(
     async def _never(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("a live token must not trigger a refresh")
 
-    monkeypatch.setattr("services.mail.oauth.refresh_tokens", _never)
+    monkeypatch.setattr("plugins.mail.services.oauth.refresh_tokens", _never)
     first = await service.transport(account)
     assert await service.transport(account) is first
     assert len(_SpecRecorder.instances) == 1
@@ -161,7 +161,7 @@ async def test_a_rotated_token_rebuilds_the_transport(
     async def _refresh(_provider: OAuthProvider, **_credentials: str) -> TokenBundle:
         return TokenBundle(access_token="fresh", refresh_token="rt-2", expires_at=LIVE)
 
-    monkeypatch.setattr("services.mail.oauth.refresh_tokens", _refresh)
+    monkeypatch.setattr("plugins.mail.services.oauth.refresh_tokens", _refresh)
     stale = await service.transport(account)
     assert _access_token(stale) == "fresh"  # the very first build already refreshed
 
@@ -173,7 +173,7 @@ async def test_a_rotated_token_rebuilds_the_transport(
     async def _refresh_again(_provider: OAuthProvider, **_credentials: str) -> TokenBundle:
         return TokenBundle(access_token="fresher", refresh_token="rt-3", expires_at=LIVE)
 
-    monkeypatch.setattr("services.mail.oauth.refresh_tokens", _refresh_again)
+    monkeypatch.setattr("plugins.mail.services.oauth.refresh_tokens", _refresh_again)
     rebuilt = await service.transport(account)
 
     assert rebuilt is not stale

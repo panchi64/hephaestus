@@ -4,7 +4,6 @@ import type {
   ContextBlock,
   HostCommandBlock,
   QuestionBlock,
-  ReviewBlock,
   TextBlock,
   ThinkingBlock,
   ToolBlock,
@@ -24,7 +23,6 @@ import { ContextInjectionCard } from "./ContextInjectionCard";
 import { HostCommandCard } from "./HostCommandCard";
 import { QuestionAnswerCard } from "./QuestionAnswerCard";
 import { ReasoningBlock } from "./ReasoningBlock";
-import { ReviewCard } from "./ReviewCard";
 import { ToolCallCard } from "./ToolCallCard";
 import {
   classifyViewItem,
@@ -131,7 +129,11 @@ export function BlockRow(
   return (
     <Switch>
       <Match when={g().kind === "text"}>
-        <div class={fullWidthTop(props.top)}>
+        {/* `data-live-answer` is what the transcript holds still while it streams. */}
+        <div
+          class={fullWidthTop(props.top)}
+          data-live-answer={props.active && props.streaming ? "" : undefined}
+        >
           <AnswerText
             text={(g().blocks[0] as TextBlock).text}
             active={props.active}
@@ -227,17 +229,6 @@ export function BlockRow(
         <Branch edge={props.edge ?? LONE} trace={props.trace} chassis>
           <ContextInjectionCard
             injection={(g().blocks[0] as ContextBlock).injection}
-            open={props.forceOpen}
-          />
-        </Branch>
-      </Match>
-      <Match when={g().kind === "review"}>
-        {/* On the trunk, because it happened in the turn's sequence, and never `active`:
-            the trunk's light means "the model is doing this now", and a review is the
-            chassis answering for the operator — the opposite kind of event. */}
-        <Branch edge={props.edge ?? LONE} trace={props.trace} chassis>
-          <ReviewCard
-            review={(g().blocks[0] as ReviewBlock).review}
             open={props.forceOpen}
           />
         </Branch>

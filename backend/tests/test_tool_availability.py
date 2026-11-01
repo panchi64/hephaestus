@@ -21,10 +21,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
+from plugins.mail.services import MailService
 from routes.deps import app_state
 from runs import Run, RunStream
 from services.calendar import CalendarService
-from services.mail import MailService
 from services.secret_vault import SecretVaultService
 from services.tool_policy import (
     CategoryAvailability,
@@ -52,8 +52,12 @@ def _ctx(disabled: frozenset[str]) -> RunContext[RunDeps]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
+#: Plugin categories whose only check is the plugin's own switch, not a backing service.
+SWITCH_ONLY = {"routines"}
+
+
 def _availability(app: FastAPI) -> tuple[CategoryAvailability, ...]:
-    return app_state(app).category_availability
+    return tuple(e for e in app_state(app).category_availability if e.category not in SWITCH_ONLY)
 
 
 def _tools(app: FastAPI, category: str) -> frozenset[str]:

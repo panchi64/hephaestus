@@ -37,6 +37,8 @@ export interface EndpointViewDTO {
   native_tools: boolean;
   vision: boolean;
   thinking: boolean;
+  /** Effort pinned for every request (`low`…`max`); null is the adapter's default. */
+  effort: string | null;
   enabled: boolean;
   last_status: EndpointStatus | null;
   last_error_category: EndpointErrorCategory | null;
@@ -72,6 +74,8 @@ export interface ProviderViewDTO {
   docs_url: string | null;
   native_tools: boolean;
   vision: boolean;
+  /** Whether this adapter's models read an effort level (endpoint or thread). */
+  uses_effort: boolean;
 }
 
 /* ── Roles ──────────────────────────────────────────────────────────────────── */

@@ -3,6 +3,8 @@
  *  what the backend actually knows (`GET /overview`, `GET /runs`). It invents
  *  nothing: telemetry/services that don't exist yet simply aren't represented. */
 
+import type { ActionTone } from "~/ui";
+
 /** A single labelled telemetry cell in the system strip. */
 export interface SystemStat {
   label: string;
@@ -16,7 +18,8 @@ export interface CapabilityHealth {
   /** Stable id: `chat_model` | `embeddings` | `sandbox`. */
   key: string;
   label: string;
-  status: "nominal" | "warn" | "alert";
+  /** `off`: not set up or switched off by the operator, which is not a fault. */
+  status: "nominal" | "warn" | "alert" | "off";
   detail: string;
   /** A capability the workspace cannot function without — drives overall status. */
   critical: boolean;
@@ -43,8 +46,10 @@ export interface ActiveRun {
   /** Human one-liner for the row. */
   label: string;
   status: "running" | "queued" | "awaiting_input";
-  /** Compact status readout, e.g. RUNNING / QUEUED / NEEDS APPROVAL. */
+  /** Compact status readout, e.g. RUNNING / QUEUED; empty while parked on the operator,
+   *  where `awaitingKind` names the wait. */
   detail: string;
+  awaitingKind?: ActionTone;
   /** When the run actually began, ISO-8601 — the run clock's input. Absent while
    *  the run is still queued, which is a different fact from "started just now". */
   startedAt?: string;

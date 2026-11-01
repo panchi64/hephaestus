@@ -2,6 +2,7 @@ import { Show, splitProps, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { cx } from "../cx";
 import { Icon, type IconProps } from "../primitives/Icon";
+import { Ellipsis } from "./Ellipsis";
 import { Frames } from "./Frames";
 
 export type ButtonVariant = "primary" | "default" | "ghost" | "danger";
@@ -29,15 +30,12 @@ export interface ButtonProps extends Omit<
    *  No effect on other variants. */
   active?: boolean;
   /** An action this button started is still running. Swaps the leading icon for the
-   *  throbber and disables the control, so the one thing a slow action must not do —
-   *  look identical to an idle one — takes a prop rather than a hand-rolled label swap
-   *  at each call site.
-   *
-   *  It disables rather than merely decorating, because a second press during a slow
-   *  action is never what the operator meant: at best it is a wasted round trip, at
-   *  worst a duplicate write. Callers that want a different label while working still
-   *  pass one; this is about the affordance, not the word. */
+   *  throbber and disables the control: a second press during a slow action is at
+   *  best a wasted round trip, at worst a duplicate write. */
   pending?: boolean;
+  /** The label while `pending` ("Unlocking"), without an ellipsis: the stepped
+   *  ellipsis replaces the throbber as the working indicator. */
+  pendingLabel?: string;
 }
 
 /* `primary` is an inverted Swiss-modernist slab — the brightest thing in its
@@ -59,13 +57,11 @@ const variantClass: Record<ButtonVariant, string> = {
  *  over cascade order. */
 const GHOST_ACTIVE_CLASS = "bg-raised text-bright hover:text-bright";
 
-/* A button label is the interface speaking to the operator, so it is sans and
-   sentence case (§2) — the old mono uppercase made every control shout. (The
-   composer's commit keys are the machine's, and are `.heph-send`, not a size here.)
+/* Sans, sentence case (§2): a button label is the interface speaking. The composer's
+   commit keys are the machine's, and are `.heph-send`, not a size here.
 
-   The type family lives here rather than in the shared base, so a size never sets a
-   font the base also sets — two `font-*` utilities on one node resolve by stylesheet
-   order, not by which was meant. */
+   The type family lives here, not in the shared base: two `font-*` utilities on one
+   node resolve by stylesheet order, not by which was meant. */
 const sizeClass: Record<ButtonSize, string> = {
   sm: "h-6 px-2 gap-1 text-label font-sans font-medium",
   md: "h-8 px-3 gap-2 text-body font-sans font-medium",
@@ -93,6 +89,7 @@ export function Button(props: ButtonProps): JSX.Element {
     "block",
     "active",
     "pending",
+    "pendingLabel",
     "disabled",
     "class",
     "children",
@@ -125,7 +122,7 @@ export function Button(props: ButtonProps): JSX.Element {
       {/* The throbber takes the leading icon's place rather than sitting beside it: a
           control that grew a glyph while working would shift its own label, and the
           leading icon is exactly the slot whose job is "what this button is about". */}
-      <Show when={!local.pending} fallback={<Frames />}>
+      <Show when={!local.pending} fallback={!local.pendingLabel && <Frames />}>
         <Show when={local.leading}>
           <Icon
             name={local.leading!}
@@ -134,7 +131,12 @@ export function Button(props: ButtonProps): JSX.Element {
           />
         </Show>
       </Show>
-      {local.children}
+      <Show
+        when={local.pending && local.pendingLabel}
+        fallback={local.children}
+      >
+        {(label) => <Ellipsis>{label()}</Ellipsis>}
+      </Show>
       <Show when={local.trailing}>
         <Icon
           name={local.trailing!}

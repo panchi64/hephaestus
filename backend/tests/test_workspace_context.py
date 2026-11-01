@@ -22,40 +22,24 @@ import tools.workspace_context as wc
 from agent import build_chat_orchestrator
 from core.config import Settings
 from core.container import ServiceContainer
-from core.vault import Vault
 from runs import RunRegistry, RunStatus
 from runs.events import ContextInjected
 from services.conversations import ConversationBinding
-from services.sandbox import SandboxSessionManager
-from services.sandbox.base import safe_key
+from services.home.scratch import ScratchDirs
 from services.sandbox.walk import walk_files
 from tools.deps import PromptContextRequest
 from tools.workspace_context import MAX_ENTRIES, workspace_context
 
-from .conftest import egress_policy
-from .vm_fakes import FakeVM
-
-
-async def _vault(tmp_path: Path):
-    vault = Vault(tmp_path / "keyfile.json")
-    await vault.setup("pw")
-    return vault
-
 
 async def _caps(
     tmp_path: Path, *, excludes: Iterable[str] | None = None
-) -> tuple[ServiceContainer, SandboxSessionManager]:
-    manager = SandboxSessionManager(
-        FakeVM(tmp_path / "sandbox" / "work"),
-        await _vault(tmp_path),
-        egress=egress_policy(tmp_path),
-        data_dir=tmp_path,
-        idle_ttl_s=1800.0,
-        reap_interval_s=60.0,
-        excludes=Settings().sandbox_walk_excludes if excludes is None else excludes,
+) -> tuple[ServiceContainer, ScratchDirs]:
+    manager = ScratchDirs(
+        tmp_path / "sandbox" / "work",
+        excludes=tuple(Settings().sandbox_walk_excludes if excludes is None else excludes),
     )
     caps = ServiceContainer()
-    caps.add(manager, as_type=SandboxSessionManager)
+    caps.add(manager)
     return caps, manager
 
 
@@ -76,8 +60,8 @@ def _request(
     )
 
 
-def _populate(manager: SandboxSessionManager, key: str, files: dict[str, str]) -> Path:
-    root = manager.work_root / safe_key(key)
+def _populate(manager: ScratchDirs, key: str, files: dict[str, str]) -> Path:
+    root = manager.path(key)
     for rel, text in files.items():
         target = root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -242,8 +226,7 @@ async def test_it_creates_neither_a_session_nor_a_directory(tmp_path: Path):
 
     assert await workspace_context(_request(caps)) == ""
 
-    assert manager.sessions == {}
-    assert not manager.work_root.exists()
+    assert not manager.root.exists()
 
 
 async def test_a_sub_agent_in_a_worktree_is_described_the_scratch_it_shares(tmp_path: Path):

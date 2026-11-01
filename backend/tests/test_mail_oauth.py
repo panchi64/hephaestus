@@ -15,16 +15,16 @@ from sqlmodel import Session, select
 
 from core.db import in_session, init_db, make_engine
 from core.vault import Vault
-from models.mail import AUTH_OAUTH, AUTH_PASSWORD, MailAccount
-from services.credential_store import KNOWN_SERVICES, CredentialStore
-from services.mail.errors import MailAuthError, MailUnavailableError
-from services.mail.oauth import (
+from plugins.mail.models import AUTH_OAUTH, AUTH_PASSWORD, MailAccount
+from plugins.mail.services.errors import MailAuthError, MailUnavailableError
+from plugins.mail.services.oauth import (
     PROVIDERS,
     MailSecrets,
     OAuthProvider,
     TokenBundle,
     authorization_url,
 )
+from services.credential_store import CredentialStore, known_services
 
 NOW = 1_800_000_000.0
 # Wall-clock-relative fixtures: `open_access` judges expiry against the real clock.
@@ -65,8 +65,8 @@ async def _account(engine: Engine, vault: Vault, **overrides: str | None) -> Mai
     return account
 
 
-def test_the_oauth_client_registrations_are_in_the_static_catalog():
-    ids = {service.id for service in KNOWN_SERVICES}
+def test_the_oauth_client_registrations_are_in_the_declared_catalog():
+    ids = {service.id for service in known_services()}
     assert {"google_oauth", "microsoft_oauth"} <= ids
     # Every provider's declared credential service must actually exist in the catalog.
     assert all(provider.credential_service in ids for provider in PROVIDERS.values())
@@ -122,7 +122,7 @@ async def test_a_live_token_is_returned_without_contacting_the_provider(
     async def _never(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("a live token must not trigger a refresh")
 
-    monkeypatch.setattr("services.mail.oauth.refresh_tokens", _never)
+    monkeypatch.setattr("plugins.mail.services.oauth.refresh_tokens", _never)
     assert await secrets.open_access(account) == (None, "live")
 
 
@@ -146,7 +146,7 @@ async def test_an_expiring_token_refreshes_and_is_resealed(
         # Google rotates the refresh token on every use — the new one must survive.
         return TokenBundle(access_token="fresh", refresh_token="rt-2", expires_at=LIVE)
 
-    monkeypatch.setattr("services.mail.oauth.refresh_tokens", _refresh)
+    monkeypatch.setattr("plugins.mail.services.oauth.refresh_tokens", _refresh)
     password, token = await secrets.open_access(account)
 
     assert (password, token) == (None, "fresh")

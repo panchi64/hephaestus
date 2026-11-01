@@ -1,14 +1,16 @@
 """Filesystem tools over the agent's home.
 
 ``pydantic_ai_harness.FileSystem`` supplies the eight tools, with their binary detection,
-hash-checked edits and ``ModelRetry`` errors. We supply the workspace each call acts on:
-the run's home (``tools/home.py``), whose backend (``services/home/backend.py``) is the
-containment boundary. Paths are read from the home, so a result's path can be passed back
+hash-checked edits and ``ModelRetry`` errors. They act on ``ctx.workspace``, whose file
+half is the run's home on the host (``tools/home_workspace.py``); its backend
+(``services/home/backend.py``) is the containment boundary, and no VM is needed. Paths
+are read from the home, so a result's path can be passed back
 as written; a path naming no folder of the home lands in the thread's own place, its
 project or else its scratch.
 
-A write into a project the thread may only read asks the operator first, and an approval
-leases that project to the thread, so the next write there does not ask again. A write
+A write into a project the thread may only read, or one its home does not mount, asks the
+operator first, and an approval leases that project to the thread, so the next write there
+does not ask again. A write
 to the operator's own folder of a project is recorded so they can put the file back
 (``services/home/changes.py``), and the first result in a project carries its instruction
 files (``tools/briefing.py``).
@@ -16,25 +18,37 @@ files (``tools/briefing.py``).
 
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import override
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+from typing import cast, override
 
-from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
+from pydantic_ai import AbstractToolset, RunContext, Tool, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness import FileSystem
+from pydantic_ai_harness.filesystem import FileSystemToolset
 
 from core.config import get_settings
 from core.diagnostics import render_tool_error
-from services.home.paths import HOME, absolute, climbs_out
+from core.untrusted import wrap_untrusted
+from services.home.backend import Mount
+from services.home.paths import HOME, SCRATCH, absolute, climbs_out
 from services.home.table import RunHome
 from services.projects.worktree import WorktreeBusyError
 
 from .briefing import with_brief
 from .deps import RunDeps
-from .home import change_log, lease, may_lease, resolve_run_home
-from .rebound import ReboundToolset
+from .describe import registered_tools
+from .harness_events import attributable
+from .home import change_log, lease, may_lease, resolve_run_home, unmounted_project
+from .run_home import home_of
+from .spill import UNTRUSTED_SUFFIX, is_untrusted_spill
 from .workspace import unavailable
+
+#: The most characters one ``read_file`` page returns, so a page of a long file, or of a
+#: saved tool result, cannot flood the context.
+READ_PAGE_CHARS = 40_000
 
 #: The tools that change a file, by their bare names.
 WRITE_TOOLS = frozenset({"write_file", "edit_file", "create_directory"})
@@ -44,6 +58,10 @@ GATED_TOOLS = frozenset(f"files_{name}" for name in WRITE_TOOLS)
 
 #: The writes that change a file's content, which a revert can put back.
 _FILE_WRITES = frozenset({"write_file", "edit_file"})
+
+#: A successful text read opens with the harness's `[path | N lines | hash:…]` header; a
+#: binary read names its type and size instead, and a failure has no header.
+_TEXT_READ = re.compile(r"\A\[[^\n]* \| \d+ lines[ \]]")
 
 #: The tools that walk a folder, and the spellings that name no folder in particular.
 _WALKS = frozenset({"list_directory", "search_files", "find_files"})
@@ -64,18 +82,15 @@ def _delegate_read_only(place: str) -> str:
     )
 
 
-class _HomeFiles(ReboundToolset):
-    @override
-    async def resolve(
-        self, name: str, ctx: RunContext[RunDeps]
-    ) -> tuple[AbstractToolset[RunDeps], RunContext[RunDeps]] | str:
-        try:
-            home = await resolve_run_home(ctx.deps)
-        except WorktreeBusyError as exc:
-            return str(exc)
-        if home is None:
-            return unavailable(ctx.deps)
-        return self._template, replace(ctx, workspace=Workspace(home.backend))
+@dataclass
+class _HomeFiles(WrapperToolset[RunDeps]):
+    """The harness file tools on ``ctx.workspace``, whose file half is the run's home on
+    the host (``tools/home_workspace.py``)."""
+
+    @property
+    def tools(self) -> Mapping[str, Tool[RunDeps]]:
+        """The static registry ``tools/catalog.py`` enumerates for the settings surface."""
+        return registered_tools(self.wrapped)
 
     @override
     async def call_tool(
@@ -85,38 +100,97 @@ class _HomeFiles(ReboundToolset):
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
     ) -> object:
-        tool_args = await _in_home_terms(ctx, name, tool_args)
-        path = tool_args.get("path")
-        if name in WRITE_TOOLS and isinstance(path, str):
-            refusal = await _clear_write(ctx, path)
-            if refusal is not None:
-                return refusal
         try:
             home = await resolve_run_home(ctx.deps)
-        except WorktreeBusyError:
-            home = None
-        located = home.locate(path) if home is not None and isinstance(path, str) else None
+        except WorktreeBusyError as exc:
+            return str(exc)
+        if home is None:
+            return unavailable(ctx.deps)
+        tool_args = await _in_home_terms(ctx.deps, name, tool_args, home)
+        path = tool_args.get("path")
+        if name in WRITE_TOOLS and isinstance(path, str):
+            refusal, leased = await _clear_write(ctx, home, path)
+            if refusal is not None:
+                return refusal
+            if leased:
+                # The lease is on the run's memo, which the workspace reads its home from.
+                home = await resolve_run_home(ctx.deps) or home
+        located = home.locate(path) if isinstance(path, str) else None
         log = change_log(ctx.deps) if name in _FILE_WRITES and located is not None else None
         if log is not None and located is not None:
             await log.before(located[0], [located[1]])
-        result = await super().call_tool(name, tool_args, ctx, tool)
+        # Only the host half: given a workspace that runs commands, the harness searches
+        # with `rg` through it, which would boot the VM for a file search.
+        inward = replace(attributable(ctx, f"files_{name}"), workspace=Workspace(home.backend))
+        result = cast(object, await super().call_tool(name, tool_args, inward, tool))
         if log is not None and located is not None:
             await log.after(located[0], [located[1]])
-        if home is None or located is None:
+        if name == "search_files" and UNTRUSTED_SUFFIX in str(result):
+            # A match inside a saved untrusted output carries its text, so the whole result
+            # reaches the model fenced, as a read of that file would.
+            return wrap_untrusted(str(result), source="saved tool output")
+        if located is None:
             return result
-        return await with_brief(ctx, home, [located[0].place], result)
+        mount, rel = located
+        if name == "read_file" and _is_fenced(mount, rel):
+            return wrap_untrusted(str(result), source="saved tool output")
+        return await with_brief(ctx, home, [mount.place], result)
+
+
+@dataclass(frozen=True)
+class FileRead:
+    """A home file read outside a tool call, as ``files_read_file`` would have returned it."""
+
+    path: str
+    host: str
+    text: str
+
+
+async def read_again(deps: RunDeps, path: str, *, max_chars: int) -> FileRead | None:
+    """``path`` (as a file tool call spelled it) read through the run's home, at most
+    ``max_chars`` long, or ``None`` when the home or the file is gone, or the file is an
+    image or PDF."""
+    home = await home_of(deps)
+    if home is None:
+        return None
+    try:
+        path = str((await _in_home_terms(deps, "read_file", {"path": path}, home))["path"])
+        located = home.locate(path)
+    except ModelRetry:
+        return None
+    if located is None:
+        return None
+    reader = FileSystem[RunDeps](
+        root_dir=HOME,
+        max_read_lines=get_settings().sandbox_files_max_read_lines,
+        max_read_chars=max_chars,
+    ).get_toolset()
+    if not isinstance(reader, FileSystemToolset):
+        return None
+    result = await reader.read_file(path, workspace=home.backend)
+    if not isinstance(result, str) or not _TEXT_READ.match(result):
+        return None
+    mount, rel = located
+    text = wrap_untrusted(result, source="saved tool output") if _is_fenced(mount, rel) else result
+    return FileRead(path=path, host=str(mount.root / rel), text=text)
+
+
+def _is_fenced(mount: Mount, rel: str) -> bool:
+    """Whether a read of this file reaches the model fenced: a saved untrusted tool output."""
+    return mount.place == SCRATCH and is_untrusted_spill(rel)
 
 
 async def _in_home_terms(
-    ctx: RunContext[RunDeps], name: str, tool_args: dict[str, object]
+    deps: RunDeps, name: str, tool_args: dict[str, object], home: RunHome | None
 ) -> dict[str, object]:
     """The call's ``path`` as the absolute home path it names.
 
     Spelled out here because the harness checks a path against ``~`` before the home sees
     it, reading ``~`` as a folder name and ``/work`` as outside it. A relative path is
     read from the thread's own place, so ``projects/x`` in a project is that project's own
-    folder, unless nothing is there and it names a place of the home: models drop the
-    ``~/``. A listing or search with no folder named walks the thread's own place.
+    folder, unless nothing is there and it names a place of the home, mounted or a project
+    a write may mount: models drop the ``~/``. A listing or search with no folder named
+    walks the thread's own place.
     """
     path = tool_args.get("path")
     if path is not None and not isinstance(path, str):
@@ -125,10 +199,6 @@ async def _in_home_terms(
     if text.startswith(("~", "/")):
         return {**tool_args, "path": _spelled(text, cwd=HOME)}
     if not text and name not in _WALKS:
-        return tool_args
-    try:
-        home = await resolve_run_home(ctx.deps)
-    except WorktreeBusyError:
         return tool_args
     if home is None:
         return tool_args
@@ -140,7 +210,10 @@ async def _in_home_terms(
     if (
         head in _GROUPS
         and not _exists(home, f"{home.default.path}/{head}")
-        and home.locate(at_home) is not None
+        and (
+            home.locate(at_home) is not None
+            or await unmounted_project(deps, home, at_home) is not None
+        )
     ):
         return {**tool_args, "path": at_home}
     return {**tool_args, "path": own}
@@ -160,23 +233,24 @@ def _spelled(text: str, *, cwd: str) -> str:
     return absolute(text, cwd=cwd)
 
 
-async def _clear_write(ctx: RunContext[RunDeps], path: str) -> str | None:
-    """Ask before a write into a place the thread may only read; lease it once approved."""
-    try:
-        home = await resolve_run_home(ctx.deps)
-    except WorktreeBusyError:
-        return None
-    if home is None:
-        return None
-    place = home.place_of(path)
+async def _clear_write(
+    ctx: RunContext[RunDeps], home: RunHome, path: str
+) -> tuple[str | None, bool]:
+    """Ask before a write into a place the thread may only read; lease it once approved.
+    Returns the refusal, if any, and whether a lease was taken."""
+    place = home.place_of(path) or await unmounted_project(ctx.deps, home, path)
     if place is None or home.writable(place):
-        return None
+        return None, False
     if not may_lease(ctx.deps):
-        return _delegate_read_only(place.path)
+        return _delegate_read_only(place.path), False
     if not ctx.tool_call_approved:
         raise ApprovalRequired()
-    _ = await lease(ctx.deps, home, place)
-    return None
+    try:
+        _ = await lease(ctx.deps, home, place)
+    except WorktreeBusyError as exc:
+        # The lease stands, as the operator approved it; the remount waits for the worktree.
+        return str(exc), False
+    return None, True
 
 
 def files_toolset() -> AbstractToolset[RunDeps]:
@@ -184,6 +258,7 @@ def files_toolset() -> AbstractToolset[RunDeps]:
     toolset = FileSystem[RunDeps](
         root_dir=HOME,
         max_read_lines=get_settings().sandbox_files_max_read_lines,
+        max_read_chars=READ_PAGE_CHARS,
     ).get_toolset()
     assert toolset is not None
-    return _HomeFiles("files", toolset)
+    return _HomeFiles(toolset)

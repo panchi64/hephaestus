@@ -2,7 +2,7 @@
 
 A thread's permission level is enforced whether or not the model knows about it: Plan is
 enforced by *absence* (the mutating tools are never offered), Manual and Edit by a park,
-Auto by a review. So a fragment here buys nothing in safety — it buys the model an
+Auto by a deterministic rule. So a fragment here buys nothing in safety — it buys the model an
 explanation for what it is about to experience.
 
 That matters at four of the five. At **Plan** the base instruction to act rather than
@@ -10,18 +10,13 @@ propose is the wrong posture, and a model that does not know why its tools are m
 reads a deliberately narrowed catalog as a broken installation and says so. At **Manual**
 every change stops on the operator, so how the work is *shaped* changes: ten separate
 edits are ten interruptions, and the model is the only thing that can group them. At
-**Auto** there is one thing the model is asked to *state* rather than merely do — the
-reach a command needs — and a declaration nothing explained would be filled in by guess.
-At **Yolo** that same declaration is still what the sandbox is built from, and it is now
-the *only* thing reading it — so the fragment has to say both that nothing will stop the
-work and that the one statement the model makes about it is still load-bearing.
+**Auto** the model is told the rule, so it prefers work inside the VM and waits on a
+stop rather than routing around it. At **Yolo** nothing parks, so the fragment has to say
+both that nothing will stop the work and that the VM still bounds it.
 
 **A fragment is delivered at its level in every workspace, so it may claim nothing about the
-catalog.** The tools that take a ``reach`` are the shell's, and an operator can switch the shell
-off; a sentence beginning "every shell command" would be a false premise in a thread that was
-never offered it. It is written as the
-conditional it actually is — *where* a tool asks how far a command reaches — which costs a clause
-and is true everywhere the fragment is delivered.
+catalog.** An operator can switch the shell off; a sentence beginning "every shell command"
+would be a false premise in a thread that was never offered it.
 
 **Edit says nothing.** It is the level the base prompt was written for — act, the approval
 gate catches what is genuinely dangerous — and repeating that here would spend
@@ -71,45 +66,31 @@ single call, and related calls into a single stretch, so they approve one cohere
 of work instead of a dozen fragments of it."""
 
 
-# Auto: the level where the approvals are given for the model, by a review it never sees
-# the rules of. Only two things here are the model's to act on — declare the reach, and
-# prefer the contained approach — and both are said in the plainest way available. The
-# review's own rubric is deliberately not restated: a model told what clears the bar writes
-# for the bar rather than writing the truth, which is the same reason the reviewer is never
-# told the passing combination either (`prompts/utility.py`).
+# Auto: the rule is deterministic (`services/permissions/decide.py`), so the model is told
+# it plainly. The last sentence is the load-bearing one: a stop routed around (the same
+# act through another tool) is the failure this level can't catch.
 AUTO_LEVEL = """\
-This thread is at the Auto level: a review decides in the operator's place, and only what \
-it will not settle stops for them. Work that stays inside this workspace and reaches no \
-network is settled without asking anyone, so prefer the approach that stays there. Where \
-a tool asks how far a command needs to reach, answer it honestly — that declaration is \
-what the sandbox around the command is built from, and one that needs more than it \
-declared fails inside that sandbox rather than going ahead. Anything reaching the network \
-is reviewed, and anything whose effect could not be undone stops for the operator however \
-plainly it was asked for."""
+This thread is at the Auto level: your commands and code run on their own in the VM, held \
+to the folders it mounts and its default hosts (package registries and source hosts). The \
+host, any further network access, a project's own working copy and anything outside the \
+VM stop for the operator, unless they have already allowed that act for this thread. \
+Prefer the approach that stays inside the VM. When something stops for the operator, wait \
+for their answer rather than reaching the same result another way."""
 
 
-# Yolo: nothing reviews, nothing parks, and the model is the last thing standing between
-# the operator and an act nobody can undo. Two claims only — what has changed, and what
-# has not — because a fragment that spent its length on warnings would be a rubric, and a
-# model told what the bar is writes for the bar (the reason the reviewer's own rules are
-# never restated to it either).
+# Yolo: nothing parks, and the model is the last thing standing between the operator and
+# an act nobody can undo. Two claims only — what has changed, and what has not.
 #
-# The second paragraph is the load-bearing one, and it is about *reach* rather than about
-# caution. At Auto a dishonest declaration was caught twice, by the review and by the
-# fence; here only the fence is left, and a model that reads "nothing will stop me" as
-# "the reach argument no longer matters" declares `host` for convenience and throws away
-# the one bound the operator still has. The clause is conditional for the same reason
-# Auto's is — the tools that take a reach are the shell's, and the shell is code mode's.
+# The second paragraph is the load-bearing one: the conversation VM is the one bound the
+# operator still has, and the host tool is the way past it.
 YOLO_LEVEL = """\
 This thread is at the Yolo level: the operator has turned every approval off, and nothing \
 you do here will pause for them — not a command, not a message sent, not a credential \
-read, not an act that cannot be undone. There is no review behind you and no prompt in \
-front of you. Work as carefully as you would if each of these were being read before it \
-ran, because none of them will be, and say plainly in the turn what you actually did \
-rather than leaving them to discover it.
+read, not an act that cannot be undone. There is no prompt in front of you. Work as \
+carefully as you would if each of these were being read before it ran, because none of \
+them will be, and say plainly in the turn what you actually did rather than leaving them \
+to discover it.
 
-The sandbox has not gone anywhere. Where a tool asks how far a command needs to reach, \
-that answer is now the only thing deciding what the command is held to, so give it \
-honestly and no wider than the work needs: take `workspace` wherever the work stays in \
-this workspace, and ask for more only where it genuinely does not. Over-declaring buys \
-you nothing here and removes the last bound on a command that goes wrong."""
+The VM has not gone anywhere. Your commands still run in it, held to the folders it \
+mounts and the hosts this conversation may reach, and that is now the only bound on a \
+command that goes wrong. Use the host only where the work cannot be done inside the VM."""

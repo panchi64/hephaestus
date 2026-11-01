@@ -8,9 +8,12 @@ import {
   exportAgent,
   importAgent,
   setAgentPublished,
+  useAgentClasses,
   useAgents,
 } from "../data";
 import {
+  agentDisplayName,
+  agentHierarchy,
   compareAgentsBySource,
   agentSourceTag,
   isAwaitingPublish,
@@ -26,6 +29,15 @@ export function AgentsDirectoryScreen(props: {
 }): JSX.Element {
   const agentsResource = useAgents();
   const agents = (): Agent[] => settled(agentsResource) ?? [];
+  const classesResource = useAgentClasses();
+  // Until the class table arrives (or if it can't), the list stays flat rather than
+  // filing every agent under an unknown class.
+  const grouping = () => {
+    const table = settled(classesResource)?.classes;
+    return table
+      ? (visible: Agent[]) => agentHierarchy(visible, table)
+      : undefined;
+  };
   const loadError = (): string | null =>
     agentsResource.error
       ? agentErrorMessage(agentsResource.error, "Could not load agents.")
@@ -107,18 +119,24 @@ export function AgentsDirectoryScreen(props: {
 
   return (
     <LibraryDirectory
-      title="Agents"
-      subtitle="Named agents a thread can run as — their own instructions, tools and limits."
-      assetId="HEPH-AGT-01.0"
+      section="agents"
       noun="agent"
       nouns="agents"
       icon="layers"
       items={agents()}
       loadError={loadError()}
       sorts={{
-        name: { label: "Name", compare: compareByName },
+        name: {
+          label: "Name",
+          compare: (a, b) =>
+            compareByName(
+              { name: agentDisplayName(a.name) },
+              { name: agentDisplayName(b.name) },
+            ),
+        },
         source: { label: "Source", compare: compareAgentsBySource },
       }}
+      groups={grouping()}
       initialSort="name"
       initialDir="asc"
       bandExtra={[
@@ -128,14 +146,15 @@ export function AgentsDirectoryScreen(props: {
           tone: awaiting() > 0 ? "bright" : "dim",
         },
       ]}
-      draftHint="A draft is not offered to threads. Publishing is what lets a thread run as the agent — imported files and agent-drafted agents always land as drafts so you can read them first."
       importHint="Accepts an agent file (.md) — a name and description in frontmatter, with the instructions as the body. It lands as a draft."
+      draftHint="A draft is not offered to threads. Publishing is what lets a thread run as the agent — imported files and agent-drafted agents always land as drafts so you can read them first."
       importAccept=".md"
       importing={importing()}
       onImport={(file) => void handleImport(file)}
       onNew={() => setNewOpen(true)}
       onOpen={(agent) => props.onOpen(agent.id)}
       emptyCreateHint="Create an agent or import an agent file."
+      rowLabel={(agent) => agentDisplayName(agent.name)}
       rowRight={(agent) => (
         <>
           <Show when={agentSourceTag(agent.source)}>

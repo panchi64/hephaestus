@@ -25,7 +25,7 @@ export function SettingHeader(props: {
       <Text variant="label" tone="default">
         {props.title}
       </Text>
-      <Text variant="micro" tone="dim">
+      <Text variant="caption" tone="dim">
         {props.children}
       </Text>
     </Stack>

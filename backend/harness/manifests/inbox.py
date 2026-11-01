@@ -32,6 +32,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         """Once the key is in, put back what a previous process left queued and start the
         turns it was waiting for."""
         _ = await ctx.vault.unlocked_event.wait()
+        _ = await runs.parks_restored.wait()
         try:
             loaded = await journal.restore_into(runs)
         except Exception:
@@ -51,6 +52,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
 MANIFEST = FeatureManifest(
     name="inbox",
+    composes_turns=True,
     routers=(inbox_router,),
     # Starting a turn composes a full interactive one, so every feature contributing to
     # that turn's capability set must have built first.
@@ -59,7 +61,6 @@ MANIFEST = FeatureManifest(
         "calendar",
         "corpus",
         "external",
-        "mail",
         "memory",
         "notifications",
         "secret-vault",

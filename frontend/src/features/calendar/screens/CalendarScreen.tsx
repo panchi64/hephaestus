@@ -1,5 +1,6 @@
 import { createSignal, For, Show, Suspense, type JSX } from "solid-js";
 import {
+  ASSET_IDS,
   Button,
   EmptyState,
   Field,
@@ -30,6 +31,7 @@ import {
   syncCalendars,
   type EventWindow,
 } from "../data";
+import { CalendarMark } from "../components/CalendarMark";
 import type { CalendarEvent, RecurrenceChoice } from "../model";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -49,13 +51,6 @@ const RECURRENCE_OPTIONS: { value: RecurrenceChoice; label: string }[] = [
 function toChoice(value: string): RecurrenceChoice {
   return RECURRENCE_OPTIONS.find((o) => o.value === value)?.value ?? "none";
 }
-
-const TONE_STATUS = {
-  nominal: "nominal",
-  info: "info",
-  warn: "warn",
-  alert: "alert",
-} as const;
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const days: Date[] = [];
@@ -191,13 +186,13 @@ export function CalendarScreen(): JSX.Element {
   // reassuring lie, so no calendars reads as exactly that.
   const syncStatus = (): {
     label: string;
-    tone: "info" | "nominal" | "warn";
+    tone: "info" | "bright" | "warn";
   } => {
     if (syncing()) return { label: "Syncing…", tone: "info" };
     const rows = calendars() ?? [];
     if (rows.length === 0) return { label: "No calendars", tone: "warn" };
     return rows.every((c) => c.synced)
-      ? { label: "All synced", tone: "nominal" }
+      ? { label: "All synced", tone: "bright" }
       : { label: "Partial", tone: "warn" };
   };
 
@@ -420,7 +415,7 @@ export function CalendarScreen(): JSX.Element {
       <PageHeader
         title="Calendar"
         subtitle="Events, scheduling, and CalDAV sync."
-        assetId="COMM-CAL-01.0"
+        assetId={ASSET_IDS.calendar}
         actions={
           <Row gap={2}>
             <Button
@@ -482,14 +477,14 @@ export function CalendarScreen(): JSX.Element {
                 <For each={calendars()}>
                   {(cal) => (
                     <ListRow
-                      label={cal.name}
+                      label={
+                        <Row gap={2} align="center">
+                          <CalendarMark tone={cal.tone} />
+                          <span>{cal.name}</span>
+                        </Row>
+                      }
                       right={
-                        <StatusFlag
-                          status={cal.synced ? TONE_STATUS[cal.tone] : "warn"}
-                          dot={cal.synced}
-                        >
-                          {cal.synced ? "Sync" : "Local"}
-                        </StatusFlag>
+                        <StatusFlag>{cal.synced ? "Sync" : "Local"}</StatusFlag>
                       }
                     />
                   )}
@@ -571,7 +566,7 @@ export function CalendarScreen(): JSX.Element {
                 if (e.key === "Enter") void handleQuickAdd();
               }}
               placeholder="Quick add — e.g. 'Team sync Monday 14:00'"
-              class="flex-1"
+              fieldClass="flex-1 min-w-0"
             />
             <Button
               variant="default"
@@ -679,17 +674,15 @@ export function CalendarScreen(): JSX.Element {
                                 return (
                                   <button
                                     type="button"
-                                    class="mb-0.5 w-full truncate px-1 py-0.5 text-left text-label font-sans transition-colors hover:bg-raised"
-                                    classList={{
-                                      "text-nominal": cal()?.tone === "nominal",
-                                      "text-info": cal()?.tone === "info",
-                                      "text-warn": cal()?.tone === "warn",
-                                      "text-alert": cal()?.tone === "alert",
-                                      "text-dim": !cal()?.tone,
-                                    }}
+                                    class="mb-0.5 flex w-full items-center gap-1 px-1 py-0.5 text-left text-label font-sans text-bright transition-colors hover:bg-raised"
                                     onClick={() => openEvent(evt)}
                                   >
-                                    {evt.title}
+                                    <Show when={cal()}>
+                                      {(c) => <CalendarMark tone={c().tone} />}
+                                    </Show>
+                                    <span class="min-w-0 truncate">
+                                      {evt.title}
+                                    </span>
                                   </button>
                                 );
                               }}
@@ -770,9 +763,10 @@ export function CalendarScreen(): JSX.Element {
                   <Field
                     label="Calendar"
                     value={
-                      <StatusFlag status={TONE_STATUS[cal().tone]} dot>
-                        {cal().name.toUpperCase()}
-                      </StatusFlag>
+                      <Row gap={2} align="center">
+                        <CalendarMark tone={cal().tone} />
+                        <StatusFlag>{cal().name.toUpperCase()}</StatusFlag>
+                      </Row>
                     }
                   />
                 )}

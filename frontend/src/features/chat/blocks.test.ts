@@ -6,6 +6,7 @@ import {
   groupBlocks,
   planTurnLayout,
   runningTools,
+  workLogStateKey,
 } from "./blocks";
 import type {
   AssistantBlock,
@@ -53,7 +54,7 @@ function host(id: string, phase: HostCommandPhase): AssistantBlock {
     id,
     command: {
       toolCallId: id,
-      name: "code_run_host_command",
+      name: "shell_run_on_host",
       command: "ls",
       phase,
     },
@@ -132,17 +133,50 @@ describe("parallel tool calls stay visible while they run", () => {
     ).toEqual(["worklog", "t"]);
   });
 
-  test("a settled batch's fold keys on where it starts", () => {
-    const items = planTurnLayout(
-      groupBlocks([
-        tool("a", "web_search", "ok"),
-        tool("b", "web_search", "ok"),
-        tool("c", "web_search", "ok"),
-        text("t"),
-      ]),
-      { streaming: true },
-    );
-    expect(layoutItemKey(items[0])).toBe("w:a");
+  test("a fold keys on its place among the turn's folds, not its first row", () => {
+    const blocks = [
+      tool("a", "web_search", "ok"),
+      tool("b", "web_search", "ok"),
+      text("t"),
+      tool("c", "web_search", "ok"),
+      text("u"),
+    ];
+    const keys = planTurnLayout(groupBlocks(blocks)).map(layoutItemKey);
+    expect(keys).toEqual(["w:0", "g:t", "w:1", "g:u"]);
+    // Dropping the log's first row (a reseat losing live-only context) keeps the key.
+    const reseated = planTurnLayout(groupBlocks(blocks.slice(1)));
+    expect(layoutItemKey(reseated[0])).toBe("w:0");
+  });
+
+  test("a log's open state keys on its first row a reload keeps", () => {
+    const context: AssistantBlock = {
+      kind: "context",
+      id: "ctx-1",
+      injection: {
+        contributor: "plan",
+        placement: "prompt",
+        tokens: 1,
+        text: "",
+        truncated: false,
+      },
+    };
+    const logs = (blocks: AssistantBlock[]) =>
+      planTurnLayout(groupBlocks(blocks)).flatMap((item) =>
+        item.type === "worklog" ? [workLogStateKey(item)] : [],
+      );
+    const live = logs([
+      context,
+      text("t"),
+      tool("c", "web_search", "ok"),
+      text("u"),
+    ]);
+    const reseated = logs([
+      text("t"),
+      tool("c", "web_search", "ok"),
+      text("u"),
+    ]);
+    expect(live).toEqual(["w:0", "g:c"]);
+    expect(reseated).toEqual(["g:c"]);
   });
 });
 
@@ -179,16 +213,52 @@ describe("a call that came back with a picture keeps its run inline", () => {
   });
 });
 
-describe("a failed call keeps its run inline", () => {
-  // The defect these cover: the card auto-expands on error, but the work log
-  // folded shut around it — so the one event that should interrupt was the one
-  // event buried, and a swallowed tool failure is how a contaminated answer gets
-  // trusted. Each fixture puts the failure MID-RUN with enough collapsible
-  // groups around it that dropping the guard really does fold over it.
-  test("a settled turn with a failure keeps it pinned open", () => {
-    // The case that matters most: nothing is streaming, so `planTurnLayout`'s
-    // trailing-group guard is not running and only the failure rule is holding
-    // this open.
+describe("only a platform failure keeps its run inline", () => {
+  /** A call that failed through the platform's own fault. */
+  function broken(id: string): AssistantBlock {
+    return {
+      kind: "tool",
+      id,
+      tool: {
+        id,
+        name: "files_read_file",
+        args: "",
+        status: "error",
+        platform: true,
+      },
+    };
+  }
+
+  // Each fixture puts the failure MID-RUN with enough collapsible groups around it
+  // that dropping the guard really does fold over it.
+  test("a settled turn with a platform failure keeps it pinned open", () => {
+    // Nothing is streaming, so `planTurnLayout`'s trailing-group guard is not
+    // running and only the failure rule is holding this open.
+    expect(
+      rows(
+        [
+          tool("a", "web_search", "ok"),
+          broken("b"),
+          tool("c", "web_search", "ok"),
+          tool("d", "web_search", "ok"),
+        ],
+        false,
+      ),
+    ).toEqual(["a", "b!", "c", "d"]);
+  });
+
+  test("a platform failure mid-stream does not cut the log in two", () => {
+    const blocks = [
+      tool("a", "web_search", "ok"),
+      broken("b"),
+      tool("c", "web_search", "ok"),
+      text("t"),
+    ];
+    expect(plan(blocks)).toEqual(["worklog", "t"]);
+    expect(rows(blocks)).toEqual(["a", "b!", "c"]);
+  });
+
+  test("an ordinary tool failure folds with the rest of the work", () => {
     expect(
       rows(
         [
@@ -199,40 +269,10 @@ describe("a failed call keeps its run inline", () => {
         ],
         false,
       ),
-    ).toEqual(["a", "b!", "c", "d"]);
-  });
-
-  test("a failure mid-stream does not cut the log in two", () => {
-    // The regression this is here for: staying visible used to mean *ending* the
-    // log, so one failed call rendered as log · failure · log — three items the
-    // operator had to read back together as one sequence.
-    const blocks = [
-      tool("a", "web_search", "ok"),
-      tool("b", "files_read_file", "error"),
-      tool("c", "web_search", "ok"),
-      text("t"),
-    ];
-    expect(plan(blocks)).toEqual(["worklog", "t"]);
-    expect(rows(blocks)).toEqual(["a", "b!", "c"]);
-  });
-
-  test("a settled turn with no failure pins nothing", () => {
-    // The counterpart that proves the rule is doing the work above, rather than
-    // settled turns simply never folding.
-    expect(
-      rows(
-        [
-          tool("a", "web_search", "ok"),
-          tool("b", "files_read_file", "ok"),
-          tool("c", "web_search", "ok"),
-          tool("d", "web_search", "ok"),
-        ],
-        false,
-      ),
     ).toEqual(["a", "b", "c", "d"]);
   });
 
-  test("a failed host command is pinned like a failed tool", () => {
+  test("a failed host command folds like an ordinary failure", () => {
     expect(
       rows(
         [
@@ -243,7 +283,7 @@ describe("a failed call keeps its run inline", () => {
         ],
         false,
       ),
-    ).toEqual(["a", "b!", "c", "d"]);
+    ).toEqual(["a", "b", "c", "d"]);
   });
 
   test("a denied host command is a decision, not a failure, and folds", () => {
@@ -472,76 +512,5 @@ describe("runningTools", () => {
   test("is empty for a turn with no tools", () => {
     expect(runningTools([text("t")])).toEqual([]);
     expect(runningTools(undefined)).toEqual([]);
-  });
-});
-
-describe("a review folds with the work, unless it refused something", () => {
-  /** One call the chassis ruled on in the operator's place. */
-  function review(
-    id: string,
-    decision?: "allow" | "ask" | "block",
-  ): AssistantBlock {
-    return {
-      kind: "review",
-      id,
-      review: {
-        toolCallId: id,
-        name: "shell_run_command",
-        summary: "Runs the shell command: git status",
-        decision,
-        stage: "judge",
-        reason: "reads the workspace and changes nothing",
-      },
-    };
-  }
-
-  test("a cleared call's review recedes like the work it cleared", () => {
-    // Nothing about it needs the operator *now*: the call it cleared ran, and the
-    // account of why is one fold away.
-    expect(
-      plan(
-        [
-          review("r1", "allow"),
-          tool("a", "shell_run_command", "ok"),
-          tool("b", "files_read_file", "ok"),
-          text("t"),
-        ],
-        false,
-      ),
-    ).toEqual(["worklog", "t"]);
-  });
-
-  test("a refusal stays on screen however much settles around it", () => {
-    // The single thing in a turn the operator is most likely to disagree with, and the
-    // only one with no following row to account for it — a refused call is followed by
-    // nothing at all. Burying it would make Auto's promise unverifiable in practice.
-    const blocks = [
-      tool("a", "files_read_file", "ok"),
-      tool("b", "files_read_file", "ok"),
-      tool("c", "files_read_file", "ok"),
-      review("r1", "block"),
-      tool("d", "files_read_file", "ok"),
-      tool("e", "files_read_file", "ok"),
-      tool("f", "files_read_file", "ok"),
-      text("t"),
-    ];
-    expect(rows(blocks, false)).toEqual(["a", "b", "c", "r1!", "d", "e", "f"]);
-    expect(plan(blocks, false)).toEqual(["worklog", "t"]);
-  });
-
-  test("a review still in flight folds rather than pinning the turn open", () => {
-    // It resolves on its own in a second or two, and a row that pins the log open for
-    // every reviewed call would leave an Auto thread permanently unfolded.
-    expect(
-      plan(
-        [
-          review("r1"),
-          tool("a", "files_read_file", "ok"),
-          tool("b", "files_read_file", "ok"),
-          text("t"),
-        ],
-        false,
-      ),
-    ).toEqual(["worklog", "t"]);
   });
 });

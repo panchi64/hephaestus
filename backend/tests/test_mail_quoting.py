@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import cast
 
-from services.mail.models import MailAddress, OutgoingMail
-from services.mail.parse import build_outgoing, html_to_text, parse_message, snippet_of
-from services.mail.quoting import split_body
+from plugins.mail.services.models import MailAddress, OutgoingMail
+from plugins.mail.services.parse import build_outgoing, html_to_text, parse_message, snippet_of
+from plugins.mail.services.quoting import split_body
 
 REPLY_WITH_QUOTE = """Yes, Tuesday works for me.
 

@@ -66,9 +66,9 @@ class DevInstance:
     #: that navigates here lands in the product rather than at a password prompt; on when
     #: the auth surfaces are themselves what is being worked on.
     auth: bool = False
-    #: Whether the platform VM (and with it the sandbox, SearXNG and web fetch) runs. Off
-    #: by default: it costs an image build, memory and boot time that most visual checks
-    #: never need. The VM lives under this instance's own data dir.
+    #: Whether the VMs (and with them the shell, code, SearXNG and web fetch) run. Off by
+    #: default: they cost an image build, memory and boot time that most visual checks
+    #: never need. The image lives under this instance's own data dir.
     vm: bool = False
 
     @property

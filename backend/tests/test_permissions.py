@@ -36,6 +36,7 @@ from services.conversations import ConversationBinding, ConversationStore
 from services.permissions import (
     ACTING_PERMISSIONS,
     DEFAULT_PERMISSION,
+    PERMISSION_LADDER,
     PERMISSION_LEVELS,
     PERMISSIONS,
     PLANNING_TOOLS,
@@ -53,8 +54,8 @@ from services.permissions import (
 )
 from services.tool_policy import permission_disabled_tools
 from services.tool_sensitivity import (
-    SENSITIVITY_CLASSES,
     Sensitivity,
+    classified_names,
     declared_sensitivity,
     sensitivity_of,
 )
@@ -68,6 +69,7 @@ from ._helpers import (
     settle,
 )
 from ._json import json_body, parse_json, s
+from .command_workspace import command_workspace
 from .test_chat_concurrency_guards import patch_hanging_model
 
 OWNER = "operator"
@@ -95,7 +97,7 @@ SELF_MARKED_WRITE = "skills_edit"
 
 
 def _classified_names() -> set[str]:
-    return {name for names in SENSITIVITY_CLASSES.values() for name in names}
+    return {name for names in classified_names().values() for name in names}
 
 
 class TestTheKnobs:
@@ -251,6 +253,10 @@ class TestTheDecisionMatrix:
         # never marks it, so the model's call simply runs (see the elevation tests).
         assert not beyond_scope("edit", WORKSPACE_WRITE)
 
+    @pytest.mark.parametrize("level", PERMISSION_LADDER)
+    def test_a_plan_approval_is_put_to_the_operator_at_every_level(self, level: str):
+        assert decide(level, "plan_submit") is Decision.ASK
+
     def test_auto_sends_the_same_calls_to_review_instead(self):
         for tool in (HOST_EXEC, EXTERNAL_EFFECT, SECRET, UNCLASSIFIED):
             assert decide("auto", tool) is Decision.REVIEW
@@ -323,7 +329,7 @@ async def _resolved_kinds(permission: PermissionLevel) -> dict[str, str]:
         # here too so this resolves the stack a Plan run really resolves.
         disabled_tools=permission_disabled_tools(permission),
     )
-    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+    ctx = RunContext(deps=deps, workspace=command_workspace(), model=TestModel(), usage=RunUsage())
     tools = await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx)
     return {name: tool.tool_def.kind for name, tool in tools.items()}
 

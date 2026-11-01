@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import override
 
 import pytest
 from pydantic import JsonValue, TypeAdapter
@@ -15,7 +16,8 @@ from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
 from runs import Run, RunStream
-from services.sandbox import SandboxError, SandboxSessionManager
+from services.home.scratch import HostFiles, ScratchDirs
+from services.sandbox import SandboxError
 from services.skills import SkillStore
 from services.skills.store import SkillCatalogEntry
 from tools.deps import RunDeps
@@ -29,34 +31,43 @@ OWNER = "operator"
 _RESULT = TypeAdapter(dict[str, JsonValue])
 
 
-class FakeSession:
-    """A sandbox session that keeps its workspace in a dict — the same `read_file` /
-    `write_file` contract the real one exposes, including raising on a missing path."""
+class FakeSession(HostFiles):
+    """A scratch that keeps its files in a dict, with the `read_file` / `write_file`
+    contract of `HostFiles`, including raising on a missing path."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, fail_writes: bool = False) -> None:
+        super().__init__(Path("/fake-host-workspace"))
         self.files: dict[str, bytes] = {}
         self.writes: int = 0
+        self._fail_writes: bool = fail_writes
 
+    @override
+    def ensure_workspace(self) -> Path:
+        return Path("/fake-host-workspace")
+
+    @override
     def read_file(self, relpath: str) -> bytes:
         if relpath not in self.files:
             raise SandboxError(f"no such file: {relpath}")
         return self.files[relpath]
 
+    @override
     def write_file(self, relpath: str, content: bytes) -> None:
+        if self._fail_writes:
+            raise SandboxError("workspace is read-only")
         self.files[relpath] = content
         self.writes += 1
 
-    def ensure_workspace(self) -> Path:
-        """The seam `services/workspace.py` binds to — the file tools and the code
-        runner reach the workspace as a directory, not through the container."""
-        return Path("/fake-host-workspace")
 
+class FakeSessions(ScratchDirs):
+    """Every key's scratch is the one `session`."""
 
-class FakeSessions:
     def __init__(self, session: FakeSession | None = None) -> None:
+        super().__init__(Path("/fake-scratch-root"))
         self.session: FakeSession = session or FakeSession()
 
-    async def acquire(self, _key: str, **_kwargs: object) -> FakeSession:
+    @override
+    def acquire(self, key: str) -> FakeSession:
         return self.session
 
 
@@ -91,7 +102,7 @@ def skill_deps(skills: SkillStore | None = None, sandbox_sessions: object = None
     if skills is not None:
         caps.add(skills, as_type=SkillStore)
     if sandbox_sessions is not None:
-        caps.add(sandbox_sessions, as_type=SandboxSessionManager)
+        caps.add(sandbox_sessions, as_type=ScratchDirs)
     run = Run(id="run-1", kind="chat", owner_id=OWNER, stream=RunStream())
     return RunDeps(run=run, owner_id=OWNER, conversation_id="conv-1", caps=caps)
 
@@ -176,21 +187,15 @@ async def test_open_without_a_sandbox_still_returns_instructions():
     assert "unavailable" in s(result["note"])
 
 
-async def test_open_survives_a_sandbox_failure():
-    class FailingSessions:
-        async def acquire(self, _key: str, **_kwargs: object) -> FakeSession:
-            raise SandboxError("no runtime")
-
+async def test_open_survives_a_workspace_that_cannot_be_written():
     store = await skill_store()
     _ = await publish_skill(store)
+    failing = FakeSessions(FakeSession(fail_writes=True))
     result = await _invoke(
-        "open", _ctx(skill_deps(skills=store, sandbox_sessions=FailingSessions())), "release-notes"
+        "open", _ctx(skill_deps(skills=store, sandbox_sessions=failing)), "release-notes"
     )
     assert result["ok"] is True
-    # A fail-closed sandbox is now indistinguishable from having no runtime at all —
-    # both are "there is no workspace", answered once by the resolver. The skill still
-    # opens; only its files are missing, and the note says so.
-    assert "not staged" in s(result["note"])
+    assert "could not be staged" in s(result["note"])
 
 
 async def test_tools_degrade_when_the_capability_is_absent():

@@ -16,10 +16,13 @@ fallback stay the same.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 import trafilatura
 from lxml.html import HtmlElement
+
+logger = logging.getLogger(__name__)
 
 # An extractor turns the parsed tree + the page URL into Markdown (or None).
 Extractor = Callable[[HtmlElement, str], str | None]
@@ -75,7 +78,8 @@ def extract(
         for extractor in EXTRACTORS:
             try:
                 out = extractor(tree, url)
-            except Exception:
+            except Exception:  # one extractor failing leaves the others to try
+                logger.debug("web extract: an extractor failed on %s", url, exc_info=True)
                 out = None
             stripped = out.strip() if out else ""
             if stripped:
@@ -97,6 +101,7 @@ def _title(tree: HtmlElement | None) -> str | None:
         return None
     try:
         meta = trafilatura.extract_metadata(tree)
-    except Exception:
+    except Exception:  # a page without readable metadata has no title
+        logger.debug("web extract: reading metadata failed", exc_info=True)
         return None
     return meta.title

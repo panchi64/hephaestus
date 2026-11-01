@@ -17,12 +17,14 @@ and opened on resolve. Resolution validates that tool-driving roles
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 
 import httpx
 from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
@@ -31,7 +33,7 @@ from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelEndpoint, ModelRole
 from runs import Endpoint, EndpointGate
-from services import embeddings, llm
+from services import embeddings, llm, reasoning
 from services.endpoint_spec import EndpointSpec
 from services.providers import DEFAULT_PROVIDER_ID, get_provider
 from services.providers.base import ModelLimits
@@ -56,9 +58,8 @@ def _same_server(one: str, two: str) -> bool:
 
 @dataclass(frozen=True)
 class ResolvedModel:
-    """A resolved role: the model to run, plus the settings that disable its
-    reasoning (empty when the model isn't a recognized thinking model). Background
-    callers that want a fast, no-reasoning pass (titling) read ``reasoning_off``.
+    """A resolved role: the model to run, plus ``reasoning_off``, the settings
+    background callers (titling) merge over their caps (see ``Provider.reasoning_off``).
     ``context_window`` is the primary endpoint's window (None when undeclared) —
     the chat layer forwards it so the run can report context fullness. ``vision`` is
     true only when **every** endpoint in the resolved fallback chain can see — the chat
@@ -71,6 +72,9 @@ class ResolvedModel:
     vision: bool = False
     #: The primary endpoint, as the run gate leases it.
     endpoint: Endpoint | None = None
+    #: The chain rebuilt with a thread's effort on each link whose adapter reads one, so
+    #: a fallback link never gets a level it can't take. None when the primary reads none.
+    with_effort: Callable[[ThinkingEffort], Model] | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +151,7 @@ class ModelRegistry:
         native_tools: bool = True,
         vision: bool = False,
         thinking: bool = False,
+        effort: str | None = None,
         enabled: bool = True,
         max_concurrent_runs: int | None = None,
     ) -> ModelEndpoint:
@@ -162,6 +167,7 @@ class ModelRegistry:
             native_tools=native_tools,
             vision=vision,
             thinking=thinking,
+            effort=effort,
             enabled=enabled,
             max_concurrent_runs=max_concurrent_runs,
         )
@@ -204,6 +210,8 @@ class ModelRegistry:
                 elif key == "model":
                     # An explicit empty value clears the default back to discovery-only.
                     endpoint.model = str(value) if value else None
+                elif key == "effort":
+                    endpoint.effort = str(value) if value else None
                 elif key == "max_concurrent_runs" and value == 0:
                     endpoint.max_concurrent_runs = None
                 elif value is not None:
@@ -308,8 +316,8 @@ class ModelRegistry:
         self, owner_id: str, role: str, endpoint_ids: list[str], *, model: str | None = None
     ) -> None:
         """Bind ``role`` to an ordered chain. Validates each endpoint exists and
-        is owned, that tool-driving roles use only tool-calling endpoints, and —
-        for ``embedding`` — that the bound endpoint/model actually serves vectors.
+        is owned, that tool-driving roles use only tool-calling endpoints, and that an
+        ``embedding`` binding's head actually serves that API.
 
         ``model`` pins an explicit model on the bound endpoint (``None`` ⇒ the
         endpoint's default). It is the embedding role's stand-in for ``main``'s
@@ -581,6 +589,22 @@ class ModelRegistry:
             # handed image bytes it can't interpret. AND across the chain, not the head.
             vision=all(spec.vision for spec in specs),
             endpoint=primary.gate_endpoint(),
+            with_effort=(
+                partial(self._chain_with_effort, specs)
+                if get_provider(primary.provider).preset.uses_effort
+                else None
+            ),
+        )
+
+    def _chain_with_effort(self, specs: Sequence[EndpointSpec], effort: ThinkingEffort) -> Model:
+        return llm.build_chain(
+            [
+                replace(spec, effort=effort)
+                if get_provider(spec.provider).preset.uses_effort
+                else spec
+                for spec in specs
+            ],
+            self._gate,
         )
 
     async def resolve_background(
@@ -680,20 +704,30 @@ class ModelRegistry:
             return None
         return specs[0].context_window if specs else None
 
-    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec:
-        """The embedding endpoint as a raw spec — embeddings hit the provider's
-        ``/embeddings`` API directly, not a Pydantic AI chat model, so the
-        embedding service needs the base_url/model/key, not a built model.
-        Unconfigured ⇒ degraded (recall falls back to keyword)."""
-        chain_ids, model = await self.get_role_binding(owner_id, "embedding")
+    @property
+    def http_client(self) -> httpx.AsyncClient | None:
+        """The pooled client for calls made straight to a resolved spec."""
+        return self._http_client
+
+    async def resolve_raw_spec(self, owner_id: str, role: str) -> EndpointSpec:
+        """The head of ``role``'s chain as a raw spec, for a role served by an API other
+        than chat (embeddings) and so never built into a model.
+
+        Raises ``DegradedCapabilityError`` when the role is unbound or its head is disabled.
+        """
+        chain_ids, model = await self.get_role_binding(owner_id, role)
         if not chain_ids:
-            raise DegradedCapabilityError("no embedding endpoint configured")
+            raise DegradedCapabilityError(f"no {role} endpoint configured")
         endpoint = await self.get_endpoint(owner_id, chain_ids[0])
         # A benched endpoint is skipped everywhere, exactly as chat resolution skips it.
-        # Degrade to keyword recall rather than resolve one the operator switched off.
         if not endpoint.enabled:
-            raise DegradedCapabilityError(f"embedding endpoint {endpoint.name!r} is disabled")
-        return self._to_spec(endpoint, "embedding", model_override=model)
+            raise DegradedCapabilityError(f"{role} endpoint {endpoint.name!r} is disabled")
+        return self._to_spec(endpoint, role, model_override=model)
+
+    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec:
+        """The embedding endpoint as a raw spec. Unconfigured ⇒ degraded (recall falls back
+        to keyword)."""
+        return await self.resolve_raw_spec(owner_id, "embedding")
 
     async def list_provider_models(self, owner_id: str, endpoint_id: str) -> list[str]:
         """Ask the endpoint's provider which models it serves (the chat picker's
@@ -823,6 +857,7 @@ class ModelRegistry:
             native_tools=endpoint.native_tools,
             vision=endpoint.vision,
             thinking=endpoint.thinking,
+            effort=reasoning.parse_effort(endpoint.effort),
             endpoint_id=endpoint.id,
             name=endpoint.name,
             max_concurrent_runs=endpoint.max_concurrent_runs,

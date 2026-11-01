@@ -1,5 +1,5 @@
 """End-to-end wiring: app.py's `on_terminal` composition over NotificationService —
-run_failed always, run_completed only when unwatched, cancelled/blocked never notify,
+run_failed and run_completed only when unwatched, cancelled/blocked never notify,
 and a stateless (no-conversation) run never notifies either."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from runs import Run
 from runs.events import AnswerDelta
 from services.notification_view import NotificationView
 
-from ._helpers import client_app
+from ._helpers import client_app, watch_stream
 
 
 async def _drain_terminal_notify_tasks(app: FastAPI) -> None:
@@ -33,7 +33,7 @@ async def _run_notifications(app: FastAPI, run_id: str) -> list[NotificationView
     return [n for n in items if n.run_id == run_id]
 
 
-async def test_run_failed_always_notifies():
+async def test_run_failed_notifies_when_nobody_is_watching():
     async with client_app() as (_client, app):
         conv_id = await app_state(app).conversations.create_conversation(OPERATOR_ID)
 
@@ -48,8 +48,27 @@ async def test_run_failed_always_notifies():
         notifs = await _run_notifications(app, run.id)
         assert len(notifs) == 1
         assert notifs[0].kind == "run_failed"
+        assert notifs[0].title == 'Talos hit an error in "this conversation"'
         assert notifs[0].conversation_id == conv_id
         assert notifs[0].body == "boom"
+
+
+async def test_a_private_threads_failure_names_neither_the_thread_nor_the_error():
+    async with client_app() as (_client, app):
+        conv_id = await app_state(app).conversations.create_conversation(OPERATOR_ID, private=True)
+
+        async def orch(_run: Run) -> None:
+            raise ValueError("salary figures")
+
+        run = app_state(app).runs.submit(
+            kind="chat", owner_id=OPERATOR_ID, orchestrator=orch, conversation_id=conv_id
+        )
+        await run.wait()
+
+        notifs = await _run_notifications(app, run.id)
+        assert [(n.title, n.body) for n in notifs] == [
+            ("Talos hit an error in a private chat", None)
+        ]
 
 
 async def test_run_completed_notifies_when_nobody_is_watching():
@@ -67,6 +86,25 @@ async def test_run_completed_notifies_when_nobody_is_watching():
         notifs = await _run_notifications(app, run.id)
         assert len(notifs) == 1
         assert notifs[0].kind == "run_completed"
+        assert notifs[0].title == 'Talos finished "this conversation"'
+
+
+async def test_a_thread_run_as_another_agent_is_notified_under_its_name():
+    async with client_app() as (_client, app):
+        conversations = app_state(app).conversations
+        conv_id = await conversations.create_conversation(OPERATOR_ID)
+        await conversations.set_agent_name(conv_id, "scout")
+
+        async def orch(run: Run) -> None:
+            _ = run.emit(AnswerDelta(text="hi"))
+
+        run = app_state(app).runs.submit(
+            kind="chat", owner_id=OPERATOR_ID, orchestrator=orch, conversation_id=conv_id
+        )
+        await run.wait()
+
+        notifs = await _run_notifications(app, run.id)
+        assert [n.title for n in notifs] == ['scout finished "this conversation"']
 
 
 async def test_run_completed_is_suppressed_with_a_live_subscriber():
@@ -84,12 +122,31 @@ async def test_run_completed_is_suppressed_with_a_live_subscriber():
         )
         _ = await started.wait()
 
-        async def consume():
-            async for _ in run.stream.subscribe():
-                pass
+        task = await watch_stream(run.stream)
+        release.set()
+        await run.wait()
+        await task
 
-        task = asyncio.create_task(consume())
-        await asyncio.sleep(0)  # let it register before the run finishes
+        assert await _run_notifications(app, run.id) == []
+
+
+async def test_run_failed_is_suppressed_with_a_live_subscriber():
+    async with client_app() as (_client, app):
+        conv_id = await app_state(app).conversations.create_conversation(OPERATOR_ID)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def orch(run: Run) -> None:
+            _ = run.emit(AnswerDelta(text="hi"))
+            started.set()
+            _ = await release.wait()
+            raise ValueError("boom")
+
+        run = app_state(app).runs.submit(
+            kind="chat", owner_id=OPERATOR_ID, orchestrator=orch, conversation_id=conv_id
+        )
+        _ = await started.wait()
+
+        task = await watch_stream(run.stream)
         release.set()
         await run.wait()
         await task
@@ -164,9 +221,9 @@ async def test_a_hidden_threads_run_never_notifies():
 
 
 async def test_a_hidden_threads_failure_is_silent_too():
-    """The same, for the branch that notifies even when somebody *is* watching. A
-    sub-agent that fails is shown on its card in an error tone and its report says so —
-    a toast pointing at a thread they cannot open adds nothing they can act on."""
+    """The same, for an unwatched failure. A sub-agent that fails is shown on its card in
+    an error tone and its report says so; a notice pointing at a thread the operator
+    cannot open adds nothing they can act on."""
     async with client_app() as (_client, app):
         conv_id = await app_state(app).conversations.create_conversation(
             OPERATOR_ID, ephemeral=True

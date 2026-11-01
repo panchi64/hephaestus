@@ -1,17 +1,12 @@
-/** Skills feature data contracts.
- *
- *  A skill is an **Agent Skills** bundle (agentskills.io): a `SKILL.md` — frontmatter
- *  plus a markdown body — and any supporting files shipped alongside it. The backend
- *  owns every rule below; the types here only describe what it sends back.
- */
+/** Skills feature data contracts. A skill is an Agent Skills bundle (agentskills.io):
+ *  a `SKILL.md` (frontmatter plus body) and supporting files. */
 
 import type { Status } from "~/ui";
 
-/** Where a skill came from. Orthogonal to {@link Skill.published} — an imported
- *  skill is a draft until the operator publishes it, an authored one likewise. */
+/** Where a skill came from; orthogonal to {@link Skill.published}. */
 export type SkillSource = "authored" | "imported" | "agent";
 
-/** One supporting file in the bundle. `relpath` is its identity. */
+/** A supporting file; `relpath` is its identity. */
 export interface SkillFile {
   relpath: string;
   sha256: string;
@@ -41,7 +36,7 @@ export interface Skill extends SkillSummary {
   license: string | null;
   compatibility: string | null;
   metadata: Record<string, unknown> | null;
-  /** Recorded and displayed, never enforced — advisory only (D32). */
+  /** Recorded and displayed, never enforced: advisory only. */
   allowedTools: string[] | null;
   /** Non-standard frontmatter preserved verbatim so an export is lossless
    *  (an imported bundle's `when_to_use` lands here). Read-only in the UI. */
@@ -49,21 +44,16 @@ export interface Skill extends SkillSummary {
   files: SkillFile[];
 }
 
-/* ── Presentation mirrors of the backend's rules ──────────────────────────────
-   Character limits and the name charset are shown so the operator sees a field
-   go red before they submit — the backend still decides, and its 422 message is
-   what actually renders. Never gate a submit on these. */
+/* Display-only mirrors of the backend's limits: the backend decides and its 422
+   message renders. Never gate a submit on these. */
 
 export const SKILL_NAME_MAX = 64;
 export const SKILL_DESCRIPTION_MAX = 1024;
 /** Lowercase letters, numbers, and hyphens. */
 export const SKILL_NAME_PATTERN = /^[a-z0-9-]+$/;
 
-/** Maps a skill's published state to its StatusFlag accent — the same active /
- *  inactive pair the document library uses (`active: nominal`, `archived: idle`).
- *  A draft is **`idle`, not `warn`**: amber means caution system-wide, and an
- *  unpublished skill is merely inactive, not a problem. Keeping it neutral is also
- *  what stops a half-written library from reading as a screen full of warnings. */
+/** StatusFlag accent for published state, matching the document library's active/archived
+ *  pair. A draft is `idle`, not `warn`: amber means caution system-wide. */
 export function skillStatusFlag(published: boolean): Status {
   return published ? "nominal" : "idle";
 }
@@ -74,24 +64,21 @@ export const PIN_HINT =
 
 /** Why the pin control is off for a draft. */
 export const PIN_DRAFT_HINT =
-  "Publish the skill first — a draft is never shown to the agent.";
+  "Publish the skill first — a draft is never shown to Talos or your agents.";
 
 export function skillStatusLabel(published: boolean): string {
   return published ? "PUBLISHED" : "DRAFT";
 }
 
-/** Provenance is a *fact*, not a state, so it carries no accent: `imported` and
- *  `agent` would otherwise share one hue between two meanings, and every imported
- *  row would spend a second accent on something that isn't a signal. The label
- *  text alone distinguishes them — meaning is never in the hue. `authored` is the
- *  unremarkable case and renders no flag at all. */
+/** Provenance is a fact, not a state, so every source is neutral `idle`; the label text
+ *  distinguishes them. `authored` renders no flag. */
 export const skillSourceFlag: Record<SkillSource, Status> = {
   authored: "idle",
   imported: "idle",
   agent: "idle",
 };
 
-/** A read-only skill shipped with the app. Its name is its identity. */
+/** A read-only skill shipped with the app; `name` is its identity. */
 export interface BuiltInSkill {
   name: string;
   description: string;

@@ -41,7 +41,6 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
-    RetryPromptPart,
     TextPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -111,8 +110,7 @@ def _categories() -> dict[str, FunctionToolset[RunDeps]]:
 
 def _called(messages: Sequence[ModelMessage], name: str) -> bool:
     return any(
-        isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
-        and part.tool_name == name
+        isinstance(part, BaseToolCallPart | BaseToolReturnPart) and part.tool_name == name
         for message in messages
         for part in message.parts
     )
@@ -368,7 +366,7 @@ async def test_the_history_surgeries_leave_a_reveal_where_it_was():
     assert revealed_tools(split) == ("browse_open_page", "browse_delete_page")
 
     # A checkpoint's carried delta merged into the turn that follows it stays on the
-    # history's side of the boundary: `parts` counts the turn's own from the end.
+    # history's side of the boundary: `history_parts` counts the history's from the front.
     merged = merge_consecutive_requests(
         [
             ModelRequest(parts=[delta, UserPromptPart(content="SUMMARY")]),
@@ -376,7 +374,7 @@ async def test_the_history_surgeries_leave_a_reveal_where_it_was():
         ]
     )
     assert len(merged) == 1
-    assert _texts(TurnStart(0, 1).slice(merged)) == ["next"]
+    assert _texts(TurnStart(0, 2).slice(merged)) == ["next"]
     assert revealed_tools(merged) == ("browse_delete_page",)
 
 
@@ -641,7 +639,8 @@ async def test_the_carried_reveal_persists_with_the_checkpoint():
         assert isinstance(checkpoint.parts[0], ToolAvailabilityDeltaPart)
         view = await store.messages_view(cid)
         divider = next(m for m in view if m.role == "compaction")
-        assert divider.content.endswith(f"so far\n{COMPACT_CLOSE}")
+        assert "so far\n" in divider.content
+        assert divider.content.endswith(COMPACT_CLOSE)
         assert divider.compaction_reason == "manual"
 
 

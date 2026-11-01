@@ -197,6 +197,16 @@ class NotificationService:
     def channels(self, value: list[NotificationChannel]) -> None:
         self._channels = value
 
+    def add_channel(self, channel: NotificationChannel) -> None:
+        """Fan out to one more channel, for a feature that brings its own."""
+        if channel not in self._channels:
+            self._channels.append(channel)
+
+    def remove_channel(self, channel: NotificationChannel) -> None:
+        """Stop fanning out to a channel; deliveries already queued still go."""
+        if channel in self._channels:
+            self._channels.remove(channel)
+
     @property
     def subscriber_count(self) -> int:
         """How many live subscribers are attached right now."""
@@ -290,17 +300,27 @@ class NotificationService:
         removed."""
         return self._delete(owner_id, lambda view: view.read_at is not None)
 
+    async def delete_all(self, owner_id: str) -> int:
+        """Delete every one of the owner's notifications. Returns how many were removed."""
+        return self._delete(owner_id, lambda _view: True)
+
+    async def delete_for_conversations(self, owner_id: str, conversation_ids: set[str]) -> int:
+        """Delete the owner's notifications about these conversations, which are gone and
+        can no longer be opened. Returns how many were removed."""
+        return self._delete(owner_id, lambda view: view.conversation_id in conversation_ids)
+
     async def resolve_for_run(self, owner_id: str, run_id: str) -> list[NotificationView]:
         """Resolve every one of the run's not-yet-resolved notifications (in practice
         at most its one `approval_needed`) — the approval was decided by some path, or
-        the run reached terminal without one ever being decided. Returns the resolved
-        views (empty if the run had none pending — idempotent)."""
+        the run reached terminal without one ever being decided. A resolved notification
+        needs no attention, so it is marked read too. Returns the resolved views (empty
+        if the run had none pending — idempotent)."""
         now = utcnow()
         resolved: list[NotificationView] = []
         for notif_id, view in list(self._cache.items()):
             if view.owner_id != owner_id or view.run_id != run_id or view.resolved_at is not None:
                 continue
-            updated = replace(view, resolved_at=now)
+            updated = replace(view, resolved_at=now, read_at=view.read_at or now)
             self._cache[notif_id] = updated
             resolved.append(updated)
         for view in resolved:

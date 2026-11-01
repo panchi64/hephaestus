@@ -13,7 +13,7 @@ merely wasted work:
 - **It does not run while the vault is locked.** The history it would read and the summary
   it would write are both sealed, so there is no key and nothing to do — the pass returns
   immediately rather than raising its way through a decrypt, the same posture
-  :class:`services.scheduler.SchedulerService` takes for the same reason.
+  :class:`plugins.routines.scheduler.SchedulerService` takes for the same reason.
 - **It does not run while any run is live.** A summary is a model call on the same
   servers the operator chats on, and on a local server it can take the only slot or make
   the server swap models under the chat. So a pass starts only when nothing is running,

@@ -1,12 +1,12 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { isApiError } from "~/lib/api";
 import { useSession } from "~/lib/stores/session";
-import { Button, Input, Stack, StatusFlag, Text } from "~/ui";
+import { Button, Input, Reveal, Stack, StatusFlag, Text } from "~/ui";
 
 /**
  * First-run setup: choose the operator password. This derives the vault key and
- * unlocks the workspace — there is exactly one operator, so this runs once. After
- * setup, this surface redirects to login (the workspace is already initialized).
+ * unlocks the workspace — there is exactly one operator, so this runs once. The gate
+ * then shows the first-run walkthrough.
  */
 export function SignupScreen(): JSX.Element {
   const session = useSession();
@@ -84,16 +84,20 @@ export function SignupScreen(): JSX.Element {
           autocomplete="new-password"
         />
         <Show when={error()}>
-          <Text variant="micro" tone="alert">
-            {error()}
-          </Text>
+          <Reveal>
+            <Text variant="micro" tone="alert">
+              {error()}
+            </Text>
+          </Reveal>
         </Show>
         <Button
           variant="primary"
           type="submit"
-          disabled={loading() || mismatch()}
+          disabled={mismatch()}
+          pending={loading()}
+          pendingLabel="Initializing"
         >
-          {loading() ? "Initializing…" : "Initialize workspace"}
+          Initialize workspace
         </Button>
       </Stack>
     </form>

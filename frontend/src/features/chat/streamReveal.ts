@@ -132,6 +132,43 @@ export function revealDelay(start: number, now: number): number | null {
   return start + REVEAL_MS <= now ? null : start - now;
 }
 
+/** Characters starting within one 144 Hz frame share a wrapper; their fades are indistinguishable. */
+export const SHARED_SPAN_MS = 1000 / 144;
+
+/** Characters up to `end` as one node: a wrapper with `delay`, or plain text when null. */
+export interface RevealRun {
+  end: number;
+  delay: number | null;
+}
+
+/** Characters `[from, to)` as runs; settled or unscheduled ones are plain and land hard. */
+export function revealRuns(
+  starts: number[],
+  from: number,
+  to: number,
+  now: number,
+): RevealRun[] {
+  const delayAt = (k: number): number | null =>
+    k < starts.length ? revealDelay(starts[k], now) : null;
+  const runs: RevealRun[] = [];
+  let i = from;
+  while (i < to) {
+    const delay = delayAt(i);
+    let end = i + 1;
+    if (delay === null) while (end < to && delayAt(end) === null) end++;
+    else
+      while (
+        end < to &&
+        end < starts.length &&
+        starts[end] - starts[i] < SHARED_SPAN_MS
+      )
+        end++;
+    runs.push({ end, delay });
+    i = end;
+  }
+  return runs;
+}
+
 /**
  * How many scheduled characters have already begun resolving. Everything from
  * here on is still invisible and can be re-paced freely; everything before it

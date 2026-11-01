@@ -15,11 +15,14 @@ reader to guess the second.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from collections.abc import Callable
 from typing import TypedDict
 
+import core.volume
+from core.config import Settings
 from devkit import doctor, launch, ports, processes, surfaces
 from devkit.instance import DevInstance, resolve
 from devkit.processes import Supervisor
@@ -158,14 +161,14 @@ def _cmd_up(args: _Args) -> int:
         supervisor.stop_all()
         print(f"error: {failure}", file=sys.stderr)
         return 1
-    except Exception as failure:  # noqa: BLE001 — see below
+    except Exception as failure:
         # Everything, not just LaunchError: `bring_up` also seeds, and seeding raises
         # ordinary HTTP and JSON errors. One escaping here would leave the services this
         # run started alive and unrecorded — running, and beyond the reach of `stop`.
         supervisor.stop_all()
         print(f"error: bringing the instance up failed: {failure!r}", file=sys.stderr)
         print(f"       logs: {instance.logs_dir}", file=sys.stderr)
-        return 1
+        raise SystemExit(1) from failure
 
     _ = supervisor.record(instance.root)
     payload = status_payload(instance)
@@ -211,6 +214,10 @@ def _cmd_reset(args: _Args) -> int:
         )
         return 1
     _ = processes.stop_recorded(instance.root)
+    # A backend killed hard leaves its volume mounted; deleting through a live mount would
+    # walk the decrypted files instead of the backing store.
+    volume = core.volume.select_volume(Settings(data_dir=instance.data_dir))
+    asyncio.run(core.volume.close_volume(volume))
     summary = reset_workspace(instance.data_dir)
     # `reset_workspace` deliberately preserves the live database — it is written for a
     # running app that holds the file open. Nothing holds it now, and leaving it would
@@ -261,7 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="dev_instance",
         description=(
             "Run an isolated Hephaestus for development — its own data, ports and "
-            "platform VM, seeded and safe to break."
+            "VMs, seeded and safe to break."
         ),
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -289,7 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--with-vm",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="also run the platform VM: sandbox, SearXNG and web fetch (remembered)",
+        help="also run the VMs: shell, code, SearXNG and web fetch (remembered)",
     )
     _ = up.add_argument(
         "--reseed",

@@ -370,12 +370,35 @@ async def test_resolve_for_run_marks_only_that_runs_pending_notification(tmp_pat
     resolved = await service.resolve_for_run(OWNER, "run-1")
     assert [r.id for r in resolved] == [approval.id]
 
-    items, _ = await service.list_notifications(OWNER)
+    items, unread = await service.list_notifications(OWNER)
     by_id = {v.id: v for v in items}
     assert by_id[approval.id].resolved_at is not None
+    assert by_id[approval.id].read_at == by_id[approval.id].resolved_at
     assert by_id[other.id].resolved_at is None
+    assert by_id[other.id].read_at is None
+    assert unread == 1
 
     assert await service.resolve_for_run(OWNER, "run-1") == []  # idempotent
+    await service.stop()
+
+
+async def test_resolve_for_run_keeps_an_earlier_read_time(tmp_path: Path):
+    engine = make_engine("sqlite:///:memory:")
+    init_db(engine)
+    vault = Vault(tmp_path / "keyfile.json")
+    await vault.setup("pw")
+    service = NotificationService(engine, vault)
+    await service.start()
+    approval = await service.notify(OWNER, "approval_needed", "needs approval", run_id="run-1")
+    assert await service.mark_read(OWNER, [approval.id]) == 1
+    read_at = (await service.list_notifications(OWNER))[0][0].read_at
+
+    [resolved] = await service.resolve_for_run(OWNER, "run-1")
+    assert resolved.read_at == read_at
+
+    await service.flush()
+    [row] = await _stored(engine)
+    assert row.read_at is not None and row.resolved_at is not None
     await service.stop()
 
 

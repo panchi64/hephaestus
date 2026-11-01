@@ -1,0 +1,19 @@
+/* highlight.js token classes (codeHighlight.ts), for prose fences and CodeBlock alike.
+   Monochrome on purpose: the accents are reserved for diffs. Unlisted tokens inherit
+   the block's own --text. */
+.hljs-comment,
+.hljs-quote,
+.hljs-doctag {
+  color: var(--text-dim);
+}
+.hljs-keyword,
+.hljs-variable.language_,
+.hljs-built_in,
+.hljs-literal,
+.hljs-type,
+.hljs-title,
+.hljs-name,
+.hljs-selector-tag,
+.hljs-section {
+  color: var(--text-bright);
+}

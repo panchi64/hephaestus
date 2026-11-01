@@ -35,7 +35,7 @@ import {
 /** The relays the room already has. Each is the *same* handler its existing control
  *  calls — a command is a second way to reach one, never a second implementation. */
 export interface CommandActions {
-  compact: () => void;
+  compact: (focus?: string) => void;
   fork: () => void;
   retitle: () => void;
   newThread: () => void;
@@ -144,7 +144,7 @@ export function createComposerCommands(
   const relay = (id: CommandActionId | null): (() => void) | undefined => {
     switch (id) {
       case "compact":
-        return actions.compact;
+        return () => actions.compact();
       case "fork":
         return actions.fork;
       case "retitle":
@@ -217,11 +217,13 @@ export function createComposerCommands(
       if (staged.command.kind === "action") {
         if (staged.command.actionId === "permission-level" && argument) {
           actions.setPermissionLevel(argument);
+        } else if (staged.command.actionId === "compact") {
+          // Only a *typed* `/compact` reaches here — a picked one ran on the pick and was
+          // never staged. Text after it is what the summary should keep.
+          actions.compact(argument || undefined);
+        } else {
+          relay(staged.command.actionId)?.();
         }
-        // Only a *typed* `/compact` reaches here with a relay of its own — a picked one
-        // ran on the pick and was never staged. Sending it is the operator's way of
-        // pressing the row they didn't open the menu for.
-        relay(staged.command.actionId)?.();
         // Swallowed either way: an action is never a message, and one sent without its
         // argument has nothing to do — the field clears and the operator tries again.
         return { kind: "acted" };

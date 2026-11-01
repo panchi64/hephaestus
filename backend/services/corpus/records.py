@@ -1,5 +1,5 @@
-"""Corpus sources over what the platform itself wrote: thread work summaries, sub-agent
-reports and routine run outputs.
+"""Corpus sources over what the platform itself wrote: thread work summaries and sub-agent
+reports. A feature adds its own through :class:`RecordAdapter`.
 
 Each is a short sealed text on an existing row, so each is a :class:`RecallCollection`
 over that row ranked by BM25 alone. They carry no embeddings; adding them would mean a
@@ -14,14 +14,13 @@ from datetime import datetime
 from typing import override
 
 import numpy as np
-from sqlalchemy import ColumnElement, Engine, func
+from sqlalchemy import ColumnElement, Engine, func, or_
 from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.vault import Vault
 from models.conversation import Conversation
 from models.subagent import SubagentRecord
-from models.task import ScheduledTask, TaskRun
 from services.conversation_search import snippet
 from services.corpus.adapter import CorpusDocument, CorpusHit, SourceAdapter, SourceStatus
 from services.recall_index import Collection, Doc, Loaded, Query, RecallIndex
@@ -29,6 +28,9 @@ from services.sealing import open_sealed
 
 #: A record's full text by id, or None when it is not the owner's.
 type ReadText = Callable[[Session, Vault, str, str], str | None]
+#: The owner's record ids that belong to a private thread. Read fresh on every query, since
+#: filing a thread in or out changes none of the record's own index stamps.
+type PrivateIds = Callable[[Session, str], frozenset[str]]
 
 
 @dataclass(frozen=True)
@@ -121,59 +123,9 @@ class ReportCollection(Collection[RecordMeta]):
         ]
 
 
-class RoutineRunCollection(Collection[RecordMeta]):
-    name: str = "routine-runs"
-
-    @staticmethod
-    def _owned(owner_id: str) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
-        return (
-            col(ScheduledTask.owner_id) == owner_id,
-            col(TaskRun.summary_enc).is_not(None),
-        )
-
-    @override
-    def signature(self, session: Session, owner_id: str) -> Hashable:
-        stmt = (
-            select(func.count(), func.max(TaskRun.finished_at))
-            .join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
-            .where(*self._owned(owner_id))
-        )
-        return tuple(session.exec(stmt).one())
-
-    @override
-    def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
-        stmt = (
-            select(TaskRun.id, TaskRun.finished_at)
-            .join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
-            .where(*self._owned(owner_id))
-        )
-        return dict(session.exec(stmt).all())
-
-    @override
-    def load(
-        self, session: Session, vault: Vault, owner_id: str, ids: list[str]
-    ) -> list[Loaded[RecordMeta]]:
-        rows = session.exec(
-            select(TaskRun, ScheduledTask)
-            .join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
-            .where(col(TaskRun.id).in_(ids))
-        ).all()
-        return [
-            Loaded(
-                Doc(
-                    run.id,
-                    run.finished_at or run.started_at,
-                    RecordMeta(vault.decrypt_str(task.title_enc)),
-                ),
-                vault.decrypt_str(run.summary_enc),
-            )
-            for run, task in rows
-            if run.summary_enc is not None
-        ]
-
-
 class RecordAdapter(SourceAdapter):
-    """A corpus source over one :class:`RecordMeta` collection."""
+    """A corpus source over one :class:`RecordMeta` collection. Records of a private thread
+    are never searched or read, open area or not."""
 
     def __init__(
         self,
@@ -185,6 +137,7 @@ class RecordAdapter(SourceAdapter):
         source_id: str,
         label: str,
         read_text: ReadText,
+        private_ids: PrivateIds | None = None,
     ) -> None:
         self._engine: Engine = engine
         self._vault: Vault = vault
@@ -192,6 +145,7 @@ class RecordAdapter(SourceAdapter):
         self._index: RecallIndex = RecallIndex(engine, vault)
         self._label: str = label
         self._read_text: ReadText = read_text
+        self._private_ids: PrivateIds = private_ids or (lambda _session, _owner: frozenset())
         self.source_kind: str = source_kind
         self.SOURCE_ID: str = source_id
 
@@ -206,14 +160,20 @@ class RecordAdapter(SourceAdapter):
         *,
         limit: int,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[CorpusHit]:
+        private = await in_session(
+            self._engine, lambda session: self._private_ids(session, owner_id)
+        )
         ranked = await self._index.search(
             self._collection,
             owner_id,
             Query(query_tokens, None, None),
             limit=limit,
             keep=lambda doc: (
-                not doc.meta.hidden and (since is None or (doc.at is not None and doc.at >= since))
+                not doc.meta.hidden
+                and doc.id not in private
+                and (since is None or (doc.at is not None and doc.at >= since))
             ),
         )
         texts = await in_session(
@@ -239,14 +199,20 @@ class RecordAdapter(SourceAdapter):
         ]
 
     @override
-    async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
+    async def read(
+        self, owner_id: str, ref: str, *, include_private: bool = False
+    ) -> CorpusDocument | None:
         docs = {doc.id: doc for doc in await self._index.docs(self._collection, owner_id)}
         doc = docs.get(ref)
         if doc is None:
             return None
-        text = await in_session(
-            self._engine, lambda session: self._read_text(session, self._vault, owner_id, ref)
-        )
+
+        def work(session: Session) -> str | None:
+            if ref in self._private_ids(session, owner_id):
+                return None
+            return self._read_text(session, self._vault, owner_id, ref)
+
+        text = await in_session(self._engine, work)
         if text is None:
             return None
         return CorpusDocument(title=doc.meta.title, text=text, at=doc.at)
@@ -280,14 +246,32 @@ def _report_text(session: Session, vault: Vault, owner_id: str, ref: str) -> str
     )
 
 
-def _run_text(session: Session, vault: Vault, owner_id: str, ref: str) -> str | None:
-    run = session.get(TaskRun, ref)
-    if run is None or run.summary_enc is None:
-        return None
-    task = session.get(ScheduledTask, run.task_id)
-    if task is None or task.owner_id != owner_id:
-        return None
-    return vault.decrypt_str(run.summary_enc)
+def _private_threads(session: Session, owner_id: str) -> frozenset[str]:
+    return frozenset(
+        session.exec(
+            select(Conversation.id).where(
+                Conversation.owner_id == owner_id, col(Conversation.private).is_(True)
+            )
+        ).all()
+    )
+
+
+def _private_reports(session: Session, owner_id: str) -> frozenset[str]:
+    """Reports delivered to a private thread or written in one."""
+    threads = _private_threads(session, owner_id)
+    if not threads:
+        return frozenset()
+    return frozenset(
+        session.exec(
+            select(SubagentRecord.id).where(
+                SubagentRecord.owner_id == owner_id,
+                or_(
+                    col(SubagentRecord.parent_conversation_id).in_(threads),
+                    col(SubagentRecord.child_conversation_id).in_(threads),
+                ),
+            )
+        ).all()
+    )
 
 
 def record_adapters(engine: Engine, vault: Vault) -> list[RecordAdapter]:
@@ -300,6 +284,7 @@ def record_adapters(engine: Engine, vault: Vault) -> list[RecordAdapter]:
             source_id="surf-summaries",
             label="Work summaries",
             read_text=_summary_text,
+            private_ids=_private_threads,
         ),
         RecordAdapter(
             engine,
@@ -309,14 +294,6 @@ def record_adapters(engine: Engine, vault: Vault) -> list[RecordAdapter]:
             source_id="surf-reports",
             label="Agent reports",
             read_text=_report_text,
-        ),
-        RecordAdapter(
-            engine,
-            vault,
-            RoutineRunCollection(),
-            source_kind="routines",
-            source_id="surf-routines",
-            label="Routine outputs",
-            read_text=_run_text,
+            private_ids=_private_reports,
         ),
     ]

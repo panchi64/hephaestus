@@ -1,8 +1,8 @@
 """A file a thread changed in the operator's own folder of a project, and what it held
 before.
 
-One row per (thread, project, file): the first change keeps the file as it was, so the
-operator can put it back whatever the thread did to it after. A worktree's changes are not
+One row per (thread, project, file, turn): each turn's first change keeps the file as it was
+before that turn, so the operator can put it back to any turn. A worktree's changes are not
 here — they stay on its branch until a merge. The path and the original content are the
 operator's own, so both are sealed; a row is found by unsealing the paths of one thread's
 changes to one project, which is a short list. Content hashes stay in the clear, as a
@@ -29,6 +29,9 @@ class ThreadChange(Table, table=True):
     #: files it worked in.
     conversation_id: str = Field(index=True)
     project_id: str = Field(index=True)
+    #: The operator message that started the turn making the change; a spawned agent's
+    #: changes carry the launching turn's. Null for rows written before turns were tracked.
+    prompt_message_id: str | None = Field(default=None, index=True)
     #: The file's path inside the project, sealed.
     path_enc: str
     #: The file before the thread's first change, sealed; null when it did not exist, or

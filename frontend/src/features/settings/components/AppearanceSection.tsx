@@ -20,6 +20,8 @@ import {
   toast,
   useTheme,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
+import { SettingRow } from "./SettingRow";
 
 /** Which palette the accent editor is writing. Named in the machine's voice
  *  because it is the *resolved* mode — a fact about the current state, not the
@@ -46,26 +48,21 @@ export function AppearanceSection(): JSX.Element {
 
   return (
     <Stack gap={4}>
-      <Panel label="Appearance">
-        <Row align="center" justify="between">
-          <Stack gap={1}>
-            <Text variant="label" tone="default">
-              Theme
-            </Text>
-            <Text variant="micro" tone="dim">
-              Phosphor (dark), Paper (light), or follow system. Stored locally
-              on this device.
-            </Text>
-          </Stack>
+      <SettingsPageHeader section="appearance" />
+      <Panel>
+        <SettingRow
+          label="Theme"
+          description="Phosphor (dark), Paper (light), or follow system. Stored locally on this device."
+        >
           <ThemeToggle />
-        </Row>
+        </SettingRow>
       </Panel>
 
       <Panel label="Accent colors">
         <Stack gap={3}>
           <Row align="center" justify="between">
             <Stack gap={1}>
-              <Text variant="micro" tone="dim">
+              <Text variant="caption" tone="dim">
                 Editing the {MODE_LABEL[mode()] ?? mode()} palette. Each mode
                 keeps its own colors — switch the theme above to edit the other.
                 Stored locally on this device.

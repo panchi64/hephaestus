@@ -17,8 +17,10 @@ from core.config import Settings
 from core.ratelimit import RateLimiter
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from routes import uploads as uploads_routes
+from services.conversations import ConversationStore
 from services.corpus import CorpusChunkStore, CorpusIndex
 from services.corpus.uploads import UploadsAdapter
+from services.private_uploads import UploadPrivacy
 from services.registry import ModelRegistry
 from services.upload_extraction import BasicExtractor, FallbackExtractor, UploadExtractor
 from services.upload_mineru import MinerUExtractor
@@ -57,6 +59,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         adapter,
         build_extractor(ctx.services.get(ModelRegistry), ctx.settings),
     )
+    privacy = UploadPrivacy(uploads, ctx.services.get(ConversationStore))
     ctx.services.get(CorpusIndex).register(adapter)
     await ctx.lifecycle.start("corpus-uploads", start=adapter.start, stop=adapter.stop)
     await ctx.lifecycle.start("uploads", start=uploads.start, stop=uploads.stop)
@@ -65,10 +68,11 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         burst=ctx.settings.upload_rate_burst,
     )
     return FeatureRuntime(
-        services=(uploads, adapter),
-        capabilities=(uploads,),
+        services=(uploads, adapter, privacy),
+        capabilities=(uploads, privacy),
         state={
             "uploads": uploads,
+            "upload_privacy": privacy,
             "corpus_uploads": adapter,
             "upload_rate_limiter": rate_limiter,
         },

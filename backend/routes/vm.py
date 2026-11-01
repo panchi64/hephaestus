@@ -1,8 +1,8 @@
-"""The platform VM — its state, and the operator's control to rebuild it.
+"""The VMs — their state, and the operator's control to restart them.
 
-Resetting boots a fresh VM from the clean image. Nothing durable lives in the guest, so
-nothing is lost: every workspace is brought back in on its next command, and the web
-services start again on their own.
+Resetting boots a fresh services machine and deletes every conversation's machine, each
+of which boots again on its next command. Nothing durable lives in a machine: the files a
+conversation works on are host folders it only mounts.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from routes import deps
-from services.vm import PlatformVM
+from services.vm import ServicesMachine
 
 router = APIRouter(prefix="/vm", tags=["vm"])
 
@@ -24,14 +24,14 @@ class VMStatus(BaseModel):
     detail: str | None = None
 
 
-def _vm(request: Request) -> PlatformVM:
+def _vm(request: Request) -> ServicesMachine:
     vm = deps.vm(request)
     if vm is None:
-        raise HTTPException(status_code=404, detail="the platform VM is not configured")
+        raise HTTPException(status_code=404, detail="the VM is not configured")
     return vm
 
 
-def _status(vm: PlatformVM) -> VMStatus:
+def _status(vm: ServicesMachine) -> VMStatus:
     if vm.available:
         return VMStatus(state="ready")
     if vm.failure is not None:
@@ -47,5 +47,8 @@ async def get_vm(request: Request) -> VMStatus:
 @router.post("/reset", response_model=VMStatus)
 async def reset_vm(request: Request) -> VMStatus:
     vm = _vm(request)
+    machines = deps.machines(request)
+    if machines is not None:
+        await machines.release_all()
     await vm.reset()
     return _status(vm)

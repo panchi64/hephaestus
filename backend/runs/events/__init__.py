@@ -11,13 +11,12 @@ Producers build a typed body (e.g. ``AnswerDelta(text=...)``); the Run stamps
 
 from .approvals import (
     AnsweredQuestionOut,
+    ApprovalDecided,
     ApprovalRequired,
     QuestionAnswered,
     QuestionAsked,
     QuestionOption,
     QuestionSpec,
-    ReviewCompleted,
-    ReviewStarted,
 )
 from .base import (
     PROTOCOL_VERSION,
@@ -38,6 +37,7 @@ from .context import (
     ContextThresholds,
     ContextWindow,
     FoldPoint,
+    InjectionPlacement,
 )
 from .conversation import (
     CompactionDelta,
@@ -77,6 +77,9 @@ from .plan import (
     PlanUpdated,
     TasksUpdated,
 )
+from .plugins import (
+    PluginWindowOpened,
+)
 from .tools import (
     ToolCompleted,
     ToolFailed,
@@ -99,8 +102,10 @@ __all__ = [
     "AnswerDelta",
     "AnswerRetracted",
     "AnsweredQuestionOut",
+    "ApprovalDecided",
     "ApprovalRequired",
     "BrowserOpened",
+    "PluginWindowOpened",
     "CitationAdded",
     "CompactionDelta",
     "CompactionFailed",
@@ -119,6 +124,7 @@ __all__ = [
     "FoldPoint",
     "INJECTED_TEXT_LIMIT",
     "InboxWaiting",
+    "InjectionPlacement",
     "LastRequestUsage",
     "LimitNotice",
     "MessageEdited",
@@ -134,8 +140,6 @@ __all__ = [
     "QuestionAsked",
     "QuestionOption",
     "QuestionSpec",
-    "ReviewCompleted",
-    "ReviewStarted",
     "RunEnded",
     "RunError",
     "RunMetrics",

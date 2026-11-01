@@ -43,7 +43,7 @@ describe("parsePermissionLevel — the word `/level` is given", () => {
     expect(parsePermissionLevel("Ask first")).toBe("manual");
     expect(parsePermissionLevel("ask FIRST")).toBe("manual");
     expect(parsePermissionLevel("no limits")).toBe("yolo");
-    expect(parsePermissionLevel("  Auto-review ")).toBe("auto");
+    expect(parsePermissionLevel("  Workspace ")).toBe("edit");
   });
 
   test("an id in capitals is still the id", () => {

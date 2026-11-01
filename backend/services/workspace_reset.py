@@ -9,10 +9,11 @@ empty workspace.
 This is the other half of that: remove the key **and everything sealed under it**, so
 "start fresh" means what it says. It is deliberately a wipe of ``data_dir`` rather
 than a list of the directories we happen to know about today — everything under there
-is runtime state the app wrote for itself (uploads, the corpus and its index, sandbox
-work and sealed archives, View snapshots, the browser profile), and a sealed directory
-added next month must be caught by default instead of quietly surviving a reset and
-outliving the only key that could read it.
+is runtime state the app wrote for itself (the encrypted volume's backing store with
+the sandbox work, plugin source and browser profile inside it, View snapshots), and a
+sealed directory added next month must be caught by default instead of quietly
+surviving a reset and outliving the only key that could read it. A reset runs only
+while locked, so the volume is unmounted and only its ciphertext is deleted.
 
 Two entries are held back, and only two:
 

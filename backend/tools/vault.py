@@ -1,6 +1,6 @@
 """Password-vault tools (`VAULT-2`) — the agent's read access to the operator's secrets.
 
-See ``tools/mail.py`` for why the category is registered before it exists.
+See ``plugins/mail/tools.py`` for why the category is registered before it exists.
 
 The agent reading the operator's secrets manager is an explicitly sensitive action, so
 **every** tool here carries ``requires_approval=True`` — the static marking, as in

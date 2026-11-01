@@ -4,22 +4,25 @@ Settings are read fresh from the environment on every ``get_settings()`` call, s
 place to pin a test-only default is the environment, before any test imports a module
 that reads one.
 
-The two patches below are installed at *import* time rather than from a fixture. Both
-targets are bound by name at module scope (``from core.db import init_db``, and
-``core.crypto``'s module-level hasher), and this file is imported before any test module
-is collected — so patching here is what reaches every caller, including the ones inside
-``app.py``.
+The patches below are installed at *import* time rather than from a fixture: their
+targets are module-level names, and this file is imported before any test module is
+collected, so patching here reaches every caller, including the ones inside ``app.py``.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from argon2 import PasswordHasher
 from pydantic_ai.models.test import TestModel as _TestModel
+
+import core.crypto
+import core.db
+import core.volume
+
+from . import _schema, _volume
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestParameters
@@ -27,7 +30,7 @@ if TYPE_CHECKING:
     from services.egress import EgressPolicy
 
 # Host-command confinement is a *process-global* singleton (`sandbox-runtime` configures
-# one sandbox for the whole interpreter). Several tests drive `code_run_host_command`
+# one sandbox for the whole interpreter). Several tests drive `shell_run_on_host`
 # through to a real `echo`, which would otherwise initialize that singleton from whatever
 # settings the test happened to have — and then only on machines where the platform
 # primitive is actually available, since it needs `ripgrep` on PATH. That makes the suite
@@ -35,27 +38,19 @@ if TYPE_CHECKING:
 # tested. Off here, so the host path under test is the plain subprocess; the confinement
 # logic itself is exercised explicitly in `test_sandbox.py`, which configures it directly.
 _ = os.environ.setdefault("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
-# The app would otherwise boot a real QEMU VM; the VM tests drive a local stand-in.
+# The app would otherwise build the guest image and boot machines; the VM tests fake the smol SDK.
 _ = os.environ.setdefault("HEPHAESTUS_VM_ENABLED", "false")
-
-import core.crypto  # noqa: E402 — must follow the environment default above
-import core.db  # noqa: E402
-
-from . import _schema  # noqa: E402
 
 # Every test database otherwise replays the full Alembic chain; see `_schema`.
 core.db.init_db = _schema.init_db
+# Booted test apps mount a plain directory instead of an encrypted volume; see `_volume`.
+core.volume.select_volume = _volume.select_directory_volume
 
-# Argon2id is deliberately costly — 64 MiB over three passes — and every booted test app
-# pays two of them, a login verifier and a key-encryption key. That is real seconds per
-# run spent re-proving that a slow KDF is slow. What these tests are about is the *shape*
-# of the scheme (a DEK only the right passphrase unwraps, a verifier that rejects a wrong
-# one, a stale verifier that gets re-minted), and none of that reads the work factors, so
-# they go to Argon2's floor here. Production takes its parameters from `core.crypto`
-# unchanged; nothing in this file is imported outside the suite.
-core.crypto.KEK_TIME_COST = 1
-core.crypto.KEK_MEMORY_COST = 8
-core.crypto.KEK_PARALLELISM = 1
+# Every booted test app pays two Argon2id derivations, and the tests check the scheme's
+# shape, not its cost, so the work factors drop to Argon2's floor. v1 and v2 stay distinct
+# so the keyfile upgrade path still runs.
+core.crypto.KDF_V1 = core.crypto.KdfParams(time_cost=1, memory_cost=8, parallelism=1)
+core.crypto.KDF_V2 = core.crypto.KdfParams(time_cost=1, memory_cost=16, parallelism=1)
 core.crypto.PASSWORD_HASHER = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 # Every agent carries `run_code` (`agent/code_mode.py`), and `TestModel`'s default of
@@ -81,17 +76,20 @@ def _call_everything_but_scripts(
 _TestModel.customize_request_parameters = _call_everything_but_scripts
 
 
-def egress_policy(data_dir: Path, domains: tuple[str, ...] = ("pypi.org",)) -> EgressPolicy:
-    """A real :class:`~services.egress.EgressPolicy` over a throwaway database.
+def pytest_configure() -> None:
+    """Every app boot pushes the features' declarations (tool classes, run kinds, service
+    keys) into core's process-wide tables; a test driving one service without booting an
+    app needs them too."""
+    from harness.discovery import discover_manifests  # after the patches above
 
-    Here rather than in each suite because four of them need one now — the session
-    manager writes the allowlist file on every cold acquire, so it is a construction
-    argument rather than a thing under test in most of them. Real rather than a stub: the
-    file on disk *is* the interface the fences read, and a stub would only re-describe it.
-    """
-    from core.db import init_db, make_engine  # noqa: PLC0415 — after the patches above
-    from services.egress import EgressPolicy  # noqa: PLC0415
+    _ = discover_manifests()
+
+
+def egress_policy(domains: tuple[str, ...] = ("pypi.org",)) -> EgressPolicy:
+    """A real :class:`~services.egress.EgressPolicy` over a throwaway database."""
+    from core.db import init_db, make_engine  # after the patches above
+    from services.egress import EgressPolicy
 
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
-    return EgressPolicy(engine, data_dir, domains)
+    return EgressPolicy(engine, domains)

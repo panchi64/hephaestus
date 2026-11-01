@@ -123,7 +123,7 @@ export function WorktreeFileTree(props: {
         <ResourceView
           data={props.listing}
           onRetry={props.onRetry}
-          loadingLabel="Reading the workspace…"
+          loadingLabel="Reading the workspace"
           isEmpty={() => rows().length === 0}
           emptyMessage={
             props.editedOnly ? "No files changed" : "No files in the workspace"
@@ -136,7 +136,7 @@ export function WorktreeFileTree(props: {
                     read a tree, and which tree it is changes what the absence of a
                     marker means. */}
                 <div class="px-3 py-2">
-                  <Text variant="micro" tone="dim">
+                  <Text variant="caption" tone="dim">
                     Showing the project checkout — this thread has no worktree
                     yet.
                   </Text>
@@ -157,7 +157,7 @@ export function WorktreeFileTree(props: {
               </For>
               <Show when={missing().length > 0}>
                 <div class="px-3 pb-1 pt-3">
-                  <Text variant="micro" tone="dim">
+                  <Text variant="caption" tone="dim">
                     Changed, not in the tree
                   </Text>
                 </div>
@@ -184,7 +184,7 @@ export function WorktreeFileTree(props: {
                 {/* The cap is the backend's and it is stated rather than implied — a
                     partial tree that looks complete is the failure this prevents. */}
                 <div class="px-3 py-2">
-                  <Text variant="micro" tone="dim">
+                  <Text variant="caption" tone="dim">
                     The workspace has more files than this list shows.
                   </Text>
                 </div>

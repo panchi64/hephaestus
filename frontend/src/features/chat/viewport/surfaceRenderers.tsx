@@ -30,9 +30,9 @@ import { FilesSurface } from "../components/FilesSurface";
 import { PlanSurface, planStatusOf } from "../components/PlanSurface";
 import { TasksSurface } from "../components/TasksSurface";
 import { ViewportPanel } from "../components/ViewportPanel";
-import { taskSummary } from "../components/TaskRows";
 import { countLabel, rosterCounts } from "../subagentRoster";
 import { flattenGroups, groupTasks } from "../taskGroups";
+import { taskSummary } from "../taskItems";
 import { failedCount } from "./commandItems";
 import type { ChatViewport } from "../useChatViewport";
 import { SURFACE_BY_ID, type SurfaceId } from "./surfaces";
@@ -60,20 +60,29 @@ export const SURFACE_RENDERERS: Record<
       />
     );
   },
-  plan: (ctx) => <PlanSurface plan={ctx.viewport.plan} />,
+  plan: (ctx) => (
+    <PlanSurface plan={ctx.viewport.plan} speaker={ctx.viewport.speaker()} />
+  ),
   agents: (ctx) => (
     <SubagentsSurface
       subagents={ctx.viewport.subagents}
+      speaker={ctx.viewport.speaker()}
       onSettled={ctx.viewport.refetchSubagents}
     />
   ),
-  commands: (ctx) => <CommandsSurface commands={ctx.viewport.commands} />,
+  commands: (ctx) => (
+    <CommandsSurface
+      commands={ctx.viewport.commands}
+      speaker={ctx.viewport.speaker()}
+    />
+  ),
   diff: (ctx) => (
     <ChangesSurface
       conversationId={ctx.viewport.conversationId}
       changes={ctx.viewport.changes}
       branch={ctx.viewport.branch}
       onChanged={ctx.viewport.refetchChanges}
+      speaker={ctx.viewport.speaker()}
       fontStep={ctx.viewport.state().fontStep}
       softWrap={ctx.viewport.state().softWrap}
     />
@@ -83,6 +92,7 @@ export const SURFACE_RENDERERS: Record<
     <BrowserSurface
       conversationId={ctx.viewport.conversationId}
       browser={ctx.viewport.browser}
+      speaker={ctx.viewport.speaker()}
     />
   ),
   files: (ctx) => (

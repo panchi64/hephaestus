@@ -76,7 +76,7 @@ export function FallbackChainsSection(): JSX.Element {
   return (
     <Panel label="Fallback chains">
       <Stack gap={4}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           Where a request goes when the primary endpoint is down. The background
           and search &amp; memory jobs each bind an ordered chain (first =
           primary) and auto-switch past dead or disabled endpoints. The chat
@@ -85,7 +85,7 @@ export function FallbackChainsSection(): JSX.Element {
         <Show
           when={(endpoints() ?? []).length}
           fallback={
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               Add an endpoint to bind a chain.
             </Text>
           }
@@ -99,7 +99,7 @@ export function FallbackChainsSection(): JSX.Element {
                 <Show
                   when={chainFor(role).length}
                   fallback={
-                    <Text variant="micro" tone="dim">
+                    <Text variant="caption" tone="dim">
                       No endpoints bound — add one below.
                     </Text>
                   }

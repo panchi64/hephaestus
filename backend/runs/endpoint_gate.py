@@ -28,8 +28,8 @@ import asyncio
 import itertools
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, field
+from contextvars import Context, ContextVar, copy_context
+from dataclasses import dataclass, field, replace
 
 from .lanes import Lane, lane_for
 
@@ -53,6 +53,17 @@ class _Lease:
 
 
 _LEASE: ContextVar[_Lease | None] = ContextVar("endpoint_lease", default=None)
+
+
+def outside_lease() -> Context:
+    """A copy of the current context whose requests take a slot of their own, at the
+    rank of the lease held here. For a task that may outlive that lease: passing through
+    it would leave a request on the endpoint after the lease is handed to the next run."""
+    context = copy_context()
+    held = context.get(_LEASE)
+    if held is not None:
+        _ = context.run(_LEASE.set, replace(held, active=False))
+    return context
 
 
 @dataclass(order=True)

@@ -1,4 +1,4 @@
-"""Managed SearXNG lifecycle against a fake platform VM: the disabled/external/no-VM
+"""Managed SearXNG lifecycle against a fake services VM: the disabled/external/no-VM
 short-circuits, the generated settings file, and the service bring-up and stop."""
 
 from __future__ import annotations
@@ -15,14 +15,12 @@ import pytest
 from services.searxng import ManagedSearxng
 from services.vm import VMError
 from services.vm.host import ServiceHost
-from services.vm.platform import GuestLayout
 
 
 class _ServiceVM(ServiceHost):
     """Records the calls ManagedSearxng makes; its forwarded port is a local HTTP stub."""
 
     def __init__(self, port: int) -> None:
-        self._layout: GuestLayout = GuestLayout()
         self.port: int = port
         self.calls: list[tuple[object, ...]] = []
         self.puts: list[tuple[str, str]] = []
@@ -31,11 +29,6 @@ class _ServiceVM(ServiceHost):
         self.alive: bool = True
         self.log: str = ""
         self.start_error: VMError | None = None
-
-    @property
-    @override
-    def layout(self) -> GuestLayout:
-        return self._layout
 
     @override
     def on_ready(self, hook: Callable[[], Coroutine[object, object, None]]) -> None:
@@ -156,14 +149,12 @@ async def test_bring_up_writes_settings_starts_the_service_and_forwards_its_port
         assert m.base_url == f"http://127.0.0.1:{port}"
         (guest, text) = vm.puts[0]
         assert guest == "/etc/searxng/settings.yml"
-        assert f"http://{vm.layout.platform_proxy}" in text  # the outgoing proxy
+        assert "proxies" not in text
         assert "port: 8888" in text
         assert "json" in text
         (name, _user, argv) = vm.services[0]
         assert name == "searxng" and "searx.webapp" in argv
-        # Requests made before `outgoing.proxies` applies must also leave through the proxy.
-        proxy_env = f"HTTPS_PROXY=http://{vm.layout.platform_proxy}"
-        assert argv.index(proxy_env) < argv.index("searx.webapp")
+        assert not any("PROXY" in part for part in argv)
         assert vm.named("forward") == [("forward", 8888)]
         # Settings land before the service starts, and the service before its port is forwarded.
         order = [c[0] for c in vm.calls]
@@ -276,11 +267,11 @@ def test_settings_enable_json_and_keep_a_stable_secret_key():
     data_dir = Path(tempfile.mkdtemp())
     m = _manager(data_dir=data_dir)
 
-    text = m.settings("127.0.0.1:3129")
+    text = m.settings()
     assert "json" in text  # the JSON API the agent queries is enabled
     assert "limiter: false" in text  # a single local operator, not a public instance
 
     key_first = (data_dir / "searxng" / "secret_key").read_text()
-    _ = m.settings("127.0.0.1:3129")  # a re-boot rewrites settings...
+    _ = m.settings()  # a re-boot rewrites settings...
     key_second = (data_dir / "searxng" / "secret_key").read_text()
     assert key_first == key_second  # ...but reuses the persisted key

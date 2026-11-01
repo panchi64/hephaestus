@@ -39,11 +39,10 @@ export function fontStepStyle(step: number | undefined): JSX.CSSProperties {
   return { "font-size": `${m.size}px`, "line-height": `${m.line}px` };
 }
 
-/** The zoom factor for `step` applied to a whole framed page (`SandboxedFrame`).
- *  A sandboxed iframe is opaque-origin, so no class or font-size can reach the
- *  document inside — the only lever is scaling the page like browser zoom. Uses
- *  browser-zoom-style factors rather than the text metrics' ratios (10px→32px
- *  would swing a full page between 77% and 246%, far past useful). */
+/** The zoom factor for `step`, for content whose type sizes are its own: a sandboxed
+ *  page (`SandboxedFrame`, opaque-origin, so no style reaches it) and rendered markdown
+ *  (`.heph-prose`, which sets every heading's size). Browser-zoom factors, because the
+ *  text metrics' 10px→32px span would swing a whole page from 77% to 246%. */
 const FRAME_ZOOM: ReadonlyArray<number> = [0.67, 0.8, 1, 1.25, 1.5];
 
 export function frameZoom(step: number | undefined): number {

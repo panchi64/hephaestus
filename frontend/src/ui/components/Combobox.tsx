@@ -274,7 +274,7 @@ export function Combobox(props: ComboboxProps): JSX.Element {
                 when={filtered().length > 0}
                 fallback={
                   <div class="px-3 py-2">
-                    <Text variant="micro" tone="dim">
+                    <Text variant="caption" tone="dim">
                       {props.groups.length === 0
                         ? (props.emptyHint ?? "No options")
                         : "No matches"}

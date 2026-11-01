@@ -36,13 +36,13 @@ export function Toggle(props: ToggleProps): JSX.Element {
         onClick={() => local.onChange?.(!local.checked)}
         class={cx(
           "relative h-4 w-7 border transition-colors",
-          local.checked ? "border-nominal bg-raised" : "border-line bg-surface",
+          local.checked ? "border-bright bg-raised" : "border-line bg-surface",
         )}
       >
         <span
           class={cx(
             "absolute top-0.5 size-2.5 transition-[left]",
-            local.checked ? "left-[14px] bg-nominal" : "left-0.5 bg-dim",
+            local.checked ? "left-[14px] bg-bright" : "left-0.5 bg-dim",
           )}
           aria-hidden="true"
         />

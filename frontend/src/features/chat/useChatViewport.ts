@@ -99,6 +99,8 @@ export interface ViewportSource {
   /** The thread's browser, for the Browser surface. */
   browser: BrowserState;
   toggleSnapshotKeeper: (snapshotId: string, keeper: boolean) => Promise<void>;
+  /** What the surfaces call the agent the thread runs as. */
+  speaker: Accessor<string>;
 }
 
 export interface ChatViewport {
@@ -133,6 +135,7 @@ export interface ChatViewport {
   conversationId: () => string | null;
   /** The thread's browser. */
   browser: BrowserState;
+  speaker: Accessor<string>;
   /** Whether a surface has anything to show — which header buttons exist. */
   available: (id: SurfaceId) => boolean;
   /** The first surface in registry order that has anything to show, or `undefined` on a
@@ -619,6 +622,7 @@ export function useChatViewport(
     sources: sourceInventory,
     conversationId: currentId,
     browser: source.browser,
+    speaker: source.speaker,
     available,
     firstAvailable,
     layout: liveLayout,

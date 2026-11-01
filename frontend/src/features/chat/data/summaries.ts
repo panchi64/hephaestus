@@ -51,6 +51,8 @@ export function toStats(dto: RunMetricsDTO): ConversationStats {
     toolMs: dto.tool_ms,
     ttftAvgMs: dto.ttft_avg_ms,
     tokensPerSecond: dto.output_tokens_per_second,
+    costUsd: dto.cost_usd,
+    savedUsd: dto.saved_usd,
     lastRequest: dto.last_request
       ? {
           route: dto.last_request.route,
@@ -58,6 +60,9 @@ export function toStats(dto: RunMetricsDTO): ConversationStats {
           outputTokens: dto.last_request.output_tokens,
           cacheReadTokens: dto.last_request.cache_read_tokens,
           cacheWriteTokens: dto.last_request.cache_write_tokens,
+          costUsd: dto.last_request.cost_usd,
+          cacheMissReason: dto.last_request.cache_miss_reason,
+          cacheMissedTokens: dto.last_request.cache_missed_tokens,
         }
       : null,
   };
@@ -81,10 +86,12 @@ export function toSummary(dto: ConversationSummaryDTO): ChatSummary {
     workSummary: dto.work_summary ?? undefined,
     model: dto.model ?? undefined,
     activity: dto.activity ?? undefined,
+    awaitingKind: dto.awaiting_kind ?? undefined,
     lastOutcome: dto.last_outcome ?? undefined,
     workspace: dto.workspace ?? undefined,
     projectId: dto.project_id ?? undefined,
     agentName: dto.agent_name ?? undefined,
     parentId: dto.parent_id ?? undefined,
+    private: dto.private || undefined,
   };
 }

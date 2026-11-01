@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
+from core.declarations import DeclarationConflictError
 from runs import (
-    CHAT_TURN_KINDS,
-    LANE_BY_KIND,
+    RUN_KINDS,
     LaneLimits,
     Orchestrator,
     Run,
+    RunKind,
     RunRegistry,
     RunStatus,
+    is_chat_turn,
     lane_for,
 )
 from runs.lanes import DEFAULT_LANE, LANES
@@ -43,13 +47,16 @@ async def test_an_unknown_kind_waits_in_the_unattended_lane():
     assert lane_for("something-invented-later") == "background"
 
 
-def test_every_composed_kind_has_a_lane():
-    # A chat turn without a lane would silently inherit the unattended fallback, so every
-    # composed kind must be in the map. The converse is *not* asserted: the map also
-    # carries kinds that are not turns (a hand-started fold), and equating the two is what
-    # would enrol the next one as a chat turn without anyone choosing that.
-    assert CHAT_TURN_KINDS <= frozenset(LANE_BY_KIND)
-    assert set(LANE_BY_KIND.values()) | {DEFAULT_LANE} == set(LANES)
+def test_every_lane_is_reachable():
+    assert {RUN_KINDS[kind].lane for kind in RUN_KINDS} | {DEFAULT_LANE} == set(LANES)
+
+
+def test_a_feature_declares_its_own_kind():
+    # Routines declares `task` on its manifest; core never names it.
+    assert is_chat_turn("task")
+    RUN_KINDS.declare({"task": RunKind("routine", chat_turn=True)})
+    with pytest.raises(DeclarationConflictError):
+        RUN_KINDS.declare({"task": RunKind("background")})
 
 
 def test_a_fold_has_a_lane_and_is_not_a_chat_turn():
@@ -58,7 +65,7 @@ def test_a_fold_has_a_lane_and_is_not_a_chat_turn():
     decides whether an orchestrator drains the queued-message inbox. A fold that drained
     one would swallow a message the operator sent while it ran."""
     assert lane_for("compaction") == "interactive"
-    assert "compaction" not in CHAT_TURN_KINDS
+    assert not is_chat_turn("compaction")
 
 
 async def test_a_saturated_background_lane_does_not_queue_the_operators_turn():

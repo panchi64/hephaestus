@@ -10,12 +10,15 @@ way instead of carrying a private copy.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import cast, overload
 
 from pydantic import JsonValue, TypeAdapter
+
+logger = logging.getLogger(__name__)
 
 _JSON = TypeAdapter(JsonValue)
 
@@ -90,4 +93,5 @@ def jsonable(value: object) -> JsonValue:
         _ = json.dumps(structured)
         return structured
     except Exception:  # total fallback: any coercion failure degrades to str
+        logger.debug("jsonable: %s degraded to str", type(value).__name__, exc_info=True)
         return str(value)

@@ -251,8 +251,8 @@ class IntegrationService:
         try:
             response = await self._request(row, found, found.test_path, "GET", {}, None)
             error = None if response.ok else f"HTTP {response.status}: {_first_line(response.body)}"
-        except Exception as exc:  # noqa: BLE001 - any outbound failure is a status
-            logger.info("integrations: test of %r failed: %s", row.name, exc)
+        except Exception as exc:  # any outbound failure is a status
+            logger.info("integrations: test of %r failed", row.name, exc_info=True)
             error = _reason(exc)
         await self.record_test(integration_id, error)
         return await self.get(owner_id, integration_id)

@@ -4,12 +4,12 @@ import {
   confirm,
   LoadingText,
   Panel,
-  Row,
   Stack,
   StatusFlag,
-  Text,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
+import { SettingRow } from "./SettingRow";
 import {
   forgetBrowserProfile,
   refreshVmState,
@@ -33,9 +33,9 @@ export function PlatformVmSection(): JSX.Element {
 
   const reset = async (): Promise<void> => {
     const ok = await confirm({
-      title: "Reset the platform VM?",
+      title: "Reset the VMs?",
       detail:
-        "Running commands are interrupted; nothing is lost, since workspaces are restored on next use.",
+        "Restarts the services VM and deletes every conversation's VM. Running commands are interrupted; files stay on the host.",
       confirmLabel: "Reset VM",
       tone: "alert",
     });
@@ -65,66 +65,56 @@ export function PlatformVmSection(): JSX.Element {
   };
 
   return (
-    <Panel label="Platform VM">
-      <Show when={vm()} fallback={<LoadingText />}>
-        {(state) => (
-          <Stack gap={3}>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Status
-                </Text>
-                <Text variant="micro" tone="dim">
-                  {state().detail ??
-                    "Runs agent code, previews, web search and web fetch."}
-                </Text>
-              </Stack>
-              <StatusFlag
-                dot
-                pulse={state().state === "starting"}
-                status={vmStateTone(state().state)}
+    <Stack gap={6}>
+      <SettingsPageHeader section="platform-vm" />
+      <Panel>
+        <Show when={vm()} fallback={<LoadingText />}>
+          {(state) => (
+            <Stack gap={3}>
+              <SettingRow
+                label="Status"
+                description={
+                  state().detail ??
+                  "Runs agent code, previews, web search and web fetch."
+                }
               >
-                {vmStateLabel(state().state)}
-              </StatusFlag>
-            </Row>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
+                <StatusFlag
+                  dot
+                  pulse={state().state === "starting"}
+                  status={vmStateTone(state().state)}
+                >
+                  {vmStateLabel(state().state)}
+                </StatusFlag>
+              </SettingRow>
+              <SettingRow
+                label="Reset VM"
+                description="Restarts the services VM and deletes every conversation's VM. Web services restart on their own."
+              >
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={state().state === "starting"}
+                  onClick={() => void reset()}
+                >
                   Reset VM
-                </Text>
-                <Text variant="micro" tone="dim">
-                  Rebuilds the VM. Web services restart on their own.
-                </Text>
-              </Stack>
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={state().state === "starting"}
-                onClick={() => void reset()}
+                </Button>
+              </SettingRow>
+              <SettingRow
+                label="Browser logins"
+                description="One profile, shared by every conversation's browser."
               >
-                Reset VM
-              </Button>
-            </Row>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Browser logins
-                </Text>
-                <Text variant="micro" tone="dim">
-                  One profile, shared by every conversation's browser.
-                </Text>
-              </Stack>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => void forgetLogins()}
-              >
-                Log out everywhere
-              </Button>
-            </Row>
-          </Stack>
-        )}
-      </Show>
-    </Panel>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void forgetLogins()}
+                >
+                  Log out everywhere
+                </Button>
+              </SettingRow>
+            </Stack>
+          )}
+        </Show>
+      </Panel>
+    </Stack>
   );
 }

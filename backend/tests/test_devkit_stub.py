@@ -20,6 +20,7 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
 )
 from pydantic_ai import Agent
+from pydantic_ai.messages import ThinkingPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -302,3 +303,18 @@ async def test_the_pydantic_ai_model_the_registry_builds_can_talk_to_it(stub: _S
     )
     result = await Agent(model).run("ping")
     assert result.output == "pong"
+
+
+async def test_scripted_reasoning_streams_as_pydantic_ai_thinking(stub: _Stub):
+    _client, http = stub
+    await _script(http, {"match": "ponder", "reasoning": "weighing it up first", "text": "done"})
+    model = OpenAIChatModel(
+        MODEL_ID,
+        provider=OpenAIProvider(base_url="http://stub/v1", api_key="unused", http_client=http),
+    )
+    async with Agent(model).run_stream("ponder") as run:
+        output = await run.get_output()
+        response = run.all_messages()[-1]
+    thinking = [part for part in response.parts if isinstance(part, ThinkingPart)]
+    assert output == "done"
+    assert "".join(part.content for part in thinking) == "weighing it up first"

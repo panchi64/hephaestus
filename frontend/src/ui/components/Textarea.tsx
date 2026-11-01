@@ -33,7 +33,7 @@ export function Textarea(props: TextareaProps): JSX.Element {
         {...rest}
       />
       <Show when={local.hint}>
-        <Text variant="micro" tone={local.invalid ? "alert" : "dim"}>
+        <Text variant="caption" tone={local.invalid ? "alert" : "dim"}>
           {local.hint}
         </Text>
       </Show>

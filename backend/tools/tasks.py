@@ -216,9 +216,7 @@ class ConversationTaskToolset(AbstractToolset[RunDeps]):
         # tool handed in carries the template's function, which is wired to the template's
         # (unbound) store.
         upstream = UPSTREAM[name]
-        # Named as the catalog names it, so the planning tools' own capability events can be
-        # attributed — a prefixed toolset otherwise hands the harness an unprefixed
-        # `tool_name` the library cannot look up (`tools/harness_events.py`).
+        # The planning tools' events carry `ctx.tool_name`, which must be the catalog's name.
         inward = attributable(ctx, f"{self.id}_{name}")
         return cast(
             object,
@@ -251,9 +249,8 @@ def tasks_toolset() -> AbstractToolset[RunDeps]:
 async def tasks_context(req: PromptContextRequest) -> str:
     """The current task list, for the tail of this turn's prompt.
 
-    Delivered per turn rather than written into history: the list changes on nearly every
-    step, and a changing block at the head of the request would invalidate the inference
-    engine's prompt-prefix cache for the whole conversation behind it.
+    In the tail rather than the head: the list changes on nearly every turn, and a fresh
+    copy per turn is cheaper than an instruction change each time.
     """
     tasks = req.caps.get_optional(ConversationTasks)
     if tasks is None or req.conversation_id is None:

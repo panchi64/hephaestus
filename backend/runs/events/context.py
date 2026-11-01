@@ -209,6 +209,8 @@ class ContextWindow(Body):
 #: buffer on every turn that reads it, to be re-sent in full to every reattaching client.
 INJECTED_TEXT_LIMIT = 8_000
 
+InjectionPlacement = Literal["instructions", "prompt", "summary"]
+
 
 class ContextInjected(Body):
     """Something the chassis put in front of the model that nobody in the conversation
@@ -230,16 +232,17 @@ class ContextInjected(Body):
 
     ``placement`` is where in the request it landed — ``instructions`` at the head
     (re-sent every turn, never retained in history) or ``prompt`` at the tail of the
-    turn's own user message (volatile content kept out of the cacheable prefix). It is on
-    the wire because it is the difference between a block that costs the operator a cache
-    invalidation and one that does not.
+    turn's own user message (volatile content kept out of the cacheable prefix), or
+    ``summary`` on a compaction checkpoint, after the briefing. It is on the wire because
+    it is the difference between a block that costs the operator a cache invalidation and
+    one that does not.
 
     ``tokens`` is the coarse estimate the rest of the readout uses, over the **whole**
     block — never over the possibly-truncated ``text``. Additive to v1; no bump."""
 
     type: Literal["context.injected"] = "context.injected"
     contributor: str
-    placement: Literal["instructions", "prompt"]
+    placement: InjectionPlacement
     tokens: int
     # The resolved block, capped at `INJECTED_TEXT_LIMIT` characters. `truncated` says so
     # rather than leaving the operator to guess whether a file simply ends there.

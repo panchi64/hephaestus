@@ -3,6 +3,8 @@ from typing import BinaryIO
 
 from PIL.Image import Image
 
+class PdfiumError(RuntimeError): ...
+
 class _AutoCloseable:
     def close(self, _by_parent: bool = False) -> bool: ...
 

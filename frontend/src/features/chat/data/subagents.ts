@@ -1,17 +1,12 @@
 /**
- * A thread's sub-agents — the cards, and the transcript behind one.
+ * A thread's sub-agents: the cards, and the transcript behind one.
  *
- * Two reads, and only one of them is about sub-agents at all. The list is this feature's
- * own; a sub-agent's transcript is just a conversation's messages, fetched with the same
- * function the main room uses, because a sub-agent *is* a conversation. Its live tail,
- * its approval and its cancel are run routes for the same reason.
+ * Only the list is this feature's own. A sub-agent is a conversation, so its transcript
+ * uses the main room's message fetch, and its live tail, approval and cancel are run routes.
  *
- * **A read that failed is not a thread with no sub-agents**, and the difference is the
- * whole reason this returns a result rather than a list. A deployment with the feature
- * switched off genuinely has none, and neither that nor a thread that has never launched
- * one is worth a broken surface. But one dropped request is not evidence of either — read
- * as "none" it would empty a panel of working sub-agents in front of the operator, and
- * stop the poll that would have corrected it, since nothing left in the list is live.
+ * A failed read is not a thread with no sub-agents, hence the `ok` flag. Read as "none"
+ * it would empty a panel of working sub-agents and stop the poll that would correct it,
+ * since nothing left in the list is live.
  */
 
 import { api } from "~/lib/api";
@@ -20,14 +15,12 @@ import type { TaskItem } from "~/lib/stream/events";
 /** One sub-agent, as the panel shows it. */
 export interface Subagent {
   id: string;
-  /** Its own thread — where the transcript is read from. */
+  /** Where the transcript is read from. */
   conversationId: string;
-  /** Its run — the live tail, the approval, and cancelling. */
+  /** For the live tail, the approval, and cancelling. */
   runId: string;
-  /** The name the launching agent gave *this* sub-agent — `helper-function-finder`
-   *  rather than `explorer`. It is what the model addresses it by, and what the operator
-   *  reads on the card: a thread with three explorers out has three cards that are
-   *  otherwise identical. */
+  /** The name the launching agent gave this sub-agent (`helper-function-finder`, not
+   *  `explorer`). The model addresses it by this, and it tells identical cards apart. */
   handle: string;
   /** Its designation (`BRAX-07`); empty for a row written before callsigns. */
   callsign: string;
@@ -36,16 +29,12 @@ export interface Subagent {
   /** Which sub-agent off the roster this is — built-in or project-declared. */
   name: string;
   task: string;
-  /** The task list it is keeping for itself. Rides the card rather than being fetched
-   *  per sub-agent: this list is already re-read while anything is live, and a thread
-   *  with four sub-agents out would otherwise open four more polls to say the same
-   *  thing. Empty for one that has not written a list. */
+  /** Its own task list. Rides the list read, which is already polled while anything is
+   *  live, instead of a poll per sub-agent. */
   tasks: TaskItem[];
   status: SubagentStatus;
-  /** Its report once it has one; while it runs, its latest answer instead.
-   *
-   *  **The prose alone** — the backend strips any machine-readable block out before
-   *  serving it, so a card cannot end in forty lines of JSON. */
+  /** Its report once it has one; while it runs, its latest answer. Prose only: the
+   *  backend strips any machine-readable block. */
   summary: string | null;
   error: string | null;
   contextUsed: number | null;
@@ -61,10 +50,10 @@ export interface Subagent {
   opened: boolean;
 }
 
-/** `blocked` is waiting on the operator rather than on the machine, which is the one
- *  state worth putting in front of them. */
+/** `blocked` is waiting on the operator. `stopped` is an agent a time or turn limit
+ *  ended, with partial work its parent may continue. */
 export type SubagentStatus =
-  "running" | "blocked" | "done" | "failed" | "cancelled";
+  "running" | "blocked" | "done" | "failed" | "cancelled" | "stopped";
 
 /** `BRAX · Tripodes` as plain text, or "" when it has no callsign. */
 export function designationText(who: {
@@ -75,8 +64,7 @@ export function designationText(who: {
   return who.agentClass ? `${who.callsign} · ${who.agentClass}` : who.callsign;
 }
 
-/** Still expected to report. Both count as live, and a blocked one sorts above the rest
- *  because it is the only one that is waiting on a person. */
+/** Still expected to report. */
 export function isLive(subagent: Subagent): boolean {
   return subagent.status === "running" || subagent.status === "blocked";
 }
@@ -108,8 +96,7 @@ function toSubagent(dto: SubagentDTO): Subagent {
     id: dto.id,
     conversationId: dto.conversation_id,
     runId: dto.run_id,
-    // `?? dto.name` for a row written before handles existed — its migration backfilled
-    // the spec name, and a card with no title is worse than one naming the roster twice.
+    // Rows written before handles existed fall back to the spec name.
     handle: dto.handle || dto.name,
     callsign: dto.callsign ?? "",
     agentClass: dto.agent_class ?? "",
@@ -129,8 +116,7 @@ function toSubagent(dto: SubagentDTO): Subagent {
   };
 }
 
-/** One read of the list. `ok` is false when it could not be read at all, which is a
- *  different fact from an empty list and has to stay one — see the note at the top. */
+/** `ok` is false when the list could not be read, which differs from an empty list. */
 export interface SubagentsRead {
   subagents: Subagent[];
   ok: boolean;
@@ -149,6 +135,30 @@ export async function fetchSubagents(
     console.warn("sub-agents unavailable", err);
     return { subagents: [], ok: false };
   }
+}
+
+/** What a sub-agent's own thread calls it: its callsign, or its handle for rows written
+ *  before callsigns. Read from the parent's roster, the only place it is kept. */
+export async function fetchOwnCallsign(
+  conversationId: string,
+  parentId: string,
+): Promise<string | undefined> {
+  const read = await fetchSubagents(parentId);
+  const own = read.subagents.find((s) => s.conversationId === conversationId);
+  return own ? own.callsign || own.handle : undefined;
+}
+
+/** Stop every live agent below a thread that has no run of its own. Their reports go
+ *  to the held inbox, so nothing wakes the thread. Rejects with a 409 when the thread
+ *  has a run: that run's cancel stops its agents. */
+export async function stopThreadAgents(
+  conversationId: string,
+): Promise<string[]> {
+  const res = await api.post<{ stopped: string[] }>(
+    `/conversations/${conversationId}/agents/stop`,
+    {},
+  );
+  return res.stopped;
 }
 
 /** Cancel one agent's run. Resolves false when the backend refused it. */

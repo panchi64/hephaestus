@@ -1,4 +1,5 @@
 import { Show, splitProps, type JSX } from "solid-js";
+import type { AssetId } from "../assetIds";
 import { cx } from "../cx";
 import { Text } from "../primitives/Text";
 import { RegistrationFrame } from "./RegistrationFrame";
@@ -8,10 +9,12 @@ export interface PageHeaderProps {
   title: string;
   /** Dim subtitle / description under the title. */
   subtitle?: string;
-  /** Diegetic asset/version ID shown above the title (e.g. "HEPH-HUD-00.1"). */
-  assetId?: string;
+  /** Diegetic asset id above the title; `page` only. */
+  assetId?: AssetId;
   /** Right-aligned actions (buttons, status flags). */
   actions?: JSX.Element;
+  /** Read-only state flags shown beside the title (a status flag, a count). */
+  status?: JSX.Element;
   /** `page` (default) opens a routed screen: a display-size `h1`, the asset
    *  plate, and the registration marks around it. `section` names one region
    *  *inside* something else — a settings dialog's pane — where all three would
@@ -40,6 +43,7 @@ export function PageHeader(props: PageHeaderProps): JSX.Element {
     "subtitle",
     "assetId",
     "actions",
+    "status",
     "framed",
     "variant",
     "class",
@@ -64,13 +68,16 @@ export function PageHeader(props: PageHeaderProps): JSX.Element {
             {local.assetId}
           </Text>
         </Show>
-        <Text
-          variant={section() ? "readout-lg" : "display"}
-          tone="bright"
-          as={section() ? "h2" : "h1"}
-        >
-          {local.title}
-        </Text>
+        <div class="flex flex-wrap items-center gap-3">
+          <Text
+            variant={section() ? "readout-lg" : "display"}
+            tone="bright"
+            as={section() ? "h2" : "h1"}
+          >
+            {local.title}
+          </Text>
+          <Show when={local.status}>{local.status}</Show>
+        </div>
         <Show when={local.subtitle}>
           <Text variant="body" tone="dim">
             {local.subtitle}

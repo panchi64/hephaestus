@@ -68,6 +68,8 @@ export interface ModelEndpoint {
   nativeTools: boolean;
   vision: boolean;
   thinking: boolean;
+  /** Effort pinned for every request; null is the adapter's default. */
+  effort: string | null;
   /** Whether this endpoint is active — disabled endpoints are hidden from the
    *  picker and skipped in fallback chains (the backend enforces both). */
   enabled: boolean;
@@ -203,6 +205,7 @@ function toEndpoint(dto: EndpointViewDTO): ModelEndpoint {
     nativeTools: dto.native_tools,
     vision: dto.vision,
     thinking: dto.thinking,
+    effort: dto.effort,
     enabled: dto.enabled,
     lastStatus: dto.last_status,
     lastErrorCategory: dto.last_error_category,
@@ -241,6 +244,7 @@ export interface ModelProvider {
   docsUrl: string | null;
   nativeTools: boolean;
   vision: boolean;
+  usesEffort: boolean;
 }
 
 function toProvider(dto: ProviderViewDTO): ModelProvider {
@@ -253,6 +257,7 @@ function toProvider(dto: ProviderViewDTO): ModelProvider {
     docsUrl: dto.docs_url,
     nativeTools: dto.native_tools,
     vision: dto.vision,
+    usesEffort: dto.uses_effort,
   };
 }
 
@@ -695,6 +700,19 @@ export function endpointDiscovery(): EndpointDiscovery[] {
 
 export function effectiveSelection(): ModelSelection | null {
   return store.effective();
+}
+
+/** The endpoint backing the effective pick, or null before one is known. */
+export function effectiveEndpoint(): ModelEndpoint | null {
+  return store.effectiveEndpoint();
+}
+
+/** Whether the effective pick's endpoint reads an effort level. */
+export function effectiveUsesEffort(): boolean {
+  const endpoint = store.effectiveEndpoint();
+  if (!endpoint) return false;
+  const providers = settled(store.providers) ?? [];
+  return providers.some((p) => p.id === endpoint.provider && p.usesEffort);
 }
 
 /** The composite value the picker should show as active (effective pick). */

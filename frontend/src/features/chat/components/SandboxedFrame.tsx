@@ -3,11 +3,12 @@ import { cx } from "~/ui";
 import { frameZoom } from "./renderers/fontStep";
 
 /**
- * The single mount point for model-generated markup — a static HTML version or the
- * live View head. Deliberately sandboxed **without** `allow-same-origin`, so the
- * framed content runs in an opaque origin and can't read the operator's cookies or
- * act as the operator against the API. Keep this the only place the `sandbox` value
- * lives so that security contract can't silently drift between render paths.
+ * The single mount point for model-generated markup — a static HTML version, the
+ * live View head, or a plugin's window. Deliberately sandboxed **without**
+ * `allow-same-origin`, so the framed content runs in an opaque origin and can't read
+ * the operator's cookies or act as the operator against the API. Keep this the only
+ * place the `sandbox` value lives so that security contract can't drift between render
+ * paths.
  *
  * A `src` change reloads the frame natively (a new live URL, a switched version). A
  * manual reload of the *same* src is driven by `reloadKey`: bumping it remounts only
@@ -26,6 +27,10 @@ export function SandboxedFrame(props: {
   reloadKey?: number;
   /** Operator zoom step (-2..+2), rendered as a whole-page scale. */
   fontStep?: number;
+  /** `plugin` frames a plugin's window: scripts only, no forms or popups, since its
+   *  one way out is the message port the host hands it. */
+  policy?: "view" | "plugin";
+  onLoad?: (frame: HTMLIFrameElement) => void;
 }): JSX.Element {
   const zoom = (): number => frameZoom(props.fontStep);
   return (
@@ -46,7 +51,12 @@ export function SandboxedFrame(props: {
                 "transform-origin": "0 0",
               }
         }
-        sandbox="allow-scripts allow-forms allow-popups"
+        sandbox={
+          props.policy === "plugin"
+            ? "allow-scripts"
+            : "allow-scripts allow-forms allow-popups"
+        }
+        onLoad={(event) => props.onLoad?.(event.currentTarget)}
       />
     </Show>
   );

@@ -122,7 +122,7 @@ async def test_ownership_is_rechecked_before_the_kill_pass(
 
 
 async def test_a_backgrounded_child_outliving_its_shell_is_still_stopped():
-    proc = await process.spawn_confined(
+    proc = await process.spawn_in_session(
         "sleep 60 & exit 0",
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,

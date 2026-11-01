@@ -25,9 +25,10 @@
  * the same question, and the one that goes stale is always the flag.
  */
 
-import { createMemo, createSignal, type Accessor } from "solid-js";
+import { createMemo, createSignal, untrack, type Accessor } from "solid-js";
 import { api, isApiError } from "~/lib/api";
-import { toast } from "~/ui";
+import { toast, type ActionTone } from "~/ui";
+import { awaitingKindOf } from "./awaitingKind";
 import { bumpGrantsRevision } from "../data/conversations";
 import type { ApprovalOutcomeDTO } from "../data/wire";
 import { isAnswered } from "../model";
@@ -35,12 +36,11 @@ import type {
   Approval,
   ApprovalDecision,
   ChatMessage,
-  HostCommandBlock,
   QuestionAnswer,
   QuestionBlock,
   QuestionReply,
 } from "../model";
-import type { PatchById } from "./patch";
+import { settleDecision, type PatchById } from "./patch";
 
 export interface ApprovalDeps {
   messages: ChatMessage[];
@@ -121,8 +121,8 @@ const emptyDraft = (): ParkDraft => ({
 });
 
 export interface ApprovalOps {
-  /** True while the room has a live, unanswered park — an approval or a question. */
-  awaitingInput: Accessor<boolean>;
+  /** The kind of the room's live, unanswered park, or null. */
+  awaitingKind: Accessor<ActionTone | null>;
   /** What the operator has entered into the dock but not yet submitted. */
   parkDraft: Accessor<ParkDraft>;
   patchParkDraft: (next: Partial<ParkDraft>) => void;
@@ -194,12 +194,34 @@ const parkedIn =
       m.blocks?.some((b) => b.kind === "approval" || b.kind === "question"),
     );
 
+/** The calls a park waits on, which stay the same across the remounts a draft outlives. */
+const parkKey = (p: Park | null): string | null =>
+  p
+    ? [
+        ...p.approvals.map((a) => a.toolCallId),
+        ...p.questions.map((q) => q.toolCallId),
+      ].join(" ")
+    : null;
+
+const NO_DRAFT: ParkDraft = emptyDraft();
+
 export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
   const [draft, setDraft] = createSignal<ParkDraft>(emptyDraft());
+  // The park the draft was collected for. A park settled anywhere but this dock (another
+  // tab, a channel) never clears the draft, and the cards only publish on change, so a
+  // draft read against the next park would offer its submit with the last one's verdicts.
+  const [draftFor, setDraftFor] = createSignal<string | null>(null);
   const patchParkDraft = (next: Partial<ParkDraft>): void => {
-    setDraft((current) => ({ ...current, ...next }));
+    const key = parkKey(untrack(park));
+    if (key === untrack(draftFor))
+      setDraft((current) => ({ ...current, ...next }));
+    else {
+      setDraftFor(key);
+      setDraft({ ...emptyDraft(), ...next });
+    }
   };
   const clearParkDraft = (): void => {
+    setDraftFor(null);
     setDraft(emptyDraft());
   };
 
@@ -253,22 +275,24 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
   // The host-command terminal keeps its own pending phase on the rail — it is a running
   // terminal, not a prompt, and only its first moment is a decision. It still counts as
   // the run waiting on the operator.
-  const awaitingInput = createMemo(() => {
+  const awaitingKind = createMemo(() => {
     // A *stale* park doesn't need them: the run already resumed elsewhere, so the
     // attention echo should clear even though the dock stays up to say so.
     const p = park();
-    if (p) return !p.stale;
-    if (!deps.sending()) return false;
+    if (p || !deps.sending()) return awaitingKindOf(p, false);
     // Keyed to the run for the same reason the park is: a terminal awaiting its first
     // decision does not stop waiting because a steering message split the flow under it.
     const runId = liveRunIdOf(deps);
-    return deps.messages.some(
-      (m) =>
-        inLiveRun(runId)(m) &&
-        (m.blocks?.some(
-          (b) => b.kind === "host_command" && b.command.phase === "pending",
-        ) ??
-          false),
+    return awaitingKindOf(
+      null,
+      deps.messages.some(
+        (m) =>
+          inLiveRun(runId)(m) &&
+          (m.blocks?.some(
+            (b) => b.kind === "host_command" && b.command.phase === "pending",
+          ) ??
+            false),
+      ),
     );
   });
 
@@ -325,8 +349,12 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
               b.command.phase = "stale";
           }
         });
-        toast.error("This was already answered elsewhere.");
-        void deps.reconcileStaleDecision();
+        toast.error(err.detail);
+        deps.reconcileStaleDecision().catch(() => {
+          toast.error(
+            "Couldn't reload this chat. Switch away and back to refresh it.",
+          );
+        });
         return;
       }
       // A transient failure (network blip, 5xx): the decision may not have
@@ -339,9 +367,12 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
   }
 
   return {
-    awaitingInput,
+    awaitingKind,
     park,
-    parkDraft: draft,
+    parkDraft: () => {
+      const key = parkKey(park());
+      return key !== null && key === draftFor() ? draft() : NO_DRAFT;
+    },
     patchParkDraft,
     clearParkDraft,
     resolvePark: (messageId, settlement) =>
@@ -377,14 +408,8 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
       }),
     resolveHostCommands: (messageId, decisions) =>
       submitDecisions(messageId, { decisions }, (m) => {
-        for (const d of decisions) {
-          const b = m.blocks?.find(
-            (x): x is HostCommandBlock =>
-              x.kind === "host_command" &&
-              x.command.toolCallId === d.tool_call_id,
-          );
-          if (b) b.command.phase = d.approved ? "running" : "denied";
-        }
+        for (const d of decisions)
+          settleDecision(m, d.tool_call_id, d.approved);
       }),
   };
 }

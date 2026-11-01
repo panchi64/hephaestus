@@ -1,29 +1,25 @@
 """The run's home, as a tool and the approval gate see it.
 
-Assembled once per run and memoised on its deps: the thread's scratch (the sandbox
-session's workspace), every registered project, writable where the thread holds a lease
-or was started in it, the thread's worktree of its project when it opened one, and the
-open worktrees of the sub-agents it spawned.
+Assembled once per run and memoised on its deps: the thread's scratch, the project it was
+started in and any it holds a write lease on, the thread's worktree of its project when it
+opened one, and the open worktrees of the sub-agents it spawned.
 """
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from services.home.changes import ChangeLog, ThreadChanges
 from services.home.leases import WriteLeases
-from services.home.paths import Place
+from services.home.paths import HomePathError, Place, parse
+from services.home.scratch import ScratchDirs
 from services.home.table import RunHome, default_place, thread_mounts
 from services.projects.store import ProjectStore
-from services.sandbox import SandboxError, SandboxSessionManager
 from services.subagents import SubagentLauncher
 from services.workspace import sandbox_workspace, split_workspace_key
 
 from .deps import RunDeps
 from .workspace import resolve_run_workspace
-
-logger = logging.getLogger(__name__)
 
 
 async def resolve_run_home(deps: RunDeps) -> RunHome | None:
@@ -35,13 +31,12 @@ async def resolve_run_home(deps: RunDeps) -> RunHome | None:
     if deps.home is not None:
         return deps.home
     projects = deps.caps.get_optional(ProjectStore)
-    scratch = None
-    sessions = deps.caps.get_optional(SandboxSessionManager)
-    if sessions is not None:
-        try:
-            scratch = (await sandbox_workspace(sessions, deps.workspace_key, holder=deps.run)).root
-        except SandboxError:
-            logger.debug("home: no scratch for %s", deps.workspace_key, exc_info=True)
+    scratch_dirs = deps.caps.get_optional(ScratchDirs)
+    scratch = (
+        sandbox_workspace(scratch_dirs, deps.workspace_key).root
+        if scratch_dirs is not None
+        else None
+    )
     slug = None
     worktree_root: Path | None = None
     if deps.project_id and projects is not None:
@@ -77,15 +72,31 @@ async def _child_worktrees(deps: RunDeps) -> list[tuple[str, str, Path]]:
     return [(child.project_id, child.handle, child.path) for child in children]
 
 
-def change_log(deps: RunDeps) -> ChangeLog | None:
-    """Where this run's changes to the operator's project folders are recorded: under the
-    thread whose files it works in, so a spawned agent's land in its parent's list."""
-    store = deps.caps.get_optional(ThreadChanges)
+def ledger_thread(deps: RunDeps) -> str | None:
+    """The thread whose ledger this run's changes are filed in: the one whose files it works
+    in, so a spawned agent's land in its parent's list."""
     owner, _ = split_workspace_key(deps.workspace_key)
-    thread = owner or deps.conversation_id
+    return owner or deps.conversation_id
+
+
+def ledger_prompt(deps: RunDeps) -> str | None:
+    """The prompt this run's changes are filed under in :func:`ledger_thread`: its own turn's
+    when it works in its own thread, else the launching turn's."""
+    if ledger_thread(deps) == deps.conversation_id:
+        return deps.run.prompt_message_id
+    return deps.ledger_prompt_message_id
+
+
+def change_log(deps: RunDeps) -> ChangeLog | None:
+    """Where this run's changes to the operator's project folders are recorded."""
+    store = deps.caps.get_optional(ThreadChanges)
+    thread = ledger_thread(deps)
     if store is None or not thread:
         return None
-    return ChangeLog(store, owner_id=deps.owner_id, conversation_id=thread)
+    prompt = ledger_prompt(deps)
+    return ChangeLog(
+        store, owner_id=deps.owner_id, conversation_id=thread, prompt_message_id=prompt
+    )
 
 
 def lease_holder(deps: RunDeps) -> str | None:
@@ -101,10 +112,29 @@ def may_lease(deps: RunDeps) -> bool:
     return deps.leases_from is None and not deps.delegated_approved and bool(deps.conversation_id)
 
 
+async def unmounted_project(deps: RunDeps, home: RunHome, path: str) -> Place | None:
+    """The registered project ``path`` names when this run's home does not mount it."""
+    try:
+        place = parse(home.backend.spell(path)).place
+    except HomePathError:
+        return None
+    if place.kind != "projects" or home.mount(place) is not None:
+        return None
+    projects = deps.caps.get_optional(ProjectStore)
+    if projects is None or place.name not in (await projects.slugs(deps.owner_id)).values():
+        return None
+    return place
+
+
 async def lease(deps: RunDeps, home: RunHome, place: Place) -> RunHome:
-    """Let this thread write ``place`` from now on, and the rest of this run at once."""
+    """Let this thread write ``place`` from now on, and the rest of this run at once. A
+    project the home did not mount is mounted by rebuilding the home, which raises
+    ``WorktreeBusyError`` while another conversation holds the thread's worktree."""
     leases = deps.caps.get_optional(WriteLeases)
     if leases is not None and deps.conversation_id:
         await leases.lease(deps.owner_id, deps.conversation_id, place)
+    if home.mount(place) is None:
+        deps.home = None
+        return await resolve_run_home(deps) or home
     deps.home = home.with_writable(place)
     return deps.home

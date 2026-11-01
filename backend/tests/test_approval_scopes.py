@@ -33,7 +33,7 @@ async def test_statically_marked_tools_are_scopes():
         body = json_list(await client.get("/tools/approval-scopes"))
     names = _names(body)
     assert {
-        "code_run_host_command",
+        "shell_run_on_host",
         "mail_send",
         "mail_reply",
         "vault_list_entries",

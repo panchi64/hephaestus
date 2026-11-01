@@ -42,6 +42,8 @@ async def submit_queued(
             await store.set_agent_name(
                 conversation_id, None if payload.agent == DEFAULT_AGENT else payload.agent
             )
+        if payload.effort is not None:
+            await store.set_effort(conversation_id, payload.effort or None)
         models = await thread_models(app, conversation_id, payload.endpoint_id, payload.model)
         command = (
             None

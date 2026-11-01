@@ -29,13 +29,13 @@ from pydantic_ai_harness.repo_context import RepoContext
 
 from core.exceptions import CommandValidationError
 from core.frontmatter import FrontmatterError, split_frontmatter
+from core.text import clip
 
 from .authoring import (
     ARGUMENT_HINT_MAX_CHARS,
     BODY_MAX_CHARS,
     DESCRIPTION_MAX_CHARS,
     TITLE_MAX_CHARS,
-    clip,
     validate_name,
 )
 from .spec import CommandSpec

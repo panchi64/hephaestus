@@ -7,6 +7,9 @@
  * the last seen `seq` drives reconnect-with-replay if the transport drops before
  * a terminal event. Resolves when the run ends, the caller aborts, or reconnects
  * are exhausted.
+ *
+ * A hidden page holds no connection, because the backend holds a run's notices while its
+ * stream is open; the reader lets go on hide and reconnects from the last seq on show.
  */
 import { API_BASE } from "~/lib/config";
 import { getToken } from "~/lib/api/token";
@@ -55,6 +58,34 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+const pageHidden = (): boolean =>
+  typeof document !== "undefined" && document.visibilityState === "hidden";
+
+/** Resolves once `pageHidden()` equals `hidden`, or the signal aborts; `stop` unlistens. */
+function visibility(
+  hidden: boolean,
+  signal?: AbortSignal,
+): { reached: Promise<void>; stop: () => void } {
+  let stop = () => {};
+  const reached = new Promise<void>((resolve) => {
+    if (typeof document === "undefined") return;
+    const check = () => {
+      if (pageHidden() === hidden) done();
+    };
+    const done = () => {
+      stop();
+      resolve();
+    };
+    stop = () => {
+      document.removeEventListener("visibilitychange", check);
+      signal?.removeEventListener("abort", done);
+    };
+    document.addEventListener("visibilitychange", check);
+    signal?.addEventListener("abort", done);
+  });
+  return { reached, stop };
+}
+
 /** Parse one SSE frame (the lines between blank lines) into an event. */
 function parseFrame(frame: string): RunEvent | null {
   const data = frame
@@ -79,17 +110,29 @@ export async function streamRun(
   let totalDelayMs = 0;
 
   while (!signal?.aborted) {
+    if (pageHidden()) {
+      await visibility(false, signal).reached;
+      continue;
+    }
+    const hides = visibility(true, signal);
+    // Its own controller so a connect that never answers can be abandoned; the caller's
+    // abort still reaches it.
+    const attempt = new AbortController();
+    const forwardAbort = () => attempt.abort();
+    signal?.addEventListener("abort", forwardAbort);
+    let endedCleanly = false;
     try {
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       const token = getToken();
       if (token) headers["Authorization"] = `Bearer ${token}`;
       if (lastSeq != null) headers["Last-Event-ID"] = String(lastSeq);
 
+      const connectTimer = setTimeout(() => attempt.abort(), READ_TIMEOUT_MS);
       const res = await fetch(`${API_BASE}/runs/${runId}/events`, {
         headers,
         credentials: "omit",
-        signal,
-      });
+        signal: attempt.signal,
+      }).finally(() => clearTimeout(connectTimer));
       if (res.status === 401 || res.status === 423) {
         // Session expiry / vault re-lock, not a transport hiccup — retrying
         // would just burn the reconnect budget on a request that can never
@@ -112,14 +155,19 @@ export async function streamRun(
           new Promise<"timeout">((resolve) => {
             timer = setTimeout(() => resolve("timeout"), READ_TIMEOUT_MS);
           }),
+          hides.reached.then(() => "hidden" as const),
         ]).finally(() => clearTimeout(timer));
-        if (result === "timeout") {
-          // Dead connection — drop it and reconnect from lastSeq (replays the gap).
+        if (result === "timeout" || result === "hidden") {
+          // A dead connection, or a page that hid: drop it and reconnect from lastSeq
+          // (replaying the gap), which waits for the page to be visible again.
           await reader.cancel().catch(() => {});
           break;
         }
         const { value, done } = result;
-        if (done) break;
+        if (done) {
+          endedCleanly = true;
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         let sep: number;
         while ((sep = buffer.indexOf("\n\n")) >= 0) {
@@ -130,7 +178,9 @@ export async function streamRun(
           if (signal?.aborted) return;
           const event = parseFrame(frame);
           if (!event) continue;
-          failures = 0; // a real frame resets the reconnect budget
+          // A real frame ends the outage: the budget bounds one, not the run's lifetime.
+          failures = 0;
+          totalDelayMs = 0;
           lastSeq = event.seq;
           onEvent(event);
           if (isTerminal(event)) return;
@@ -140,10 +190,7 @@ export async function streamRun(
       // from lastSeq to replay anything missed.
     } catch {
       if (signal?.aborted) return;
-      const backoff = Math.min(
-        RECONNECT_BASE_DELAY_MS * 2 ** failures,
-        RECONNECT_MAX_DELAY_MS,
-      );
+      const backoff = backoffFor(failures);
       failures += 1;
       totalDelayMs += backoff;
       if (totalDelayMs > RECONNECT_MAX_TOTAL_DELAY_MS) {
@@ -151,6 +198,18 @@ export async function streamRun(
         throw new StreamDetachedError();
       }
       await delay(backoff, signal);
+    } finally {
+      hides.stop();
+      signal?.removeEventListener("abort", forwardAbort);
+    }
+    // A server that keeps accepting and closing would otherwise be reconnected in a
+    // tight loop. Not charged to the budget: the backend answered.
+    if (endedCleanly) {
+      await delay(backoffFor(failures), signal);
+      failures += 1;
     }
   }
 }
+
+const backoffFor = (failures: number): number =>
+  Math.min(RECONNECT_BASE_DELAY_MS * 2 ** failures, RECONNECT_MAX_DELAY_MS);

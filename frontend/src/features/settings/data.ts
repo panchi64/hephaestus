@@ -1,6 +1,7 @@
 import { createResource, createSignal, type Resource } from "solid-js";
 import { api } from "~/lib/api";
 import type { ReindexStatusDTO } from "~/lib/api/models-types";
+import { settled } from "~/lib/resource";
 import {
   refreshEndpoints,
   setEndpointEnabled,
@@ -10,7 +11,9 @@ import {
   useEndpoints,
   useProviders,
   useRoles,
+  type ModelEndpoint,
 } from "~/lib/stores/models";
+import type { EndpointFormValues } from "./components/EndpointForm";
 import {
   toChatSettings,
   toChatSettingsBody,
@@ -18,16 +21,27 @@ import {
 } from "./chatSettingsDto";
 import type {
   AgentTool,
+  CapabilityHealth,
   ChatSettings,
-  EmbeddingHealth,
   EndpointInput,
   OfflineState,
   ReindexStatus,
   SearchProvider,
   SearchProviderInput,
   VmState,
+  WebSearchReadout,
 } from "./model";
+import { webSearchReadout } from "./model";
 import { toVmState, type VmStateDTO } from "./vmDto";
+import {
+  openThreadCleared,
+  toClearResult,
+  type ClearResult,
+  type ClearResultDTO,
+  type DataKind,
+} from "./clearData";
+import { mainChat, refreshSessions } from "~/features/chat/data";
+import { refreshUploads } from "~/features/uploads/data";
 
 // The endpoint catalog, the provider presets, and the role bindings (reads AND
 // the role writes) are owned by the shared models store so the chat picker,
@@ -61,6 +75,7 @@ function toBody(input: Partial<EndpointInput>): Record<string, unknown> {
   if (input.nativeTools !== undefined) body.native_tools = input.nativeTools;
   if (input.vision !== undefined) body.vision = input.vision;
   if (input.thinking !== undefined) body.thinking = input.thinking;
+  if (input.effort !== undefined) body.effort = input.effort;
   if (input.enabled !== undefined) body.enabled = input.enabled;
   return body;
 }
@@ -86,6 +101,44 @@ export async function updateEndpoint(
   refreshEndpoints();
 }
 
+/** Create `target`'s endpoint from form values, or update it; returns its id. */
+export async function saveEndpointForm(
+  target: ModelEndpoint | null,
+  f: EndpointFormValues,
+): Promise<string> {
+  const cw = f.contextWindow.trim();
+  const mcr = f.maxConcurrentRuns.trim();
+  const model = f.model.trim();
+  const fields = {
+    name: f.name.trim(),
+    baseUrl: f.baseUrl.trim(),
+    provider: f.provider,
+    contextWindow: cw ? Number(cw) : null,
+    nativeTools: f.nativeTools,
+    vision: f.vision,
+    thinking: f.thinking,
+  };
+  if (target) {
+    // Always send model so a cleared field unsets the default; the key is only sent
+    // when typed (blank = leave the stored key unchanged).
+    await updateEndpoint(target.id, {
+      ...fields,
+      maxConcurrentRuns: mcr ? Number(mcr) : 0,
+      model,
+      effort: f.effort,
+      ...(f.apiKey ? { apiKey: f.apiKey } : {}),
+    });
+    return target.id;
+  }
+  return createEndpoint({
+    ...fields,
+    maxConcurrentRuns: mcr ? Number(mcr) : null,
+    model: model || undefined,
+    apiKey: f.apiKey || undefined,
+    effort: f.effort || null,
+  });
+}
+
 export async function deleteEndpoint(id: string): Promise<void> {
   await api.del(`/models/endpoints/${id}`);
   refreshEndpoints();
@@ -107,7 +160,7 @@ export async function setRoleBinding(
   model: string | null = null,
 ): Promise<boolean> {
   await bindRole(role, endpointIds, model);
-  void refreshEmbeddingHealth(); // a bind can flip recall health
+  void refreshCapabilityHealth(); // a bind can flip recall health
   // A changed embedding endpoint/model strands existing vectors, so the backend
   // heals them with a background re-embed. Pull the just-started status so the
   // live readout (and its poller) reflect it; report whether one kicked off.
@@ -116,11 +169,9 @@ export async function setRoleBinding(
   return reindexStatus()?.state === "running";
 }
 
-/* ── Embedding health + re-embed (reindex) ───────────────────────────────────
-   These are LIVE-POLLED reads, so they must NOT go through `createResource` /
-   Suspense: a refetching resource re-enters its pending state and re-triggers the
-   route's `<Suspense>` fallback, flashing the whole page on every poll. Plain
-   signals update in place — the readout ticks over without disrupting the screen. */
+/* Capability health and re-embed status are live-polled, so they are plain signals,
+   not resources: a refetching resource re-triggers the route's `<Suspense>` fallback
+   and flashes the whole page on every poll. */
 
 interface CapabilityDTO {
   key: string;
@@ -129,29 +180,48 @@ interface CapabilityDTO {
 }
 
 const [embeddingHealth, setEmbeddingHealth] =
-  createSignal<EmbeddingHealth | null>(null);
+  createSignal<CapabilityHealth | null>(null);
+const [webSearchHealth, setWebSearchHealth] =
+  createSignal<CapabilityHealth | null>(null);
 
-/** The backend owns the verdict on recall health — Settings only renders it (read
- *  off `/overview`, the home page's source of truth, not re-derived here). */
-export function useEmbeddingHealth(): () => EmbeddingHealth | null {
+export function useEmbeddingHealth(): () => CapabilityHealth | null {
   return embeddingHealth;
 }
 
-export async function refreshEmbeddingHealth(): Promise<void> {
-  try {
-    const o = await api.get<{ capabilities: CapabilityDTO[] }>("/overview");
-    const cap = o.capabilities.find((c) => c.key === "embeddings");
-    setEmbeddingHealth(
-      cap
-        ? {
-            status: cap.status as EmbeddingHealth["status"],
-            detail: cap.detail,
-          }
-        : null,
+/** What web search runs on: the built-in SearXNG, or the operator's own when one of
+ *  `providers` is enabled. */
+export function useWebSearchReadout(
+  providers: Resource<SearchProvider[]>,
+): () => WebSearchReadout {
+  return () =>
+    webSearchReadout(
+      webSearchHealth(),
+      (settled(providers) ?? []).filter((p) => p.enabled).length,
     );
+}
+
+/** Recall and web-search health off one `/overview` read, the home page's source of
+ *  truth: the backend owns the verdict and Settings only renders it. */
+export async function refreshCapabilityHealth(): Promise<void> {
+  let caps: CapabilityDTO[];
+  try {
+    caps = (await api.get<{ capabilities: CapabilityDTO[] }>("/overview"))
+      .capabilities;
   } catch {
-    // Keep the last known health — a transient failure shouldn't blank the badge.
+    // A failed read keeps the last known health rather than blanking the badges.
+    return;
   }
+  const health = (key: string): CapabilityHealth | null => {
+    const cap = caps.find((c) => c.key === key);
+    return cap
+      ? {
+          status: cap.status as CapabilityHealth["status"],
+          detail: cap.detail,
+        }
+      : null;
+  };
+  setEmbeddingHealth(health("embeddings"));
+  setWebSearchHealth(health("web_search"));
 }
 
 function toReindexStatus(d: ReindexStatusDTO): ReindexStatus {
@@ -238,6 +308,12 @@ function toProviderBody(
 
 const [providersTick, setProvidersTick] = createSignal(0);
 
+/** An enabled provider overrides the built-in instance, so a write can flip search health. */
+function providersChanged(): void {
+  setProvidersTick((n) => n + 1);
+  void refreshCapabilityHealth();
+}
+
 async function fetchSearchProviders(): Promise<SearchProvider[]> {
   const rows = await api.get<SearchProviderView[]>("/search/providers");
   return rows.map(toSearchProvider);
@@ -252,7 +328,7 @@ export async function createSearchProvider(
   input: SearchProviderInput,
 ): Promise<void> {
   await api.post("/search/providers", toProviderBody(input));
-  setProvidersTick((n) => n + 1);
+  providersChanged();
 }
 
 export async function updateSearchProvider(
@@ -260,12 +336,12 @@ export async function updateSearchProvider(
   patch: Partial<SearchProviderInput>,
 ): Promise<void> {
   await api.patch(`/search/providers/${id}`, toProviderBody(patch));
-  setProvidersTick((n) => n + 1);
+  providersChanged();
 }
 
 export async function deleteSearchProvider(id: string): Promise<void> {
   await api.del(`/search/providers/${id}`);
-  setProvidersTick((n) => n + 1);
+  providersChanged();
 }
 
 /* ── Chat settings (turn budgets + conversation compaction) ──────────────────
@@ -367,7 +443,7 @@ export async function refreshVmState(): Promise<void> {
   }
 }
 
-/** Rebuild the platform VM and reflect the state the POST returns. */
+/** Restart the services VM, delete every conversation's VM, and reflect the state the POST returns. */
 export async function resetVm(): Promise<void> {
   setVmState(toVmState(await api.post<VmStateDTO>("/vm/reset")));
 }
@@ -375,6 +451,26 @@ export async function resetVm(): Promise<void> {
 /** Log the agent's shared browser profile out of every site. */
 export async function forgetBrowserProfile(): Promise<void> {
   await api.del("/browser/profile");
+}
+
+/** Permanently delete every item of one kind, then re-read the lists that showed them,
+ *  failed or not, since a clear can fail partway. Notifications need no re-read: the
+ *  store hears the `deleted` events. A chats clear that took the open thread restages
+ *  the room. */
+export async function clearData(kind: DataKind): Promise<ClearResult> {
+  try {
+    const result = toClearResult(
+      await api.post<ClearResultDTO>(`/data/clear/${kind}`),
+    );
+    if (kind === "chats") {
+      const chat = mainChat();
+      if (openThreadCleared(chat.currentId(), result)) chat.setCurrentId(null);
+    }
+    return result;
+  } finally {
+    if (kind === "chats") refreshSessions();
+    if (kind === "chats" || kind === "uploads") refreshUploads();
+  }
 }
 
 /* ── Agent tools ────────────────────────────────────────────────────────────────

@@ -1,8 +1,7 @@
-"""Pillar I + II — the Run substrate and the event protocol (the chassis).
+"""The Run substrate and the event protocol.
 
-A Run is one server-side, background-executing unit of work for one request.
-Chat and agent work both ride it, so continuity, resume, cancellation,
-timeouts, and metrics are written once here and inherited everywhere.
+A Run is one server-side, background-executing unit of work. Chat and agent work both
+ride it, so continuity, resume, cancellation, timeouts and metrics are written once.
 
 - :class:`RunRegistry` — launch/track/bound/cancel Runs (in-process asyncio).
 - :class:`Run` / :class:`RunStatus` — the unit of work and its lifecycle.
@@ -10,13 +9,13 @@ timeouts, and metrics are written once here and inherited everywhere.
 - ``events`` — the frozen v1 typed event union.
 - :func:`sse_response` — stream a Run to a client over SSE.
 
-See docs/architecture/README.md (Pillars I & II).
+See docs/architecture/README.md.
 """
 
 from __future__ import annotations
 
 from . import events
-from .endpoint_gate import Endpoint, EndpointGate
+from .endpoint_gate import Endpoint, EndpointGate, outside_lease
 from .events import (
     DEFAULT_CONTEXT_THRESHOLDS,
     INJECTED_TEXT_LIMIT,
@@ -24,6 +23,7 @@ from .events import (
     AnswerDelta,
     AnsweredQuestionOut,
     AnswerRetracted,
+    ApprovalDecided,
     ApprovalRequired,
     BrowserOpened,
     CitationAdded,
@@ -42,6 +42,7 @@ from .events import (
     EventBody,
     FoldPoint,
     InboxWaiting,
+    InjectionPlacement,
     LastRequestUsage,
     LimitNotice,
     MessageEdited,
@@ -51,12 +52,11 @@ from .events import (
     MessageWithdrawn,
     PermissionChanged,
     PlanUpdated,
+    PluginWindowOpened,
     QuestionAnswered,
     QuestionAsked,
     QuestionOption,
     QuestionSpec,
-    ReviewCompleted,
-    ReviewStarted,
     RunEnded,
     RunError,
     RunMetrics,
@@ -85,8 +85,9 @@ from .inbox import (
     QueuedMessage,
     TurnPayload,
 )
-from .lanes import CHAT_TURN_KINDS, LANE_BY_KIND, LaneLimits, lane_for
+from .lanes import RUN_KINDS, LaneLimits, RunKind, is_chat_turn, lane_for
 from .overhead import BriefBlock, ToolGroupOverhead, TurnOverhead
+from .parked import NO_PARKED_JOURNAL, ParkedJournal
 from .prefix import FIRST_REQUEST, PrefixDigest, PrefixLedger, PrefixVerdict
 from .registry import ConversationBusyError, RunRegistry, RunTimeout
 from .run import Orchestrator, PreparingCall, Run, RunStatus
@@ -104,8 +105,10 @@ __all__ = [
     "LaneLimits",
     "Endpoint",
     "EndpointGate",
-    "LANE_BY_KIND",
-    "CHAT_TURN_KINDS",
+    "outside_lease",
+    "RUN_KINDS",
+    "RunKind",
+    "is_chat_turn",
     "lane_for",
     "ConversationBusyError",
     "Run",
@@ -116,6 +119,8 @@ __all__ = [
     "InboxDispatch",
     "InboxJournal",
     "NO_JOURNAL",
+    "NO_PARKED_JOURNAL",
+    "ParkedJournal",
     "STOP_NOTICE",
     "TurnPayload",
     "Orchestrator",
@@ -159,6 +164,7 @@ __all__ = [
     "ToolImage",
     "CitationAdded",
     "BrowserOpened",
+    "PluginWindowOpened",
     "ViewLive",
     "ViewLiveStopped",
     "ViewSnapshot",
@@ -171,19 +177,19 @@ __all__ = [
     "ContextInjected",
     "INJECTED_TEXT_LIMIT",
     "ApprovalRequired",
+    "ApprovalDecided",
     "QuestionAsked",
     "QuestionAnswered",
     "AnsweredQuestionOut",
     "QuestionOption",
     "QuestionSpec",
-    "ReviewStarted",
-    "ReviewCompleted",
     "MessageQueued",
     "MessageEdited",
     "MessageWithdrawn",
     "MessageHeld",
     "MessageInjected",
     "InboxWaiting",
+    "InjectionPlacement",
     "TasksUpdated",
     "PlanUpdated",
     "PermissionChanged",

@@ -324,7 +324,7 @@ export function Select(props: SelectProps): JSX.Element {
                       <Show when={opt.description}>
                         <span
                           class={cx(
-                            "max-w-60 font-sans text-micro text-dim",
+                            "max-w-60 font-sans text-caption text-dim",
                             opt.swatch ? "pl-9" : "pl-5",
                           )}
                         >
@@ -340,7 +340,7 @@ export function Select(props: SelectProps): JSX.Element {
         }}
       />
       <Show when={props.hint}>
-        <Text variant="micro" tone={props.invalid ? "alert" : "dim"}>
+        <Text variant="caption" tone={props.invalid ? "alert" : "dim"}>
           {props.hint}
         </Text>
       </Show>

@@ -51,11 +51,13 @@ class ScenarioIn(BaseModel):
     status: int = 200
     error: str = "scripted failure"
     uses: int | None = None
+    reasoning: str = ""
 
     def to_scenario(self) -> Scenario:
         return Scenario(
             match=self.match,
             text=self.text,
+            reasoning=self.reasoning,
             tool_calls=[ToolCall(c.name, c.arguments, c.id) for c in self.tool_calls],
             needs_tools=self.needs_tools,
             latency_s=self.latency_s,

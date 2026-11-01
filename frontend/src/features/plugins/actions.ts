@@ -1,3 +1,4 @@
+import { windowActions } from "~/lib/stores/pluginWindows";
 import { confirm, toast } from "~/ui";
 import {
   deletePlugin,
@@ -13,6 +14,7 @@ import {
   publishTarget,
   type Plugin,
 } from "./model";
+import { fetchPluginWindows } from "./windows";
 
 /** Confirms against the hosts and secrets the plugin will use, then publishes
  *  the draft (or re-enables a disabled plugin). Resolves true when it did. */
@@ -21,7 +23,7 @@ export async function publishWithConfirm(plugin: Plugin): Promise<boolean> {
   if (!target) return false;
   const ok = await confirm({
     title: `Publish "${plugin.name}"?`,
-    detail: `Its ${target.tools.length === 1 ? "tool becomes" : "tools become"} callable in the platform VM. ${accessSummary(target).join(" ")}`,
+    detail: `Its ${target.tools.length === 1 ? "tool becomes" : "tools become"} callable in the conversation's VM. ${accessSummary(target).join(" ")}`,
     confirmLabel: "Publish",
   });
   if (!ok) return false;
@@ -85,6 +87,17 @@ export async function deleteWithConfirm(plugin: Plugin): Promise<boolean> {
   } catch (err) {
     toast.error(pluginErrorMessage(err, `Could not delete "${plugin.name}".`));
     return false;
+  }
+}
+
+/** Opens every window a published plugin offers. */
+export async function openWindowsWithToast(plugin: Plugin): Promise<void> {
+  try {
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    for (const spec of await fetchPluginWindows())
+      if (spec.pluginId === plugin.id) windowActions.open(spec, viewport);
+  } catch (err) {
+    toast.error(pluginErrorMessage(err, `Could not open "${plugin.name}".`));
   }
 }
 

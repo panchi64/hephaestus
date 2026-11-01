@@ -10,6 +10,7 @@
  */
 
 import { createResource, createSignal, type Resource } from "solid-js";
+import { ensureUnlocked, withPrivateAccess } from "~/features/private";
 import { api } from "~/lib/api";
 import type { TaskItem } from "~/lib/stream";
 import {
@@ -28,20 +29,23 @@ import type {
   ApprovalGrantDTO,
   ConversationDetailDTO,
   ConversationSummaryDTO,
-  OrphanImageAttachmentsDTO,
 } from "./wire";
 
 async function fetchSession(id: string): Promise<ChatSession> {
-  const dto = await api.get<ConversationDetailDTO>(`/conversations/${id}`);
+  const dto = await withPrivateAccess(() =>
+    api.get<ConversationDetailDTO>(`/conversations/${id}`),
+  );
   return {
     id: dto.id,
     title: deriveTitle(dto),
+    untitled: dto.title === null,
     messages: dto.messages.map(toMessage),
     context: dto.context,
     stats: dto.stats ? toStats(dto.stats) : null,
     activeRun: toActiveRun(dto.active_run),
     snapshots: (dto.snapshots ?? []).map(toViewSnapshotRef),
     permission: permissionLevel(dto.permission_level ?? undefined),
+    effort: dto.effort ?? "",
   };
 }
 
@@ -89,19 +93,30 @@ export async function regenerateTitle(id: string): Promise<void> {
   refreshSessions();
 }
 
-export async function deleteConversation(
+/** Reveal an auto-title still being written when its run ended. The backend holds the
+ *  request until that title lands or gives up, so this resolves once either way. */
+export async function collectLateTitle(id: string): Promise<void> {
+  const { title } = await api.get<{ title: string | null }>(
+    `/conversations/${id}/title`,
+  );
+  if (title) revealTitle(id, title);
+  refreshSessions();
+}
+
+/** File a thread's whole spawn family in or out of the Private area,
+ *  opening the area first (or choosing a first PIN). False if the operator backed out. */
+export async function setConversationPrivate(
   id: string,
-  purgeImages = false,
-  discardBranch = false,
-): Promise<void> {
-  const params = [
-    purgeImages ? "purgeImages=true" : "",
-    // A code thread with unmerged commits is refused unless this says so —
-    // the backend decides, this only relays the operator's answer.
-    discardBranch ? "discardBranch=true" : "",
-  ].filter(Boolean);
-  const q = params.length ? `?${params.join("&")}` : "";
-  await api.del(`/conversations/${id}${q}`);
+  value: boolean,
+): Promise<boolean> {
+  if (!(await ensureUnlocked())) return false;
+  await api.put(`/conversations/${id}/private`, { private: value });
+  refreshSessions();
+  return true;
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await api.del(`/conversations/${id}`);
   refreshSessions();
 }
 
@@ -118,21 +133,6 @@ export async function forkConversation(
   );
   refreshSessions();
   return detail.id;
-}
-
-/** Image uploads a pending delete would orphan — ones nothing else references.
- *  Probed before a conversation/message delete so the operator can be offered the
- *  keep-or-purge choice. Empty ⇒ nothing would be left unused, delete outright.
- *  Omit `messageId` for a whole-conversation delete. */
-export async function fetchOrphanImageAttachments(
-  conversationId: string,
-  messageId?: string,
-): Promise<string[]> {
-  const q = messageId ? `?messageId=${encodeURIComponent(messageId)}` : "";
-  const res = await api.get<OrphanImageAttachmentsDTO>(
-    `/conversations/${conversationId}/orphan-image-attachments${q}`,
-  );
-  return res.upload_ids;
 }
 
 // Bumped when an approval is submitted that records a conversation grant, so the
@@ -157,7 +157,6 @@ export async function fetchGrants(
   return rows.map((r) => ({
     toolName: r.tool_name,
     commandPrefix: r.command_prefix ?? [],
-    decisive: r.decisive ?? false,
     commandScoped: r.command_scoped ?? false,
   }));
 }

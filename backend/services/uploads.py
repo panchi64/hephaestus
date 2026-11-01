@@ -36,7 +36,7 @@ from core.db import get_owned, in_session
 from core.exceptions import NotFoundError
 from core.vault import Vault, VaultLocked
 from core.worker import WriteBehindWorker
-from models.upload import Upload, UploadStatus
+from models.upload import Upload, UploadStatus, select_private_ids
 from services.corpus.uploads import UploadsAdapter
 from services.upload_extraction import UploadExtractor
 
@@ -67,6 +67,7 @@ class UploadView:
     note: str | None
     kb_excluded: bool
     favorite: bool
+    private: bool
     created_at: datetime
     updated_at: datetime
 
@@ -87,6 +88,7 @@ class UploadSummaryView:
     note: str | None
     kb_excluded: bool
     favorite: bool
+    private: bool
     created_at: datetime
     updated_at: datetime
 
@@ -168,11 +170,14 @@ class UploadStore:
     # --- write path -------------------------------------------------------
 
     async def create(
-        self, owner_id: str, filename: str, mime: str, content: bytes
+        self, owner_id: str, filename: str, mime: str, content: bytes, *, private: bool = False
     ) -> tuple[UploadView, bool]:
         """Store a file and queue its text extraction. Recognizes duplicates (`UP-1`):
-        identical bytes return the existing upload untouched. Returns the upload and
-        whether it was newly created (False ⇒ a duplicate of an existing one)."""
+        identical bytes return the existing upload. Returns the upload and whether it was
+        newly created (False ⇒ a duplicate of an existing one).
+
+        ``private`` marks a new file staged in a private composer. A duplicate keeps its
+        flag: which chats it is sent in decides (`services/private_uploads.py`)."""
         digest = hashlib.sha256(content).hexdigest()
         existing = await self._find_by_hash(owner_id, digest)
         if existing is not None:
@@ -186,6 +191,7 @@ class UploadStore:
             sha256=digest,
             blob_enc=self._vault.encrypt_bytes(content),
             status=UploadStatus.QUEUED,
+            private=private,
         )
 
         def work(session: Session) -> UploadView:
@@ -269,6 +275,22 @@ class UploadStore:
 
         return await in_session(self._engine, work)
 
+    async def set_private(self, owner_id: str, flags: dict[str, bool]) -> None:
+        """Write each upload's Private flag; ids that aren't the owner's are skipped."""
+        if not flags:
+            return
+
+        def work(session: Session) -> None:
+            rows = session.exec(
+                select(Upload).where(Upload.owner_id == owner_id, col(Upload.id).in_(list(flags)))
+            ).all()
+            for row in rows:
+                if row.private != flags[row.id]:
+                    row.private = flags[row.id]
+                    session.add(row)
+
+        await in_session(self._engine, work)
+
     async def retry(self, owner_id: str, upload_id: str) -> UploadView:
         """Re-queue extraction for an upload (e.g. after configuring a vision model for a
         scanned PDF). Resets it to queued and clears the prior note."""
@@ -300,18 +322,45 @@ class UploadStore:
         await in_session(self._engine, work)
         self._adapter.remove_upload(owner_id, upload_id)
 
+    async def delete_all(self, owner_id: str) -> list[str]:
+        """Hard-delete every one of the owner's uploads and drop their corpus chunks.
+        Returns the deleted ids."""
+
+        def work(session: Session) -> list[str]:
+            rows = session.exec(select(Upload).where(Upload.owner_id == owner_id)).all()
+            for row in rows:
+                session.delete(row)
+            return [row.id for row in rows]
+
+        ids = await in_session(self._engine, work)
+        for upload_id in ids:
+            self._adapter.remove_upload(owner_id, upload_id)
+        return ids
+
     # --- read path --------------------------------------------------------
 
-    async def list_uploads(self, owner_id: str) -> list[UploadSummaryView]:
+    async def list_uploads(
+        self, owner_id: str, *, include_private: bool = True
+    ) -> list[UploadSummaryView]:
         """The library, newest first — summaries only (no full extracted text)."""
 
         def work(session: Session) -> list[UploadSummaryView]:
-            rows = session.exec(
-                select(Upload)
-                .where(Upload.owner_id == owner_id)
-                .order_by(col(Upload.created_at).desc())
-            ).all()
+            stmt = select(Upload).where(Upload.owner_id == owner_id)
+            if not include_private:
+                stmt = stmt.where(col(Upload.private).is_(False))
+            rows = session.exec(stmt.order_by(col(Upload.created_at).desc())).all()
             return [self._to_summary(row) for row in rows]
+
+        return await in_session(self._engine, work)
+
+    async def private_among(self, owner_id: str, ids: list[str]) -> set[str]:
+        """Which of ``ids`` are the owner's private uploads. Decrypts nothing."""
+        wanted = list(dict.fromkeys(ids))
+        if not wanted:
+            return set()
+
+        def work(session: Session) -> set[str]:
+            return set(session.exec(select_private_ids(owner_id, wanted)).all())
 
         return await in_session(self._engine, work)
 
@@ -404,9 +453,8 @@ class UploadStore:
         return await in_session(self._engine, work)
 
     async def image_ids(self, owner_id: str, ids: list[str]) -> list[str]:
-        """Of ``ids``, those that name this owner's image files (``image/*``). A cheap
-        clear-column filter that decrypts nothing — the delete-choice flow uses it to keep
-        the keep/purge prompt to images, and to purge only images."""
+        """Of ``ids``, those that name this owner's image files (``image/*``). A clear-column
+        filter that decrypts nothing; deletes use it so they purge only images."""
         wanted = list(dict.fromkeys(ids))  # de-dupe, preserve order
         if not wanted:
             return []
@@ -582,6 +630,7 @@ class UploadStore:
             note=upload.note,
             kb_excluded=upload.kb_excluded,
             favorite=upload.favorite,
+            private=upload.private,
             created_at=upload.created_at,
             updated_at=upload.updated_at,
         )
@@ -600,6 +649,7 @@ class UploadStore:
             note=upload.note,
             kb_excluded=upload.kb_excluded,
             favorite=upload.favorite,
+            private=upload.private,
             created_at=upload.created_at,
             updated_at=upload.updated_at,
         )

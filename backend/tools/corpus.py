@@ -39,6 +39,7 @@ from services.corpus import CorpusIndex
 from services.projects import visible_project_ids
 
 from .deps import RunDeps
+from .recall_gate import own_private_files
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,7 @@ def corpus_toolset() -> FunctionToolset[RunDeps]:
             source_ids=source_ids,
             limit=limit,
             visible_projects=visible_project_ids(ctx.deps.project_id),
+            allowed_private=await own_private_files(ctx),
         )
         nonce = new_nonce()
         passages = [

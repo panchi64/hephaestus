@@ -24,8 +24,7 @@ export function InstrumentBand(props: InstrumentBandProps): JSX.Element {
   return (
     <div
       class={cx(
-        // `heph-framed`: glass over a dot field page, inert elsewhere (§11.1).
-        "heph-framed flex flex-wrap items-stretch divide-x divide-line border border-line bg-surface",
+        "flex flex-wrap items-stretch divide-x divide-line border border-line bg-surface",
         local.class,
       )}
     >

@@ -1,6 +1,7 @@
 import type { JSX } from "solid-js";
 import { useTheme } from "../theme/useTheme";
 import type { ThemePreference } from "../theme/theme-store";
+import { Button } from "./Button";
 import { Icon } from "../primitives/Icon";
 import type { IconName } from "../icons/registry";
 
@@ -20,14 +21,14 @@ const LABEL: Record<ThemePreference, string> = {
 export function ThemeToggle(): JSX.Element {
   const theme = useTheme();
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="sm"
       onClick={() => theme.toggle()}
       aria-label={`Theme: ${LABEL[theme.preference]}. Click to change.`}
       title={LABEL[theme.preference]}
-      class="inline-flex items-center justify-center border border-line w-6 h-6 text-dim transition-colors hover:bg-raised hover:text-bright"
     >
-      <Icon name={ICON[theme.preference]} size={12} />
-    </button>
+      <Icon name={ICON[theme.preference]} size={14} />
+    </Button>
   );
 }

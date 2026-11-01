@@ -2,7 +2,7 @@
  * The thread's live browser: whether it is running, how to start and end it, the stream
  * of frames it paints, and the way input goes back.
  *
- * The browser is headless and lives in the platform VM, so this view is the only window
+ * The browser is headless and lives in the services VM, so this view is the only window
  * onto it. Each conversation owns one session (its tabs); sign-ins are one profile shared
  * across the app, which is not this module's business.
  */

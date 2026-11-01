@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Subagent } from "./data";
+import { isLive } from "./data/subagents";
 import {
   arrange,
   byUrgency,
@@ -143,5 +144,20 @@ describe("countLabel", () => {
       ),
     ).toBe("2 done");
     expect(countLabel(rosterCounts([]))).toBe("");
+  });
+});
+
+describe("a sub-agent a limit stopped", () => {
+  test("is finished, not waiting on the operator, and sorts after the failures", () => {
+    const stopped = agent("s", { status: "stopped" });
+    expect(isLive(stopped)).toBe(false);
+    expect(rosterCounts([stopped])).toEqual({
+      waiting: 0,
+      working: 0,
+      failed: 0,
+      done: 1,
+    });
+    const sorted = [stopped, agent("f", { status: "failed" })].sort(byUrgency);
+    expect(sorted.map((s) => s.id)).toEqual(["f", "s"]);
   });
 });

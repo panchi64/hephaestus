@@ -59,13 +59,11 @@ export function ConversationGrants(props: {
   // is presentation and stops here: the revoke sends the words themselves.
   // A scope recorded under a wider reach leads with `@host` / `@network` (the backend's
   // marker), which reads better as a suffix: "brew install wget (host)".
-  // A grant the operator gave the whole of a command-running tool says so, rather than
-  // sitting under a bare tool name: the empty prefix it shares with that tool's other
-  // grants is exactly what a reader cannot see, and this is the chip they are most likely
-  // to want to revoke. Only there, though — on a tool that runs no command there is one
-  // width and nothing to contrast it with, and "any command" would name commands it never
-  // runs.
-  const wholeTool = (g: ApprovalGrant) => g.decisive && g.commandScoped;
+  // A whole-tool grant on a command-running tool says so, rather than sitting under a bare
+  // tool name: it is the chip the operator is most likely to want to revoke. Only there,
+  // though — on a tool that runs no command "any command" would name commands it never runs.
+  const wholeTool = (g: ApprovalGrant) =>
+    g.commandScoped && g.commandPrefix.length === 0;
   const label = (g: ApprovalGrant) => {
     const [head, ...rest] = g.commandPrefix;
     if (head?.startsWith("@")) return `${rest.join(" ")} (${head.slice(1)})`;

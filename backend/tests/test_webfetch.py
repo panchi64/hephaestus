@@ -4,7 +4,7 @@ Four layers, fastest-first:
 - ``extract`` — the trafilatura→innerText cascade over an HTML string (no browser).
 - ``RequestGuard`` — the per-request SSRF policy (no browser; IP literals stay offline).
 - ``BrowserFetcher`` — pre-flight refusal + degrade, and a real Chromium render in the
-  platform VM that proves JavaScript-injected content is captured (skipped without a real VM).
+  services VM that proves JavaScript-injected content is captured (skipped without a real VM).
 - the agent reaching ``web_fetch`` through the toolset stack.
 """
 
@@ -20,6 +20,7 @@ from typing import cast, final, override
 
 import httpx
 import pytest
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page, Route
 from pydantic_ai import ModelResponse, TextPart
 from pydantic_ai.messages import ModelMessage
@@ -30,8 +31,7 @@ from pydantic_ai.settings import ModelSettings
 from core.config import Settings
 from core.exceptions import SSRFError, WebFetchError
 from core.text import tokens_to_chars, truncate_on_boundary
-from services.vm import PlatformVM
-from services.vm.smolvm import SmolvmDriver
+from services.vm import GuestImage, Platform, ServicesMachine
 from services.webfetch import BrowserFetcher, FetchedPage, ManagedBrowser
 from services.webfetch.cookies import DomainCookieJar
 from services.webfetch.distill import WebDistiller
@@ -518,6 +518,46 @@ async def test_distiller_windows_and_drops_irrelevant():
     assert "covered the first 24 of 36 characters" in out2
 
 
+def _stalling_distiller(*, answer_first: bool) -> WebDistiller:
+    """A distiller over 3 windows whose model answers the "A" window (if ``answer_first``)
+    and hangs on every other until the 0.2 s deadline."""
+
+    async def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        contents = (
+            cast(object, getattr(part, "content", None)) for m in messages for part in m.parts
+        )
+        text = " ".join(content for content in contents if isinstance(content, str))
+        if answer_first and "A" * 12 in text:
+            return ModelResponse(parts=[TextPart(content="KEPT-A")])
+        _ = await asyncio.Event().wait()
+        raise AssertionError("unreachable: the deadline cancels the hang")
+
+    async def _resolve() -> tuple[Model, ModelSettings | None]:
+        return FunctionModel(_respond), None
+
+    return WebDistiller(
+        resolve_model=_resolve, instructions="x", window_tokens=3, max_windows=8, timeout_s=0.2
+    )
+
+
+async def test_distiller_timeout_keeps_finished_windows(caplog: pytest.LogCaptureFixture):
+    body = "A" * 12 + "B" * 12 + "C" * 12
+    out = await _stalling_distiller(answer_first=True).distill(body, goal="g", url="http://x/")
+    assert out is not None
+    assert out.startswith("KEPT-A")
+    assert "covered the first 12 of 36 characters" in out
+    timeouts = [r for r in caplog.records if "timed out" in r.getMessage()]
+    assert len(timeouts) == 1
+    assert "1 of 3 windows done" in timeouts[0].getMessage()
+    assert timeouts[0].exc_info is None  # an expected timeout logs no traceback
+
+
+async def test_distiller_timeout_before_any_window_falls_back():
+    body = "A" * 12 + "B" * 12 + "C" * 12
+    out = await _stalling_distiller(answer_first=False).distill(body, goal="g", url="http://x/")
+    assert out is None
+
+
 # --- adaptive settle loop (no browser) -------------------------------------
 
 
@@ -635,8 +675,6 @@ class _PdfDownloadBrowser(RenderBrowser, RenderContext, RenderPage):
     async def goto(
         self, url: str, *, wait_until: WaitUntil, timeout: float
     ) -> RenderResponse | None:
-        from playwright.async_api import Error as PlaywrightError
-
         raise PlaywrightError("Page.goto: net::ERR_ABORTED; Download is starting")
 
 
@@ -649,6 +687,157 @@ async def test_download_error_routes_to_pdf_path(monkeypatch: pytest.MonkeyPatch
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/paper.pdf")
     assert "Attention Is All You Need" in page.content
     assert '<untrusted id="' in page.content
+
+
+_CLOUDFLARE = {"server": "cloudflare"}
+
+# The shape of Cloudflare's HTML error templates, old (cf-error-code) and new (bare span).
+_CF_HTML_1016 = (
+    "<!DOCTYPE html><html><head><title>Origin DNS error | x.example | Cloudflare</title>"
+    '</head><body><h1><span class="cf-error-type">Error</span> '
+    '<span class="cf-error-code">1016</span></h1></body></html>'
+)
+_CF_HTML_1018 = (
+    '<html><body><h1><span data-translate="error">Error</span><span>1018</span></h1></body></html>'
+)
+
+
+@final
+class _ErrorResponse(RenderResponse):
+    """An error response whose body reads as ``body``, raises it, or (None) never finishes."""
+
+    def __init__(self, status: int, body: str | Exception | None, headers: dict[str, str]) -> None:
+        self._status: int = status
+        self._body: str | Exception | None = body
+        self._headers: dict[str, str] = headers
+
+    @property
+    @override
+    def status(self) -> int:
+        return self._status
+
+    @property
+    @override
+    def headers(self) -> dict[str, str]:
+        return self._headers
+
+    @override
+    async def body(self) -> bytes:
+        if self._body is None:
+            _ = await asyncio.Event().wait()
+        if isinstance(self._body, Exception):
+            raise self._body
+        return (self._body or "").encode()
+
+
+@final
+class _ErrorStatusBrowser(RenderBrowser, RenderContext, RenderPage):
+    """available; its page's goto answers with a fixed error response."""
+
+    def __init__(self, response: _ErrorResponse) -> None:
+        self._response: _ErrorResponse = response
+
+    @property
+    @override
+    def available(self) -> bool:
+        return True
+
+    @override
+    @asynccontextmanager
+    async def context(self, url: str | None = None) -> AsyncGenerator[_ErrorStatusBrowser]:
+        yield self
+
+    @override
+    async def new_page(self) -> _ErrorStatusBrowser:
+        return self
+
+    @override
+    async def apply_stealth(self, page: RenderPage) -> None:
+        return None
+
+    @property
+    @override
+    def url(self) -> str:
+        return "http://93.184.216.34/gone"
+
+    @override
+    async def wait_for_timeout(self, timeout: float) -> None:
+        raise AssertionError("unexpected call: wait_for_timeout")
+
+    @override
+    async def content(self) -> str:
+        raise AssertionError("unexpected call: content")
+
+    @override
+    async def evaluate(self, expression: str) -> str:
+        raise AssertionError("unexpected call: evaluate")
+
+    @override
+    async def goto(
+        self, url: str, *, wait_until: WaitUntil, timeout: float
+    ) -> RenderResponse | None:
+        return self._response
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "headers", "says_search"),
+    [
+        (404, "", {}, True),
+        # Cloudflare fronting a hostname it no longer routes: the host itself is gone.
+        (409, "error code: 1001", _CLOUDFLARE, True),
+        (530, _CF_HTML_1016, _CLOUDFLARE, True),
+        (530, _CF_HTML_1018, _CLOUDFLARE, True),
+        # A firewall block is a live host refusing us, not a missing page.
+        (403, "error code: 1020", _CLOUDFLARE, False),
+        # The same text from another server is that app's own error, not Cloudflare's.
+        (401, "error code: 1002", {"server": "nginx"}, False),
+        (409, "", _CLOUDFLARE, False),
+        (409, PlaywrightError("Response body is unavailable"), _CLOUDFLARE, False),
+    ],
+)
+async def test_error_status_hint(
+    status: int, body: str | Exception, headers: dict[str, str], says_search: bool
+):
+    response = _ErrorResponse(status, body, headers)
+    fetcher = BrowserFetcher(browser=_ErrorStatusBrowser(response))
+    with pytest.raises(WebFetchError) as raised:
+        _ = await fetcher.fetch(OWNER, "http://93.184.216.34/gone")
+    assert f"HTTP {status}" in str(raised.value)
+    assert ("web_search" in (raised.value.hint or "")) is says_search
+
+
+async def test_error_body_that_never_finishes_is_bounded():
+    response = _ErrorResponse(530, None, _CLOUDFLARE)
+    fetcher = BrowserFetcher(browser=_ErrorStatusBrowser(response), timeout_s=0.05)
+    with pytest.raises(WebFetchError) as raised:
+        _ = await asyncio.wait_for(fetcher.fetch(OWNER, "http://93.184.216.34/gone"), 5)
+    assert raised.value.hint is None
+
+
+async def test_fetch_pdf_text_reads_cloudflare_dead_host(monkeypatch: pytest.MonkeyPatch):
+    from services.webfetch import pdf as pdf_mod
+
+    async def _public(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(pdf_mod, "assert_public_url", _public)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, headers=_CLOUDFLARE, content=b"error code: 1001")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(WebFetchError) as raised:
+            _ = await pdf_mod.fetch_pdf_text(
+                "https://gone.example/a.pdf",
+                timeout_s=5,
+                max_bytes=1000,
+                max_pages=1,
+                client=client,
+            )
+    finally:
+        await client.aclose()
+    assert "web_search" in (raised.value.hint or "")
 
 
 async def test_fetch_pdf_text_follows_redirect_recheck(monkeypatch: pytest.MonkeyPatch):
@@ -765,29 +954,31 @@ async def test_fetch_pdf_text_size_cap(monkeypatch: pytest.MonkeyPatch):
 # --- VM-hosted browser: a real render (skipped without a real VM) ------------
 
 
-async def _browser_or_skip(tmp_path: Path) -> tuple[ManagedBrowser, PlatformVM]:
-    """A browser in a real platform VM; set ``HEPHAESTUS_TEST_VM=1`` on a host that has the
-    VM backend and its image to run it."""
+async def _browser_or_skip(tmp_path: Path) -> tuple[ManagedBrowser, ServicesMachine, Platform]:
+    """A browser in a real services VM; set ``HEPHAESTUS_TEST_VM=1`` on a host that can run
+    machines to run it."""
     if not os.environ.get("HEPHAESTUS_TEST_VM"):
-        pytest.skip("set HEPHAESTUS_TEST_VM=1 to render in a real platform VM")
+        pytest.skip("set HEPHAESTUS_TEST_VM=1 to render in a real services VM")
     settings = Settings(data_dir=tmp_path)
-    vm = PlatformVM(
-        SmolvmDriver(
-            state_dir=tmp_path / "vm",
-            cpus=settings.vm_cpus,
-            memory_mb=settings.vm_memory_mb,
-            disk_gb=settings.vm_disk_gb,
-            boot_timeout_s=settings.vm_boot_timeout_s,
-            provision_timeout_s=settings.vm_provision_timeout_s,
-            image=Path(settings.vm_image) if settings.vm_image else None,
+    platform = Platform(
+        GuestImage(
+            tmp_path / "images",
             ca_bundle=Path(settings.vm_ca_bundle) if settings.vm_ca_bundle else None,
-        ),
-        scratch=tmp_path / "vm" / "transfer",
+            override=Path(settings.vm_image) if settings.vm_image else None,
+        )
+    )
+    await platform.start()
+    vm = ServicesMachine(
+        platform,
+        name=f"heph-test-{os.getpid()}-services",
+        cpus=settings.vm_services_cpus,
+        memory_mb=settings.vm_services_memory_mb,
     )
     await vm.start()
-    if not await vm.wait_ready(settings.vm_boot_timeout_s + settings.vm_provision_timeout_s):
+    if not await vm.wait_ready(3600.0):
         await vm.stop()
-        pytest.fail(f"the platform VM did not come up: {vm.failure}")
+        await platform.stop()
+        pytest.fail(f"the services VM did not come up: {vm.failure}")
     browser = ManagedBrowser(
         enabled=True,
         vm=vm,
@@ -801,8 +992,9 @@ async def _browser_or_skip(tmp_path: Path) -> tuple[ManagedBrowser, PlatformVM]:
     if not await browser.wait_available(600.0):
         await browser.stop()
         await vm.stop()
-        pytest.fail("the browser did not connect in the platform VM")
-    return browser, vm
+        await platform.stop()
+        pytest.fail("the browser did not connect in the services VM")
+    return browser, vm, platform
 
 
 async def _allow_all(_url: str) -> None:
@@ -816,7 +1008,7 @@ async def _js(page: Page, expression: str) -> object:
 async def test_vm_browser_renders_js_extracts_and_is_stealthed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    browser, vm = await _browser_or_skip(tmp_path)
+    browser, vm, platform = await _browser_or_skip(tmp_path)
     try:
         # 1) The fetch pipeline renders a JS-built page and extracts its content as Markdown.
         # Let the synthetic data: URL past the entry pre-flight (the guard treats data: as
@@ -888,6 +1080,7 @@ async def test_vm_browser_renders_js_extracts_and_is_stealthed(
     finally:
         await browser.stop()
         await vm.stop()
+        await platform.stop()
 
 
 # --- agent reaches the fetch tool through the toolset stack ----------------

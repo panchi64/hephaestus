@@ -11,7 +11,6 @@ import {
   LoadingText,
   Menu,
   Modal,
-  PageHeader,
   Panel,
   Row,
   Select,
@@ -23,6 +22,7 @@ import {
   toast,
   type Status,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { timestamp } from "~/lib/format";
 import { createInFlight } from "~/lib/inFlight";
 import {
@@ -199,7 +199,7 @@ function ConnectorCard(props: {
                   <ExpandableText
                     text={action.description}
                     limit={100}
-                    variant="micro"
+                    variant="caption"
                     tone="dim"
                     class="max-w-xs"
                   />
@@ -404,18 +404,15 @@ export function IntegrationsScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Integrations"
-        subtitle="HTTP service connectors. Credentials are encrypted at rest."
-        assetId="SYS-INT-05.1"
+      <SettingsPageHeader
+        section="integrations"
+        status={
+          <StatusFlag status="nominal">{`${configuredCount()} CONFIGURED`}</StatusFlag>
+        }
         actions={
-          <Row gap={2} align="center">
-            <StatusFlag status="nominal">{`${configuredCount()} CONFIGURED`}</StatusFlag>
-            <Button variant="default" leading="plus" onClick={openAdd}>
-              Add connector
-            </Button>
-          </Row>
+          <Button variant="default" leading="plus" onClick={openAdd}>
+            Add connector
+          </Button>
         }
       />
 
@@ -436,7 +433,7 @@ export function IntegrationsScreen(): JSX.Element {
           }
         >
           <Stack gap={4}>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               Every connector action asks for your approval before it runs until
               you trust it — one action at a time, never a whole connector.
             </Text>
@@ -489,7 +486,7 @@ export function IntegrationsScreen(): JSX.Element {
           <Show when={chosenPreset()}>
             {(preset) => (
               <Stack gap={4}>
-                <Text variant="micro" tone="dim">
+                <Text variant="caption" tone="dim">
                   {preset().description}
                 </Text>
                 <Input
@@ -519,7 +516,7 @@ export function IntegrationsScreen(): JSX.Element {
                       : "Optional for this connector"
                   }
                 />
-                <Text variant="micro" tone="dim">
+                <Text variant="caption" tone="dim">
                   {preset().actions.length} actions become available, each
                   switched on but untrusted — they will ask before they run.
                 </Text>
@@ -549,7 +546,7 @@ export function IntegrationsScreen(): JSX.Element {
           {(int) => (
             <Stack gap={4}>
               <Show when={int().description}>
-                <Text variant="micro" tone="dim">
+                <Text variant="caption" tone="dim">
                   {int().description}
                 </Text>
               </Show>
@@ -588,7 +585,7 @@ export function IntegrationsScreen(): JSX.Element {
                 />
               </Show>
 
-              <Text variant="micro" tone="dim">
+              <Text variant="caption" tone="dim">
                 Credentials are encrypted at rest and never read back. Save,
                 then run TEST on the card to prove the credential before relying
                 on it.

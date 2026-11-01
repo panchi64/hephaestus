@@ -1,8 +1,8 @@
 /**
  * Does a streamed answer leave anything behind?
  *
- * The reveal wraps each arriving character in its own span so it can resolve in on its
- * own schedule, and for a long time nothing ever took those wrappers out again: every
+ * The reveal wraps arriving characters in spans so they resolve in on their own
+ * schedule, and for a long time nothing ever took those wrappers out again: every
  * character that passed through the reveal window kept its span, its inline
  * `animation-delay` and its filled animation for the life of the session. A four-turn
  * fixture left over a thousand of them. That is invisible — the fade is over, the text
@@ -181,7 +181,10 @@ test("no character loses its wrapper while its fade is still running", async () 
         await new Promise((res) => {
           const t0 = performance.now();
           const tick = () => {
-            const spans = document.querySelectorAll('.heph-token-in').length;
+            const wrappers = document.querySelectorAll('.heph-token-in');
+            const spans = wrappers.length;
+            let wrapped = 0;
+            for (const w of wrappers) wrapped += w.textContent.length;
             const prose = document.querySelector(${ANSWER_PROSE});
             const chars = prose ? prose.textContent.length : 0;
             let running = 0;
@@ -192,7 +195,7 @@ test("no character loses its wrapper while its fade is still running", async () 
               const ct = typeof a.currentTime === 'number' ? a.currentTime : 0;
               if (a.playState !== 'finished' && ct / d < 1) running++;
             }
-            log.push({ spans, running, chars });
+            log.push({ spans, wrapped, running, chars });
             zero = spans === 0 ? zero + 1 : 0;
             if ((zero > 30 && log.length > 120) || performance.now() - t0 > 30000) { res(); return; }
             requestAnimationFrame(tick);
@@ -200,13 +203,14 @@ test("no character loses its wrapper while its fade is still running", async () 
           requestAnimationFrame(tick);
         });
         // A wrapper may only disappear once its fade is over, so a big drop in the
-        // wrapper count while characters are still fading is the snap this guards. Two
+        // wrapped characters while some are still fading is the snap this guards. Counted
+        // in characters, not wrappers, since a wrapper holds a frame's worth of them. Two
         // qualifiers, both load-bearing:
         //
-        // The tolerance separates things orders of magnitude apart — a couple of
-        // characters finishing between frames and being written back as plain text is
-        // ordinary churn (observed: 1-2), where the bug collapsed 74 wrappers to 1 in a
-        // single frame with every one at opacity 0.
+        // The tolerance separates things orders of magnitude apart — a few characters
+        // finishing between frames and being written back as plain text is ordinary
+        // churn, where the bug collapsed 74 characters in a single frame with every one
+        // at opacity 0.
         //
         // A frame where the rendered prose got SHORTER is exempt, and that is a real
         // rule rather than a let-off. It means markdown finished a construct that took
@@ -219,12 +223,12 @@ test("no character loses its wrapper while its fade is still running", async () 
         for (let i = 1; i < log.length; i++)
           if (
             log[i - 1].running > 0 &&
-            log[i - 1].spans - log[i].spans > 10 &&
+            log[i - 1].wrapped - log[i].wrapped > 10 &&
             log[i].chars >= log[i - 1].chars
           )
             cuts.push({
               wasMidFade: log[i - 1].running,
-              lost: log[i - 1].spans - log[i].spans,
+              lost: log[i - 1].wrapped - log[i].wrapped,
             });
         return JSON.stringify({
           frames: log.length,
@@ -242,13 +246,14 @@ test("no character loses its wrapper while its fade is still running", async () 
     };
 
     // Without these the assertion below passes on a reveal that never animated at all.
-    expect(result.peak).toBeGreaterThan(50);
+    // Characters starting within a frame share a wrapper, so the window's couple of
+    // hundred characters peak at a few dozen wrappers (observed ~46).
+    expect(result.peak).toBeGreaterThan(20);
     expect(result.framesMidFade).toBeGreaterThan(30);
     // And an upper bound, because the failure in the other direction is silent: wrapping
-    // a block that still holds wrappers puts a span inside each existing one and doubles
-    // the count every delta. The reveal window at this rate holds a couple of hundred
-    // characters (observed peak ~190); nesting took it past a thousand.
-    expect(result.peak).toBeLessThan(500);
+    // a block that still holds wrappers puts a span inside each existing one and
+    // multiplies the count every delta, which took it past a thousand.
+    expect(result.peak).toBeLessThan(250);
     expect(result.cuts).toEqual([]);
   } finally {
     wv.close();

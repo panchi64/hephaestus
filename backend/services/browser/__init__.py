@@ -1,4 +1,4 @@
-"""Browser control — the agent drives a real page in the platform VM, and the operator
+"""Browser control — the agent drives a real page in the services VM, and the operator
 watches and drives it through the app's live view.
 
 :class:`VMBrowser` hands out web fetch's Chromium; :class:`BrowserSessionManager` gives

@@ -22,9 +22,7 @@ from pathlib import Path
 
 from routes.deps import app_state
 from services.plugins import PluginRuntime
-from services.sandbox import SandboxSessionManager
-from services.sandbox.thread_shells import ThreadShells
-from services.vm.project import ProjectCopies
+from services.vm import ConversationMachines, Previews
 from tests._helpers import client_app
 
 _BACKEND = Path(__file__).resolve().parents[1]
@@ -33,11 +31,9 @@ _BACKEND = Path(__file__).resolve().parents[1]
 # the host lacks the facility, which is exactly how the test app boots. Each entry
 # needs a reason; anything else missing is a wiring bug, not a condition.
 _CONDITIONAL = {
-    # Added only when the sandbox is enabled; tests run sandbox_enabled=False.
-    SandboxSessionManager,
-    # Added only when the platform VM is enabled; tests run vm_enabled=False.
-    ProjectCopies,
-    ThreadShells,
+    # Added only when the VM is enabled; tests run vm_enabled=False.
+    ConversationMachines,
+    Previews,
     PluginRuntime,
 }
 

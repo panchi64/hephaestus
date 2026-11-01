@@ -4,7 +4,7 @@ and the rendered turns.
 
 from __future__ import annotations
 
-from pydantic_ai import ModelMessage, ModelRequest
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse
 
 from runs.timings import TimingTotals
 from services.conversation_view import MessageView, project_tree, stamped_command, stamped_file_refs
@@ -27,6 +27,14 @@ class HistoryMixin(StoreCore):
         thread."""
         tree = await self.tree(conversation_id)
         return [node.message for node in tree.active_path()]
+
+    async def latest_answer(self, conversation_id: str) -> str | None:
+        """The newest response that said anything. One answering a retry is a second answer,
+        not more of the first, so the rendered turn (which joins them) is not it."""
+        messages = await self.history(conversation_id)
+        return next(
+            (m.text for m in reversed(messages) if isinstance(m, ModelResponse) and m.text), None
+        )
 
     async def replay_history(self, conversation_id: str) -> ReplayHistory:
         """What the next request replays, with the fold boundary the live gauge would use.

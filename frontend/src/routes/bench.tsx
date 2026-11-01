@@ -490,7 +490,7 @@ export default function Bench(): JSX.Element {
               // still in flight is depending on, cutting live fades to full opacity and
               // leaving the clean arms measuring a DOM the product never produces.
               span.dataset.benchSpan = "";
-              span.style.setProperty("--reveal-ms", "320ms");
+              span.style.setProperty("--token-reveal-ms", "320ms");
               span.style.animationDelay = "-9999ms";
               span.textContent = node.data[c];
               frag.appendChild(span);

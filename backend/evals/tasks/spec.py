@@ -10,7 +10,7 @@ from typing import Annotated, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 type Area = Literal["build", "research", "admin", "personal"]
-#: Both run in the platform VM: web search is SearXNG inside it.
+#: Both need a VM: web search is SearXNG in the services VM.
 type Requirement = Literal["vm", "search"]
 
 

@@ -9,10 +9,16 @@ import httpx
 import pytest
 from pydantic import JsonValue
 
-from services.mail.errors import MailAuthError, MailError
-from services.mail.jmap import JmapTransport
-from services.mail.models import ROLE_INBOX, ROLE_SENT, AccountSpec, MailAddress, OutgoingMail
-from services.mail.transport import MailTransport
+from plugins.mail.services.errors import MailAuthError, MailError
+from plugins.mail.services.jmap import JmapTransport
+from plugins.mail.services.models import (
+    ROLE_INBOX,
+    ROLE_SENT,
+    AccountSpec,
+    MailAddress,
+    OutgoingMail,
+)
+from plugins.mail.services.transport import MailTransport
 
 from ._json import arr, obj, parse_json, s
 
@@ -133,7 +139,7 @@ def _allow_outbound(monkeypatch: pytest.MonkeyPatch):
     async def _ok(_url: str) -> None:
         return None
 
-    monkeypatch.setattr("services.mail.jmap.assert_public_url", _ok)
+    monkeypatch.setattr("plugins.mail.services.jmap.assert_public_url", _ok)
 
 
 def test_the_adapter_satisfies_the_transport_protocol():
@@ -255,7 +261,7 @@ async def test_a_private_server_url_is_refused(monkeypatch: pytest.MonkeyPatch):
     async def _blocked(_url: str) -> None:
         raise SSRFError("resolves to a private address")
 
-    monkeypatch.setattr("services.mail.jmap.assert_public_url", _blocked)
+    monkeypatch.setattr("plugins.mail.services.jmap.assert_public_url", _blocked)
     server = _Server()
     with pytest.raises(MailError):
         _ = await _transport(server).probe()

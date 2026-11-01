@@ -154,35 +154,6 @@ describe("a fold made only of injected context still names itself", () => {
   });
 });
 
-describe("a folded review names the call it judged", () => {
-  function review(id: string, decision?: "allow" | "ask" | "block") {
-    return {
-      kind: "review" as const,
-      id,
-      review: {
-        toolCallId: id,
-        name: "shell_run_command",
-        summary: "Runs the shell command: git status",
-        decision,
-      },
-    };
-  }
-
-  test("the header borrows the judged tool's own glyph and word", () => {
-    // "Review · Shell · review: allow" says what happened; a header reading
-    // "Review" alone would say only that something did.
-    expect(shape([review("r1", "allow")]).latest).toEqual({
-      icon: "review",
-      label: "Shell",
-      detail: "review: allow",
-    });
-  });
-
-  test("a review still in flight says so rather than reading as settled", () => {
-    expect(shape([review("r1")]).latest?.detail).toBe("reviewing");
-  });
-});
-
 describe("the header's reason and the row beneath it", () => {
   test("it is the latest narration, and the step keeps its argument", () => {
     // The header leads with the reason; the indented row under it names the act.

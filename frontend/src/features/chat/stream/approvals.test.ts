@@ -56,7 +56,7 @@ function waiting(messages: ChatMessage[], sending = true): boolean {
       activeRunId: () => "run-1",
       reconcileStaleDecision: async () => {},
     });
-    const answer = ops.awaitingInput();
+    const answer = ops.awaitingKind() !== null;
     dispose();
     return answer;
   });

@@ -60,9 +60,11 @@ class Scenario:
     #: wrong test. Scripting a sequence is the case that says ``uses``, and saying it
     #: there reads naturally — this reply once, then the next one.
     uses: int | None = None
+    #: Thinking streamed before the text — see ``Reply.reasoning``.
+    reasoning: str = ""
 
     def reply(self) -> Reply:
-        return Reply(text=self.text, tool_calls=list(self.tool_calls))
+        return Reply(text=self.text, tool_calls=list(self.tool_calls), reasoning=self.reasoning)
 
 
 #: What an unscripted request gets. Deliberately echoes the prompt rather than saying

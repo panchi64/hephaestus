@@ -108,7 +108,7 @@ export function ContextBreakdown(props: {
       </div>
 
       <Show when={!props.usage.parts}>
-        <Text variant="micro" tone="dim">
+        <Text variant="caption" tone="dim">
           The breakdown appears once a turn has run — the tool schemas and
           system prompt aren't in the stored transcript, so they're measured as
           a message is sent, then kept with the thread.

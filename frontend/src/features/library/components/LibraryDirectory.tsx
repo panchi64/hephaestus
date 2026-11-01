@@ -1,6 +1,7 @@
-import { For, Show, Suspense, type JSX } from "solid-js";
+import { For, Index, Show, Suspense, type JSX } from "solid-js";
 import { createListView, type SortDef, type SortDir } from "~/lib/list";
 import { useTabParam } from "~/lib/useTabParam";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import {
   Button,
   EmptyState,
@@ -11,12 +12,12 @@ import {
   ListToolbar,
   LoadingText,
   Menu,
-  PageHeader,
   Panel,
   Row,
   Stack,
   Tabs,
   Text,
+  Tooltip,
   useFileDrop,
   type BandCell,
   type IconName,
@@ -28,13 +29,13 @@ import {
   LIBRARY_TAB_VALUES,
   searchText,
   type LibraryEntry,
+  type LibraryGroup,
   type LibraryTab,
 } from "../model";
 
 export interface LibraryDirectoryProps<T extends LibraryEntry> {
-  title: string;
-  subtitle: string;
-  assetId: string;
+  /** The settings section this directory is the pane of; it titles the header. */
+  section: string;
   /** Singular and plural nouns for the empty states and the New button. */
   noun: string;
   nouns: string;
@@ -46,8 +47,9 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
   initialDir: SortDir;
   /** Cells after the shared Total / Published / Draft. */
   bandExtra?: BandCell[];
-  /** Text of the two info hints beside the tabs. */
+  /** Text of the info hint beside the tabs. */
   draftHint: string;
+  /** What Import accepts, shown on the button's tooltip. */
   importHint: string;
   importAccept: string;
   importing: boolean;
@@ -55,9 +57,14 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
   /** Absent where items are not created by hand; the New button is omitted. */
   onNew?: () => void;
   onOpen: (item: T) => void;
+  /** A row's label, when it is not the item's name. Search matches it instead of the
+   *  name; a `sorts` entry by name should compare it too. */
+  rowLabel?: (item: T) => string;
   /** Everything on the right of a row except the `…` menu. */
   rowRight: (item: T) => JSX.Element;
   menuItems: (item: T) => MenuItem[];
+  /** Splits the searched, sorted rows into headed sections; without it the list is flat. */
+  groups?: (visible: T[]) => LibraryGroup<T>[];
   /** Hint shown under an empty unfiltered list. */
   emptyCreateHint: string;
   /** The create dialog, rendered once beside the list. */
@@ -65,8 +72,8 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
 }
 
 /** The directory both Skills and Agents render: header with Import / New,
- *  instrument band, All / Published / Draft tabs, search + sort, and a flat row
- *  list. What differs between them arrives as props and render slots. */
+ *  instrument band, All / Published / Draft tabs, search + sort, and a row list,
+ *  flat or grouped. What differs between them arrives as props and render slots. */
 export function LibraryDirectory<T extends LibraryEntry>(
   props: LibraryDirectoryProps<T>,
 ): JSX.Element {
@@ -80,13 +87,44 @@ export function LibraryDirectory<T extends LibraryEntry>(
   const publishedCount = () => props.items.filter((i) => i.published).length;
   const draftCount = () => props.items.length - publishedCount();
 
+  const label = (item: T): string => props.rowLabel?.(item) ?? item.name;
   const view = createListView({
     source: () => filterByTab(props.items, tab()),
-    search: searchText,
+    search: (item) =>
+      searchText({ name: label(item), description: item.description }),
     sorts: props.sorts,
     initialSort: props.initialSort,
     initialDir: props.initialDir,
   });
+
+  const row = (item: T) => (
+    <ListRow
+      label={label(item)}
+      leading={props.icon}
+      onClick={() => props.onOpen(item)}
+      right={
+        <span class="flex shrink-0 items-center gap-3">
+          {props.rowRight(item)}
+          {/* Stop row navigation when interacting with the menu. */}
+          <span
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <Menu
+              trigger={
+                <span class="px-1 text-dim hover:text-bright">
+                  <Text variant="micro">···</Text>
+                </span>
+              }
+              items={props.menuItems(item)}
+            />
+          </span>
+        </span>
+      }
+    />
+  );
 
   const emptyHint = (): string => {
     if (view.isFiltered()) return `No ${props.nouns} match your search.`;
@@ -97,11 +135,8 @@ export function LibraryDirectory<T extends LibraryEntry>(
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title={props.title}
-        subtitle={props.subtitle}
-        assetId={props.assetId}
+      <SettingsPageHeader
+        section={props.section}
         actions={
           <Row gap={2}>
             <input
@@ -111,14 +146,16 @@ export function LibraryDirectory<T extends LibraryEntry>(
               accept={props.importAccept}
               {...picker.inputHandlers}
             />
-            <Button
-              variant="default"
-              leading="upload"
-              disabled={props.importing}
-              onClick={picker.openPicker}
-            >
-              {props.importing ? "Importing…" : "Import"}
-            </Button>
+            <Tooltip label={props.importHint} side="bottom">
+              <Button
+                variant="default"
+                leading="upload"
+                disabled={props.importing}
+                onClick={picker.openPicker}
+              >
+                {props.importing ? "Importing…" : "Import"}
+              </Button>
+            </Tooltip>
             <Show when={props.onNew}>
               {(onNew) => (
                 <Button variant="primary" leading="plus" onClick={onNew()}>
@@ -133,11 +170,7 @@ export function LibraryDirectory<T extends LibraryEntry>(
       <InstrumentBand
         items={[
           { label: "Total", value: String(props.items.length) },
-          {
-            label: "Published",
-            value: String(publishedCount()),
-            tone: "nominal",
-          },
+          { label: "Published", value: String(publishedCount()) },
           { label: "Draft", value: String(draftCount()), tone: "dim" },
           ...(props.bandExtra ?? []),
         ]}
@@ -156,12 +189,6 @@ export function LibraryDirectory<T extends LibraryEntry>(
                 Draft
               </Text>
               <InfoHint label={props.draftHint} />
-            </Row>
-            <Row align="center" gap={1}>
-              <Text variant="micro" tone="dim">
-                Import
-              </Text>
-              <InfoHint label={props.importHint} />
             </Row>
           </Row>
         </div>
@@ -202,36 +229,28 @@ export function LibraryDirectory<T extends LibraryEntry>(
               />
             }
           >
-            <For each={view.items()}>
-              {(item) => (
-                <ListRow
-                  label={item.name}
-                  leading={props.icon}
-                  onClick={() => props.onOpen(item)}
-                  right={
-                    <span class="flex shrink-0 items-center gap-3">
-                      {props.rowRight(item)}
-                      {/* Stop row navigation when interacting with the menu. */}
-                      <span
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                      >
-                        <Menu
-                          trigger={
-                            <span class="px-1 text-dim hover:text-bright">
-                              <Text variant="micro">···</Text>
-                            </span>
-                          }
-                          items={props.menuItems(item)}
-                        />
-                      </span>
-                    </span>
-                  }
-                />
+            <Show
+              when={props.groups}
+              fallback={<For each={view.items()}>{row}</For>}
+            >
+              {/* `Index`: the grouping builds fresh group objects on every change, so
+                  keying sections by reference would remount every row with them. */}
+              {(groups) => (
+                <Index each={groups()(view.items())}>
+                  {(group) => (
+                    <section>
+                      <div class="flex items-baseline gap-3 px-3 pt-4 pb-1">
+                        <Text variant="plate">{group().label}</Text>
+                        <Text variant="micro" tone="dim" class="truncate">
+                          {group().note}
+                        </Text>
+                      </div>
+                      <For each={group().items}>{row}</For>
+                    </section>
+                  )}
+                </Index>
               )}
-            </For>
+            </Show>
           </Show>
         </Suspense>
       </Panel>

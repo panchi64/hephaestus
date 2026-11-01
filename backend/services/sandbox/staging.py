@@ -32,9 +32,7 @@ _MAX_SUFFIX_ATTEMPTS = 1000
 
 
 class _Stageable(Protocol):
-    """The slice of :class:`~services.sandbox.session.SandboxSession` staging uses —
-    named structurally so this module needn't import the session (and so a test can
-    stand in a two-method fake)."""
+    """The slice of :class:`~services.home.scratch.HostFiles` staging uses."""
 
     def read_file(self, relpath: str) -> bytes: ...
 

@@ -222,7 +222,7 @@ export function ViewSnapshotCode(props: {
                   <Switch>
                     {/* Full code. */}
                     <Match when={fromId() === NO_DIFF}>
-                      <Switch fallback={<LoadingText label="Loading file…" />}>
+                      <Switch fallback={<LoadingText label="Loading file" />}>
                         <Match when={text.error}>
                           <ErrorState
                             message="Could not load this file."
@@ -243,7 +243,7 @@ export function ViewSnapshotCode(props: {
 
                     {/* Diff against the chosen FROM. */}
                     <Match when={fromId() !== NO_DIFF}>
-                      <Switch fallback={<LoadingText label="Loading diff…" />}>
+                      <Switch fallback={<LoadingText label="Loading diff" />}>
                         <Match when={diffs.error}>
                           <ErrorState
                             message="Could not load this diff."

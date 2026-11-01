@@ -9,9 +9,11 @@ never returned — listings expose only ``has_api_key``.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from pydantic_ai.settings import ThinkingEffort
 
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from models.registry import ModelEndpoint
@@ -34,6 +36,7 @@ class EndpointCreate(BaseModel):
     native_tools: bool = True
     vision: bool = False
     thinking: bool = False
+    effort: ThinkingEffort | None = None
     enabled: bool = True
     max_concurrent_runs: int | None = Field(default=None, ge=1)
 
@@ -48,6 +51,7 @@ class EndpointUpdate(BaseModel):
     native_tools: bool | None = None
     vision: bool | None = None
     thinking: bool | None = None
+    effort: ThinkingEffort | Literal[""] | None = None  # "" clears it
     enabled: bool | None = None
     max_concurrent_runs: int | None = Field(default=None, ge=0)  # 0 clears it
 
@@ -67,6 +71,7 @@ class EndpointView(BaseModel):
     native_tools: bool
     vision: bool
     thinking: bool
+    effort: str | None
     # None ⇒ the server's reported slot count, or unlimited.
     max_concurrent_runs: int | None
     # Disable-without-delete + last connection-test health. ``last_*`` carry the
@@ -91,6 +96,7 @@ def _view(endpoint: ModelEndpoint) -> EndpointView:
         native_tools=endpoint.native_tools,
         vision=endpoint.vision,
         thinking=endpoint.thinking,
+        effort=endpoint.effort,
         max_concurrent_runs=endpoint.max_concurrent_runs,
         enabled=endpoint.enabled,
         last_status=endpoint.last_status,
@@ -112,6 +118,7 @@ class ProviderView(BaseModel):
     docs_url: str | None
     native_tools: bool
     vision: bool
+    uses_effort: bool
 
 
 @router.get("/providers", response_model=list[ProviderView])
@@ -126,6 +133,7 @@ async def list_providers() -> list[ProviderView]:
             docs_url=p.preset.docs_url,
             native_tools=p.preset.native_tools,
             vision=p.preset.vision,
+            uses_effort=p.preset.uses_effort,
         )
         for p in all_providers()
     ]
@@ -151,6 +159,7 @@ async def create_endpoint(body: EndpointCreate, request: Request) -> EndpointVie
             native_tools=body.native_tools,
             vision=body.vision,
             thinking=body.thinking,
+            effort=body.effort,
             enabled=body.enabled,
             max_concurrent_runs=body.max_concurrent_runs,
         )

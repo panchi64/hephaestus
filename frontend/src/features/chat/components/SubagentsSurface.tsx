@@ -28,6 +28,7 @@ const HEADINGS = ["Agent", "Task", "Latest", "Ctx", "T+"];
  */
 export function SubagentsSurface(props: {
   subagents: () => Subagent[];
+  speaker: string;
   /** Re-read the cards — after a decision the operator just gave one of them. */
   onSettled?: () => void;
 }): JSX.Element {
@@ -135,7 +136,7 @@ export function SubagentsSurface(props: {
             fallback={
               <EmptyState
                 message="No sub-agents yet"
-                hint="Work the agent hands to a sub-agent shows up here while it happens."
+                hint={`When ${props.speaker} delegates, each automaton it launches appears here by callsign and class.`}
               />
             }
           >

@@ -2,9 +2,18 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   type JSX,
 } from "solid-js";
+import {
+  ensureUnlocked,
+  lockPrivate,
+  lockedByOperator,
+  privateUnlocked,
+  requestPin,
+  setStagedPrivate,
+} from "~/features/private";
 import { useLocation, useNavigate } from "@solidjs/router";
 import {
   ContextMenu,
@@ -36,6 +45,7 @@ import {
   isPinned,
   mainChat,
   refreshSessions,
+  setConversationPrivate,
   togglePin,
   useChatSessions,
 } from "../data";
@@ -43,6 +53,7 @@ import {
   deleteConversationFlow,
   retitleConversation,
 } from "../conversationActions";
+import { refreshUploads } from "~/features/uploads/data";
 import { createRenameConversation } from "./RenameConversationModal";
 import { directoryLabel, useAddDirectory } from "../addDirectory";
 import { settled } from "~/lib/resource";
@@ -104,12 +115,15 @@ export function RecentsRail(props: {
     // so keyed on the seat its row stayed dark for the whole of that turn.
     const id = openId();
     if (!list || !id || !stream.sending()) return list;
-    const echo: ChatActivity = stream.awaitingInput()
+    const awaitingKind = stream.awaitingKind() ?? undefined;
+    const echo: ChatActivity = awaitingKind
       ? "awaiting_input"
       : stream.runQueue()
         ? "queued"
         : "running";
-    return list.map((s) => (s.id === id ? { ...s, activity: echo } : s));
+    return list.map((s) =>
+      s.id === id ? { ...s, activity: echo, awaitingKind } : s,
+    );
   });
 
   /** The projects threads file under, or undefined while the listing is in flight — the
@@ -176,14 +190,45 @@ export function RecentsRail(props: {
     if (location.pathname !== "/chat") navigate("/chat");
   };
   const select = (id: string) => {
+    setStagedPrivate(false);
     setCurrentId(id);
     toChat();
   };
   const startNew = (projectId?: string) => {
     setStagedProjectId(projectId);
+    setStagedPrivate(false);
     setCurrentId(null);
     toChat();
   };
+  const startPrivate = () => {
+    setStagedProjectId(undefined);
+    setStagedPrivate(true);
+    setCurrentId(null);
+    toChat();
+  };
+
+  // The backend lists private threads and files only while the area is open, so every
+  // change of lock re-reads both lists. A private thread on screen when it shuts is cleared, and
+  // unless the operator locked it themselves, the PIN prompt offers to bring it back.
+  createEffect(
+    on(
+      privateUnlocked,
+      (unlocked) => {
+        const open = currentId();
+        const wasPrivate =
+          open !== null && rows()?.find((s) => s.id === open)?.private;
+        refreshSessions();
+        refreshUploads();
+        if (unlocked || !wasPrivate) return;
+        setCurrentId(null);
+        if (lockedByOperator()) return;
+        void requestPin("unlock").then((opened) => {
+          if (opened && currentId() === null) setCurrentId(open);
+        });
+      },
+      { defer: true },
+    ),
+  );
 
   /* ── The per-thread actions menu ────────────────────────────────────────────
    *
@@ -240,6 +285,15 @@ export function RecentsRail(props: {
         icon: "refresh",
         // No refresh of our own — `regenerateTitle` already re-reads the list.
         onSelect: () => void retitleConversation(id),
+      },
+      {
+        label: row?.private ? "Remove from Private" : "Move to Private",
+        icon: "lock",
+        onSelect: () => {
+          void setConversationPrivate(id, !row?.private).catch(() =>
+            toast.error("Couldn't move the chat."),
+          );
+        },
       },
       {
         label: "Delete conversation",
@@ -438,6 +492,18 @@ export function RecentsRail(props: {
           }
           query={query}
           unread={(id) => unreadIds().has(id)}
+          privateArea={{
+            unlocked: privateUnlocked(),
+            onUnlock: () =>
+              void ensureUnlocked().catch(() =>
+                toast.error("Couldn't open private chats."),
+              ),
+            onLock: () =>
+              void lockPrivate().catch(() =>
+                toast.error("Couldn't lock private chats."),
+              ),
+            onNewThread: startPrivate,
+          }}
         />
       </div>
       {/* Both render nothing where they sit — the panel is portalled and the modal

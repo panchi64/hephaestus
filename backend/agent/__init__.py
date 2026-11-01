@@ -14,12 +14,14 @@ from __future__ import annotations
 from tools import RunDeps
 
 from .engine import build_chat_orchestrator, build_resume_orchestrator
-from .parking import ParkedTurn
+from .parking import AwaitingKind, ParkedTurn, awaiting_kind
 from .translate import stream_agent_run
 
 __all__ = [
     "RunDeps",
+    "AwaitingKind",
     "ParkedTurn",
+    "awaiting_kind",
     "build_chat_orchestrator",
     "build_resume_orchestrator",
     "stream_agent_run",

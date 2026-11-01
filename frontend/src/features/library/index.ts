@@ -9,4 +9,4 @@ export {
 export { LibraryDirectory } from "./components/LibraryDirectory";
 export { type LibraryFileSource } from "./components/LibraryFileBrowser";
 export { LibrarySection } from "./components/LibrarySection";
-export { compareByName, compareByUpdated } from "./model";
+export { compareByName, compareByUpdated, type LibraryGroup } from "./model";

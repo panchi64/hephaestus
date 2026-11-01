@@ -19,10 +19,9 @@ from devkit.stub.app import MODEL_ID
 #: existing workspace updates them in place instead of accumulating duplicates.
 ENDPOINT_NAME = "dev-instance"
 
-#: Every role the registry knows (``services.llm.ROLES``), all pointed at the one
-#: endpoint. `main` drives chat; leaving the other two unbound would make a seeded
-#: workspace fail at exactly the background work — titling, compaction, recall — that a
-#: visual check is least likely to notice going missing.
+#: Every model role (``services.llm.ROLES``), all pointed at the one endpoint. Leaving
+#: `utility` or `embedding` unbound would make a seeded workspace fail at exactly the
+#: background work (titling, compaction, recall) a visual check is least likely to notice.
 ROLES = ("main", "utility", "embedding")
 
 #: Declared rather than discovered, and not optional. The app refuses to send a turn on

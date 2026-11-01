@@ -26,13 +26,14 @@
  * events and the answer streams in blank.
  */
 
-import { createSignal, onCleanup, type Accessor } from "solid-js";
+import { batch, createSignal, onCleanup, type Accessor } from "solid-js";
 import { produce, type SetStoreFunction } from "solid-js/store";
 import { StreamDetachedError, streamRun, type RunEvent } from "~/lib/stream";
 import { toast } from "~/ui";
 import type { ActiveRun, ChatMessage } from "../model";
 import { FOLD_RUN_KIND, type FoldState } from "./fold";
 import { nextId, type PatchById } from "./patch";
+import { createReplayGate } from "./replayGate";
 
 /** What the drive is allowed to touch. Passed in rather than closed over, so the run
  *  lifecycle can be reasoned about without the store, the seam and the composer's
@@ -45,9 +46,13 @@ export interface RunDriveDeps {
   state: FoldState;
   /** `epoch` is the drive's own; the fold drops an event whose epoch is not current. */
   foldEvent: (assistantId: string, ev: RunEvent, epoch: number) => void;
-  setSending: (value: boolean) => void;
+  /** `resumed` marks a turn picked up rather than sent; see `ReattachOptions.seat`. */
+  setSending: (value: boolean, resumed?: boolean) => void;
   setErrored: (value: boolean) => void;
+  titlePending: Accessor<boolean>;
   setTitlePending: (value: boolean) => void;
+  /** Reveal the thread's auto-title once the backend has finished writing it. */
+  collectTitle: (conversationId: string) => Promise<void>;
   /** Whether the run's events left something queued that a turn will be started for. */
   deliveryDue: () => boolean;
   /** Read the inbox again, and pick up the turn the backend starts for what was queued
@@ -80,6 +85,9 @@ export interface ReattachOptions {
   /** The persisted row the run is answering. A reattach that has no streaming bubble of
    *  its own seats a fresh one directly after this row. */
   promptMessageId?: string | null;
+  /** The run answers the operator's own message (a queued send the backend started), so
+   *  the transcript seats it as it would a send. Otherwise the turn counts as resumed. */
+  seat?: boolean;
 }
 
 /** How to attach to a run the persisted detail reports as active: replay its whole
@@ -103,6 +111,30 @@ export function seatAfterPrompt(
   if (!promptMessageId) return null;
   const at = messages.findIndex((m) => m.id === promptMessageId);
   return at < 0 ? null : at + 1;
+}
+
+/** Settle the title throbber when a run ends. A thread still waiting on its name keeps
+ *  it while the backend finishes, since a name that lands after the run's stream closed
+ *  is never announced on it. The clear only applies if the operator is still on that
+ *  thread: switching away cleared it already, and another thread may now own it. */
+export async function awaitLateTitle(
+  conversationId: string | null,
+  deps: Pick<
+    RunDriveDeps,
+    "titlePending" | "setTitlePending" | "collectTitle" | "conversationId"
+  >,
+): Promise<void> {
+  if (!deps.titlePending() || conversationId === null) {
+    deps.setTitlePending(false);
+    return;
+  }
+  try {
+    await deps.collectTitle(conversationId);
+  } catch {
+    // Cosmetic: the rail picks the name up on its next refresh.
+  } finally {
+    if (deps.conversationId() === conversationId) deps.setTitlePending(false);
+  }
 }
 
 export interface RunDrive {
@@ -178,29 +210,42 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
       m.detached = false; // a fresh drive/reattach supersedes any prior detach
     });
     let connected = false;
+    let shown = false;
     let detachedNow = false;
+    const gate = createReplayGate(replayThrough, (events) => {
+      if (myGen !== driveGen) return;
+      batch(() => {
+        for (const ev of events) deps.foldEvent(assistantId, ev, myGen);
+      });
+      // A reattach's "RESYNCING…" badge drops once what it caught up on is on screen,
+      // not when the backlog starts arriving.
+      if (!shown) {
+        shown = true;
+        onConnected?.();
+      }
+    });
     try {
       controller = new AbortController();
-      await streamRun(runId, {
-        signal: controller.signal,
-        fromSeq,
-        onEvent: (ev: RunEvent) => {
-          // Superseded between the read and here: the bubble and the fold belong to
-          // whatever took over.
-          if (myGen !== driveGen) return;
-          // First event = the transport is live again; let a reattach drop its
-          // "RESYNCING…" badge here, so it shows only across the reconnect latency.
-          // It's also the queued→streaming transition: the backend only starts
-          // emitting once the run actually clears the concurrency semaphore, so
-          // the first frame (of any kind) is what tells us it's no longer queued.
-          if (!connected) {
-            connected = true;
-            deps.patchById(assistantId, (m) => (m.queued = false));
-            onConnected?.();
-          }
-          deps.foldEvent(assistantId, ev, myGen);
-        },
-      });
+      try {
+        await streamRun(runId, {
+          signal: controller.signal,
+          fromSeq,
+          onEvent: (ev: RunEvent) => {
+            // Superseded between the read and here: the bubble and the fold belong to
+            // whatever took over.
+            if (myGen !== driveGen) return;
+            // The first frame (of any kind) is the queued→streaming transition: the
+            // backend only starts emitting once the run clears the concurrency semaphore.
+            if (!connected) {
+              connected = true;
+              deps.patchById(assistantId, (m) => (m.queued = false));
+            }
+            gate.push(ev);
+          },
+        });
+      } finally {
+        gate.flush();
+      }
     } catch (err) {
       if (myGen !== driveGen) {
         // superseded — nothing to surface
@@ -244,8 +289,8 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
         // have emptied the queue into the turn this has to go looking for.
         const due = deps.deliveryDue();
         deps.setSending(false);
-        deps.setTitlePending(false); // turn ended — clear even if no title landed
         const conversationId = deps.conversationId();
+        void awaitLateTitle(conversationId, deps);
         // Keyed on the id the first turn created rather than on `wasNew`: when a
         // reattach took this turn over, the drive that sees it end is not the one that
         // started it, and the thread's id would never have been adopted.
@@ -336,7 +381,7 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     }
     // `driveRun` re-anchors `maxFoldedSeq` to the `fromSeq` passed below, so the
     // resume replays only the gap after the last folded event.
-    deps.setSending(true);
+    deps.setSending(true, !opts.seat);
     setReattaching(true);
     try {
       // Clears RESYNCING on the first folded event; the finally is the safety net

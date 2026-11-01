@@ -1,11 +1,12 @@
-"""Plugins: tools written as Python that run in the platform VM.
+"""Plugins: tools written as Python that run in a VM.
 
 A plugin's files are sealed as one bundle. ``active_enc`` is the published version, the
 one its tools run; ``draft_enc`` is the working copy an agent or the operator edits,
 which runs only when tested until the operator publishes it. Earlier published versions
 live in ``revisions``.
 
-A secret's value is sealed here and is sent only by the egress gateway, to ``domain``.
+A secret's value is sealed here and is injected by smol's ``CredentialSpec`` only in
+requests to ``domain``.
 """
 
 from __future__ import annotations
@@ -34,6 +35,23 @@ class Plugin(Table, table=True):
     active_enc: bytes | None = Field(default=None)
     draft_enc: bytes | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class PluginStorageEntry(Table, table=True):
+    """One key a plugin's windows saved through the bridge; its JSON value is sealed."""
+
+    __tablename__: ClassVar[str] = "plugin_storage"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("plugin_id", "key", name="uq_plugin_storage_plugin_key"),
+    )
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    owner_id: str = Field(index=True)
+    plugin_id: str = Field(index=True)
+    key: str
+    value_enc: str
+    size_bytes: int
     updated_at: datetime = Field(default_factory=utcnow)
 
 

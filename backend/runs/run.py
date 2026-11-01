@@ -1,9 +1,7 @@
-"""Pillar I — the Run: one identified, background-executing unit of work.
+"""The Run: one identified, background-executing unit of work.
 
-Chat turns and agent tasks are all Runs; they differ only in
-the orchestrator that drives them. A Run owns its id/owner/status, its event
-stream (buffer + broker), and — once running — the asyncio task executing it.
-Status follows ``queued → running → {done | blocked | error | cancelled}``,
+Chat turns and agent tasks are all Runs; they differ only in the orchestrator that
+drives them. Status follows ``queued → running → {done | blocked | error | cancelled}``,
 with a parked ``awaiting_input`` when a sensitive action needs approval.
 """
 
@@ -27,15 +25,15 @@ from .events import (
     RunMetrics,
     now_utc,
 )
+from .events.lifecycle import EndCode
 from .inbox import ConversationInbox, QueuedMessage
 from .overhead import TurnOverhead
 from .prefix import PrefixVerdict
 from .stream import RunStream
 from .timings import TimingTotals, TurnTimer
 
-# How often :meth:`Run.keepalive` touches the activity clock while a long, silent call is
-# in flight. A ceiling, not a fixed rate: a run held to a shorter inactivity bound beats
-# proportionally faster (see ``Run._beat``).
+# Ceiling on how often ``Run.keepalive`` touches the activity clock; a shorter inactivity
+# bound beats proportionally faster (see ``Run._beat``).
 _KEEPALIVE_INTERVAL_S = 20.0
 
 
@@ -47,6 +45,13 @@ class RunStatus(StrEnum):
     blocked = "blocked"
     error = "error"
     cancelled = "cancelled"
+
+
+class StopCause(StrEnum):
+    operator = "operator"
+    parent = "parent"
+    time_limit = "time_limit"
+    turn_limit = "turn_limit"
 
 
 TERMINAL_STATUSES = {
@@ -74,119 +79,88 @@ class Run:
     kind: str
     owner_id: str
     stream: RunStream
-    # The conversation this run drives, when it is a chat turn. Lets a client that
-    # has only a conversation id (e.g. after a page reload) find the in-flight run
-    # to reattach to — see ``RunRegistry.active_run_for``.
+    # Lets a client holding only a conversation id find the in-flight run
+    # (``RunRegistry.active_run_for``).
     conversation_id: str | None = None
-    # The model endpoint this run's turn leases while it executes (`runs/endpoint_gate.py`).
+    # The model endpoint this turn leases while it executes (`runs/endpoint_gate.py`).
     endpoint: Endpoint | None = None
-    # The stored id of the operator's prompt this run is answering — written down by the
-    # orchestrator as the turn begins (or, for a regenerate, the request it re-answers).
-    # What lets a client that opens the thread mid-run find the row its streaming answer
-    # belongs after, instead of inventing one. None until the orchestrator has it, and for
-    # a run that answers no prompt (a hand-started fold).
+    # Stored id of the prompt this run answers (a regenerate's re-answered request), so a
+    # client opening the thread mid-run can place the streaming answer. None until the
+    # orchestrator sets it, and for runs that answer no prompt (a hand-started fold).
     prompt_message_id: str | None = None
     status: RunStatus = RunStatus.queued
     detail: str | None = None
+    # Who or what stopped a cancelled or blocked run; None for every other ending.
+    stop_cause: StopCause | None = None
+    # Which bound blocked the run; becomes `RunEnded.code`.
+    end_code: EndCode | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=now_utc)
     started_at: datetime | None = None
     ended_at: datetime | None = None
     last_activity_mono: float = 0.0
-    # The inactivity bound this run is actually being supervised under (None ⇒ unbounded),
-    # stamped by the registry when it starts supervising. Read by ``keepalive`` so a
-    # heartbeat can't drift slower than the bound it exists to stay inside.
+    # The inactivity bound this run is supervised under (None ⇒ unbounded), stamped by the
+    # registry; ``keepalive`` reads it so the heartbeat can't drift slower than the bound.
     inactivity_timeout_s: float | None = None
     task: asyncio.Task[None] | None = None
+    # Work that may finish after the run ends (an auto-title). Held so the loop's weak
+    # reference is not the only one, and so the registry can wait on or stop it.
+    afterwork: set[asyncio.Task[None]] = field(default_factory=set)
     cancel_requested: bool = False
     metrics: RunMetrics | None = None
-    # The active model's context window, when known — set by the orchestrator so
-    # emitted metrics can report how full the window is. None leaves the derived
-    # context fields null (no ceiling to measure against).
+    # The active model's context window; None leaves the derived context fields null.
     context_window: int | None = None
-    # The operator's severity boundaries for that window, set by the orchestrator from
-    # the same settings read that resolved everything else about the turn. Sits beside
-    # `context_window` because they are one measurement: a ceiling nobody set boundaries
-    # against, and boundaries with no ceiling to apply them to, are equally inert.
+    # Severity boundaries for that window, from the same settings read as the rest of the
+    # turn. Inert without a window, and the window is inert without them.
     context_thresholds: ContextThresholds = DEFAULT_CONTEXT_THRESHOLDS
-    # Where this thread's fold will fire, and whether it is armed — set by the orchestrator
-    # from the same resolved policy the compaction trigger itself uses, so the mark the
-    # operator sees on the gauge is the number that will actually act on their thread.
-    # None when the turn ran with no compaction policy at all.
+    # Where this thread's fold fires and whether it is armed, from the policy the
+    # compaction trigger itself uses. None when the turn ran with no compaction policy.
     context_fold: FoldPoint | None = None
-    # This run's wall-clock stopwatch, collecting a timing per model response as the
-    # translator walks the graph. Lives on the Run rather than in `drive_turn` so it
-    # survives a park/resume: an approval splits a turn into several segments, and a
-    # timer scoped to one of them would report only the last.
+    # Lives on the Run, not in `drive_turn`, so it survives park/resume: an approval splits
+    # a turn into segments, and a per-segment timer would report only the last.
     timer: TurnTimer = field(default_factory=TurnTimer)
-    # The conversation's timing totals *before* this run — read from the persisted
-    # message rows when the turn starts. What makes the emitted frame cumulative over
-    # the thread rather than over this run: everything else in the frame is derived
-    # from the replayed history, but time isn't in the history, only in our own rows.
+    # Timing totals before this run, read from persisted message rows: time isn't in the
+    # replayed history, and this makes the emitted frame cumulative over the thread.
     prior_timings: TimingTotals = field(default_factory=TimingTotals)
-    # The standing brief and tool schemas measured on this turn's most recent model
-    # request — the two parts of a request that never reach the message history, and so
-    # are knowable only while one is being assembled. None until the turn makes its first
-    # request, and on any turn whose measurement failed; the composition readout is absent
-    # rather than guessed in that case.
+    # Standing brief and tool schemas measured on the latest model request. Neither reaches
+    # the message history, so they are knowable only while a request is assembled. None
+    # before the first request or when measurement failed (the readout is absent, not guessed).
     context_overhead: TurnOverhead | None = None
-    # How much of the previous request's cacheable prefix this turn's most recent request
-    # could have reused, and what moved if it couldn't (`runs/prefix.py`). Sits beside the
-    # overhead because it is read off the same assembled request by the same kind of
-    # capability, and for the same reason: neither the brief nor the tool array reaches the
-    # message history, so whether *this* brief is the same brief as last time is knowable
-    # only while a request is being assembled. None until the turn makes its first request.
+    # How much of the previous request's cacheable prefix the latest request could reuse,
+    # and what moved if not (`runs/prefix.py`). Read off the assembled request, like the
+    # overhead. None until the first request.
     prefix_verdict: PrefixVerdict | None = None
-    # How many messages at the head of the current replay predate this run's most recent
-    # compaction — 0 when nothing has folded. A response *before* the boundary reported its
-    # prompt size against a history that no longer exists, so reading the footprint off it
-    # would pin the gauge at the pre-fold figure for the rest of the turn. Set by the
-    # orchestrator on both folds (the prelude's, and the in-turn overflow recovery's), read
-    # only by the metrics builder.
+    # Messages at the head of the replay that predate the latest compaction (0 if none).
+    # A response before the boundary reported its prompt size against a vanished history and
+    # would pin the gauge at the pre-fold figure. Set on both folds, read by the metrics builder.
     fold_boundary: int = 0
-    # Set once the first answer token has streamed. The AE-5.3 rule — never
-    # switch endpoints after answer text has begun — is enforced against this:
-    # the orchestrator refuses to re-drive a turn onto another endpoint once it
-    # is set (FallbackModel only falls back pre-stream; this guards the rest).
-    answer_started: bool = False
     # Answer and reasoning characters streamed for the model request in flight, which a
     # retry of that request has to take back off the operator's screen.
     step_text_chars: int = 0
     step_thinking_chars: int = 0
     # Tool calls whose arguments are streaming for the request in flight, by part index.
     preparing_calls: dict[int, PreparingCall] = field(default_factory=dict)
-    # Opaque continuation payload for a parked run (set by the orchestrator
-    # layer when awaiting approval). The substrate never interprets it.
+    # Opaque continuation payload for a parked run; the substrate never interprets it.
     parked_payload: object | None = None
-    # The conversation's inbox, which the orchestrator drains at each model-request
-    # boundary. The registry hands a conversation's run the conversation's own inbox, which
-    # outlives the run; a run with no conversation gets one of its own.
+    # The conversation's inbox, drained at each model-request boundary. It outlives the
+    # run; a run with no conversation gets its own.
     inbox: ConversationInbox | None = None
-    # Opaque hook the orchestrator may set to flush whatever partial state it holds
-    # before the registry force-cancels this run's task for a wall-clock/inactivity
-    # bound — called synchronously with the bound's operator-legible message, from
-    # inside the still-running task's own event-loop turn (safe to read the task's
-    # local state). The substrate never interprets it beyond calling it; a raising
-    # hook is swallowed by the caller.
+    # Flushes the orchestrator's partial state before the registry force-cancels the task
+    # for a wall-clock/inactivity bound. Called synchronously with the bound's message,
+    # on the event-loop turn of the still-running task. A raising hook is swallowed.
     on_timeout: Callable[[str], None] | None = None
-    # The cancel counterpart of ``on_timeout`` — set by the orchestrator to persist
-    # whatever partial turn it holds before the registry cancels this run's task for
-    # an operator-requested cancel. Called synchronously from the *registry's own*
-    # coroutine (not this run's task), before ``task.cancel()``: under single-threaded
-    # asyncio, this run's task is necessarily suspended while a different coroutine is
-    # running, so reading its state here is race-free. Unlike ``on_timeout`` it must
-    # never set ``run.status``/outcome — the registry's own cancellation handling sets
-    # the terminal ``cancelled`` status once the cancellation actually lands, so this
-    # hook is finalize-only. A raising hook is swallowed by the caller.
+    # Persists the partial turn before an operator-requested cancel. Called from the
+    # registry's coroutine before ``task.cancel()``; the task is suspended then, so
+    # reading its state is race-free. Finalize-only: it must not set ``run.status``, which
+    # the registry sets once the cancellation lands. A raising hook is swallowed.
     on_cancel: Callable[[], None] | None = None
-    # The parked counterpart of ``on_cancel``: set by the orchestrator once a turn has
-    # parked (``awaiting_input``) awaiting an approval decision, so cancelling the
-    # *parked* run — there is no task left to interrupt, see ``RunRegistry.cancel``'s
-    # parked branch — still persists the parked turn instead of silently dropping it
-    # (including the operator's own prompt). Called synchronously from the registry's
-    # own coroutine, after ``run.status`` has already been set to the terminal
-    # ``cancelled`` value. A raising hook is swallowed by the caller.
+    # Cancel counterpart for a parked run (``RunRegistry.cancel``'s parked branch), which
+    # has no task to interrupt: persists the parked turn, including the operator's prompt.
+    # Called after ``run.status`` is already ``cancelled``. A raising hook is swallowed.
     on_park_cancel: Callable[[], None] | None = None
+    # Told the stream's new last seq whenever an event is emitted into the run while it is
+    # parked, so the stored row never trails what a client may already have seen.
+    on_parked_emit: Callable[[int], None] | None = None
 
     def touch(self) -> None:
         """Mark activity now — feeds the inactivity watchdog."""
@@ -194,22 +168,11 @@ class Run:
 
     @asynccontextmanager
     async def keepalive(self) -> AsyncGenerator[None]:
-        """Hold the inactivity clock open across a single long call that streams nothing.
+        """Hold the inactivity clock open across one long call that streams nothing.
 
-        The watchdog reads activity from the event stream, which is the right signal
-        almost everywhere: a run that has emitted nothing for minutes has stalled. The
-        exception is one awaited call that is known to be slow and known to produce no
-        frames until it finishes — a non-streaming model call generating a long report,
-        say. Between two step boundaries there is no activity to observe even while real
-        work is happening, and the run would be stopped for idling.
-
-        This belongs to the substrate, not to whichever feature hit it first: the clock is
-        the substrate's, and a heartbeat loop reimplemented per long call is a heartbeat
-        loop that drifts out of step with the operator's configured bound.
-
-        The bargain is explicit: inside this scope the inactivity bound no longer applies,
-        so a call that truly wedges is bounded only by the run's wall clock. Wrap the one
-        awaited call, never a whole orchestration.
+        Inside this scope the inactivity bound no longer applies, so a call that truly
+        wedges is bounded only by the run's wall clock. Wrap the one awaited call, never
+        a whole orchestration.
         """
         task = asyncio.create_task(self._beat())
         try:
@@ -218,15 +181,13 @@ class Run:
             _ = task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-            self.touch()  # the call returned — that is real activity
+            self.touch()
 
     async def _beat(self) -> None:
         interval = _KEEPALIVE_INTERVAL_S
         if self.inactivity_timeout_s:
-            # Comfortably inside whatever bound this run is actually being held to, so a
-            # shortened timeout can't outpace a fixed interval chosen against the default.
-            # The small floor is only to keep a nonsensical bound from spinning; at any
-            # realistic timeout the ceiling above is what applies.
+            # A third of the bound, so a shortened timeout can't outpace the default-sized
+            # interval; the floor only stops a nonsensical bound from spinning.
             interval = min(interval, max(self.inactivity_timeout_s / 3, 0.01))
         while True:
             await asyncio.sleep(interval)
@@ -234,7 +195,10 @@ class Run:
 
     def emit(self, body: EventBody) -> Event:
         self.touch()
-        return self.stream.emit(body)
+        event = self.stream.emit(body)
+        if self.on_parked_emit is not None and self.status is RunStatus.awaiting_input:
+            self.on_parked_emit(event.seq)
+        return event
 
     def block(self, detail: str | None = None) -> None:
         """Orchestrator declares it cannot proceed."""
@@ -286,12 +250,23 @@ class Run:
         return self.status is RunStatus.awaiting_input
 
     async def wait(self) -> None:
-        """Await the executing task — it ends when the Run settles, which means either a
-        terminal status **or** ``awaiting_input``: parking returns the orchestrator, so
-        the task finishes there too and the run continues on a fresh task if it resumes.
-        Callers that need "finished for good" must check ``is_terminal`` afterwards."""
+        """Await the executing task, which ends on a terminal status or on ``awaiting_input``.
+
+        Parking returns the orchestrator; a resumed run continues on a fresh task. Check
+        ``is_terminal`` afterwards for "finished for good".
+        """
         if self.task is not None:
             await asyncio.shield(self.task)
+
+    def outlive(self, task: asyncio.Task[None]) -> None:
+        """Let ``task`` run on past this run's end (see ``afterwork``)."""
+        self.afterwork.add(task)
+        task.add_done_callback(self.afterwork.discard)
+
+    async def settle_afterwork(self, timeout_s: float | None = None) -> None:
+        """Wait, at most ``timeout_s``, for the work this run left running."""
+        if self.afterwork:
+            _ = await asyncio.wait(list(self.afterwork), timeout=timeout_s)
 
 
 # An orchestrator drives one Run: it emits events and may call ``run.block()``

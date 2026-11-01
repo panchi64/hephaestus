@@ -73,6 +73,14 @@ export interface BindingDeps {
   initialSnapshots?: () => ViewSnapshotRef[] | undefined;
 }
 
+/** Whether a change of thread id is a new thread taking its backend id after its first
+ *  run, on the thread the stream was bound to all along, rather than a switch. */
+export const isNamedInPlace = (
+  id: string | null,
+  prev: string | null | undefined,
+  bound: string | null,
+): boolean => prev === null && id !== null && id === bound;
+
 const INIT = Symbol("init");
 
 export function createThreadBinding(deps: BindingDeps): void {

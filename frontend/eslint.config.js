@@ -1,12 +1,11 @@
+import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 import solid from "eslint-plugin-solid/configs/typescript";
 
-export default tseslint.config(
+export default defineConfig(
   {
     ignores: [
       "node_modules/**",
-      ".vinxi/**",
-      ".solid-start/**",
       ".nitro/**",
       ".output/**",
       "dist/**",

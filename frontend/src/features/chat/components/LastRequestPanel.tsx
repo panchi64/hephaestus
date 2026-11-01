@@ -1,5 +1,5 @@
 import { For, Show, type JSX } from "solid-js";
-import { compactCount } from "~/lib/format";
+import { compactCount, sentenceCase, usd } from "~/lib/format";
 import { Text } from "~/ui";
 import type { LastRequest } from "../model";
 
@@ -35,8 +35,9 @@ export function LastRequestPanel(props: { request: LastRequest }): JSX.Element {
         { label: "Cache write", value: props.request.cacheWriteTokens },
       ] satisfies Figure[]
     ).filter((figure) => figure.value !== null);
+  const measured = () => figures().length > 0 || props.request.costUsd !== null;
   return (
-    <Show when={props.request.route || figures().length > 0}>
+    <Show when={props.request.route || measured()}>
       {/* A hairline above rather than a heading: this is a second measurement of the
           same request, not a second section of the panel. */}
       <div class="flex flex-col gap-1 border-t border-line pt-2.5">
@@ -55,7 +56,7 @@ export function LastRequestPanel(props: { request: LastRequest }): JSX.Element {
             )}
           </Show>
         </div>
-        <Show when={figures().length > 0}>
+        <Show when={measured()}>
           <div class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
             <For each={figures()}>
               {(figure) => (
@@ -67,7 +68,36 @@ export function LastRequestPanel(props: { request: LastRequest }): JSX.Element {
                 </Text>
               )}
             </For>
+            {/* Null, not falsy: a free model is priced at $0, which is worth saying. */}
+            <Show when={props.request.costUsd !== null}>
+              <Text variant="micro" tone="dim">
+                Cost{" "}
+                <span class="tabular-nums text-text">
+                  {usd(props.request.costUsd!)}
+                </span>
+              </Text>
+            </Show>
           </div>
+        </Show>
+        {/* Anthropic's own diagnosis of a missed cache: the part of the prompt that changed
+            since the previous request, which no token count can say. */}
+        <Show when={props.request.cacheMissReason}>
+          {(reason) => (
+            <Text variant="micro" tone="warn">
+              Cache miss: {sentenceCase(reason())}
+              <Show when={props.request.cacheMissedTokens}>
+                {(missed) => (
+                  <>
+                    {" · ~"}
+                    <span class="tabular-nums">
+                      {compactCount(missed(), true)}
+                    </span>
+                    {" tokens"}
+                  </>
+                )}
+              </Show>
+            </Text>
+          )}
         </Show>
       </div>
     </Show>

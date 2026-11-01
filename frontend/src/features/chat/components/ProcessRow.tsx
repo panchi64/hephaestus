@@ -11,7 +11,9 @@ import {
 } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { Icon, Text, cx, type IconName } from "~/ui";
+import type { Frame } from "../frames";
 import { useArrival } from "./arrival";
+import { Socket } from "./Socket";
 
 export interface AdoptedOpen {
   open: Accessor<boolean>;
@@ -51,20 +53,11 @@ export function createAdoptedOpen(
  *
  *  Provided by the work log around its rows, so every kind of row it holds (a
  *  tool call, reasoning, a review, injected context) speaks it without each
- *  card threading a prop through. In it the glyph sits in a hard-cornered
- *  socket that a `Branch` elbow lands on, the label is the machine's `meta` at
- *  the dim tone, and the chevron moves to the row's far end. Everywhere else —
- *  the log's own header, the panel surfaces — rows keep the ordinary voice. */
+ *  card threading a prop through. In it the glyph sits in a framed `Socket`
+ *  that a `Branch` elbow lands on, the label is the machine's `meta` at the dim
+ *  tone, and the chevron moves to the row's far end. Everywhere else — the
+ *  log's own header, the panel surfaces — rows keep the ordinary voice. */
 export const SchematicContext = createContext(false);
-
-/** The socket a schematic glyph sits in: 12px glyph + 1px padding + a hairline,
- *  16px square, hard-cornered because a registration mark's corners are hard.
- *
- *  16 and not the 18 it was, so a schematic row is the same 24px as every other
- *  row (`py-1` either side of the 16px line box). An 18px socket made the log's
- *  rows the tallest thing in the column that isn't prose, beside a composer whose
- *  cells are 24. */
-const SOCKET = "box-content border border-line p-px";
 
 /** The `·` between segments of one row. Quiet enough to read as punctuation
  *  rather than as another value. */
@@ -123,6 +116,10 @@ export function ProcessRow(props: {
   icon?: IconName;
   /** Tone class for the glyph — how a row carries its state without a word. */
   iconClass?: string;
+  /** The glyph's outline in a schematic: what kind of thing the row is. */
+  frame?: Frame;
+  /** Dashes the outline: a row the chassis put there rather than the model. */
+  dashed?: boolean;
   /** The row's name, in the interface's voice: "Read", "Reasoning", "Work log". */
   label: string;
   /** Everything between the label and the right cluster. Segments supply their
@@ -196,17 +193,24 @@ export function ProcessRow(props: {
           </Show>
         </Show>
         <Show when={props.icon}>
-          {(name) => (
-            <Icon
-              name={name()}
-              size={12}
-              class={cx(
-                schematic && SOCKET,
-                props.iconClass ?? "text-dim",
-                arrival.socket,
-              )}
-            />
-          )}
+          {(name) =>
+            schematic ? (
+              <Socket
+                icon={name()}
+                frame={props.frame}
+                dashed={props.dashed}
+                lead
+                iconClass={props.iconClass}
+                charge={arrival.socket}
+              />
+            ) : (
+              <Icon
+                name={name()}
+                size={12}
+                class={cx(props.iconClass ?? "text-dim", arrival.socket)}
+              />
+            )
+          }
         </Show>
         <Text
           variant={schematic ? "meta" : "label"}

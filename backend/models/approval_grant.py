@@ -11,8 +11,7 @@ A grant on a tool that *runs a command* is scoped narrower than the tool
 (:attr:`ApprovalGrant.command_prefix`): "stop asking me about `uv run pytest`" is what the
 operator means when they tick the box under a test run, and one yes to
 ``shell_run_command`` is not a yes to every command a thread will ever want. The operator
-can still say the wider thing deliberately, and :attr:`ApprovalGrant.decisive` is what
-records that they did.
+can still say the wider thing deliberately, as an empty prefix.
 """
 
 from __future__ import annotations
@@ -54,21 +53,6 @@ class ApprovalGrant(Table, table=True):
     # UNIQUE index, so a nullable column would stop the re-grant upsert's ON CONFLICT from
     # ever matching a whole-tool grant, and every refresh would insert a second row.
     command_prefix: str = Field(default="")
-    # Whether this grant *answers* for the operator wherever it applies, or only informs
-    # the level that is doing the deciding. A grant has always settled a call at the levels
-    # that ask outright; at the level that reviews, one recorded from a single approval is
-    # an input to the review rather than a way past it. This column is how the operator
-    # says the wider thing on purpose: a standing yes to the whole tool, taken as their
-    # authorization by the review itself, so every call it covers runs without asking. What
-    # it never buys is an act nobody can undo, or one no review could look at.
-    #
-    # **A column rather than a reading of the empty prefix**, which would have been free.
-    # An empty prefix is also what a scheduled task's pre-authorization seeds, and a task's
-    # thread is an ordinary conversation the operator can reopen and carry on — so a width
-    # inferred from emptiness, or from the kind of run asking, would silently promote every
-    # one of those seeds the moment a human typed into the thread. Stored, a row says what
-    # it authorizes without anyone having to know who is reading it.
-    decisive: bool = Field(default=False)
     created_at: datetime = Field(default_factory=utcnow)
     # When the grant lapses back to strict per-call approval (UTC).
     expires_at: datetime

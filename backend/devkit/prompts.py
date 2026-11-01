@@ -28,7 +28,6 @@ _PROMPT_MODULES = (
     "calendar",
     "compaction",
     "levels",
-    "routines",
     "utility",
     "voice",
 )

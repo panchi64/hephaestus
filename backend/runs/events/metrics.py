@@ -43,6 +43,12 @@ class LastRequestUsage(Body):
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
+    # Null when the model has no published price (`services/conversations/usage.py`).
+    cost_usd: float | None = None
+    # Anthropic's cache diagnostics: where this prompt first diverged from the previous
+    # request's (`system_changed`, `messages_changed`, …) and roughly what that cost.
+    cache_miss_reason: str | None = None
+    cache_missed_tokens: int | None = None
 
     # The two figures behind `prefill_tokens_per_second` below. Kept as plain fields, with
     # the arithmetic as a computed property, on the same pattern the frame's throughput
@@ -114,6 +120,11 @@ class RunMetrics(Body):
     # local servers. This is the one number here we can't measure ourselves, and a 0
     # would read as "your caching is broken" rather than "nobody said".
     cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    # Dollars over the responses that could be priced, and what caching saved against
+    # sending every prompt uncached. Null when nothing on the path has a published price.
+    cost_usd: float | None = None
+    saved_usd: float | None = None
     # Wall-clock, measured by us around our own node iteration so it means the same
     # thing on every endpoint (see `agent/timings.py`). `llm_ms` is the full model
     # round-trip including connect and queue — the wait the operator actually sat

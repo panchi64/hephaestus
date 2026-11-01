@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from services.agents import ToolAccess
-from services.agents.files import parse_agent_file
+from services.agents.definition import AgentDefinition
+from services.agents.files import parse_agent_file, render_agent_file
 
 
 class TestToolAccess:
@@ -77,3 +80,21 @@ class TestParsingTools:
     @pytest.mark.parametrize("raw", ["", "tools:\n"])
     def test_no_tools_means_unrestricted(self, raw: str):
         assert parse_agent_file(_file(raw), name="scout").tools == ToolAccess()
+
+
+class TestMaxRequests:
+    def test_it_is_parsed_from_frontmatter(self):
+        assert parse_agent_file(_file("max-requests: 12\n"), name="scout").max_requests == 12
+
+    @pytest.mark.parametrize("raw", ["0", "-1", "-3", "0.5", "2.9", "true", "lots", "abc"])
+    def test_an_invalid_value_is_ignored_without_raising(self, raw: str):
+        assert parse_agent_file(_file(f"max-requests: {raw}\n"), name="scout").max_requests is None
+
+    def test_the_definition_refuses_a_non_positive_value(self):
+        with pytest.raises(ValueError, match="positive"):
+            _ = AgentDefinition(name="scout", description="x", max_requests=0)
+
+    def test_it_round_trips_through_an_exported_file(self):
+        agent = parse_agent_file(_file("max-requests: 7\n"), name="scout")
+        assert parse_agent_file(render_agent_file(agent), name="scout").max_requests == 7
+        assert "max-requests" not in render_agent_file(replace(agent, max_requests=None))

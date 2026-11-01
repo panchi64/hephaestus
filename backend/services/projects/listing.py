@@ -67,9 +67,12 @@ class FileListing:
     truncated: bool
 
 
-async def list_files(root: Path, *, query: str = "", limit: int = 200) -> FileListing:
-    """The files under ``root`` matching ``query``, best first."""
-    paths, truncated = await _candidates(root)
+async def list_files(
+    root: Path, *, repo_root: Path | None = None, query: str = "", limit: int = 200
+) -> FileListing:
+    """The files under ``root`` matching ``query``, best first. ``repo_root`` is the project
+    when ``root`` is one of its worktrees."""
+    paths, truncated = await _candidates(root, repo_root)
     ranked = _rank(query, paths)
     entries = tuple(FileEntry(path=p, name=p.rsplit("/", 1)[-1]) for p in ranked[:limit])
     return FileListing(entries=entries, truncated=truncated or len(ranked) > limit)
@@ -130,9 +133,9 @@ def _read_head(target: Path, limit: int) -> bytes | None:
         return None
 
 
-async def _candidates(root: Path) -> tuple[list[str], bool]:
+async def _candidates(root: Path, repo_root: Path | None) -> tuple[list[str], bool]:
     code, out, _ = await run_git(
-        root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"
+        root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", root=repo_root
     )
     if code == 0:
         # NUL-separated, so a filename containing a newline survives the round trip.

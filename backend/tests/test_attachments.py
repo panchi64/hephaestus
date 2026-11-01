@@ -14,6 +14,7 @@ import hashlib
 import tempfile
 from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
+from typing import override
 
 import httpx
 import pytest
@@ -23,7 +24,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -41,18 +41,21 @@ from core.vault import Vault
 from models.corpus import CorpusChunk
 from models.upload import Upload, UploadStatus
 from runs import Run, RunRegistry, RunStatus, RunStream
+from services.chassis_tail import operator_content, tail_stamp
 from services.conversation_view import (
     ATTACHMENTS_MARKER_OPEN,
     FILE_REFS_MARKER_OPEN,
     strip_chassis_markers,
 )
-from services.conversations import ConversationStore, install_persisted_attachments
+from services.conversations import ConversationStore
+from services.conversations.projection import project
 from services.corpus.chunk_store import CorpusChunkStore
 from services.corpus.folder import FolderAdapter
 from services.corpus.index import CorpusIndex
 from services.corpus.uploads import UploadsAdapter
+from services.home.scratch import HostFiles, ScratchDirs
 from services.registry import ModelRegistry
-from services.sandbox import SandboxError, SandboxSessionManager
+from services.sandbox import SandboxError
 from services.upload_extraction import BasicExtractor
 from services.uploads import UploadStore
 from services.workspace import RunWorkspace
@@ -117,35 +120,39 @@ async def _insert_upload(
 # --- the sandbox fakes both halves of the feature stage into ----------------
 
 
-class _FakeSandboxSession:
-    """Records files staged into its (host-side) workspace. Mirrors the real
-    ``SandboxSession``'s ``read_file``/``write_file`` contract closely enough to exercise
-    the collision-safe staging path (``services.sandbox.staging``)."""
+class _FakeSandboxSession(HostFiles):
+    """Records files staged into its (host-side) workspace. Mirrors ``HostFiles``'
+    ``read_file``/``write_file`` contract closely enough to exercise the collision-safe
+    staging path (``services.sandbox.staging``)."""
 
     def __init__(self) -> None:
+        super().__init__(Path("/fake-host-workspace"))
         self.files: dict[str, bytes] = {}
 
+    @override
     def write_file(self, relpath: str, content: bytes) -> None:
         self.files[relpath] = content
 
+    @override
     def read_file(self, relpath: str) -> bytes:
         if relpath not in self.files:
             raise SandboxError(f"no such file in the sandbox: {relpath!r}")
         return self.files[relpath]
 
+    @override
     def ensure_workspace(self) -> Path:
         return Path("/fake-host-workspace")
 
 
-class _FakeSandboxSessions:
+class _FakeSandboxSessions(ScratchDirs):
     def __init__(self) -> None:
+        super().__init__(Path("/fake-scratch-root"))
         self.session: _FakeSandboxSession = _FakeSandboxSession()
         self.acquired: str | None = None
-        self.holder: object = None
 
-    async def acquire(self, key: str, *, holder: object = None) -> _FakeSandboxSession:
+    @override
+    def acquire(self, key: str) -> _FakeSandboxSession:
         self.acquired = key
-        self.holder = holder
         return self.session
 
 
@@ -183,10 +190,8 @@ async def test_a_document_becomes_a_marker_not_its_text():
     # *Which* workspace is `services/workspace.py`'s answer, not this function's — see
     # `test_workspace.py` for the assertion that a conversation gets its own.
     assert sessions.session.files == {"attachments/dossier": b"raw-bytes"}
-    # And what the model gets is a marker naming it — no extracted text at all, in
-    # either shape. The two collapse to the same thing for a document.
+    # And what the model gets is a marker naming it — no extracted text at all.
     body = _text(resolved.content)
-    assert resolved.content == resolved.persisted
     assert "zebra dossier" not in body
     assert "dossier" in body and uid in body and "text/plain" in body
     assert "/work/attachments/dossier" in body
@@ -203,12 +208,11 @@ async def test_vision_model_gets_pixels_and_the_image_is_staged_too():
         store, OWNER, [uid], vision=True, workspace=_workspace(sessions)
     )
 
-    # An image is still pixels, live and retained — there is nothing to page through in a
-    # picture — but its bytes are staged as well, so code can act on it with no round-trip.
+    # An image is still pixels — there is nothing to page through in a picture — but its
+    # bytes are staged as well, so code can act on it with no round-trip.
     assert _binaries(resolved.content)
-    assert _binaries(resolved.persisted)
     assert sessions.session.files == {"attachments/dossier": b"raw-bytes"}
-    assert "/work/attachments/dossier" in _text(resolved.persisted)
+    assert "/work/attachments/dossier" in _text(resolved.content)
 
 
 async def test_an_image_for_a_text_only_model_is_a_staged_file_like_any_other():
@@ -233,7 +237,6 @@ async def test_staging_failure_degrades_to_the_full_text_inline():
     # No path to point at, so the text rides inline — in full, wrapped as data — and the
     # marker says the file could not be staged rather than naming a path that isn't there.
     body = _text(resolved.content)
-    assert resolved.content == resolved.persisted
     assert "zebra dossier" in body
     assert "untrusted" in body.lower()  # wrap_untrusted sentinel/instruction present
     assert "could not be staged" in body
@@ -283,7 +286,7 @@ async def test_unknown_attachment_id_is_skipped():
     resolved = await resolve_attachments(
         store, OWNER, ["nope"], vision=True, workspace=_workspace(_FakeSandboxSessions())
     )
-    assert resolved.content == [] and resolved.persisted == [] and resolved.ids == []
+    assert resolved.content == [] and resolved.ids == []
 
 
 async def test_two_files_sharing_a_basename_stage_to_distinct_paths():
@@ -358,39 +361,33 @@ async def test_resolution_order_follows_the_request_not_the_database():
     assert body.index(reversed_ids[0]) < body.index(reversed_ids[1]) < body.index(reversed_ids[2])
 
 
-# --- install_persisted_attachments: what the durable blob carries -----------
+# --- the chassis tail: stored as sent, read without it -----------------------
 
 
-def test_install_keeps_the_prompt_and_retains_an_image():
-    request = ModelRequest(
-        parts=[
-            UserPromptPart(
-                content=["summarize this", BinaryContent(data=b"x", media_type="image/png")]
-            )
-        ]
-    )
-    install_persisted_attachments(
-        request,
-        [BinaryContent(data=b"x", media_type="image/png"), "[Attached file(s): a.png (id: up1).]"],
-    )
-
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
-    assert isinstance(part.content, list)  # an image survives → kept as a multimodal list
-    assert part.content[0] == "summarize this"
-    assert any(isinstance(item, BinaryContent) for item in part.content)
-    assert any(isinstance(item, str) and "Attached file(s)" in item for item in part.content)
+def _with_tail() -> tuple[ModelRequest, UserPromptPart]:
+    image = BinaryContent(data=b"x", media_type="image/png")
+    part = UserPromptPart(content=["summarize this", image, "<tasks>open: 1</tasks>"])
+    return ModelRequest(parts=[part], metadata=tail_stamp([part], 1)), part
 
 
-def test_install_collapses_to_text_when_no_binary_survives():
-    request = ModelRequest(parts=[UserPromptPart(content=["summarize this", "<file>doc</file>"])])
-    install_persisted_attachments(request, ["<file>doc</file>", "[Attached file(s): d (id: up2).]"])
+def test_operator_content_drops_only_the_chassis_tail():
+    request, part = _with_tail()
+    own = operator_content(request, part)
+    assert isinstance(own, list)
+    assert own[0] == "summarize this"
+    assert any(isinstance(item, BinaryContent) for item in own)
+    assert "<tasks>open: 1</tasks>" not in own
 
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
-    assert isinstance(part.content, str)  # no binary → collapsed back to one string
-    assert part.content.startswith("summarize this")
-    assert "Attached file(s)" in part.content
+
+def test_a_request_without_a_tail_reads_whole():
+    part = UserPromptPart(content=["summarize this", "[Attached file(s): d (id: up2).]"])
+    assert operator_content(ModelRequest(parts=[part]), part) == part.content
+
+
+def test_search_text_leaves_the_tail_out():
+    request, _part = _with_tail()
+    _kind, text = project(request)
+    assert "summarize this" in text and "open: 1" not in text
 
 
 def test_the_bubble_shows_only_what_the_operator_typed():
@@ -404,7 +401,7 @@ def test_the_bubble_shows_only_what_the_operator_typed():
     assert strip_chassis_markers("no markers here") == "no markers here"
 
 
-# --- the engine: full live content, capped persisted content ----------------
+# --- the engine: an attachment persists as sent ------------------------------
 
 
 async def _conv_store() -> ConversationStore:
@@ -425,8 +422,7 @@ async def test_image_attachment_is_retained_inline_in_history():
     await conv.start()
     cid = await conv.create_conversation(OWNER)
 
-    # Snapshot what the model received *at call time* — the message object is mutated in
-    # place when the capped content is installed afterward.
+    # Snapshot what the model received at call time.
     saw_binary: list[bool] = []
 
     async def capture(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
@@ -468,9 +464,7 @@ def _provision_then_answer(uid: str) -> Callable[[list[ModelMessage], AgentInfo]
     """A FunctionModel function: call attachments_provision once, then answer."""
 
     def fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        already = any(
-            isinstance(p, ToolReturnPart | RetryPromptPart) for m in messages for p in m.parts
-        )
+        already = any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
         if already:
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(
@@ -488,7 +482,7 @@ def _provision_then_answer(uid: str) -> Callable[[list[ModelMessage], AgentInfo]
 
 async def _run_provision(
     uid: str, *, uploads: UploadStore | None, sessions: _FakeSandboxSessions | None
-) -> tuple[list[ToolReturnPart], list[RetryPromptPart]]:
+) -> tuple[list[ToolReturnPart], list[ToolReturnPart]]:
     agent = Agent(
         FunctionModel(_provision_then_answer(uid)),
         deps_type=RunDeps,
@@ -501,7 +495,7 @@ async def _run_provision(
         caps.add(uploads)
     if sessions is not None:
         # The fake sandbox manager registers under the class the tools resolve.
-        caps.add(sessions, as_type=SandboxSessionManager)
+        caps.add(sessions, as_type=ScratchDirs)
     deps = RunDeps(
         run=run,
         owner_id=OWNER,
@@ -509,8 +503,9 @@ async def _run_provision(
         conversation_id="conv-1",
     )
     result = await agent.run("go", deps=deps)
-    returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
-    retries = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    returns = [p for p in parts if p.outcome != "retried"]
+    retries = [p for p in parts if p.outcome == "retried"]
     return returns, retries
 
 
@@ -736,6 +731,42 @@ async def test_chat_allows_empty_prompt_with_an_attachment(monkeypatch: pytest.M
         # …but still nothing to act on with neither text nor a file.
         empty = await client.post("/chat", json={"prompt": "   "})
         assert empty.status_code == 422
+
+
+async def test_deleting_a_chat_deletes_its_orphaned_images_only(monkeypatch: pytest.MonkeyPatch):
+    patch_model_resolution(monkeypatch)
+    async with client_app() as (client, _app):
+        image = await _upload_file(client, name="shot.png", body=b"png-bytes", mime="image/png")
+        note = await _upload_file(client)
+        resp = await client.post("/chat", json={"prompt": "look", "attachment_ids": [image, note]})
+        body = json_body(resp)
+        _ = await collect_sse_events(client, s(body["run_id"]))
+
+        deleted = await client.delete(f"/conversations/{s(body['conversation_id'])}")
+
+        assert deleted.status_code == 204
+        assert (await client.get(f"/uploads/{image}")).status_code == 404
+        assert (await client.get(f"/uploads/{note}")).status_code == 200
+
+
+async def test_deleting_a_message_deletes_its_orphaned_images(monkeypatch: pytest.MonkeyPatch):
+    patch_model_resolution(monkeypatch)
+    async with client_app() as (client, _app):
+        image = await _upload_file(client, name="shot.png", body=b"png-bytes", mime="image/png")
+        body = json_body(
+            await client.post("/chat", json={"prompt": "look", "attachment_ids": [image]})
+        )
+        _ = await collect_sse_events(client, s(body["run_id"]))
+        conversation = s(body["conversation_id"])
+        detail = json_body(await client.get(f"/conversations/{conversation}"))
+        user_turn = next(obj(m) for m in arr(detail["messages"]) if obj(m)["role"] == "user")
+
+        deleted = await client.delete(
+            f"/conversations/{conversation}/messages/{s(user_turn['id'])}"
+        )
+
+        assert deleted.status_code == 200
+        assert (await client.get(f"/uploads/{image}")).status_code == 404
 
 
 async def test_patch_upload_toggles_kb_excluded(monkeypatch: pytest.MonkeyPatch):

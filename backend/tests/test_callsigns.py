@@ -12,6 +12,7 @@ from models.subagent import SubagentRecord
 from prompts.voice import CLASSES
 from routes.deps import app_state
 from services.agents import builtin_roster, describe_roster
+from services.agents.definition import class_key
 from services.agents.files import AgentFileError, parse_agent_file, render_agent_file
 from services.subagents import SubagentParent, SubagentUnavailableError
 from services.subagents.callsigns import (
@@ -173,8 +174,13 @@ class TestClasses:
         assert parse_agent_file(text, name="scout").agent_class == "kourai"
 
     def test_a_display_name_with_macrons_is_read(self):
-        text = "---\nname: scout\ndescription: Looks.\nclass: Kēlēdones\n---\n\nLook.\n"
-        assert parse_agent_file(text, name="scout").agent_class == "keledones"
+        assert class_key("Kēlēdones") == "keledones"
+
+    @pytest.mark.parametrize("declared", ["Talos", "Kēlēdones"])
+    def test_a_reserved_class_fails_the_file(self, declared: str):
+        text = f"---\nname: scout\ndescription: Looks.\nclass: {declared}\n---\n\nLook.\n"
+        with pytest.raises(AgentFileError, match=f"reserved class '{declared}'"):
+            _ = parse_agent_file(text, name="scout")
 
     def test_an_unknown_class_fails_the_file_naming_the_classes(self):
         text = "---\nname: scout\ndescription: Looks.\nclass: golem\n---\n\nLook.\n"

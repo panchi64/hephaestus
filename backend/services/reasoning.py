@@ -44,19 +44,29 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 
 @dataclass(frozen=True)
 class ModelDescriptor:
     """What a strategy matches on. ``model_id`` is the provider-served id (e.g.
     ``"qwen3:8b"``, ``"gpt-5.1"``), ``base_url`` is the endpoint it lives on (some
-    levers are runtime-specific), and ``thinking`` is the operator's declared hint
-    that the endpoint is a reasoning model."""
+    levers are runtime-specific), ``thinking`` is the operator's declared hint
+    that the endpoint is a reasoning model, and ``effort`` is the operator's chosen
+    effort level (None ⇒ the adapter's default)."""
 
     model_id: str
     base_url: str | None = None
     thinking: bool = False
+    effort: ThinkingEffort | None = None
+
+
+EFFORTS: tuple[ThinkingEffort, ...] = ("minimal", "low", "medium", "high", "xhigh", "max")
+
+
+def parse_effort(value: str | None) -> ThinkingEffort | None:
+    """A stored effort string as the typed level, or None when unset or unrecognized."""
+    return next((effort for effort in EFFORTS if effort == value), None)
 
 
 # A strategy recognizes a family and returns the settings that disable its

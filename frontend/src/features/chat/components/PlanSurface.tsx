@@ -50,6 +50,7 @@ export const planStatusOf = (status: PlanStatus): (typeof STATUS)[PlanStatus] =>
  */
 export function PlanSurface(props: {
   plan: () => PlanDocument | null;
+  speaker: string;
 }): JSX.Element {
   return (
     <SurfaceBody>
@@ -60,7 +61,7 @@ export function PlanSurface(props: {
           <EmptyState
             icon="note"
             message="No plan yet"
-            hint="In plan mode, the plan the agent proposes lands here for you to read before approving."
+            hint={`In plan mode, the plan ${props.speaker} proposes lands here for you to read before approving.`}
           />
         }
       >

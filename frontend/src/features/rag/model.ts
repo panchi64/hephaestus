@@ -1,4 +1,4 @@
-/** RAG / Knowledge Base feature data contracts. */
+/** Knowledge base (RAG) feature data contracts. */
 
 import type { IconName } from "~/ui";
 
@@ -35,7 +35,14 @@ export interface RagIndexStats {
   embeddingModel: string | null;
   /** Null until the active embedding model's dimensionality is known. */
   dims: number | null;
+  /** Stored chunks across the chunked sources, not documents: memory and records
+   *  surfaces never enter the chunk store. */
   totalDocs: number;
   totalCollections: number;
   storeSize: string;
+}
+
+/** Documents across every source, surfaces and folders alike. */
+export function documentCount(sources: readonly RagSource[]): number {
+  return sources.reduce((sum, source) => sum + source.docCount, 0);
 }

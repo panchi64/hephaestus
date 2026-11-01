@@ -1,5 +1,10 @@
-import { EmailInboxScreen } from "~/features/email";
+import { EmailInboxScreen } from "~/plugins/mail";
+import { PluginGate } from "~/plugins/PluginGate";
 
 export default function EmailRoute() {
-  return <EmailInboxScreen />;
+  return (
+    <PluginGate plugin="mail" title="Mail">
+      <EmailInboxScreen />
+    </PluginGate>
+  );
 }

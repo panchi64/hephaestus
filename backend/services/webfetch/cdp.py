@@ -1,7 +1,7 @@
 """Finding a Chromium's DevTools endpoint — shared by both browsers this app runs.
 
-Two very different browsers need the same three lines: the headless one in the platform VM that web
-fetch renders pages in, and the visible one on the host the agent drives. Both are reached
+Two very different browsers need the same three lines: the headless one in the services VM that
+web fetch renders pages in, and the visible one on the host the agent drives. Both are reached
 by asking ``/json/version`` for its websocket URL and then **rewriting the authority**,
 because the endpoint a browser reports is the one it sees itself on — the guest's own
 loopback port, or a hostname that resolves to nothing out here. The port we can actually

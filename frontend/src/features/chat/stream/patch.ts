@@ -17,7 +17,6 @@ import type {
   ChatMessage,
   HostCommand,
   HostCommandBlock,
-  ReviewBlock,
   ToolInvocation,
 } from "../model";
 import { findToolCall } from "../toolTree";
@@ -135,17 +134,28 @@ export function findHost(
   );
 }
 
-/** The review row for one call, keyed by tool_call_id — `review.started` opens it and
- *  `review.completed` fills in the verdict on the same block, so the row the operator
- *  saw appear is the row that ends up carrying the answer. */
-export function findReview(
+/** Apply the operator's verdict on one parked call to `m`: a pending terminal starts
+ *  running or closes denied, an approval card retires. False when `m` holds neither.
+ *  Shared by the optimistic settle and the `approval.decided` fold, which must agree. */
+export function settleDecision(
   m: ChatMessage,
   toolCallId: string,
-): ReviewBlock | undefined {
-  return m.blocks?.find(
-    (b): b is ReviewBlock =>
-      b.kind === "review" && b.review.toolCallId === toolCallId,
-  );
+  approved: boolean,
+): boolean {
+  const host = findHost(m, toolCallId);
+  if (host) {
+    if (host.command.phase === "pending")
+      host.command.phase = approved ? "running" : "denied";
+    return true;
+  }
+  if (
+    !m.blocks?.some(
+      (b) => b.kind === "approval" && b.approval.toolCallId === toolCallId,
+    )
+  )
+    return false;
+  clearPark(m, toolCallId);
+  return true;
 }
 
 /** Drop the prompt one call parked on — `approval.required` / `question.asked` open it,

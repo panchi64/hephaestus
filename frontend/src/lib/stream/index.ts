@@ -15,8 +15,10 @@ export {
   type LastRequestUsage,
   type PlanStatus,
   type PlanUpdated,
+  type PluginWindowOpened,
   type RunEvent,
   type SummarySection,
+  type ViewPreviewKind,
   type TaskItem,
   type RunMetrics,
 } from "./events";

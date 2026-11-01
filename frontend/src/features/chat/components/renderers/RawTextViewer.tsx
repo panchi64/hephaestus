@@ -200,7 +200,7 @@ export function RawTextViewer(props: {
     >
       <Show
         when={settled(loaded)}
-        fallback={<LoadingText label="Loading view…" />}
+        fallback={<LoadingText label="Loading view" />}
       >
         <div class="flex h-full min-h-0 flex-col">
           <div class="flex shrink-0 items-center gap-2 px-2 py-1.5">

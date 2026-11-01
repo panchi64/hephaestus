@@ -1,7 +1,7 @@
 # The dev instance
 
 A second, disposable Hephaestus you can run, drive and break: its own data directory, its
-own ports, its own platform VM, and a scripted model behind it. Nothing it does touches
+own ports, its own VMs, and a scripted model behind it. Nothing it does touches
 the operator's workspace.
 
 It exists because the test suite proves behaviour and cannot show a change working. A
@@ -30,7 +30,7 @@ browser pane. Ports differ per worktree — read them from
 `uv run python dev_instance.py status --json`, never assume them.
 
 This instance is **not** the operator's: separate data directory, separate ports,
-a separate VM, a stub model. Nothing in it is real, and breaking it costs nothing.
+separate VMs, a stub model. Nothing in it is real, and breaking it costs nothing.
 
 ## Getting it running
 
@@ -74,7 +74,11 @@ schema changes:
 - one scheduled task, disabled
 
 Data persists between sessions, so a scenario you build up in one is still there in the
-next. `reset --yes` wipes the workspace; the next `up` re-seeds it.
+next. It is encrypted like the operator's: `app.db` is a SQLCipher file and scratch,
+plugin source and the browser profile sit in an encrypted volume mounted at
+`<data dir>/volume` while the backend runs (a sparse bundle on macOS; on Linux, install
+`gocryptfs` and `fuse3` first). Read them through the API, not from disk. `reset --yes`
+unmounts the volume and wipes the workspace; the next `up` re-seeds it.
 
 ## The model
 
@@ -129,13 +133,15 @@ by the task's policy, and questions are answered with "use your best judgement".
 go to `evals/tasks/results/<label>.jsonl`, with a markdown summary of outcomes and causes
 beside it. Tasks that need the VM are skipped without `--with-vm`.
 
-## The platform VM, and why it is off
+## The VMs, and why they are off
 
-The platform VM — and with it the sandbox, the project shell, SearXNG and the web-fetch
-browser — does not run by default: it costs an image build, memory and boot time that most
-visual checks never need. `up --with-vm` turns it on. The VM and its image live under this
-instance's own data dir; to skip the first image build, point `HEPHAESTUS_VM_IMAGE` at an
-image directory another instance already built (`<data dir>/vm/images/<hash>`).
+The VMs — the per-conversation machines behind the shell and `code_execute`, and the
+services machine behind SearXNG and the web-fetch browser — do not run by default: they
+cost an image build, memory and boot time that most visual checks never need. The file
+tools work on host folders and need no VM. `up --with-vm` turns the VMs on. The guest
+image is built under this instance's own data dir, at `<data dir>/vm/images/<hash>/image.tar`;
+to skip the first build, point `HEPHAESTUS_VM_IMAGE` at an `image.tar` another instance
+already built.
 
 ## When something is wrong
 
@@ -150,9 +156,9 @@ forgets the instance entirely; the next `up` builds a new one.
 
 ## Running `alembic` by hand
 
-The CLI falls back to `alembic.ini`, which points at the live `data/app.db`. A command meant
-for a dev instance must carry that instance's `HEPHAESTUS_DB_URL` (`status --json` has the
-data directory), or it migrates the real database.
+The CLI holds no key, so it refuses any encrypted database, the live one and a dev
+instance's alike; both migrate at unlock. Point `HEPHAESTUS_DB_URL` at an unencrypted
+scratch file to generate or test a revision.
 
 ## What it is not
 

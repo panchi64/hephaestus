@@ -6,11 +6,11 @@
  *  registry. Reading `files_read_file, path=backend/app.py` costs a beat that
  *  "Read · backend/app.py" does not, and a turn is a dozen of those rows.
  *
- *  So each tool gets three things here: the glyph for its family (so a column of
- *  rows is scannable by shape before any word is read), a short label in the
- *  interface's own voice, and — where the generic fallbacks would guess wrong —
- *  which argument actually says what the call is about and what its results are
- *  counted in.
+ *  So each tool gets these things here: the glyph for its family and the outline
+ *  the work log frames it in (so a column of rows is scannable by shape before any
+ *  word is read), a short label in the interface's own voice, and — where the
+ *  generic fallbacks would guess wrong — which argument actually says what the
+ *  call is about and what its results are counted in.
  *
  *  **The table is a display convenience, never a gate.** A tool missing from it
  *  still renders: it falls back to its category's glyph and a humanized form of
@@ -19,7 +19,13 @@
  *  and what keeps a newly landed backend tool from rendering as a blank row. */
 
 import { sentenceCase } from "~/lib/format";
+import {
+  PLUGIN_CATEGORY_ICONS,
+  PLUGIN_CATEGORY_PREPARING,
+  PLUGIN_TOOLS,
+} from "~/plugins/registry";
 import type { IconName } from "~/ui";
+import type { Frame } from "./frames";
 import type { ToolInvocation } from "./model";
 
 export interface ToolPresentation {
@@ -33,22 +39,9 @@ export interface ToolEntry extends ToolPresentation {
   keys?: readonly string[];
   /** `[singular, plural]` for a counted result — "12 entries", "1 match". */
   noun?: readonly [string, string];
-  /** Present when the call renders as a **terminal** rather than as a tool card: the
-   *  command line, its approval, and its output as one continuous readout that never
-   *  splits into an approval card and a separate result.
-   *
-   *  It is here, on the table, and not as a name test in the fold. Running a command
-   *  is the thing the operator most needs to see happen, and there is more than one
-   *  tool that does it — the fold used to ask `name === code_run_host_command` in four
-   *  separate event cases, which is four places to remember when a second one lands,
-   *  and is why `shell_run_command` (a worktree thread's only way to run anything, already
-   *  carrying the terminal glyph two rows below) fell through to a generic card.
-   *
-   *  It used to say *how* the tool reported, because the worktree shell answered with
-   *  one labelled string the client had to pull apart while the sandboxed one answered
-   *  with a record. Both answer with a record now, so the distinction had one value
-   *  left and no second reading — a flag is the honest shape of the question that
-   *  remains. */
+  /** Present when the call renders as a **terminal**: the command line, its approval and
+   *  its output as one readout, not an approval card and a separate result. Declared on
+   *  this table so the fold never tests a tool name. */
   terminal?: true;
   /** The argument that holds a program the call runs. The open card shows it as code
    *  and leaves it out of the argument dump, which would otherwise print the whole
@@ -56,12 +49,18 @@ export interface ToolEntry extends ToolPresentation {
   script?: string;
   /** What the row says while the model is still writing the call's arguments. */
   preparing?: string;
+  /** The work-log outline, by what the call does rather than its family: a read that
+   *  brings context into the model is a `diamond` and traffic to a sub-agent is `out`,
+   *  so `memory_recall` and `memory_remember` differ. Omitted means `square`. */
+  frame?: Frame;
 }
 
 /** The glyph for a category, for any tool without its own row below. Every
- *  registered category is listed, so a new tool lands in the right family on the
- *  day it lands rather than falling through to the generic plug. */
+ *  registered category is listed (a built-in plugin's through its UI entry), so a new
+ *  tool lands in the right family on the day it lands rather than falling through to
+ *  the generic plug. */
 const CATEGORY_ICONS: Record<string, IconName> = {
+  ...PLUGIN_CATEGORY_ICONS,
   agents: "users",
   attachments: "attach",
   browse: "eye",
@@ -72,7 +71,6 @@ const CATEGORY_ICONS: Record<string, IconName> = {
   corpus: "library",
   external: "plug",
   files: "file",
-  mail: "mail",
   memory: "database",
   plan: "note",
   project: "layers",
@@ -87,6 +85,7 @@ const CATEGORY_ICONS: Record<string, IconName> = {
 
 /** The preparing phrase for any tool without its own row, by category. */
 const CATEGORY_PREPARING: Record<string, string> = {
+  ...PLUGIN_CATEGORY_PREPARING,
   agents: "Briefing a sub-agent",
   attachments: "Preparing an attachment",
   browse: "Preparing a browser action",
@@ -97,7 +96,6 @@ const CATEGORY_PREPARING: Record<string, string> = {
   corpus: "Composing a corpus query",
   external: "Preparing a connector call",
   files: "Preparing a file operation",
-  mail: "Preparing a mail action",
   memory: "Preparing a memory change",
   plan: "Preparing a plan step",
   project: "Preparing a project action",
@@ -112,6 +110,14 @@ const CATEGORY_PREPARING: Record<string, string> = {
 
 const DEFAULT_ICON: IconName = "plug";
 
+const HOST_COMMAND_ENTRY: ToolEntry = {
+  icon: "terminal",
+  label: "Host command",
+  keys: ["explanation", "command"],
+  terminal: true,
+  preparing: "Composing a host command",
+};
+
 export const TOOLS: Record<string, ToolEntry> = {
   // Both keys, in this order: which agent is most of what the row says, and the task is
   // the part worth reading. The card is the *spawn* — an agent's own work is its card in
@@ -120,12 +126,14 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "users",
     label: "Sub-agent",
     keys: ["agent_name", "task"],
+    frame: "out",
     preparing: "Briefing a sub-agent",
   },
   agents_message: {
     icon: "users",
     label: "Message agent",
     keys: ["to", "text"],
+    frame: "out",
     preparing: "Writing to a sub-agent",
   },
   agents_list: {
@@ -309,18 +317,14 @@ export const TOOLS: Record<string, ToolEntry> = {
     keys: ["code"],
     preparing: "Writing code to run",
   },
-  code_run_host_command: {
-    icon: "terminal",
-    label: "Host command",
-    keys: ["explanation", "command"],
-    terminal: true,
-    preparing: "Composing a host command",
-  },
+  shell_run_on_host: HOST_COMMAND_ENTRY,
+  code_run_host_command: HOST_COMMAND_ENTRY,
 
   corpus_retrieve: {
     icon: "library",
     label: "Retrieve",
     keys: ["query"],
+    frame: "diamond",
     noun: ["passage", "passages"],
     preparing: "Composing a corpus query",
   },
@@ -371,54 +375,11 @@ export const TOOLS: Record<string, ToolEntry> = {
     preparing: "Writing a file",
   },
 
-  mail_draft_reply: {
-    icon: "pen",
-    label: "Draft reply",
-    keys: ["message_id"],
-    preparing: "Drafting a reply",
-  },
-  mail_list_accounts: {
-    icon: "mail",
-    label: "Mail accounts",
-    noun: ["account", "accounts"],
-    preparing: "Listing the mail accounts",
-  },
-  mail_list_messages: {
-    icon: "mail",
-    label: "Inbox",
-    keys: ["folder", "account_id"],
-    noun: ["message", "messages"],
-    preparing: "Choosing a mailbox to list",
-  },
-  mail_mark: {
-    icon: "mail",
-    label: "Mark mail",
-    keys: ["message_id"],
-    preparing: "Marking a message",
-  },
-  mail_read: {
-    icon: "mail",
-    label: "Read mail",
-    keys: ["message_id"],
-    preparing: "Opening a message",
-  },
-  mail_reply: {
-    icon: "send",
-    label: "Reply",
-    keys: ["explanation", "message_id"],
-    preparing: "Writing a reply",
-  },
-  mail_send: {
-    icon: "send",
-    label: "Send mail",
-    keys: ["subject", "to"],
-    preparing: "Writing an email",
-  },
-
   memory_recall: {
     icon: "database",
     label: "Recall",
     keys: ["query"],
+    frame: "diamond",
     noun: ["memory", "memories"],
     preparing: "Composing a memory query",
   },
@@ -432,6 +393,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "database",
     label: "Open memory",
     keys: ["id"],
+    frame: "diamond",
     preparing: "Picking a memory to open",
   },
   memory_update: {
@@ -444,12 +406,14 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "database",
     label: "List memories",
     noun: ["memory", "memories"],
+    frame: "diamond",
     preparing: "Listing the memories",
   },
   memory_audit: {
     icon: "database",
     label: "Audit memory",
     noun: ["group", "groups"],
+    frame: "diamond",
     preparing: "Setting up a memory audit",
   },
   memory_forget: {
@@ -469,6 +433,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "note",
     label: "Read tasks",
     noun: ["task", "tasks"],
+    frame: "diamond",
     preparing: "Opening the task list",
   },
   tasks_update_statuses: {
@@ -489,6 +454,7 @@ export const TOOLS: Record<string, ToolEntry> = {
   plan_read: {
     icon: "note",
     label: "Read plan",
+    frame: "diamond",
     preparing: "Opening the plan",
   },
   plan_submit: {
@@ -530,6 +496,7 @@ export const TOOLS: Record<string, ToolEntry> = {
   repo_inventory_agent_context: {
     icon: "branch",
     label: "Repo context",
+    frame: "diamond",
     preparing: "Asking for repo context",
   },
 
@@ -554,6 +521,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "grid",
     label: "Loading tools",
     keys: ["queries"],
+    frame: "diamond",
     noun: ["tool", "tools"],
     preparing: "Asking for more tools",
   },
@@ -601,6 +569,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     icon: "library",
     label: "Open skill",
     keys: ["name"],
+    frame: "diamond",
     preparing: "Picking a skill to open",
   },
 
@@ -643,6 +612,7 @@ export const TOOLS: Record<string, ToolEntry> = {
     noun: ["result", "results"],
     preparing: "Composing a web search",
   },
+  ...PLUGIN_TOOLS,
 };
 
 /** The namespace a name declares, or `""` for a name that declares none. The

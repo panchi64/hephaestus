@@ -85,22 +85,17 @@ class TestTheLevelPart:
     async def test_the_auto_fragment_claims_nothing_about_tools_a_thread_may_not_have(
         self,
     ):
-        """Auto is every fresh thread's level, and the tools that take a `reach` are the
-        shell's, which an operator may switch off. So the fragment asks the model to
-        answer the question *where a tool asks it*, rather than asserting that every
-        command carries one."""
+        """Auto is every fresh thread's level, and the shell is a tool an operator may
+        switch off. So the fragment asserts nothing about every command."""
         for project_id in (None, "proj-1"):
             assert AUTO_LEVEL in await _brief(project_id=project_id, permission="auto")
-        assert "Where a tool asks how far a command needs to reach" in AUTO_LEVEL
         assert "Every shell command" not in AUTO_LEVEL
 
-    async def test_auto_asks_for_the_declaration_and_never_states_the_bar(self):
-        """The one thing an Auto thread's model has to *do* differently is declare a
-        reach. What clears the review is deliberately absent — from here as much as from
-        the reviewer's own prompt: a model told the bar writes for the bar."""
-        assert "reach" in AUTO_LEVEL
-        for tell in ("low", "high", "too_destructive", "authorization"):
-            assert tell not in AUTO_LEVEL
+    async def test_auto_says_a_stop_is_waited_on_not_routed_around(self):
+        """The rule is deterministic, so it is stated; the one thing it can't catch is the
+        same act reached through another tool."""
+        assert "default hosts" in AUTO_LEVEL
+        assert "rather than reaching the same result another way" in AUTO_LEVEL
 
     async def test_a_plan_thread_is_told_its_missing_tools_are_deliberate(self):
         """The catalog is cut at Plan whether or not the model knows why. Without this it

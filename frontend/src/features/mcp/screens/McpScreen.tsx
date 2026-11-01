@@ -5,13 +5,12 @@ import {
   EmptyState,
   ListToolbar,
   LoadingText,
-  PageHeader,
-  Row,
   Stack,
   StatusFlag,
   Text,
   toast,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { createInFlight } from "~/lib/inFlight";
 import { createListView } from "~/lib/list";
 import {
@@ -138,25 +137,22 @@ export function McpScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="MCP connections"
-        subtitle="Model Context Protocol server registration and tool management."
-        assetId="SYS-MCP-04.1"
+      <SettingsPageHeader
+        section="mcp"
+        status={
+          <StatusFlag
+            status="nominal"
+            dot
+          >{`${connectedCount()} CONNECTED`}</StatusFlag>
+        }
         actions={
-          <Row gap={2} align="center">
-            <StatusFlag
-              status="nominal"
-              dot
-            >{`${connectedCount()} CONNECTED`}</StatusFlag>
-            <Button
-              variant="default"
-              leading="plus"
-              onClick={() => setRegisterOpen(true)}
-            >
-              Register
-            </Button>
-          </Row>
+          <Button
+            variant="default"
+            leading="plus"
+            onClick={() => setRegisterOpen(true)}
+          >
+            Register
+          </Button>
         }
       />
 
@@ -177,7 +173,7 @@ export function McpScreen(): JSX.Element {
           }
         >
           <Stack gap={4}>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               MCP servers expose tools the agent can call. Every one of them
               asks for your approval before it runs until you trust it — one
               tool at a time, never a whole server.

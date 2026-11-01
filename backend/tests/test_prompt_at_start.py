@@ -18,10 +18,20 @@ import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 
-from pydantic_ai import FunctionToolset, ModelRequest, ModelResponse, TextPart, ToolApproved
+import pytest
+from pydantic_ai import (
+    AgentInstructionSource,
+    FunctionToolset,
+    InstructionDeltaPart,
+    InstructionId,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolApproved,
+)
 from pydantic_ai.messages import (
     ModelMessage,
-    RetryPromptPart,
+    ModelRequestPart,
     SystemPromptPart,
     ThinkingPart,
     ToolReturnPart,
@@ -37,12 +47,18 @@ from sqlalchemy import Engine
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from agent.finalize import finalize
 from agent.flush import PersistContext
-from agent.history import TurnStart, after_recorded_prompt
+from agent.history import (
+    TurnStart,
+    merge_consecutive_requests,
+    split_injected_requests,
+    split_recorded_opening,
+)
 from agent.turn import TurnResult
 from core.db import init_db, make_engine
 from core.vault import Vault
 from routes.deps import OPERATOR_ID, app_state
 from runs import Run, RunRegistry, RunStatus, RunStream
+from services.chassis_tail import operator_content, with_tails
 from services.conversations import ConversationStore
 from tools import RunDeps
 
@@ -199,19 +215,85 @@ async def test_the_prompts_stamps_land_on_it_and_never_on_a_steering_message(tmp
     await store.stop()
 
 
+async def test_a_regenerated_prompt_is_written_back_as_it_was_sent(tmp_path: Path):
+    """A regenerate swaps the stored prompt's tail and the library records its window on
+    it; both land on the stored node, which keeps its stamps, so the next turn replays
+    the bytes the regenerate cached."""
+    store, _ = await _fresh_store(tmp_path)
+    await store.start()
+    conv = await store.create_conversation("operator")
+    first = UserPromptPart(["look at @a.py", "STOP NOTICE"])
+    prompt_id = store.record_prompt(
+        conv, ModelRequest(parts=[first]), file_refs=["a.py"], chassis_tail=1
+    )
+    swapped = UserPromptPart(["look at @a.py", "<tasks>open: 2</tasks>"])
+    delta = InstructionDeltaPart(id=_ID, content="b")
+    sent = with_tails(ModelRequest(parts=[swapped, delta]), {0: 1})
+
+    store.amend_request(conv, prompt_id, sent)
+    store.amend_request(conv, prompt_id, sent)
+
+    [stored] = [m for m in await store.history(conv) if isinstance(m, ModelRequest)]
+    prompt = stored.parts[0]
+    assert isinstance(prompt, UserPromptPart) and prompt.content == swapped.content
+    assert operator_content(stored, prompt) == ["look at @a.py"]
+    assert stored.parts[1:] == [delta]
+    views = await store.messages_view(conv)
+    assert views[0].content == "look at @a.py" and views[0].file_refs == ["a.py"]
+    await store.stop()
+
+
 async def test_an_opening_request_carrying_steering_yields_it_as_its_own_request():
     opening = ModelRequest(parts=[UserPromptPart("the prompt"), UserPromptPart("steered in")])
     response = ModelResponse(parts=[TextPart("answer")])
 
-    rest = after_recorded_prompt([opening, response])
+    sent, rest = split_recorded_opening([opening, response])
 
+    assert sent is not None and sent.parts == [opening.parts[0]]
     assert [type(m).__name__ for m in rest] == ["ModelRequest", "ModelResponse"]
     assert isinstance(rest[0], ModelRequest)
     steered = rest[0].parts[0]
     assert isinstance(steered, UserPromptPart) and steered.content == "steered in"
-    assert len(after_recorded_prompt([opening])) == 1  # the steering, with no response yet
-    assert after_recorded_prompt([ModelRequest(parts=[UserPromptPart("only")])]) == []
-    assert after_recorded_prompt([]) == []
+    assert len(split_recorded_opening([opening])[1]) == 1  # the steering, no response yet
+    only = UserPromptPart("only")
+    alone, nothing = split_recorded_opening([ModelRequest(parts=[only])])
+    assert alone is not None and alone.parts == [only] and nothing == []
+    assert split_recorded_opening([]) == (None, [])
+
+
+_ID = InstructionId(AgentInstructionSource(), name="level")
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        [UserPromptPart("steered"), InstructionDeltaPart(id=_ID, content="b")],
+        [InstructionDeltaPart(id=_ID, content="b"), UserPromptPart("steered")],
+        [
+            UserPromptPart("one"),
+            InstructionDeltaPart(id=_ID, content="b"),
+            UserPromptPart("two"),
+        ],
+    ],
+)
+def test_a_split_opening_replays_in_the_order_it_was_sent(tail: list[ModelRequestPart]):
+    """Amended prompt plus the recorded requests, merged as replay merges them, is the
+    request that was sent — whatever order steering and library parts arrived in."""
+    prompt = UserPromptPart("the prompt")
+    stored, rest = split_recorded_opening([ModelRequest(parts=[prompt, *tail])])
+    assert stored is not None
+    [replayed] = merge_consecutive_requests([stored, *rest])
+    assert replayed.parts == [prompt, *tail]
+
+
+def test_a_split_tool_return_request_replays_in_the_order_it_was_sent():
+    sent = [
+        ToolReturnPart(tool_name="t", content="ok", tool_call_id="c"),
+        UserPromptPart("steered"),
+        InstructionDeltaPart(id=_ID, content="b"),
+    ]
+    [replayed] = merge_consecutive_requests(split_injected_requests([ModelRequest(parts=sent)]))
+    assert replayed.parts == sent
 
 
 # --- the verifier's drop range -------------------------------------------------
@@ -455,12 +537,7 @@ async def test_a_fold_never_swallows_the_prompt_being_answered(tmp_path: Path):
         for part in message.parts
         if isinstance(
             part,
-            UserPromptPart
-            | TextPart
-            | SystemPromptPart
-            | ToolReturnPart
-            | RetryPromptPart
-            | ThinkingPart,
+            UserPromptPart | TextPart | SystemPromptPart | ToolReturnPart | ThinkingPart,
         )
     ]
     assert texts == ["earlier", "old"]  # the prompt stays out of the summary

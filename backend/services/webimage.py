@@ -1,29 +1,16 @@
 """Fetch a remote image on the operator's behalf, so their browser never does.
 
-An answer can hyperlink the web (see ``prompts.agent``), and an image is the natural
-next step — a chart on the page the model just read is worth showing, not describing.
-But ``<img src="https://…">`` is not like a link: it fetches **on render**, with no
-click to gate it. Pointed at a host chosen by relayed, untrusted page content, that is
-a silent request carrying the operator's IP, user-agent, and any cookies for that
-host — the classic markdown-image exfiltration channel.
+An ``<img>`` fetches on render with no click to gate it, so a URL chosen by untrusted page
+content would silently carry the operator's IP, user-agent and cookies to that host. The
+browser asks ``routes.media`` instead, and this service fetches:
 
-So the browser never sees the remote URL. It asks *us* (``routes.media``), and this
-service does the fetching, one origin removed from the operator:
+* :func:`core.ssrf.assert_public_url` runs on the URL and on every redirect hop.
+* The declared content type and the magic bytes must agree on a format in
+  :data:`IMAGE_TYPES`.
+* A byte cap is enforced while streaming.
 
-* :func:`core.ssrf.assert_public_url` on the URL and again on every redirect hop, so
-  the proxy can't be aimed at loopback, the LAN, or a cloud metadata endpoint.
-* The response has to actually be a raster image — declared content type **and**
-  magic bytes must agree on a format in :data:`IMAGE_TYPES`. A server that answers an
-  ``<img>`` with HTML is not serving an image, and we don't pass it on.
-* A byte cap enforced *while streaming*, so a hostile or mistaken URL can't stream
-  gigabytes through the backend before anyone notices the declared length was a lie.
-
-What this deliberately does not solve: the remote host still learns its URL was
-requested, so a URL that encodes exfiltrated data still arrives — from this machine's
-address, at a time correlated with the answer. Closing that needs a human click before
-the fetch, which is a product decision, not a service one. The agent's own
-``web_fetch`` can already reach an arbitrary URL; what this removes is the operator's
-identity and the silence.
+Not solved: the remote host still learns its URL was requested, so data encoded in the URL
+still arrives. Closing that needs a human click before the fetch.
 """
 
 from __future__ import annotations
@@ -33,15 +20,11 @@ from dataclasses import dataclass
 import httpx
 
 from core.exceptions import HephaestusError
-from core.net import header
+from core.net import ResponseTooLarge, header, iter_capped
 from core.ssrf import assert_public_url
 
-# Formats worth rendering inline, each with the magic-byte prefix that proves it.
-#
-# SVG is absent on purpose. It is XML, it can carry script, and it is the one image
-# format whose bytes become a *document* if the response is ever opened directly
-# rather than through an `<img>`. The headers this is served with make that inert, but
-# a raster allowlist means we are not relying on them.
+# Formats worth rendering inline, each with the magic-byte prefix that proves it. SVG is
+# excluded: it can carry script and becomes a document if opened outside an `<img>`.
 IMAGE_TYPES: tuple[tuple[str, tuple[bytes, ...]], ...] = (
     ("image/png", (b"\x89PNG\r\n\x1a\n",)),
     ("image/jpeg", (b"\xff\xd8\xff",)),
@@ -60,9 +43,8 @@ class ImageFetchError(HephaestusError):
 
 @dataclass(frozen=True)
 class FetchedImage:
-    """Validated image bytes and the content type they were *sniffed* as — never the
-    type the remote server claimed, so a mislabelled response can't pick the type the
-    browser then trusts."""
+    """Validated image bytes and the type they were sniffed as, never the type the server
+    claimed, so a mislabelled response can't choose what the browser trusts."""
 
     content_type: str
     data: bytes
@@ -73,8 +55,7 @@ def _sniff(data: bytes) -> str | None:
     for content_type, prefixes in IMAGE_TYPES:
         for prefix in prefixes:
             if content_type == "image/webp":
-                # RIFF<u32 size>WEBP — the length between the two markers is the
-                # file's, so match both ends rather than a single prefix.
+                # RIFF<u32 size>WEBP: the size sits between the markers, so match both.
                 if data.startswith(prefix) and data[8:12] == b"WEBP":
                     return content_type
             elif content_type == "image/avif":
@@ -95,17 +76,13 @@ async def fetch_image(
 ) -> FetchedImage:
     """Fetch ``url`` and return it only if it is a raster image within ``max_bytes``.
 
-    Redirects are followed by hand rather than by the client, because each hop's target
-    has to clear :func:`assert_public_url` before it is contacted — a public host that
-    redirects to ``127.0.0.1`` is the open-redirect case the guard exists for, and a
-    client following redirects internally would already have made that request.
+    Redirects are followed by hand so each hop's target clears :func:`assert_public_url`
+    before it is contacted.
     """
     seen = url
     for _ in range(_MAX_REDIRECTS + 1):
         await assert_public_url(seen)
         try:
-            # `follow_redirects=False`: see above. No operator credentials are on this
-            # client, and `Accept` states what we are willing to render.
             async with client.stream(
                 "GET",
                 seen,
@@ -126,20 +103,12 @@ async def fetch_image(
                 )
                 if declared and not declared.startswith("image/"):
                     raise ImageFetchError(f"remote served {declared!r}, not an image")
-                # Read to the cap +1 so an over-size body is *detected* rather than
-                # silently truncated into a corrupt image. Streaming, so the declared
-                # Content-Length (which a hostile server can lie about) is never trusted.
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in resp.aiter_bytes():
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise ImageFetchError(f"image exceeds {max_bytes} bytes")
-                    chunks.append(chunk)
+                data = b"".join([chunk async for chunk in iter_capped(resp, max_bytes)])
+        except ResponseTooLarge:
+            raise ImageFetchError(f"image exceeds {max_bytes} bytes") from None
         except httpx.HTTPError as exc:
             raise ImageFetchError(f"could not be fetched: {exc}") from exc
 
-        data = b"".join(chunks)
         sniffed = _sniff(data)
         if sniffed is None:
             raise ImageFetchError("bytes are not a supported image format")

@@ -1,0 +1,24 @@
+"""Merged the thread effort and dev migration heads
+
+Revision ID: 73e04c51a348
+Revises: 405b92e9a321, d0815ca0ecbb
+Create Date: 2026-10-31 14:57:49.722338
+
+"""
+from collections.abc import Sequence
+
+# revision identifiers, used by Alembic.
+revision: str = '73e04c51a348'
+down_revision: str | Sequence[str] | None = ('405b92e9a321', 'd0815ca0ecbb')
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    pass
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    pass

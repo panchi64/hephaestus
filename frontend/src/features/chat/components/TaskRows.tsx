@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { cx, Frames, Icon, Text } from "~/ui";
 import type { TaskItem } from "~/lib/stream";
+import { taskLabel } from "../taskItems";
 
 /** Compact window: the readout shows at most this many rows — enough to see
  *  where work is and what comes next without pushing the transcript off screen. */
@@ -42,22 +43,6 @@ const fade = (distance: number) =>
         ? "opacity-50"
         : "opacity-30";
 
-/** The task list's headline numbers, derived once here and read by both the status
- *  strip (which shows them) and the rows below it. Cancelled tasks leave the
- *  denominator: the question the count answers is "how much is left to do", and a
- *  cancelled task is not left to do. */
-export function taskSummary(items: TaskItem[]): {
-  done: number;
-  total: number;
-  active: TaskItem | undefined;
-} {
-  return {
-    done: items.filter((i) => i.status === "completed").length,
-    total: items.filter((i) => i.status !== "cancelled").length,
-    active: items.find((i) => i.status === "in_progress"),
-  };
-}
-
 /** The agent's task list for this thread, as rows.
  *
  *  Shows a compact window around the frontier — the running task, else the next pending
@@ -67,8 +52,8 @@ export function taskSummary(items: TaskItem[]): {
  *  lists every row.
  *
  *  The done/total count and the ACTIVE flag are *not* here — they live in the
- *  `Tasks` toggle on the row under the composer, which is also what opens these rows.
- *  This renders only what that one-word summary can't say.
+ *  composer's `Tasks` toggle, which is also what opens these rows. This renders only
+ *  what that one-word summary can't say.
  *
  *  Presentation only: the backend owns the list and nothing here can change it. There is
  *  deliberately no edit affordance — the list is the agent's account of its own work, and
@@ -161,9 +146,7 @@ export function TaskRows(props: {
                     item.status === "cancelled" && "line-through",
                   )}
                 >
-                  {item.status === "in_progress"
-                    ? (item.active_form ?? item.content)
-                    : item.content}
+                  {taskLabel(item)}
                 </Text>
               </li>
             )}

@@ -36,6 +36,7 @@ from core.diagnostics import PLATFORM_CODE, render_tool_error
 from core.exceptions import HephaestusError
 
 from .deps import RunDeps
+from .spill import spill_large
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ class RecoveringToolset(WrapperToolset[RunDeps]):
         deadline = asyncio.timeout(limit)
         try:
             async with ctx.deps.run.keepalive(), deadline:
-                return cast(object, await self.wrapped.call_tool(name, tool_args, ctx, tool))
+                result = cast(object, await self.wrapped.call_tool(name, tool_args, ctx, tool))
         except _PASS_THROUGH:
             raise
         except Exception as exc:
@@ -129,6 +130,7 @@ class RecoveringToolset(WrapperToolset[RunDeps]):
             else:
                 logger.exception("tool %s raised", name)
             raise ToolFailed(describe_failure(name, exc)) from exc
+        return await spill_large(ctx, name, result)
 
 
 @dataclass

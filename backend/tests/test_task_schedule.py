@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from models.task import ScheduleType
-from services.scheduler import compute_next_run
+from plugins.routines.models import ScheduleType
+from plugins.routines.scheduler import compute_next_run
 
 
 def test_once_returns_its_run_at_unchanged_regardless_of_anchor():

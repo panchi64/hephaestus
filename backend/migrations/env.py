@@ -8,6 +8,8 @@ Two ways in:
   lives only on a single shared connection.
 - **CLI (autogenerate / manual).** No connection is attached, so we build one
   from ``sqlalchemy.url`` (``alembic.ini``, overridable via ``HEPHAESTUS_DB_URL``).
+  It holds no key, so it works only on an unencrypted scratch database; the live
+  one is encrypted and migrates at unlock.
 
 ``target_metadata`` is the SQLModel registry, populated by importing every model
 module, so ``--autogenerate`` sees the full schema. SQLite gets batch mode, since
@@ -19,9 +21,11 @@ from __future__ import annotations
 import os
 
 from alembic import context
-from sqlalchemy import Connection, Engine, create_engine
+from sqlalchemy import Connection, Engine
+from sqlalchemy.exc import DatabaseError
 from sqlmodel import SQLModel
 
+from core.db import make_engine
 from core.exceptions import SchemaMigrationError
 
 # Import every model module so its tables register on SQLModel.metadata — walked
@@ -115,8 +119,18 @@ def run_migrations_online() -> None:
     url = os.environ.get("HEPHAESTUS_DB_URL") or config.get_main_option("sqlalchemy.url")
     if url is None:
         raise SchemaMigrationError("No database URL: set HEPHAESTUS_DB_URL or sqlalchemy.url.")
-    engine = create_engine(url)
+    engine = make_engine(url)
     with engine.connect() as connection:
+        try:
+            _ = connection.exec_driver_sql("SELECT count(*) FROM sqlite_master").scalar()
+        except DatabaseError as exc:
+            raise SchemaMigrationError(
+                f"{url} is encrypted (or not a database); the live database migrates at "
+                + "unlock, so point HEPHAESTUS_DB_URL at an unencrypted scratch copy."
+            ) from exc
+        # The probe autobegan a transaction; the foreign-key pragma in `_run` is ignored
+        # inside one.
+        connection.rollback()
         _run(connection)
 
 

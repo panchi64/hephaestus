@@ -1,14 +1,7 @@
 import { onCleanup, onMount, Show, type JSX } from "solid-js";
-import {
-  LoadingText,
-  Panel,
-  Row,
-  Stack,
-  StatusFlag,
-  Text,
-  Toggle,
-  toast,
-} from "~/ui";
+import { LoadingText, Panel, Stack, StatusFlag, Toggle, toast } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
+import { SettingRow } from "./SettingRow";
 import {
   refreshOfflineState,
   setOfflineAutoDetect,
@@ -43,70 +36,55 @@ export function OfflineSection(): JSX.Element {
   };
 
   return (
-    <Panel label="Offline mode">
-      <Show when={offline()} fallback={<LoadingText />}>
-        {(state) => (
-          <Stack gap={3}>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Status
-                </Text>
-                <Text variant="micro" tone="dim">
-                  When connectivity is lost the web search + fetch services are
-                  suspended to save resources and the agent's web tools are
-                  hidden. They return automatically when you're back online.
-                </Text>
-              </Stack>
-              <StatusFlag
-                status={state().effectiveOffline ? "warn" : "nominal"}
+    <Stack gap={6}>
+      <SettingsPageHeader section="offline" />
+      <Panel>
+        <Show when={offline()} fallback={<LoadingText />}>
+          {(state) => (
+            <Stack gap={3}>
+              <SettingRow
+                label="Status"
+                description="When connectivity is lost the web search + fetch services are suspended to save resources and the agent's web tools are hidden. They return automatically when you're back online."
               >
-                {offlineLabel(state())}
-              </StatusFlag>
-            </Row>
-            <Row align="center" justify="between" class="pt-3">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Offline now
-                </Text>
-                <Text variant="micro" tone="dim">
-                  Force offline immediately — stops the web services regardless
-                  of connectivity.
-                </Text>
-              </Stack>
-              <Toggle
-                checked={state().manualOffline}
-                onChange={() =>
-                  void toggleOffline(
-                    () => setOfflineManual(!state().manualOffline),
-                    "offline mode",
-                  )
-                }
-              />
-            </Row>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Auto-detect
-                </Text>
-                <Text variant="micro" tone="dim">
-                  Go offline on its own when the internet connection drops, and
-                  come back when it returns.
-                </Text>
-              </Stack>
-              <Toggle
-                checked={state().autoDetect}
-                onChange={() =>
-                  void toggleOffline(
-                    () => setOfflineAutoDetect(!state().autoDetect),
-                    "auto-detect",
-                  )
-                }
-              />
-            </Row>
-          </Stack>
-        )}
-      </Show>
-    </Panel>
+                <StatusFlag
+                  status={state().effectiveOffline ? "warn" : "nominal"}
+                >
+                  {offlineLabel(state())}
+                </StatusFlag>
+              </SettingRow>
+              <SettingRow
+                label="Offline now"
+                description="Force offline immediately — stops the web services regardless of connectivity."
+                class="pt-3"
+              >
+                <Toggle
+                  checked={state().manualOffline}
+                  onChange={() =>
+                    void toggleOffline(
+                      () => setOfflineManual(!state().manualOffline),
+                      "offline mode",
+                    )
+                  }
+                />
+              </SettingRow>
+              <SettingRow
+                label="Auto-detect"
+                description="Go offline on its own when the internet connection drops, and come back when it returns."
+              >
+                <Toggle
+                  checked={state().autoDetect}
+                  onChange={() =>
+                    void toggleOffline(
+                      () => setOfflineAutoDetect(!state().autoDetect),
+                      "auto-detect",
+                    )
+                  }
+                />
+              </SettingRow>
+            </Stack>
+          )}
+        </Show>
+      </Panel>
+    </Stack>
   );
 }

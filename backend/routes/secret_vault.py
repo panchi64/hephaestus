@@ -6,7 +6,7 @@ module is named ``secret_vault`` rather than ``vault`` so ``app.py`` can import 
 alongside its local ``vault`` handle on the key custody — same reason the ``deps`` accessor
 is ``secret_vault()``.
 
-See ``routes/mail.py`` for why the surface is registered before it exists.
+See ``plugins/mail/routes.py`` for why the surface is registered before it exists.
 
 Thin, like every router: it parses, calls ``services/secret_vault``, and maps that layer's
 domain errors to status codes — 409 for a locked vault or an unmet configure/unlock

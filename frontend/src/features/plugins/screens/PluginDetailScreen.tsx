@@ -26,6 +26,7 @@ import {
   deleteWithConfirm,
   discardWithConfirm,
   exportWithToast,
+  openWindowsWithToast,
   publishWithConfirm,
   unpublishWithToast,
 } from "../actions";
@@ -125,16 +126,28 @@ export function PluginDetailScreen(props: {
             onExport={() => void exportWithToast(p())}
             canEdit={false}
             actions={
-              <Show when={canPublish(p())}>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  leading="check"
-                  onClick={() => void publish(p())}
-                >
-                  {p().draft ? "Publish" : "Enable"}
-                </Button>
-              </Show>
+              <>
+                <Show when={p().published && p().active?.windows.length}>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    leading="grid"
+                    onClick={() => void openWindowsWithToast(p())}
+                  >
+                    Open
+                  </Button>
+                </Show>
+                <Show when={canPublish(p())}>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    leading="check"
+                    onClick={() => void publish(p())}
+                  >
+                    {p().draft ? "Publish" : "Enable"}
+                  </Button>
+                </Show>
+              </>
             }
             menuItems={[
               ...(p().published

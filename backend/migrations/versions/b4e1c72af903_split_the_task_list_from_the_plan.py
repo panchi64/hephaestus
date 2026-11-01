@@ -60,13 +60,9 @@ def _remap_disabled_tools(mapping: dict[str, str]) -> None:
     value_column = sa.column("value", sa.String)
     settings = sa.table("app_settings", id_column, key_column, value_column)
     connection = op.get_bind()
-    rows = (
-        connection.execute(
-            sa.select(id_column, value_column).where(key_column == _DISABLED_TOOLS_KEY)
-        )
-        .tuples()
-        .all()
-    )
+    rows = connection.execute(
+        sa.select(id_column, value_column).where(key_column == _DISABLED_TOOLS_KEY)
+    ).all()
     for row_id, raw in rows:
         try:
             names = _JSON.validate_json(raw)

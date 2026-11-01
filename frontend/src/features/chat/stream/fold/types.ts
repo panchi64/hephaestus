@@ -5,7 +5,7 @@
  */
 
 import type { SetStoreFunction } from "solid-js/store";
-import type { ContextWindow, TaskItem } from "~/lib/stream";
+import type { ContextWindow, PluginWindowOpened, TaskItem } from "~/lib/stream";
 import type {
   ChatMessage,
   ConversationStats,
@@ -105,6 +105,9 @@ export interface FoldDeps {
    *  the live session through the room's own read. Optional for a caller with no browser
    *  panel (the compare pane). */
   onBrowserOpened?: () => void;
+  /** The agent opened a plugin window. Not called on a replay, so a reload doesn't
+   *  reopen a window the operator closed. */
+  onPluginWindowOpened?: (window: PluginWindowOpened) => void;
 }
 
 /** When the streaming run began and how far it has got, both straight off the wire:

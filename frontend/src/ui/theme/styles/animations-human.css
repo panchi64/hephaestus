@@ -12,22 +12,13 @@
    actually doing, and it is the single cheapest way to make an arrival feel
    considered rather than switched on.
 
-   Two keyframes, not four. Every reveal in the system is "fade" or "fade plus a
-   short glide up", and the rest was distance and duration — so those are custom
-   properties (`--reveal-y`, `--reveal-ms`, `--reveal-blur`) and the presets
-   below only set them. The two are kept separate rather than collapsed into one
-   with `--reveal-y: 0` because `animation-fill-mode: both` would then leave a
-   `translateY(0)` on every faded element forever, and a transform makes the
-   element a containing block for its absolutely-positioned children. A fade
-   should not change layout semantics.
+   Two keyframes: distance, duration and blur are custom properties
+   (`--reveal-y`, `--reveal-ms`, `--reveal-blur`) the presets set. A fade carries
+   no transform, so it never makes the element a containing block for its
+   absolutely-positioned children; a rise does for as long as it runs.
 
-   Which is also why both land on `filter: none` rather than `blur(0)`: the two
-   render identically, but `none` leaves no filter on the element afterwards, and
-   so no lingering containing block or stacking context. (Interpolating a filter
-   list against `none` is defined as interpolating against its no-op, so the
-   animation is still smooth.) The containing block does exist for the ~200ms the
-   animation runs — worth knowing if a reveal wraps absolutely-positioned
-   children. */
+   Lasting entries fill `backwards`: a filled `blur(0px)` stays a render surface
+   in Chromium. Exits fill `forwards` so the region stays gone until unmount. */
 @keyframes heph-reveal-fade {
   from {
     opacity: 0;
@@ -51,16 +42,21 @@
   }
 }
 
-.heph-fade-in,
-.heph-token-in {
+.heph-fade-in {
   animation: heph-reveal-fade var(--reveal-ms, var(--motion-base)) var(--ease)
-    both;
+    backwards;
+}
+/* Keeps `both`: its spans are unwrapped once the block settles, and a fill ending
+   mid-stream would restyle a span on every frame. */
+.heph-token-in {
+  animation: heph-reveal-fade var(--token-reveal-ms, var(--motion-base))
+    var(--ease) both;
 }
 /* Overlay entry — modals, popovers, menus, toasts. Settles, never bounces. */
 .heph-rise,
 .heph-message-in {
   animation: heph-reveal-rise var(--reveal-ms, var(--motion-base)) var(--ease)
-    both;
+    backwards;
 }
 
 /* LEAVING. Only a *gated* reveal ever does this — one whose caller says when the
@@ -94,9 +90,11 @@
 }
 .heph-fade-in[data-closed] {
   animation-name: heph-reveal-fade-out;
+  animation-fill-mode: forwards;
 }
 .heph-rise[data-closed] {
   animation-name: heph-reveal-rise-out;
+  animation-fill-mode: forwards;
 }
 /* Held before its entry plays: mounted, laid out, and invisible.
    A gated reveal starts its animation a frame AFTER mount rather than at mount,
@@ -148,11 +146,8 @@
      non-replaced inline box — so the blur is doing all the materializing here,
      which is another reason to keep it legible. */
   --reveal-blur: 2.5px;
-  /* NO `--reveal-ms` here on purpose. The reveal is scheduled in absolute time
-     (`streamReveal.ts`), so the schedule has to know the duration to decide when
-     a character is finished — it owns the number and writes it inline, per span,
-     alongside that character's delay. A second copy here would drift, and the
-     symptom would be characters that never settle or settle early. */
+  /* `--token-reveal-ms` comes from `AnswerText`'s host, from the schedule's own
+     constant; its own name keeps it from leaking into reveals inside the answer. */
 }
 :where(code, pre, kbd, samp, table, .font-mono) .heph-token-in {
   animation: none;

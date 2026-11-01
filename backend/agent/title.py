@@ -35,6 +35,7 @@ from pydantic_ai.settings import ModelSettings
 from core.text import strip_think_blocks
 from core.untrusted import wrap_untrusted
 from prompts.utility import TITLE_INSTRUCTIONS
+from services.chassis_tail import part_content
 
 from .meta import make_utility_agent
 
@@ -75,7 +76,7 @@ def _part_text(message: ModelMessage, part_names: frozenset[str]) -> str:
     for part in message.parts:
         if type(part).__name__ not in part_names:
             continue
-        content: object = getattr(part, "content", None)
+        content = part_content(message, part)
         if isinstance(content, str):
             chunks.append(content)
         elif isinstance(content, list | tuple):
@@ -190,8 +191,8 @@ async def generate_title(
         # asyncio.TimeoutError is an Exception subclass (caught below); CancelledError
         # is not, so a cancelled run still propagates rather than degrading to a title.
         result = await (asyncio.wait_for(run, timeout_s) if timeout_s else run)
-    except Exception as exc:  # noqa: BLE001 — titling is best-effort, never fails a turn
-        logger.warning("conversation title generation failed: %s", exc)
+    except Exception:  # titling is best-effort, never fails a turn
+        logger.warning("conversation title generation failed", exc_info=True)
         return None
     return clean_title(result.output)
 

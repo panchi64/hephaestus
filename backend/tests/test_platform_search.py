@@ -19,7 +19,8 @@ from core.container import ServiceContainer
 from core.vault import Vault
 from models.conversation import Conversation
 from models.subagent import SubagentRecord
-from models.task import ScheduledTask, TaskRun
+from plugins.routines.models import ScheduledTask, TaskRun
+from plugins.routines.services.corpus import routine_runs_adapter
 from runs import Run, RunStream
 from services.conversations import ConversationStore
 from services.corpus import (
@@ -36,7 +37,7 @@ from services.plugins import PluginStore
 from services.registry import ModelRegistry
 from services.skills import SkillStore
 from tools.deps import RunDeps
-from tools.platform import PlatformDocument, PlatformResults, Source, platform_toolset
+from tools.platform import PlatformDocument, PlatformResults, platform_toolset
 
 from ._plugin_helpers import bundle
 from .test_conversation_search import DegradedEmbedder, record_conversation, setup_search
@@ -79,7 +80,7 @@ class Platform:
     async def search(
         self,
         query: str,
-        sources: list[Source] | None = None,
+        sources: list[str] | None = None,
         since: str | None = None,
         *,
         conversation_id: str | None = "current",
@@ -106,6 +107,13 @@ class Platform:
 
 @pytest.fixture
 async def platform() -> AsyncIterator[Platform]:
+    built = await make_platform()
+    yield built
+    await built.store.stop()
+
+
+async def make_platform() -> Platform:
+    """A platform over an in-memory DB; the caller stops ``store``."""
     engine, vault, store, search = await setup_search(DegradedEmbedder())
     embedder = DegradedEmbedder()
     memory = MemoryStore(engine, vault, embedder)
@@ -117,7 +125,8 @@ async def platform() -> AsyncIterator[Platform]:
     index.register(ConversationAdapter(search))
     for adapter in record_adapters(engine, vault):
         index.register(adapter)
-    yield Platform(
+    index.register(routine_runs_adapter(engine, vault))
+    return Platform(
         engine,
         vault,
         store,
@@ -127,7 +136,6 @@ async def platform() -> AsyncIterator[Platform]:
         PluginStore(engine, vault),
         folder,
     )
-    await store.stop()
 
 
 def _refs(results: PlatformResults) -> list[str]:

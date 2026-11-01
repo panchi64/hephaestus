@@ -1,5 +1,5 @@
 import {
-  SETTINGS_GROUPS,
+  settingsGroups,
   type SettingsGroup,
   type SettingsSection,
 } from "./sections";
@@ -31,7 +31,7 @@ export function searchSettingsSections(query: string): SettingsSectionHit[] {
   const byKeyword: SettingsSectionHit[] = [];
   const byDescription: SettingsSectionHit[] = [];
 
-  for (const group of SETTINGS_GROUPS) {
+  for (const group of settingsGroups()) {
     for (const section of group.sections) {
       const hit = { section, group };
       if (section.label.toLowerCase().includes(q)) byLabel.push(hit);

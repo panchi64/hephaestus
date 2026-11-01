@@ -16,6 +16,7 @@ const GLYPH: Record<SubagentStatus, string> = {
   done: "bg-text",
   failed: "bg-alert",
   cancelled: "bg-dim",
+  stopped: "bg-dim",
 };
 
 /** For the row's accessible name; the glyph is hidden from screen readers. */
@@ -25,14 +26,15 @@ const LABEL: Record<SubagentStatus, string> = {
   done: "done",
   failed: "failed",
   cancelled: "stopped",
+  stopped: "stopped at a limit",
 };
 
-/** Running: the live edge (§10.9). Blocked: the action tier's echo (§10.18). Both are
- *  inset shadows so marking a row costs no layout. */
+/** Running: the live edge. Blocked: the action tier's echo. Inset shadows cost no layout. */
 const EDGE: Partial<Record<SubagentStatus, string>> = {
   running: "shadow-[inset_1px_0_0_var(--color-info)]",
   blocked: "bg-warn/5 shadow-[inset_2px_0_0_var(--color-warn)]",
   cancelled: "opacity-60",
+  stopped: "opacity-60",
 };
 
 const GAUGE_FILL = {
@@ -188,8 +190,7 @@ export function SubagentCard(props: {
         <span class="hidden pt-1 text-right @2xl:block">{clock()}</span>
       </button>
 
-      {/* Over the readout on hover or focus. A sibling of the row's button, never
-          inside it, so no control nests in another. */}
+      {/* Over the readout on hover or focus; a sibling of the row's button so no control nests in another. */}
       <div
         class={cx(
           "absolute inset-y-0 right-0 flex w-18 items-center justify-end gap-1 bg-raised pr-2 @2xl:w-33",

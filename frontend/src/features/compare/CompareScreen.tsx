@@ -1,5 +1,13 @@
 import { Show, type JSX } from "solid-js";
-import { Button, Composer, PageHeader, Stack, Text, toast } from "~/ui";
+import {
+  ASSET_IDS,
+  Button,
+  Composer,
+  PageHeader,
+  Stack,
+  Text,
+  toast,
+} from "~/ui";
 import { createCompareController } from "./data";
 import { ComparePaneView } from "./ComparePane";
 
@@ -29,11 +37,11 @@ export function CompareScreen(): JSX.Element {
       <PageHeader
         title="Compare"
         subtitle="Run the same prompt across two models, side by side."
-        assetId="SYS-MDL-04.0"
+        assetId={ASSET_IDS.compare}
       />
       <div class="flex h-[70vh] min-h-[28rem] flex-col gap-3">
         <div class="flex items-center justify-between gap-3">
-          <Text variant="micro" tone="dim">
+          <Text variant="caption" tone="dim">
             One message, sent to both models at once — pre-load both in your
             inference server (e.g. LM Studio) so neither stalls on a cold load.
             These threads are scratch and stay out of your chat history.
@@ -46,8 +54,8 @@ export function CompareScreen(): JSX.Element {
         </div>
 
         <div class="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
-          <ComparePaneView pane={compare.panes[0]} label="Model a" />
-          <ComparePaneView pane={compare.panes[1]} label="Model b" />
+          <ComparePaneView pane={compare.panes[0]} label="Model A" />
+          <ComparePaneView pane={compare.panes[1]} label="Model B" />
         </div>
 
         <Composer

@@ -12,19 +12,20 @@ import threading
 from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import override
+from typing import cast, override
 
 from starlette.testclient import TestClient
 from websockets.asyncio.server import ServerConnection, serve
 
 from app import create_app
 from core.config import Settings
-from services.sandbox import PreviewHandle
+from routes.deps import app_state
+from services.vm import PreviewHandle, Previews
 
 from ._helpers import client_app
 
 
-class _FakeManager:
+class _FakePreviews:
     """Resolves exactly one token to a handle aimed at a real upstream port."""
 
     def __init__(self, token: str, host_port: int) -> None:
@@ -35,13 +36,14 @@ class _FakeManager:
             server_port=8000,
             command=("srv",),
         )
-        self.touches: int = 0
 
-    def resolve_preview(self, token: str) -> PreviewHandle | None:
-        if token != self._token:
-            return None
-        self.touches += 1
-        return self._handle
+    def resolve(self, token: str) -> PreviewHandle | None:
+        return self._handle if token == self._token else None
+
+
+def _previews(token: str, host_port: int) -> Previews:
+    """The route only calls ``resolve``; a real ``Previews`` needs a machine to build."""
+    return cast(Previews, cast(object, _FakePreviews(token, host_port)))
 
 
 @contextlib.contextmanager
@@ -112,7 +114,7 @@ async def test_http_proxy_forwards_and_strips_credentials():
     record: dict[str, str | None] = {}
     with _http_upstream(record) as port:
         async with client_app() as (client, app):
-            app.state.sandbox = _FakeManager("tok", port)
+            app_state(app).previews = _previews("tok", port)
             resp = await client.get(
                 "/previews/tok/hello?x=1",
                 headers={"cookie": "hephaestus_session=secret", "authorization": "Bearer xyz"},
@@ -135,7 +137,7 @@ async def test_proxied_html_is_sandboxed_by_csp_not_by_the_client():
     record: dict[str, str | None] = {}
     with _http_upstream(record) as port:
         async with client_app() as (client, app):
-            app.state.sandbox = _FakeManager("tok", port)
+            app_state(app).previews = _previews("tok", port)
             resp = await client.get("/previews/tok/index.html")
 
             csp = resp.headers["content-security-policy"]
@@ -151,7 +153,7 @@ async def test_upstream_cannot_weaken_the_preview_sandbox():
     record: dict[str, str | None] = {}
     with _http_upstream(record, extra_headers={"content-security-policy": "default-src *"}) as port:
         async with client_app() as (client, app):
-            app.state.sandbox = _FakeManager("tok", port)
+            app_state(app).previews = _previews("tok", port)
             resp = await client.get("/previews/tok/index.html")
             assert resp.headers["content-security-policy"].startswith("sandbox")
             assert "default-src *" not in resp.headers["content-security-policy"]
@@ -159,13 +161,13 @@ async def test_upstream_cannot_weaken_the_preview_sandbox():
 
 async def test_unknown_token_is_404():
     async with client_app() as (client, app):
-        app.state.sandbox = _FakeManager("tok", 1)
+        app_state(app).previews = _previews("tok", 1)
         assert (await client.get("/previews/wrong/x")).status_code == 404
 
 
-async def test_missing_manager_is_404():
+async def test_missing_previews_is_404():
     async with client_app() as (client, app):
-        app.state.sandbox = None
+        app_state(app).previews = None
         assert (await client.get("/previews/tok/x")).status_code == 404
 
 
@@ -173,7 +175,7 @@ async def test_previews_subtree_is_public():
     # Auth on, no credentials: a gated route would 401. Reaching the route (404 on
     # an unknown token) proves the token-gated subtree is exempt from the cookie gate.
     async with client_app(auth_enabled=True, passphrase="pw") as (client, app):
-        app.state.sandbox = _FakeManager("tok", 1)
+        app_state(app).previews = _previews("tok", 1)
         assert (await client.get("/previews/wrong/x")).status_code == 404
 
 
@@ -190,7 +192,7 @@ def test_ws_proxy_round_trips_text_and_bytes(tmp_path: Path):
         )
         app = create_app(settings)
         with TestClient(app) as client:
-            app.state.sandbox = _FakeManager("tok", port)
+            app_state(app).previews = _previews("tok", port)
             with client.websocket_connect("/previews/tok/ws") as ws:
                 ws.send_text("ping")
                 assert ws.receive_text() == "ping"
@@ -209,7 +211,7 @@ def test_ws_unknown_token_is_rejected(tmp_path: Path):
     )
     app = create_app(settings)
     with TestClient(app) as client:
-        app.state.sandbox = _FakeManager("tok", 1)
+        app_state(app).previews = _previews("tok", 1)
         with contextlib.suppress(WebSocketDisconnect):
             with client.websocket_connect("/previews/wrong/ws"):
                 pass

@@ -1,13 +1,14 @@
 import { createMemo, type JSX } from "solid-js";
 import { Select, Tooltip } from "~/ui";
 import {
+  agentDisplayName,
   DEFAULT_AGENT_NAME,
   pickableAgents,
   type Agent,
 } from "~/features/agents/model";
 
 /** The composer status-bar cell choosing which agent the thread runs as from the
- *  next send on. Lists `default` and every published, active agent. */
+ *  next send on. Lists Talos and every published, active agent. */
 export function AgentControl(props: {
   agents: readonly Agent[];
   value: string;
@@ -16,7 +17,7 @@ export function AgentControl(props: {
   const options = createMemo(() => {
     const list = pickableAgents(props.agents).map((a) => ({
       value: a.name,
-      label: a.name,
+      label: agentDisplayName(a.name),
       description: a.description,
     }));
     // A thread's agent that has since been unpublished still reads as itself.
@@ -31,7 +32,7 @@ export function AgentControl(props: {
       : [
           {
             value: DEFAULT_AGENT_NAME,
-            label: DEFAULT_AGENT_NAME,
+            label: agentDisplayName(DEFAULT_AGENT_NAME),
             description: "",
           },
         ];

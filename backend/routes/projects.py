@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from core.exceptions import InvalidInputError, NotFoundError
 from routes import deps
@@ -33,7 +33,7 @@ from services.artifacts import guess_content_type
 from services.projects import ProjectView, WorktreeError
 from services.projects.listing import list_files, read_file
 
-router = APIRouter(prefix="/projects", tags=["projects"])
+router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(deps.private_gate)])
 
 
 class RepoOut(CamelModel):
@@ -189,12 +189,14 @@ async def list_project_files(
     # this thread looking at" is three chances for them to disagree. The 404 stays here,
     # because a listing for a project that does not exist is a request to refuse — where
     # for the two pickers it is a keystroke, and an empty menu is the right answer.
-    root, from_worktree = await deps.composer_tree(request, project_id, conversation_id)
-    if root is None:
+    found = await deps.composer_tree(request, project_id, conversation_id)
+    if found is None:
         raise HTTPException(status_code=404, detail="project not found")
-    listing = await list_files(root, query=query, limit=max(1, min(limit, 500)))
+    listing = await list_files(
+        found.tree, repo_root=found.project_root, query=query, limit=max(1, min(limit, 500))
+    )
     return FilesOut(
-        root="worktree" if from_worktree else "project",
+        root="worktree" if found.from_worktree else "project",
         entries=[FileEntryOut(path=e.path, name=e.name) for e in listing.entries],
         truncated=listing.truncated,
     )
@@ -232,7 +234,7 @@ async def read_project_file(
     Served with the same inert headers as a View's bytes: a sandboxing CSP and `nosniff`,
     so a file out of a repository cannot execute anything in the operator's origin.
     """
-    root, _from_worktree = await deps.composer_tree(request, project_id, conversation_id)
+    root = await deps.composer_root(request, project_id, conversation_id)
     if root is None:
         raise HTTPException(status_code=404, detail="project not found")
     content = await read_file(root, path, max_bytes=_FILE_MAX_BYTES)

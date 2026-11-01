@@ -2,31 +2,22 @@
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
-    "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
-    "allowJs": true,
     "noEmit": true,
-    "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    // skipLibCheck: SolidStart's server runtime (srvx/h3) ships .d.ts that
-    // declare Node+Deno+Bun+Cloudflare types at once — unsatisfiable in a
-    // browser tsconfig. This skips checking dependency .d.ts INTERNALS only;
-    // our own src/ code is still fully type-checked. (TS team's tsc --init
-    // default.)
+    // bun-types and vite/client declare conflicting `ImportMeta.hot`/`env`, and mermaid's
+    // types import an uninstalled `type-fest`. src/ is still fully checked.
     "skipLibCheck": true,
-    // "bun" is here only for `bun:test` in *.test.ts. It brings Bun's server
-    // globals into scope app-wide, which is harmless: nothing in src/ can call
-    // them (this builds to a browser bundle) and the build would fail if it did.
+    // "bun" is only for `bun:test`. Its server globals are in scope app-wide, but the
+    // browser build fails if src/ calls one.
     "types": ["vite/client", "bun"],
     "isolatedModules": true,
     "paths": {
       "~/*": ["./src/*"]
     }
   },
-  // Typecheck our app code only — not vite.config.ts / build tooling.
-  "include": ["src"]
+  // App code and the bun test preload; not vite.config.ts / build tooling.
+  "include": ["src", "test"]
 }

@@ -1,46 +1,83 @@
-"""Pillar I — the per-run event stream: in-memory buffer + broker.
+"""The per-run event stream: in-memory buffer and broker.
 
-One :class:`RunStream` per Run owns the sequence-numbered event buffer and the
-set of live subscribers. It does two jobs at once:
+One :class:`RunStream` per Run owns the sequence-numbered event buffer and the live
+subscribers. The buffer keeps every event in ``seq`` order for the run's lifetime so a
+reconnecting client can replay what it missed; each emit also fans out to every
+subscriber's queue.
 
-- **buffer** — every event is appended in ``seq`` order and kept for the run's
-  lifetime, so a client that disconnects and reconnects can replay what it
-  missed on reconnect.
-- **broker** — each emit fans out to every live subscriber's queue.
+The buffer dies with the process. A run parked on the operator is the exception: it is
+rebuilt with a stream seeded past its last id and the events it waits on replayed
+(``RunRegistry.restore_parked``).
 
-The buffer is in-memory and dies with the process, which the spec explicitly
-licenses ("continuity need not survive a server restart").
+``emit`` is synchronous and ``subscribe`` registers then snapshots with no ``await``
+between, which is atomic under single-threaded asyncio: every event lands in exactly one
+of backlog or live queue, with no gap or duplicate.
 
-Correctness note: ``emit`` is synchronous and ``subscribe`` does its
-register-then-snapshot with no ``await`` in between. Under single-threaded
-asyncio that window is atomic, so every event lands in exactly one of {backlog,
-live queue} — no gap, no duplicate, for any subscriber at any time.
-
-Backpressure: each subscriber queue is bounded. A consumer that stops draining
-(a stalled or wedged client) is dropped rather than allowed to grow without
-limit — it can reconnect with ``Last-Event-ID`` and replay the gap from the
-buffer, so dropping it is lossless, not data loss.
+Each subscriber queue is bounded; a consumer that stops draining is dropped, and can
+reconnect with ``Last-Event-ID`` and replay the gap, so nothing is lost.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Callable
 
-from core.shutdown import STOPPED, get_unless_shutdown
+from core.shutdown import STOPPED, get_unless_shutdown, is_shutting_down
 
-from .events import Event, EventBody, now_utc
+from .events import AnswerDelta, Event, EventBody, ThinkingDelta, now_utc
 
-# Per-subscriber backlog cap before we treat the consumer as wedged and drop it.
+logger = logging.getLogger(__name__)
+
+# Backlog past which a subscriber is treated as wedged and dropped.
 SUBSCRIBER_QUEUE_MAX = 1024
 
 
+def coalesce_deltas(events: list[Event]) -> list[Event]:
+    """Merge each run of adjacent same-type text deltas into one event at the run's last seq.
+
+    A long run's backlog is mostly deltas, each folded separately by a reattaching client.
+    Keeping the last seq keeps ``Last-Event-ID`` resumption exact.
+    """
+    out: list[Event] = []
+    # Joined once per run of deltas: concatenating per delta is quadratic in a long answer.
+    kind: type[AnswerDelta] | type[ThinkingDelta] | None = None
+    parts: list[str] = []
+    last: Event | None = None
+
+    def close_run() -> None:
+        if kind is None or last is None:
+            return
+        body = last.body if len(parts) == 1 else kind(text="".join(parts))
+        out.append(Event(seq=last.seq, ts=last.ts, body=body))
+
+    for event in events:
+        body = event.body
+        if isinstance(body, AnswerDelta | ThinkingDelta):
+            if type(body) is not kind:
+                close_run()
+                kind, parts = type(body), []
+            parts.append(body.text)
+            last = event
+            continue
+        close_run()
+        kind, parts, last = None, [], None
+        out.append(event)
+    close_run()
+    return out
+
+
 class RunStream:
-    def __init__(self) -> None:
+    def __init__(self, last_seq: int = 0) -> None:
+        """``last_seq`` seeds the counter for a stream rebuilt after a restart, so its new
+        events number above anything a reconnecting client may already have seen."""
         self._buffer: list[Event] = []
-        self._seq: int = 0
+        self._seq: int = last_seq
         self._subscribers: set[asyncio.Queue[Event | None]] = set()
+        # The subscribers that are the operator looking at the run, not a client tailing it.
+        self._watchers: set[asyncio.Queue[Event | None]] = set()
         self._closed: bool = False
+        self._unwatched: list[Callable[[], None]] = []
 
     @property
     def last_seq(self) -> int:
@@ -52,13 +89,35 @@ class RunStream:
 
     @property
     def subscriber_count(self) -> int:
-        """How many live subscribers are attached right now — the run-terminal emit
-        policy's "was anyone watching" check (see ``RunRegistry``'s injected
-        ``on_terminal`` hook). Read this *before* ``close()``: closing signals every
-        subscriber's queue but doesn't discard them itself — each subscriber's own
-        generator removes itself once it wakes to the sentinel, so a count taken after
-        ``close()`` can race that cleanup."""
+        """Live subscribers attached now, watching or not."""
         return len(self._subscribers)
+
+    @property
+    def watcher_count(self) -> int:
+        """Watching subscribers attached now, for the terminal "was anyone watching" check
+        (``RunRegistry``'s ``on_terminal`` hook). Read before ``close()``: each subscriber's
+        generator removes itself only after waking to the sentinel, so a later count races
+        that cleanup."""
+        return len(self._watchers)
+
+    def when_unwatched(self, callback: Callable[[], None]) -> None:
+        """Call ``callback`` once, the next time the last watcher detaches from the open
+        stream. A close or an app shutdown emptying it never counts, and drops the callback."""
+        self._unwatched.append(callback)
+
+    def _detach(self, queue: asyncio.Queue[Event | None]) -> None:
+        self._subscribers.discard(queue)
+        if queue not in self._watchers:
+            return
+        self._watchers.discard(queue)
+        if self._watchers or self._closed or is_shutting_down():
+            return
+        callbacks, self._unwatched = self._unwatched, []
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.exception("run stream: an unwatched callback failed")
 
     def emit(self, body: EventBody) -> Event:
         """Stamp, buffer, and fan out an event. Synchronous and atomic."""
@@ -88,19 +147,24 @@ class RunStream:
             return list(self._buffer)
         return [e for e in self._buffer if e.seq > after_seq]
 
-    async def subscribe(self, after_seq: int = 0) -> AsyncIterator[Event]:
-        """Replay missed events (``seq > after_seq``) then stream live ones.
+    async def subscribe(self, after_seq: int = 0, *, watching: bool = True) -> AsyncIterator[Event]:
+        """Replay missed events (``seq > after_seq``, adjacent text deltas merged by
+        :func:`coalesce_deltas`) then stream live ones, one frame per event.
 
         Ends when the stream is closed (the run reached a terminal state) or the app
         begins shutting down — a run parked on an approval has no terminal state coming,
         and its open stream would otherwise keep the server from stopping.
         Subscribing to an already-closed stream replays the backlog and stops —
         so a client reconnecting after the run ended still gets the full record.
+        ``watching`` is false for a client that tails the run without being the operator
+        in front of it, so it never counts toward ``watcher_count``.
         """
         queue: asyncio.Queue[Event | None] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX)
         # --- atomic: register before snapshot, no await between ---
         self._subscribers.add(queue)
-        backlog = self.replay(after_seq)
+        if watching:
+            self._watchers.add(queue)
+        backlog = coalesce_deltas(self.replay(after_seq))
         already_closed = self._closed
         # ----------------------------------------------------------
         try:
@@ -114,13 +178,14 @@ class RunStream:
                     return
                 yield event
         finally:
-            self._subscribers.discard(queue)
+            self._detach(queue)
 
     def close(self) -> None:
         """Mark terminal and signal every live subscriber to finish."""
         if self._closed:
             return
         self._closed = True
+        self._unwatched.clear()
         for queue in list(self._subscribers):
             if queue.full():  # a wedged consumer — drain to make room for the sentinel
                 self._drop_slow(queue)

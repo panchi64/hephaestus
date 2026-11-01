@@ -11,13 +11,9 @@ import pytest
 
 from core.db import init_db, make_engine
 from core.vault import Vault
-from services.mail.service import AccountView
-from services.notification_channels import (
-    EmailChannel,
-    MailSender,
-    PushChannel,
-    default_channels,
-)
+from plugins.mail.services.channel import EmailChannel, MailSender
+from plugins.mail.services.service import AccountView
+from services.notification_channels import PushChannel, default_channels
 from services.notifications import NotificationService
 from services.settings_store import SettingsStore
 
@@ -83,7 +79,7 @@ async def _wired(
     await vault.setup("pw")
     settings = SettingsStore(engine)
     mail = _FakeMail() if mail is None else mail
-    email = EmailChannel(lambda: mail, settings, vault)
+    email = EmailChannel(mail, settings, vault)
     push = PushChannel(settings, vault, client=client)
     service = NotificationService(engine, vault, channels=[email, push])
     await service.start()
@@ -156,7 +152,7 @@ async def test_no_mail_account_degrades_to_in_app_only(tmp_path: Path):
     service, _mail, email, _push, _settings = await _wired(tmp_path, mail=mail)
     health = await email.health(OWNER)
     await service.stop()
-    assert (health.configured, health.status) == (False, "warn")
+    assert (health.configured, health.status) == (False, "off")
     assert "in-app only" in health.detail
 
 
@@ -253,7 +249,7 @@ async def test_push_is_silent_until_an_endpoint_is_configured(tmp_path: Path):
     await service.flush_deliveries()
     await service.stop()
     assert seen == []
-    assert (health.configured, health.status) == (False, "warn")
+    assert (health.configured, health.status) == (False, "off")
 
 
 async def test_push_health_names_the_host_but_never_the_path(tmp_path: Path):
@@ -324,10 +320,18 @@ async def test_channel_health_reports_every_channel_in_order(tmp_path: Path):
     assert [h.key for h in health] == ["email", "push"]
 
 
-async def test_default_channels_are_email_then_push(tmp_path: Path):
+async def test_core_ships_only_push(tmp_path: Path):
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
-    channels = default_channels(lambda: None, SettingsStore(engine), vault)
-    assert [c.key for c in channels] == ["email", "push"]
+    channels = default_channels(SettingsStore(engine), vault)
+    assert [c.key for c in channels] == ["push"]
+
+
+async def test_a_feature_adds_its_own_channel(tmp_path: Path):
+    service, mail, _email, push, settings = await _wired(tmp_path)
+    service.channels = [push]
+    service.add_channel(EmailChannel(mail, settings, Vault(tmp_path / "keyfile.json")))
+    await service.stop()
+    assert [c.key for c in service.channels] == ["push", "email"]

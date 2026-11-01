@@ -16,13 +16,20 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
-import services.scheduler as scheduler_mod
+import plugins.routines.scheduler as scheduler_mod
 from core.db import init_db, make_engine, read_session
 from core.serde import as_utc
 from core.vault import Vault
 from models._fields import utcnow
-from models.task import ScheduledTask, ScheduleType, TaskKind, TaskOutcome, TaskOutput, TaskRun
-from services.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
+from plugins.routines.models import (
+    ScheduledTask,
+    ScheduleType,
+    TaskKind,
+    TaskOutcome,
+    TaskOutput,
+    TaskRun,
+)
+from plugins.routines.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
 
 OWNER = "operator"
 

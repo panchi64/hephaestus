@@ -17,7 +17,6 @@ import {
   LoadingText,
   Menu,
   Modal,
-  PageHeader,
   Panel,
   Row,
   Stack,
@@ -26,6 +25,7 @@ import {
   toast,
   Tooltip,
 } from "~/ui";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { isApiError } from "~/lib/api";
 import { createListView } from "~/lib/list";
 import {
@@ -196,26 +196,19 @@ export function VaultScreen(): JSX.Element {
 
   return (
     <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Password vault"
-        subtitle="Encrypted credential store. Agent reads require explicit approval."
-        assetId="HEPH-VLT-05.0 EDITION 01"
+      <SettingsPageHeader
+        section="vault"
+        status={
+          <StatusFlag status={locked() ? "alert" : "nominal"} dot>
+            {locked() ? "Locked" : "Unlocked"}
+          </StatusFlag>
+        }
         actions={
-          <Row gap={2} align="center">
-            <StatusFlag status={locked() ? "alert" : "nominal"} dot>
-              {locked() ? "Locked" : "Unlocked"}
-            </StatusFlag>
-            <Show when={!locked()}>
-              <Button
-                variant="danger"
-                leading="lock"
-                onClick={() => void lock()}
-              >
-                Lock
-              </Button>
-            </Show>
-          </Row>
+          <Show when={!locked()}>
+            <Button variant="danger" leading="lock" onClick={() => void lock()}>
+              Lock
+            </Button>
+          </Show>
         }
       />
 
@@ -238,7 +231,7 @@ export function VaultScreen(): JSX.Element {
                     </Text>
                     <InfoHint label="Credentials are sealed with a key derived from this passphrase, which is never stored and never leaves memory. It is separate from your login password: unlocking the app does not unlock the vault, and restarting re-locks it." />
                   </Row>
-                  <Text variant="micro" tone="dim">
+                  <Text variant="caption" tone="dim">
                     {configured()
                       ? "Enter the vault passphrase to access stored credentials."
                       : "No vault exists yet. The passphrase you choose here cannot be recovered."}
@@ -271,7 +264,7 @@ export function VaultScreen(): JSX.Element {
                     <StatusFlag status={s().status} dot>
                       {s().label}
                     </StatusFlag>
-                    <Text variant="micro" tone="dim">
+                    <Text variant="caption" tone="dim">
                       Use 12+ characters mixing case, digits, and symbols.
                     </Text>
                   </Row>
@@ -285,7 +278,7 @@ export function VaultScreen(): JSX.Element {
               >
                 {configured() ? "Unlock vault" : "Create vault"}
               </Button>
-              <Text variant="micro" tone="dim">
+              <Text variant="caption" tone="dim">
                 Agent access to vault credentials pauses for your approval on
                 every read.
               </Text>

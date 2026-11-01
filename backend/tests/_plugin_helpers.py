@@ -6,7 +6,7 @@ from pathlib import Path
 
 from core.db import init_db, make_engine
 from core.vault import Vault
-from services.plugins import PluginStore
+from services.plugins import PluginSecretStore, PluginStore
 from services.revisions import RevisionStore
 from services.skills import SkillStore
 
@@ -38,6 +38,16 @@ def bundle(manifest: str = MANIFEST, code: str = CODE) -> dict[str, bytes]:
 
 async def make_store(tmp_path: Path) -> PluginStore:
     return (await make_stores(tmp_path))[0]
+
+
+async def make_plugin_stores(tmp_path: Path) -> tuple[PluginStore, PluginSecretStore]:
+    """A plugin store and its secret store on one database."""
+    engine = make_engine("sqlite:///:memory:")
+    init_db(engine)
+    vault = Vault(tmp_path / "keyfile.json")
+    await vault.setup("pw")
+    store = PluginStore(engine, vault, RevisionStore(engine, vault))
+    return store, PluginSecretStore(engine, vault, store)
 
 
 async def make_stores(tmp_path: Path) -> tuple[PluginStore, SkillStore]:

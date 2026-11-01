@@ -63,11 +63,7 @@ export interface WorkShape {
 
 /** Host commands borrow the registry entry of the tool that produces them, so
  *  the header's glyph matches the terminal card's. */
-const HOST_TOOL = "code_run_host_command";
-
-/** The one glyph a review row leads with, wherever it appears — the header's summary and
- *  the row itself must agree, or the fold and its contents read as two different events. */
-const REVIEW_ICON: IconName = "review";
+const HOST_TOOL = "shell_run_on_host";
 
 /** One block as a step, or `undefined` for a block kind that is not work the log
  *  reports (nothing else reaches a fold today, but the log's membership rules
@@ -94,17 +90,6 @@ function stepOf(block: AssistantBlock): WorkStep | undefined {
         icon: INJECTION_ICON,
         label: segmentLabel(block.injection.contributor),
         detail: "injected",
-      };
-    case "review":
-      // Named by the tool it judged, not by the review — a collapsed log ending on
-      // "Review · Shell · refused" says what happened; one ending on "Review"
-      // alone says only that something did.
-      return {
-        icon: REVIEW_ICON,
-        label: toolEntry(block.review.name).label,
-        detail: block.review.decision
-          ? `review: ${block.review.decision}`
-          : "reviewing",
       };
     // No View arm: a chip is a result and never folds (`isCollapsible`), so a
     // case for one here would be a summary that can't be reached.
@@ -160,9 +145,8 @@ export function latestReason(groups: BlockGroup[]): string | undefined {
 
 /** The shape of a run of work groups — the latest step and the fold's size.
  *
- *  There is no failure count here on purpose: `isCollapsible` pins a failed call
- *  inline, so a failure cannot be inside a fold, and a field that is structurally
- *  always zero is a field that will eventually be believed. */
+ *  There is no failure count on purpose: ordinary failures are routine, and a count
+ *  on the shut log would surface exactly what the fold keeps quiet. */
 export function workShape(groups: BlockGroup[]): WorkShape {
   const last = lastOf(groups, stepOf);
   return last

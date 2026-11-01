@@ -11,7 +11,7 @@ import {
 } from "~/ui";
 import { compactCount, num } from "~/lib/format";
 import { isLiveStatus, type ToolInvocation } from "../model";
-import { preparingPhrase, toolPresentation } from "../toolPresentation";
+import { preparingPhrase, toolEntry } from "../toolPresentation";
 import { Branch } from "./Branch";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
 import { EnvelopeRow } from "./EnvelopeRow";
@@ -62,7 +62,7 @@ const ELAPSED_WIDTH = "min-w-[6ch]";
  *  the alert-toned glyph.
  *
  *  `open` makes expand/collapse controlled (expand-all/collapse-all); when
- *  undefined the card keeps its default behavior (auto-open on error).
+ *  undefined the card keeps its default behavior (auto-open on a platform error).
  *
  *  **A script's calls are this same row, nested.** A `run_code` card lists the calls
  *  its script made under its own row, each with the anatomy every call has — only the
@@ -76,12 +76,12 @@ export function ToolCallCard(props: {
   variant?: "card" | "nested";
 }): JSX.Element {
   const nested = (): boolean => props.variant === "nested";
-  // Auto-expand error cards so the reason is immediately visible.
+  // Only a platform failure opens itself; ordinary failures are routine and stay shut.
   const { open, toggle } = createAdoptedOpen(
     props,
-    props.tool.status === "error",
+    props.tool.status === "error" && !!props.tool.platform,
   );
-  const shown = createMemo(() => toolPresentation(props.tool.name));
+  const shown = createMemo(() => toolEntry(props.tool.name));
   const preparing = (): boolean => props.tool.status === "preparing";
   const argsSize = (): string | undefined => {
     const n = props.tool.argsChars;
@@ -126,6 +126,7 @@ export function ToolCallCard(props: {
         foldable={preparing() ? false : undefined}
         icon={shown().icon}
         iconClass={iconTone[props.tool.status]}
+        frame={shown().frame}
         label={
           preparing() ? `${preparingPhrase(props.tool.name)}…` : shown().label
         }
@@ -274,8 +275,8 @@ export function ToolCallCard(props: {
           </Show>
           {/* A call that ran a command without being a terminal — a backgrounded
               process, which is a handle the agent checks on later rather than output
-              the operator watches arrive. It still ran something on their machine
-              under a declared reach, and this is the only row that would say so. */}
+              the operator watches arrive. It still ran something, and this is the
+              only row that says where. */}
           <Show when={props.tool.boundary}>
             {(boundary) => (
               <>

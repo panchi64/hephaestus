@@ -8,7 +8,7 @@ from pydantic_ai import ModelRequest, ToolAvailabilityDeltaPart, UserPromptPart
 from pydantic_ai.messages import ModelRequestPart
 
 from runs.events import CompactionReason
-from services.conversation_view import COMPACTION_REASON_KEY
+from services.conversation_view import COMPACTION_REASON_KEY, COMPACTION_RESTORED_KEY
 
 from .core import StoreCore
 from .paths import (
@@ -89,6 +89,8 @@ class CompactionMixin(StoreCore):
         expected_leaf_id: str,
         reason: CompactionReason,
         revealed_tools: Sequence[str] = (),
+        restored: UserPromptPart | None = None,
+        restored_names: Sequence[str] = (),
     ) -> str | None:
         """Append a compaction checkpoint at the tip and queue its durable write, returning
         the new node's id — or ``None`` when the plan went stale.
@@ -101,6 +103,9 @@ class CompactionMixin(StoreCore):
         ``ToolAvailabilityDeltaPart`` — the library's own shape for "the tools changed
         here", carrying no content and reaching the model as nothing but the reveal — and
         so persist with the summary rather than living only in the turn that folded.
+
+        ``restored`` is the files and plan the fold re-read, as one user part after the
+        summary; ``restored_names`` lists them on the metadata for the divider.
 
         ``reason`` is stored on the checkpoint's own ``ModelRequest.metadata``, which is
         the one place a fact about the message can ride without a schema column: the
@@ -121,14 +126,20 @@ class CompactionMixin(StoreCore):
         tree = self._cache.get(conversation_id)
         if tree is None or tree.active_leaf_id != expected_leaf_id:
             return None
-        # The delta leads, so the summary stays the message's *last* part: a checkpoint
-        # hoisted in front of a turn is merged into it, and the boundary the engine records
-        # there counts the turn's own parts from the end.
+        # The delta leads, so the checkpoint's user parts are the message's tail: a
+        # checkpoint hoisted in front of a turn is merged into it, and the boundary the
+        # engine records there counts the turn's own parts from the end. The summary comes
+        # first among them, the part the divider and the recognizers read.
         parts: list[ModelRequestPart] = []
         if revealed_tools:
             parts.append(ToolAvailabilityDeltaPart(tools_added=list(revealed_tools)))
         parts.append(UserPromptPart(content=summary))
-        message = ModelRequest(parts=parts, metadata={COMPACTION_REASON_KEY: reason})
+        if restored is not None:
+            parts.append(restored)
+        metadata: dict[str, object] = {COMPACTION_REASON_KEY: reason}
+        if restored_names:
+            metadata[COMPACTION_RESTORED_KEY] = list(restored_names)
+        message = ModelRequest(parts=parts, metadata=metadata)
         node = tree.append_chain([message])[0]
         node.compacted = True
         node.compacted_through = through_id

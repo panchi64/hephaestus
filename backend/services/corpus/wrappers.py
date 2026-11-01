@@ -47,6 +47,7 @@ class MemoryAdapter(SourceAdapter):
         *,
         limit: int,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[CorpusHit]:
         # MemoryStore.recall embeds + hybrid-fuses internally, so it takes the raw query
         # string (not the index's pre-computed vector). Its hits come back ranked; the
@@ -67,7 +68,9 @@ class MemoryAdapter(SourceAdapter):
         ]
 
     @override
-    async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
+    async def read(
+        self, owner_id: str, ref: str, *, include_private: bool = False
+    ) -> CorpusDocument | None:
         try:
             memory = await self._store.get(owner_id, ref)
         except NotFoundError:
@@ -112,10 +115,13 @@ class ConversationAdapter(SourceAdapter):
         *,
         limit: int,
         since: datetime | None = None,
+        include_private: bool = False,
     ) -> list[CorpusHit]:
         # ConversationSearch.search embeds + hybrid-fuses internally; it takes the raw
         # query and returns hits already ranked (one per conversation).
-        hits = await self._search.search(owner_id, query, limit=limit, since=since)
+        hits = await self._search.search(
+            owner_id, query, limit=limit, since=since, include_private=include_private
+        )
         return [
             CorpusHit(
                 gid=f"{self.SOURCE_ID}:{hit.conversation_id}",
@@ -126,13 +132,16 @@ class ConversationAdapter(SourceAdapter):
                 matched_by=hit.matched_by,
                 at=hit.updated_at,
                 title=hit.title or "(untitled conversation)",
+                private=hit.private,
             )
             for hit in hits
         ]
 
     @override
-    async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
-        transcript = await self._search.read(owner_id, ref)
+    async def read(
+        self, owner_id: str, ref: str, *, include_private: bool = False
+    ) -> CorpusDocument | None:
+        transcript = await self._search.read(owner_id, ref, include_private=include_private)
         if transcript is None:
             return None
         return CorpusDocument(

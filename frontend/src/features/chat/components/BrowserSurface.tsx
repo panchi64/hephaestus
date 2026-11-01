@@ -1,7 +1,7 @@
 /**
  * The thread's browser, live.
  *
- * The agent's browser is headless and runs in the platform VM, so this pane is the only
+ * The agent's browser is headless and runs in the services VM, so this pane is the only
  * way to see it and the only way to take the wheel: it paints the frames the backend
  * streams and sends back what the operator does to them. Logging in, dismissing a
  * banner or landing on a page before handing the thread on all happen here.
@@ -89,6 +89,7 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 export function BrowserSurface(props: {
   conversationId: () => string | null;
   browser: BrowserState;
+  speaker: string;
 }): JSX.Element {
   const [status, setStatus] = createSignal<Status>("connecting");
   const [shown, setShown] = createSignal<Shown | null>(null);
@@ -495,13 +496,13 @@ export function BrowserSurface(props: {
         <Show when={!shown()}>
           <div class="absolute inset-0 flex items-center justify-center">
             <Show when={status() === "connecting"}>
-              <LoadingText label="Connecting to the browser…" />
+              <LoadingText label="Connecting to the browser" />
             </Show>
             <Show when={status() === "none"}>
               <EmptyState
                 icon="link"
                 message="No browser session"
-                hint="Open one to watch and drive the agent's browser here."
+                hint={`Open one to watch and drive ${props.speaker}'s browser here.`}
                 action={
                   <Button
                     variant="default"
@@ -552,7 +553,7 @@ export function BrowserSurface(props: {
         <Show when={shown() && !live()}>
           <div class="absolute inset-x-0 bottom-0 bg-raised/90 px-3 py-1">
             <Show when={status() === "connecting"}>
-              <LoadingText label="Reconnecting…" />
+              <LoadingText label="Reconnecting" />
             </Show>
             <Show when={status() === "lost"}>
               <Button

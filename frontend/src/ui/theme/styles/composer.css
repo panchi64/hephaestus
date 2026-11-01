@@ -61,14 +61,15 @@
   animation: none;
 }
 /* The echo of the action tier (§10.18): while the thread waits on the
-   operator the plate is replaced by a solid amber strip with the tier's own
-   blinking square, and its Jump takes the operator to the ask. */
+   operator the plate is replaced by a solid strip in the ask's tone (`--action`,
+   from action-tier.css) with the tier's own blinking square, and its Jump takes
+   the operator to the ask. */
 .heph-composer-wait {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  background: var(--accent-warn);
+  background: var(--action);
   color: var(--bg);
   font-family: var(--font-mono);
   font-size: var(--type-meta-size);

@@ -531,6 +531,16 @@ async def test_an_approval_and_a_question_park_once_and_resume_once(
     assert types.count("question.asked") == 1
     assert types.count("approval.required") == 1
     assert types[-1] == "run.ended"
+    # The refused half body announced nothing; the accepted one announces its decision
+    # between the card and the call's result, so a replay retires the card in order.
+    [decided] = [e for e in events if e["type"] == "approval.decided"]
+    assert (decided["tool_call_id"], decided["approved"]) == (approval_id, True)
+    danger_done = next(
+        i
+        for i, e in enumerate(events)
+        if e["type"] == "tool.completed" and e.get("tool_call_id") == approval_id
+    )
+    assert types.index("approval.required") < events.index(decided) < danger_done
 
 
 async def test_a_call_settled_by_the_wrong_pile_is_refused(monkeypatch: pytest.MonkeyPatch):

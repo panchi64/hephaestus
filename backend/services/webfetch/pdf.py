@@ -1,15 +1,8 @@
 """Fetch a PDF a page navigation refused to render and pull its text layer.
 
-The headless browser can't *render* a PDF — a `.pdf` URL makes Chromium start a download,
-which surfaces as a "Download is starting" navigation error. Rather than burn the fetch
-tool's retry budget on an unreadable page, :func:`fetch_pdf_text` downloads the bytes
-directly (SSRF-guarded on every redirect hop, size-capped) and extracts their text with the
-same ``pypdfium2`` scanner the upload pipeline uses. There is no vision OCR here — a scanned
-PDF with no text layer comes back as a recoverable ``WebFetchError`` telling the model to try
-another source.
-
-Domain errors only (``WebFetchError``/``SSRFError``), like the rest of ``webfetch`` — the
-tool layer maps them to a retry vs a refusal.
+Headless Chromium turns a `.pdf` URL into a download, so the bytes are fetched directly and
+read with the upload pipeline's ``pypdfium2`` scanner. There is no OCR: a PDF with no text
+layer is a recoverable ``WebFetchError``. Only domain errors leave this module.
 """
 
 from __future__ import annotations
@@ -19,11 +12,11 @@ import asyncio
 import httpx
 
 from core.exceptions import WebFetchError
-from core.net import header
+from core.net import ResponseTooLarge, header, iter_capped
 from core.ssrf import assert_public_url
 from services.upload_extraction import scan_pdf
 
-from .status import status_hint
+from .status import ERROR_BODY_BYTES, served_by_cloudflare, status_hint
 
 _MAX_REDIRECTS = 5
 
@@ -68,13 +61,7 @@ async def fetch_pdf_text(
 async def _download(
     url: str, client: httpx.AsyncClient, *, timeout_s: float, max_bytes: int
 ) -> tuple[bytes, httpx.Headers]:
-    """Fetch ``url``'s bytes, following redirects manually so SSRF is re-checked on each
-    hop and the response is never streamed to a private address.
-
-    The body is **streamed** and the running total checked against ``max_bytes`` as it
-    arrives, so a response with no (or a lying) ``Content-Length`` can't materialize an
-    unbounded body in memory before the cap is applied — the read stops the moment the
-    limit is crossed."""
+    """Fetch ``url``'s bytes, following redirects by hand so SSRF is re-checked on each hop."""
     current = url
     for _ in range(_MAX_REDIRECTS + 1):
         await assert_public_url(current)
@@ -89,25 +76,31 @@ async def _download(
                     current = str(httpx.URL(current).join(location))
                     continue
                 if resp.status_code >= 400:
+                    cloudflare_body = (
+                        await _error_head(resp) if served_by_cloudflare(resp.headers) else ""
+                    )
                     raise WebFetchError(
                         f"{url!r} returned HTTP {resp.status_code}",
-                        hint=status_hint(resp.status_code),
+                        hint=status_hint(resp.status_code, cloudflare_body=cloudflare_body),
                     )
                 declared = header(resp.headers, "content-length")
                 if declared is not None and declared.isdigit() and int(declared) > max_bytes:
                     raise WebFetchError(
                         f"the file at {url!r} exceeds the {max_bytes}-byte fetch limit"
                     )
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in resp.aiter_bytes():
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise WebFetchError(
-                            f"the file at {url!r} exceeds the {max_bytes}-byte fetch limit"
-                        )
-                    chunks.append(chunk)
-                return b"".join(chunks), resp.headers
+                body = b"".join([chunk async for chunk in iter_capped(resp, max_bytes)])
+                return body, resp.headers
+        except ResponseTooLarge:
+            raise WebFetchError(
+                f"the file at {url!r} exceeds the {max_bytes}-byte fetch limit"
+            ) from None
         except httpx.HTTPError as exc:
             raise WebFetchError(f"could not fetch {url!r}: {exc}") from exc
     raise WebFetchError(f"too many redirects fetching {url!r}")
+
+
+async def _error_head(resp: httpx.Response) -> str:
+    """The first chunk of an error page, capped at ``ERROR_BODY_BYTES``."""
+    async for chunk in resp.aiter_bytes():
+        return chunk[:ERROR_BODY_BYTES].decode(errors="replace")
+    return ""

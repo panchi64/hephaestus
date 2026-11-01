@@ -4,7 +4,7 @@
 
 **Version 1.2** · Status: Foundation spec · Supersedes *Terminal-HUD 0.1*
 
-*1.1 adds the mission-control register: a console group, a caution & warning grid, a mission clock, the `plate` type step, and §11.1's licensed moment — one expressive device per screen, where nothing competes.*
+*1.1 adds the mission-control register: a console group, a caution & warning grid, a mission clock, the `plate` type step, and §11.1's ambient field — a dithered planet behind every page.*
 
 *1.2 settles the chat surfaces on that register — **the square console**: ruled frames, bare contents, mono plates, square corners, no resting shadow. A soft-card register (rounded fills, sans labels, soft elevation) was weighed against it and rejected. It adds the **action tier** (§10.18), the one loud frame for anything the run is waiting on the operator for, and removes the LED edge light, the composer's ambient bloom and the ⌘K palette.*
 
@@ -114,7 +114,7 @@ Instrument runs at **one step less dense** than Terminal-HUD. Where the old syst
 
 The exception is **tabular data** — tables, instrument bands, log output, list rows. Density is a virtue there because scanning many rows is the task. Keep those at `space-1`/`space-2` vertical.
 
-**Console groups (§10.14) and the annunciator grid (§10.15) join that exception**, for the same reason and not for a new one: their contents are ruled rows and fixed cells read by scanning, so the rule that governs a table governs them. What the exception does *not* license is a console group wrapped around prose, a form, or a stack of cards — those are read one at a time, and the frame would just be a box drawn around ordinary content at the wrong density.
+**Console groups (§10.14) and ledgers like the launchpad's activity list join that exception**, for the same reason and not for a new one: their contents are ruled rows read by scanning, so the rule that governs a table governs them. What the exception does *not* license is a console group wrapped around prose, a form, or a stack of cards — those are read one at a time, and the frame would just be a box drawn around ordinary content at the wrong density.
 
 ### Margins & gutters
 
@@ -155,8 +155,9 @@ looked at*, so they differ in scale.
 
 | Token | Size/LH | Family | Weight | Case | Use |
 |---|---|---|---|---|---|
-| `micro` | 10 / 14 | Mono | 400 | as-is | Ambient telemetry, fine print, precision coordinates |
-| `plate` | 10 / 14 | Mono | 500 | UPPER, +0.16em | **Engraved panel label.** Names a region: a console group's header, an annunciator cell |
+| `micro` | 10 / 14 | Mono | 400 | as-is | Ambient telemetry, precision coordinates. Emitted values only |
+| `caption` | 11 / 16 | Sans | 400 | Sentence | A sentence a person wrote, at fine-print size: hints, help text, an empty state's explanation, a form error |
+| `plate` | 10 / 14 | Mono | 500 | UPPER, +0.16em | **Engraved panel label.** Names a region: a console group's header, a ledger's legend |
 | `meta` | 11 / 16 | Mono | 500 | UPPER, +0.08em | Machine labels & state: `RUN-0341`, `LIVE`, `QUEUED` |
 | `label` | 12 / 16 | Sans | 500 | Sentence | Field labels, column headers, section eyebrows |
 | `code` | 12 / 16 | Mono | 400 | as-is | Code, diffs, patches inside chrome |
@@ -312,6 +313,7 @@ The base is pure neutral. Both modes are built on true black and true white — 
 3. **Brightness separates active from inactive**, not hue (`text-bright` vs `text` vs `text-dim`).
 4. **At most two accents visible in a region.** Three reads as decoration.
 5. **`accent` marks primary focus, and there is at most one per screen** — the primary action, the live run, the awaiting-approval card. It is the only place an accent-tinted shadow is permitted (§6).
+6. **A count is never coloured unless it counts faults.** "6 published" and "4 embedded" are bright, not green; "2 alerts" is red only while it is above zero. An accent is not a palette either: a calendar tells its calendars apart by a mark's shape, not by borrowing `nominal` or `info`.
 
 ---
 
@@ -319,7 +321,7 @@ The base is pure neutral. Both modes are built on true black and true white — 
 
 Terminal-HUD banned shadows outright. Instrument uses them, sparingly, and for one purpose: **saying what is on top.** Never for mood, never for a card that is merely present.
 
-**Shadows are for things that float over content** — menus, popovers, tooltips, toasts, modals, drawers. Nothing that sits in the flow of a page carries one: not the composer, not a transcript row, not the action tier (§10.18). The composer is separated from the transcript by its opaque `surface` fill and its `line-strong` frame, and the transcript ends above it in the `ScrollFade` band (§10.17). `Panel` and `Tile` carry no resting shadow either: they are a `surface` fill inside a 1px `line` rule, and a state recolours the rule (`active` → `info`, `alert` → `alert`) rather than glowing.
+**Shadows are for things that float over content** — menus, popovers, tooltips, toasts, modals, drawers. Nothing that sits in the flow of a page carries one: not the composer, not a transcript row, not the action tier (§10.18). The composer is separated from the transcript by its opaque `surface` fill and its `line-strong` frame, and the transcript fades out above it (§10.17). `Panel` and `Tile` carry no resting shadow either: they are a `surface` fill inside a 1px `line` rule, and a state recolours the rule (`active` → `info`, `alert` → `alert`) rather than glowing.
 
 The two modes model elevation differently, because they physically must:
 
@@ -360,7 +362,7 @@ Hierarchy comes from brightness, and hue is reserved for meaning (§1.3, §5). T
 
 ## 7. Corners & borders
 
-Corners are **square.** The 1.0 system rounded controls to 3px and containers to 6px; the console register (1.2) resolved that contradiction in favour of the machined edge, and the two radius tokens are gone. Nothing takes a radius: buttons, inputs, chips, checkboxes, tabs, menus, panels, modals, popovers, toasts, rows, cells, state marks (square, not round dots) and count badges. Square is the absence of a radius, so it has no token. Outside icon glyphs (§9), the one curve left in the product is the scrollbar thumb.
+Corners are **square.** The 1.0 system rounded controls to 3px and containers to 6px; the console register (1.2) resolved that contradiction in favour of the machined edge, and the two radius tokens are gone. Nothing takes a radius: buttons, inputs, chips, checkboxes, tabs, menus, panels, modals, popovers, toasts, rows, cells, state marks (square, not round dots) and count badges. Square is the absence of a radius, so it has no token. Outside icon glyphs (§9) and the work log's socket outlines (§8), the one curve left in the product is the scrollbar thumb.
 
 **Selection and hover are fills, not shapes.** Hover is the `surface-raised` fill and nothing else — no outline box, no radius, no accent. A selected row is `surface-raised` plus a 2px bright inset edge on its leading side (a tab: under it); a selected segmented cell is inverted. The edge is an inset shadow, so it costs no layout.
 
@@ -447,9 +449,12 @@ between them; both drop down the sides as the sides close; and the glass surface
 resolves inside the frame that has just been described. Closing runs the gesture
 in reverse, so the region is taken apart rather than switched off.
 
-Six surfaces use it, and the list is meant to stay short: the chat **View**,
+Eight surfaces use it, and the list is meant to stay short: the chat **View**,
 the **settings dialog**, the **park dock** (the approval/question dock that takes
-the composer's slot), the **404** plate, and the two panels behind the
+the composer's slot), the **404** plate, the **unlock plates** (login and setup, and
+the Private area's PIN prompt, which is the same plate on a `FramedOverlay`),
+the **first-run walkthrough's column**
+(a place prepared for the operator before the workspace exists), and the two panels behind the
 composer's status bar — the **context breakdown** (behind the context bar) and the
 conversation's **stats panel** (behind `stats`). Both of those go through one
 shell, `RevealPopover`, so the frame, the glass and the padding inside it cannot
@@ -494,14 +499,14 @@ behind it — an overlay over the transcript, a dialog over a working page.
 ### Permitted animations
 
 - Eased (human): the reveal above, hover and focus transitions, height on disclosure, ambient state colour (240ms).
-- **The trace-in** (`.heph-trace-*`) — a row arriving on a trunk. The construction reveal's sentence at the size of one line: the elbow hanging the row off its parent draws itself down and then across (overlapping, so it reads as one L), and the row resolves out of the ordinary blur-fade as the stroke reaches it. The stroke arrives **charged**: the elbow, its length of trunk and the hard-cornered socket around the row's glyph land in the info tone and cool to their own colour over 240ms, and one band of light crosses the row's text from the socket outward — every segment clips the same band, so it reads as one sweep across the row, not one per segment. No phase runs past 240ms, the whole gesture is over by ~420ms, and nothing waits on it. The row's label speaks `meta` at the dim tone — it recedes under the header's reason, the line meant to be read first. The socket and the label are the whole work log's voice: open, the log is drawn as a schematic — one trunk down from the header's chevron, an elbow into each row's socket, a script's calls branching off the script's own socket, the chevron at the row's far end. A row the chassis put there rather than the model (injected context, a review) hangs off a **dashed** elbow into a dashed socket, which is what tells the two apart now that no row has a card to refuse; and the running row's length of trunk and its elbow turn `info`. **It plays on arrival and nowhere else.** A row traces in when its id is new to the trunk: a work log's row that a streaming run just added, and an agent thread the latest read of the thread list put under its parent in the rail. A row that only moves — a settled call leaving the pinned run for the fold or the collapsed log's latest slot — is not an arrival and stays still, as does everything on a thread opening, a log folding open, or a list re-read that added nothing. Lighting a row that had merely moved is what put the glow on the previous call instead of the new one.
-- Stepped (machine): caret blink, the braille throbber (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) as a "working now" indicator, live-state pulse, the action tier's waiting square (`steps(2)`, 1.2s; static under reduced motion, §10.18), value tick-over, **the reasoning wall** (§10.10).
+- **The trace-in** (`.heph-trace-*`) — a row arriving on a trunk. The construction reveal's sentence at the size of one line: the elbow hanging the row off its parent draws itself down and then across (overlapping, so it reads as one L), and the row resolves out of the ordinary blur-fade as the stroke reaches it. The stroke arrives **charged**: the elbow, its length of trunk and the socket's outline around the row's glyph land in the info tone and cool to their own colour over 240ms, and one band of light crosses the row's text from the socket outward — every segment clips the same band, so it reads as one sweep across the row, not one per segment. No phase runs past 240ms, the whole gesture is over by ~420ms, and nothing waits on it. The row's label speaks `meta` at the dim tone — it recedes under the header's reason, the line meant to be read first. The socket and the label are the whole work log's voice: open, the log is drawn as a schematic — one trunk down from the header's chevron, an elbow into each row's socket, a script's calls branching off the script's own socket, the chevron at the row's far end. The socket's **outline says what kind of thing the row is**: a square for a tool call (work, a building block), a diamond for context read into the model (an opened skill, a recalled memory, the plan read back), a circle for reasoning, and a square pointing right for a brief or message sent to a sub-agent — pointing left on the report that comes back. Every outline shares one centre and the glyph is 11px in all of them, so the glyphs stand in one column. A row the chassis put there rather than the model (injected context) hangs off a **dashed** elbow into a dashed outline, which is what tells the two apart now that no row has a card to refuse; and the running row's length of trunk and its elbow turn `info`. **It plays on arrival and nowhere else.** A row traces in when its id is new to the trunk: a work log's row that a streaming run just added, and an agent thread the latest read of the thread list put under its parent in the rail. A row that only moves — a settled call leaving the pinned run for the fold or the collapsed log's latest slot — is not an arrival and stays still, as does everything on a thread opening, a log folding open, or a list re-read that added nothing. Lighting a row that had merely moved is what put the glow on the previous call instead of the new one.
+- Stepped (machine): caret blink, the braille throbber (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) as a "working now" indicator, the loading ellipsis (no dots to three, 400ms a step, read off the page clock so every label ticks on one beat and a pending button's dots carry into the splash; still in a hidden tab, a static `…` under reduced motion), live-state pulse, the action tier's waiting square (`steps(2)`, 1.2s; static under reduced motion, §10.18), value tick-over, **the reasoning wall** (§10.10).
 
 The chat transcript is where the two registers are visible at once, and it is the reference implementation: the mono reasoning wall lands hard, the sans answer beneath it eases in token by token.
 
 ### Forbidden
 
-Bouncing, springs, overshoot, staggered cascades, eased *decorative* spinners, parallax, anything over 240ms, and any animation that runs while the operator is not looking at it.
+Bouncing, springs, overshoot, staggered cascades, eased *decorative* spinners, parallax, anything over 240ms, and any animation that runs while the operator is not looking at it. The ambient field's turning clouds (§11.1) are the one exception to the last: they are stepped, stop on a hidden tab, and hold still under reduced motion.
 
 **One stated exception to the 240ms ceiling: the answer's per-character reveal (320ms).** The ceiling governs anything the operator is *waiting on* — a control answering a click, an overlay opening — where a long duration reads as lag. Nothing waits on this one: it is paced to a stream that already takes seconds, and a character is legible well before it finishes settling. Under the ceiling the resolve is over before the eye reaches it. If a second case ever wants this exemption, it has to clear the same bar — nothing is waiting.
 
@@ -522,7 +527,7 @@ Bouncing, springs, overshoot, staggered cascades, eased *decorative* spinners, p
 - **The glyph names the action, not the metaphor everyone else uses.** A paper plane for send and an upload tray for attach are the two most generic marks in messaging UI — the exact look this system is trying not to have, and both were also the busiest shapes in the set at 16px. Send is a **departure arrow** (a diagonal, three straight lines); attaching a document is the **`file` body carrying a `plus`**, because attaching is not uploading — `upload`/`download` keep the arrow-and-tray, and they mean the server.
 - **Redraw a pair, or neither.** `upload`/`download` are read as mirrors of each other; changing one alone is how a set starts to drift.
 - No emoji, ever.
-- **Registration marks are retained** — corner `+` crosshairs, reticles, diamond nodes — and they are one of the system's signatures. Use them at `text-dim` and at `micro` scale so they frame without competing.
+- **Registration marks are retained** — corner `+` crosshairs, reticles — and they are one of the system's signatures. Use them at `text-dim` and at `micro` scale so they frame without competing.
 - **A registration mark must bracket an object, not the window.** They belong on `PageHeader`, framing the plate that holds the asset id, title, subtitle and status badge; on a hero card; on a lightbox. They do **not** go on the shell's content region — that put two crosses just above the page and two in the bottom corners of the screen, framing the viewport rather than anything in it, which is the one job a registration mark has. Whatever they bracket needs enough inset (~20px) that the marks never collide with the content.
 - Icons inherit `currentColor` and follow the text tone they sit beside.
 
@@ -552,7 +557,7 @@ A `bare` panel also keeps its **state** shadow (`active`/`alert`) while dropping
 
 **`bare` drops the surface entirely** — no fill, no shadow, no ring, no card padding. The panel becomes its label and its content, sitting directly on the page.
 
-This is for regions that should read as *behind* the interface rather than as objects on it: the home page's recent-threads and in-flight lists, the system strip. They are things the operator glances past on the way to the composer, and giving each one a card turned the launchpad into a wall of boxes competing with the single surface that matters. Structure still comes from the label and the spacing — it just stops being a container.
+This is for regions that should read as *behind* the interface rather than as objects on it: the launchpad's activity ledger and its system footer. They are things the operator glances past on the way to the composer, and giving each one a card turned the launchpad into a wall of boxes competing with the single surface that matters. Structure still comes from the label and the spacing — it just stops being a container.
 
 The rule generalizes: **a card is a claim on attention.** Anything ambient — telemetry, recent items, background activity — should be bare, so the operator can look past it to what is live.
 
@@ -604,6 +609,8 @@ Stop and Open thread are icon buttons laid over the readout. They appear only on
 
 Square, hairline border, `space-2`/`space-3` padding, sans label. Focus is `shadow-focus`, always neutral. A **primary** button — one per view — is the sole carrier of `shadow-accent`.
 
+**On is luminance, not hue.** A checked toggle or checkbox is a `text-bright` edge and knob, the way a selected segmented cell is inverted. A switch reports a setting the operator chose, not a health state, so a page of enabled switches stays grayscale.
+
 ### 10.9 Live edge — a coloured rule, not light
 
 *The LED edge light (`LedEdge`, `.heph-led*`) is removed.* It was a hairline with a four-layer directional glow reaching ~90px past it; the console register says the same thing without light.
@@ -619,13 +626,13 @@ While the model reasons, its trace is **not a message**. It is the computer work
 - **Mono, `micro` size, barely tinted** — `accent` mixed at ~25% into `text-dim`, held at ~30% opacity. It reads as machine texture, not as content, and never competes with the answer.
 - **A flat wall, not an effect.** The subtlety lives entirely in the *color*: one uniform value across the whole block. **No gradient and no mask.** A faded edge would make it a decorated panel; this is meant to be a surface — a dense wall of machine text sitting behind the response.
 - **Clipped into the background** of the response area, behind the content, `pointer-events: none`.
-- **The stage travels; it does not appear.** The wall's height is a token (`--reasoning-h`), and the region opens and closes over that distance in `--motion-stage` rather than popping in and out at it — a region this large arriving instantly is a jump the reader absorbs twice per turn. Both directions are one token each, so retiming or resizing the state change is a token edit; nothing holds a matching copy, and the component waits on `animationend` rather than a duration of its own.
+- **The stage opens by travelling.** The wall's height is a token (`--reasoning-h`), and the region opens over that distance in `--motion-stage` rather than popping in at the foot of the turn, where nothing below it is being read.
 - **Cascading and bottom-anchored**, so new tokens push older lines up and out of frame. The wall stays filled to its top edge with older reasoning, and the newest line sits at the bottom where the eye already is.
 - **Fixed-height stage**, so the transcript does not reflow line-by-line while the trace streams.
 - **Machine register (§8)** — tokens land hard as they arrive. No easing, no fade-in per token.
 - **Nothing sits in the foreground.** No label, no throbber. Text arriving *is* the signal that the model is working — the most direct one available — and the `info` edge beside it already says so. Both a "THINKING" label and a spinner on top were restating what the wall and the rail were already communicating, which is the clutter this system exists to remove.
 
-**The handoff.** When the turn resolves, the wall **fades to the background over ~320ms** in the human register — that is the interface clearing the stage, not a control responding — and the **collapsed reasoning accordion fades in where it stood**, above the response. Two fades in the same place, so it reads as one movement rather than as a block being swapped out. The accordion holds the full trace, still mono and dim: available, out of the way.
+**The handoff.** When the reasoning ends, the wall **gives way in one frame** and the **collapsed reasoning accordion fades in where it stood**, above the response. The wall does not travel closed: the answer starts beneath it, and a stage shrinking over `--motion-stage` slid that text up while the operator read it. The accordion holds the full trace, still mono and dim: available, out of the way.
 
 The live layer is `aria-hidden` (it is texture, and a token-by-token live region would be unusable); a polite live region announces that the model is reasoning, and the settled accordion carries the real content.
 
@@ -675,11 +682,11 @@ The card — `surface`, **only the writing**, top to bottom:
 
 **No glow, in either size.** The composer used to wear an ambient aura (`shadow-bloom`) on the launchpad and a lit strip along its top edge in a conversation (`edge="bloom" | "led"`). Both are removed, and so is the `edge` prop: the aura's ~90px of reach landed on the last thing the model said, and the frame already separates the input from the conversation (§6).
 
-**Docked, it floats.** No rule welded to the bottom edge — the sticky wrapper carries the page background, and the transcript dissolves into it through a bottom `ScrollFade` (§10.17) reaching one band up over the conversation; the transcript keeps exactly that band as its bottom inset, so the last turn at rest clears the fade. Below the unit, only an 8px margin — the shell gives the chat route its bottom edge flush. **While the approval dock holds the slot**, the bar's trailing cells stand on their own under it as the same `StatusBar`, boxed on all four sides (`edge="box"`), with `DISCONNECTED` as its leading cell — the header line that says it the rest of the time has gone with the composer.
+**Docked, it floats.** No rule welded to the bottom edge and no ground of its own — the dock sits below the transcript's scroller, never over it, so the ambient field (§11.1) runs on beside and under the composer, and the transcript's text fades out over its last band (§10.17); the transcript keeps exactly that band as its bottom inset, so the last turn at rest clears the fade. Below the unit, only an 8px margin — the shell gives the chat route its bottom edge flush. **While the approval dock holds the slot**, the bar's trailing cells stand on their own under it as the same `StatusBar`, boxed on all four sides (`edge="box"`), with `DISCONNECTED` as its leading cell — the header line that says it the rest of the time has gone with the composer.
 
 ### 10.12a The chat room's title
 
-The thread's name and nothing else on its side — the workspace hint under it for a staged worktree thread, the `Frames` throbber while the backend names it — with the branch chip, surface buttons and session menu at the other end. The model, the thread's age and the run state used to ride an eyebrow above it; the model is a control in the composer's status bar, and the state is said in the composer's header line. **The title carries no fill and is laid over the top of the transcript**, which scrolls beneath it into a top `ScrollFade`; the transcript's top inset is the title block's measured height plus one band, so the first turn at rest starts clear of both. A thread recap pinned under the title keeps the ground as a fill — it is a paragraph, and prose scrolling through prose is unreadable at any blur.
+The thread's name and nothing else on its side — the workspace hint under it for a staged worktree thread, the `Frames` throbber while the backend names it — with the branch chip, surface buttons and session menu at the other end. The model, the thread's age and the run state used to ride an eyebrow above it; the model is a control in the composer's status bar, and the state is said in the composer's header line. **The title carries no fill and is laid over the top of the transcript**, whose text is masked out beneath it and fades in over one band below it (§10.17); the transcript's top inset is the title block's measured height plus one band, so the first turn at rest starts clear of both. A thread recap pinned under the title is part of that measured block, so nothing scrolls visibly behind it either.
 
 ### 10.13 The operator’s turn
 
@@ -695,7 +702,7 @@ Alignment of the *block* and alignment of the *words* are separate decisions: th
 
 **It is rendered, not printed.** The turn goes through `Markdown` — `.heph-prose`, the reading scale, the answer's own colour — so a prompt carrying a list, a fence or a `>` quote is set the way the answer beside it is. Printing the operator's source beside the model's rendered prose read as the product taking one speaker less seriously than the other. The block's edge and tag are what mark the turn as theirs; the text takes `text-bright` (the one colour difference from the answer). A long turn clamps with a `ScrollFade variant="clamp"` over its foot and a Show more/less toggle beneath.
 
-**The transcript's chrome runs at the composer's density; its prose does not.** Every row that isn't reading text — a work log's header and rows, a View chip, a turn's identity row — is 24px, the height of the composer's status cells, and the work log's sockets are 16px so a schematic row is no taller than a plain one. Turns are separated by 24px (12px of padding above and below each), and the parts inside an assistant turn sit 8px apart. The reading scale is untouched by any of it: density is taken out of the furniture around the words, never out of the words.
+**The transcript's chrome runs at the composer's density; its prose does not.** Every row that isn't reading text — a work log's header and rows, a View chip, a turn's identity row — is 24px, the height of the composer's status cells, and a work log's socket takes a 16px-tall box so a schematic row is no taller than a plain one; the outlines wider than that spill into the row's padding. Turns are separated by 24px (12px of padding above and below each), and the parts inside an assistant turn sit 8px apart. The reading scale is untouched by any of it: density is taken out of the furniture around the words, never out of the words.
 
 **Turns glide in.** Every turn — the operator's on send, the assistant's as it opens — fades up 10px over 200ms in the human register. Fast enough to read as a response rather than a reveal, and it fires once on mount, so a streaming turn never re-animates as deltas land. Opening a thread mounts its turns together, so the transcript settles in as one movement rather than a staggered cascade.
 
@@ -705,27 +712,17 @@ One implementation note that is easy to get wrong: the entry animation runs with
 
 A frame, a header band, and flush ruled rows. The header carries a `plate` label at the left and an optional readout at the right; the rows inside sit square, `space-1`/`space-2` vertical, hairline-separated, edge to edge with no padding of their own.
 
-This is the one shell that is allowed to be a box (§7), and the reason it exists rather than being drawn per screen is that three surfaces want the identical skeleton — the launchpad's sequencer, the annunciator grid's frame, and the chat status strip. A shape repeated three times in three files drifts three ways.
+This is the one shell that is allowed to be a box (§7), and the reason it exists rather than being drawn per screen is that several chat surfaces want the identical skeleton: the thread recap, a compaction section, the inbox dock. A shape repeated in several files drifts several ways.
 
 **What goes in one:** ruled rows and fixed cells — things read by scanning a column. **What does not:** prose, forms, or a stack of cards. A `Panel` (§10.2) is still the default container, and it stays the default; a console group is what you reach for when the content is genuinely a readout and the frame is telling the operator where that readout begins and ends.
 
-### 10.15 Annunciator grid — caution & warning
+### 10.15 Caution & warning
 
-The capability strip as a console panel: one cell per capability, laid out as a square ruled grid with 1px `line` gaps, inside a console group.
+Capability health is read by looking for what is wrong, so **only what is wrong is drawn.** The launchpad's footer (`SystemFooter`) carries a count in words, `5 OF 7 NOMINAL`, and under it one entry per degraded capability: a state square, the name in `micro` mono uppercase, the reason on hover, and the remediation on click. A capability the operator hasn't set up or has switched off (an optional alert channel) reports `off`: it is listed dim, with no state square and its remediation link, and left out of the count, since it is a choice rather than a fault. A healthy installation shows the count and those dim entries, so the region is grayscale at rest (§5).
 
-**A cell is two lines: the legend, and why it is lit.** An unlit cell carries its `plate` legend at a tone barely above the surface it sits on, and an empty second line. A lit cell fills, and its reason occupies that second line — scrolling (`Marquee`) rather than truncating where it overflows the column, because the reason is the one thing in the cell the operator has to finish reading. The second line is reserved either way, so a capability degrading changes a cell's contents and never its size.
+**Caution is amber; alert is red, and alerts come first.** The name keeps the accent (§10.5's exception for `warn` and `alert`), and the square repeats it, so the severity is never hue on a word alone (§12): the count says how many, the order says which is worse.
 
-The reason used to be set in a list *beneath* the grid. That restated every legend in order to say the thing the cell it named had room for, and grew the panel by a line per fault.
-
-**Caution is a tint; alert is a solid fill.** With the reason occupying the second line there is no status *word* left, so §12 has real work to do here: the two severities are told apart by fill weight — a luminance difference that survives any colour vision — rather than by hue. It is also what the hardware does, where a master alarm is not merely a different colour from a caution. Lit and unlit stay separable on a third, independent channel: an unlit cell's second line is empty.
-
-**The column count comes from the cell count**, capped per breakpoint (4 / 6 / 8), filling the rows as evenly as possible. A fixed count left seven capabilities sitting 5 + 2, and the three dead positions read as a row that failed to finish. It cannot always reach zero — nine cells at a cap of eight is 5 + 4 whatever is chosen — so it minimizes the gap rather than promising none. Letting the last row's cells *stretch* would promise none, and is rejected: the columns would stop aligning between rows, which is the ruled structure §7 keeps the borders for.
-
-This replaces a flat band where every cell was equally loud, and it is a better instrument for the same reason the real panel was: **the operator reads the panel by looking for the lit one.** A band of eight equally-bright cells has to be read left to right every time; a matrix with one amber cell in it has already answered the question from across the room. It is §1.1 — volume is hierarchy — applied to a region that was violating it.
-
-Never hue alone (§12): the fill weight separates the two severities, an empty second line separates unlit from lit, and the console group's header carries the count in words.
-
-The failure mode is real and worth naming: with few enough capabilities, a grid of dark cells can read as a wall of empty boxes rather than as a calm panel. If it does, render only the lit cells plus a single count of the rest.
+A ruled matrix of one cell per capability (the annunciator grid) carried this before and is retired. A grid of mostly dark cells read as a wall of empty boxes. A grid of mostly lit cells lost the lit/unlit contrast that made it readable. Either way it outweighed the composer on the one screen whose point is the composer (§1.1).
 
 ### 10.16 Mission clock
 
@@ -737,11 +734,11 @@ One is in use: the **run clock** on an in-flight run, from its `started_at`, in 
 
 ### 10.17 Scroll fade
 
-Where a scroll region runs **under** something laid over its edge — the chat title above, the docked composer below — it dissolves rather than being cut at a line. `ScrollFade edge="top" | "bottom"` (`.heph-scroll-fade`) fills its positioned parent and reaches one `--scroll-fade-band` (28px) past the side facing the content. Two effects on one falloff, strongest at the edge and nothing at the band's far end: a **progressive backdrop blur** — three layers, each masked to a shorter reach and blurring harder (a quarter, a half, all of `--scroll-fade-blur`), so there is no seam where one stops — and a **tint of the ground** from `--scroll-fade-tint` (70%) to clear, which keeps a title legible over text passing under it. Either alone fails: a gradient alone is a smear of crisp grey text; a blur alone leaves the title's contrast to whatever scrolls by.
+The chat transcript dissolves at both ends rather than being cut at a line: under the title laid over its top, and above the composer docked below it. It is a **mask on the transcript's own scroller**, not an overlay: the text is fully masked under the title, then fades in over one `--scroll-fade-band` (28px), and fades out over the last band above the composer. Nothing is laid over the page, so the ambient field (§11.1) behind the title and the composer is never blurred or tinted. An overlay of backdrop blur and ground tint was the earlier answer, and over a dithered ground it flattened the field into a dark band at both ends, whether or not any text sat under it.
 
-The scroll region keeps an inset of exactly one band at that edge (plus the overlay's own height at the top), so what rests there at the end of the scroll clears the fade — never more, or the band becomes dead page. The overlay's content must be positioned to paint above it, and the backdrop-root trap applies in full: nothing between the scroller and the fade may set `opacity`, `filter`, `mask`, `isolation` or a `will-change` of them, and the overlay takes its paint order from the DOM rather than a `z-index`. Pointer-transparent and hidden from assistive tech.
+The scroller keeps an inset of exactly one band at each end (plus the title block's measured height at the top), so what rests there at the end of the scroll clears the fade — never more, or the band becomes dead page. The mask makes the scroller a backdrop root: a glass surface inside the transcript frosts only the transcript.
 
-**`variant="clamp"`** is the same idea at the scale of one clamped block — the operator's long turn, a compaction section — saying "there is more below" over its foot: a plain 24px gradient from the block's own ground (`ground="bg" | "surface" | "sunken"`), inside the block, no blur (`.heph-clamp-fade`). A hand-rolled `bg-gradient-to-t` is the thing it replaces.
+**`ScrollFade`** is the same idea at the scale of one clamped block — the operator's long turn, a compaction section — saying "there is more below" over its foot: a plain 24px gradient from the block's own ground (`ground="bg" | "surface" | "sunken" | "raised"`), inside the block, no blur (`.heph-clamp-fade`). A hand-rolled `bg-gradient-to-t` is the thing it replaces.
 
 ### 10.18 The action tier — things that need the operator
 
@@ -755,7 +752,7 @@ A coloured border alone is too quiet for the one moment the run cannot continue 
 - **`ActionButtons`** — a wrapping row of square cells with **joined borders** (each cell after the first drops its left rule): mono `meta` uppercase, `line-strong` outlines, and **one filled primary** (`text-bright` on the ground — luminance, not hue). A cell may print its key (`kbd`: `↵`, `esc`) after the label at reduced opacity; binding the key is the consumer's.
 - Focus inside the tier is a **2px outline in the tone**, not the halo — a halo is clipped by the neighbouring rows (§6 rule 1).
 
-**The echo.** An ask is visible from anywhere, not only where it was raised: the composer's plate is replaced by an amber strip ("N waiting · Jump ↑"), and the thread's rail row takes an inset bar and a `WAITING` tag. (Specified here; landing with the composer and rail restyle.)
+**The echo.** An ask is visible from anywhere, not only where it was raised: the composer's plate is replaced by a strip ("N waiting · Jump ↑"), the thread's rail row takes an inset bar and a tag, and the launchpad's activity row says what is asked. Every echo takes **the ask's own tone**: amber for an approval, blue for a question, red for a decision (`ACTION_TONES` in `ActionFrame.tsx`; nothing parks on a decision yet, so the backend's `AwaitingKind` holds only the first two). The backend reports the kind (`awaiting_kind` on runs and conversations), so a thread that isn't open echoes the same tone as one that is.
 
 **The question card** — `ActionFrame tone="question"` around `ChoiceList` (`ui/components/ChoiceList.tsx`), and the shape of **any** multi-choice ask:
 
@@ -773,10 +770,22 @@ A coloured border alone is too quiet for the one moment the run cannot continue 
 
 Text that arrives wrapped, which nobody in the thread wrote, is its own row (`EnvelopeRow`) instead of sitting inline in the text around it: fetched or mailed content inside a tool result, attachment text and a routine's previous run beside the operator's turn, a project's instruction file, a chassis reminder.
 
-- **Anatomy** is the context-injection row's: `ProcessRow`, dashed socket glyph, no hover fill, closed at rest, body in dim `micro` mono capped at `max-h-64`.
+- **Anatomy** is the context-injection row's: `ProcessRow`, glyph in a dashed diamond, no hover fill, closed at rest, body in dim `micro` mono capped at `max-h-64`.
 - **The label is a word in the machine voice**, never only a glyph (§12): `External · <source>`, `Attachment text · <file>`, `Previous run`, `Project instructions · <path>`, `Reminder · N tasks open`, or `Notice · <kind>`.
 - **Untrusted bodies** sit behind a hairline under an attribution line ("Quoted from …, not this workspace's own words"), the block a compaction checkpoint uses for tool-derived text (`QuotedBlock`).
 - A **notice** (`role: "notice"`) is the same row as a thread turn: no bubble, no actions.
+
+### 10.20 The first-run walkthrough
+
+After the operator creates the platform password, a full-screen surface walks them through Connect a model, Pick the chat model, Helper models, Preferences, and Review and enter. The first two are required; the rest can be skipped. It can be reopened from Settings › Models (**Run setup walkthrough**).
+
+- **The rail** (left) is a quiet "Preparation" checklist in the app rail's chrome: `RailFrame`, one `RailRow` per step in the checklist states (`done` in nominal, `current` bright, `pending` hollow and dim), mono readouts at the right (`1 FOUND`, `SET`, `REQUIRED`), and a done count on the plate. Its `StatusBar` footer carries the `03 / 05` index and Lock.
+- **The column** (right) is one centered single column, built in once on first mount with the construction reveal (§8).
+- **The status block** is a mono `ConsoleGroup` that lists only probes that ran (the localhost scan, a connection test and its verdict). A step that hasn't run a probe has no block.
+- **Talos's briefing** opens each step in two short parts, first person (voice §14): one sentence on what the section is for, which never changes, then one on what Talos found or recommends. It streams in through the answer's own reveal (`AnswerText`), and when the state changes only the second part is spoken again. It carries no label.
+- **One question frame**: a live `ActionFrame tone="question"` holding a `ChoiceList` or a form, with Back and Continue in its footer. It is the only loud element on the page. Every option row says what it is and, under it, why you'd pick it; Talos's pick carries `RECOMMENDED` in its consequence column. A step with several settings (the roles, the workspace) gives each one line — its name and purpose at the left, a `Select` on its current pick at the right — with the default first in the menu and every option's reason under it.
+- **Motion.** Moving between steps is a `Reveal` at distance 10 per step. Mono values snap rather than tween.
+- **It must not** wear chat framing (no bubbles, no composer, no thread), show a second loud frame, celebrate the last step (Ready is a mono summary and **Enter workspace**), or stagger its children.
 
 ### States — all components
 
@@ -789,7 +798,7 @@ Text that arrives wrapped, which nobody in the thread wrote, is its own row (`En
 | Focus (keyboard) | `shadow-focus` — neutral, both modes |
 | Primary focus | `shadow-accent` — one per screen |
 | Alert | `accent-alert` on the value or border, never a fill |
-| Loading | sans "Loading…" or a mono braille throbber — never an eased spinner |
+| Loading | sans "Loading" with a stepped ellipsis, or a mono braille throbber — never an eased spinner |
 | Empty | sans "No data" / a written sentence explaining what would appear here |
 
 ---
@@ -803,34 +812,30 @@ Keep:
 - **Asset & version IDs** — `RUN-0341-A7`, `IDX-v3.2.1`
 - **Precision values** — coordinates, byte counts, token counts, latencies to the millisecond
 - **Plausible telemetry** — uplink latency, queue depth, cache hit rate
-- **Consistent naming** — pick a scheme (`[DOMAIN]-[SUBSYSTEM]-[SEQ]`) and hold to it
+- **Consistent naming** — one scheme, `HEPH-<SUBSYSTEM>-<SEQ>` (`HEPH-RAG-01`). Every id the interface prints is declared in `frontend/src/ui/assetIds.ts`; `PageHeader`, `Plate` and `RailFrame` accept only those. A section header (a settings page) prints none
 
 **The budget:** at most one diegetic detail per panel, and it lives at the panel's edge — a footer line, a header's right slot — never between a label and its value. Terminal-HUD's mistake was letting atmosphere sit in the reading path. Set at `micro`/`meta` in `text-dim`, it becomes texture the eye skips until it wants it, which is exactly the intent.
 
-### 11.1 The licensed moment
+### 11.1 The ambient field
 
-Everything above is texture the eye skips. **One thing per screen is allowed not to be.**
+Everything above is texture the eye skips. The field behind every page is texture too, but it is the one texture that knows what the platform is doing.
 
-A licensed moment is a single expressive device — the `DotField` is currently the only one — permitted on a screen where *nothing is read against it*. That is a short list, and it is the whole rule:
+**What it is.** A gas giant seen from orbit, rising out of the bottom-right corner: a disc about 0.96 of the viewport's height in radius (1.2 of its width on a narrow screen), centred on the right edge a quarter radius below the bottom, so only its upper-left shoulder shows. It reads as something just discovered at the edge of the view, not a planet placed in it. It is ordered-dithered on a 2px cell (half the base unit), each cell lit or unlit against a 4×4 Bayer threshold, shaded on the GPU one canvas pixel per cell and scaled up hard. The canvas covers only the planet and its halo, never the whole viewport (`DitherField`, its constants and geometry in `ui/theme/dither.ts`, the renderer in `ui/theme/dither-gl.ts`, the shaders in `ui/theme/dither-shader.ts`). Its cloud deck is turbulent belts rolled around nine vortices, lit raking from the left, so all of it that shows is day and the dither runs dense on the bright belts and sparse in their troughs, with a thin haze beyond the limb. The night side is always past the viewport's edge. A lit cell is `--dither-on` (`#1a1a1a` on Ink, `#e9e9e9` on Paper): clearly there, still below `--line`. Everywhere off the planet the page is its plain ground. Without WebGL2 it draws nothing.
 
-- an **empty state**, which by definition has nothing in it;
-- the **auth screens**, which hold one form and no work;
-- the **launchpad**, whose one object is a composer and whose panels are readouts;
-- a **lightbox**, which has already darkened everything else.
+**Where it is.** Behind every page, the auth screens and the 404 included, mounted once at the app root under everything in flow. The rail is glass over it (`.heph-rail-glass`), so it reads through as a blur. Opaque objects occlude it on purpose: panels, console groups, instrument bands and the composer keep their `bg-surface`, so the planet shows only in the gaps between them and never runs through a column of numbers. Dialogs, drawers, menus and toasts sit above it.
 
-**What it is.** 1px square dots on the 4px grid at a 24px pitch (`--space-6`), anchored to the viewport so the grid holds still while the rail is dragged. One neutral token, `--dot-field`: `#1a1a1a` on Ink's black, `#ebebeb` on Paper's white — Paper sits a step shallower because dark marks on a light ground read more readily. A radial mask centred on the focal object (the launchpad's composer, the 404's plate) holds the dots at full strength just around it and takes them to nothing by the page edges. Static, no accent, no glow, no marks. You see it if you look for it.
+**What it says.**
 
-**The field backs a page, not a region.** The falloff has to reach zero at the page edges, not at the edge of a screen's padding box, so the shell paints it behind its whole content column (`isDotFieldRoute`, `AppShell`), status bar included, and the screen stops owning it. The mask's centre is fixed in `.heph-dot-field` where the launchpad composer lands; moving the composer means moving it.
+- **Load.** The clouds turn faster with each live top-level thread (two for one waiting on the operator), up to twice their resting speed at five. The speed is integrated frame by frame, so a change of load never jumps the clouds.
+- **Sub-agents.** Each live thread an agent spawned hangs one aurora curtain over the upper-left limb toward the pole, up to six, all on screen: a faint band of vertical rays that shimmers slowly. Spawned threads count here and nowhere else.
+- **Events.** A top-level thread starting, finishing, failing or asking, and a reminder, task outcome or system notice, strikes lightning at a random spot on the visible disc, through the lit clouds: five flashes scattered a few dozen pixels apart over about a second, each flickering on 100ms beats and fading in 1.4s. Where on the planet carries no meaning.
+- **Hue.** A flash's lit cells take its event's accent, and the aurora's take `--accent-nominal`, each `--dither-tint` of the way from `--dither-on` (4% on Ink, 3% on Paper). Near the ground that is a suggestion of hue and no more, which keeps it inside §5's rules: the field never carries a colour on its own, only the faint echo of one already said elsewhere. The cloud deck is never tinted.
 
-**What makes that safe is glass, and the two are one decision.** A page-wide field runs under content the operator is meant to read, which is the "atmosphere in the reading path" failure this section exists to prevent — unless nothing readable sits *on* the field. On a field page every framed shell (`.heph-framed`: `Panel`, `ConsoleGroup`, `Composer`, `InstrumentBand`) trades its opaque `bg-surface` for the same glass the View and the park dock use, so dots behind a column of numbers arrive as a blur rather than running through them. A shell with no surface of its own — a bare panel, the system strip — carries no marker and is instead given space, which is the same answer §7 gives everywhere else. **Ship one without the other and the rejection above stands.**
+**It turns.** The clouds rotate slowly while the window has focus (a full turn takes about half an hour at rest): the one stated exception to §8's "nothing runs while the operator is not looking". It redraws in hard steps (the machine register), and only when a cell would change: when the clouds at the mean rotation have moved one cell (one to three times a second), and every 100ms while lightning flashes. Between draws nothing runs. While the window is unfocused the clouds and the aurora's shimmer hold still, and only lightning or a change in what the platform is doing redraws, so an event still shows on a screen the operator glances at. Focus inside an embedded frame counts as focus. The bands shear against each other and swing back over half a turn, so the deck never shreds. It stops when the tab is hidden, and under reduced motion holds a still frame with no lightning, changing only when the aurora does. Where the browser renders WebGL in software, it draws one still frame with no aurora or lightning, and redraws it only on a resize or a theme change.
 
-**Still rationed, and still never inside a container holding data.** Two routes carry it (the launchpad and the 404), the list is explicit rather than a default, and matching is exact — `/` is a prefix of every path in the app, and a `matchesHref` here would put the field behind all of it, which is the outcome the ration exists to prevent.
+**It costs nothing you can see.** It draws in a worker on an OffscreenCanvas, so its shader compiles and draws never touch the page's thread; the page only sends it the platform's state when that changes (`ui/theme/dither.worker.ts`, the pacing in `ui/theme/dither-loop.ts`). Where a worker can't draw WebGL2, as in Safari before 17, it draws on the page instead. A draw is a texture lookup per cell: the cloud deck is baked once into a texture and only looked up, and a slowly evolving second bake is made a few rows per draw and crossfaded in. Lightning redraws only the few patches it touches. Measured on an Apple M5 Max, the heaviest draw is under 0.07ms of GPU at 4K, under half a percent of a 144Hz frame. It asks for the integrated GPU on a machine with two.
 
-**Why the exception is worth having at all.** §1.4 says a screen at rest is grayscale and §1.1 says most of the interface should sit at a low volume. Both are right, and followed absolutely they produce a system with no register above "quiet" — which §1.6 already names as the other failure: *restraint is the goal; anonymity is not*. An interface that is only ever recessive has no way to say that the thing in front of you is the point. The moment is that register, and rationing it to one per screen, in a region with nothing to drown out, is what keeps it from becoming decoration.
-
-**It must stay under the thing it sits behind.** The launchpad's moment is densest right around the composer, the screen's point of action — two claims on the eye in the same 200px. The field is neutral, quieter than `--line`, and never takes the accent, and where the two compete the field loses. The composer is the point of the screen; the field is the reason the screen feels like somewhere.
-
-**Nothing in it is an instrument, and nothing in it is a figure.** Registration marks on the grid were tried and dropped: they read as the interface measuring something, and there is nothing there to measure. Diegetic detail that *implies a readout* is a lie about what the product is doing. The same goes for anything mythic or pictorial — schematics, maps, veins, horizons: the background is a material, not an illustration.
+**One figure, and no instruments.** The planet is the field's only figure: no marks, readouts or labels on or around it. Registration marks on a background read as the interface measuring something, and diegetic detail that *implies a readout* is a lie about what the product is doing.
 
 ---
 
@@ -863,6 +868,7 @@ A licensed moment is a single expressive device — the `DotField` is currently 
 
   /* ---- type scale ---- */
   --type-micro-size: 10px;      --type-micro-lh: 14px;
+  --type-caption-size: 11px;    --type-caption-lh: 16px;
   --type-plate-size: 10px;      --type-plate-lh: 14px;
   --type-meta-size: 11px;       --type-meta-lh: 16px;
   --type-label-size: 12px;      --type-label-lh: 16px;
@@ -885,7 +891,6 @@ A licensed moment is a single expressive device — the `DotField` is currently 
   /* ---- INK (dark, default) ---- */
   --bg: #000000;         --surface: #0a0a0a;      --surface-raised: #161616;
   --surface-sunken: #0f0f0f;
-  --annunciator-dark: #0d0d0d;   /* an unlit caution & warning cell */
   --line: #212121;       --line-strong: #333333;
   --text-dim: #6e6e6e;   --text: #a8a8a8;         --text-bright: #ffffff;
   --text-reading: #d2d2d2;       /* prose only — 13.9:1 */
@@ -893,6 +898,7 @@ A licensed moment is a single expressive device — the `DotField` is currently 
   --accent-nominal: #34d67f;  --accent-warn: #f2a93b;
   --accent-alert: #ff5c5c;    --accent-info: #5aa2ff;
   --accent-queue: #b48cff;
+  --dither-on: #1a1a1a;  --dither-tint: 4%;    /* the ambient field, §11.1 */
   /* Each carries a 1px hairline ring first — the surface's edge, folded into the
      shadow so it costs no layout (§6). Floating things only. */
   --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.6);
@@ -902,7 +908,6 @@ A licensed moment is a single expressive device — the `DotField` is currently 
 [data-theme="paper"] {
   --bg: #ffffff;         --surface: #ffffff;      --surface-raised: #f5f5f4;
   --surface-sunken: #f4f3f0;
-  --annunciator-dark: #f7f7f5;
   --line: #e4e4e1;       --line-strong: #cfcfcb;
   --text-dim: #8a8a85;   --text: #3d3d3a;         --text-bright: #000000;
   --text-reading: #343431;       /* prose only — 12.5:1 */
@@ -910,6 +915,7 @@ A licensed moment is a single expressive device — the `DotField` is currently 
   --accent-nominal: #0e7a46;  --accent-warn: #9a6510;
   --accent-alert: #c0342b;    --accent-info: #0f5fa8;
   --accent-queue: #6a3fb5;
+  --dither-on: #e9e9e9;  --dither-tint: 3%;
   --shadow-1: 0 0 0 1px rgb(0 0 0 / 0.07), 0 1px 2px rgb(0 0 0 / 0.05),
     0 1px 1px rgb(0 0 0 / 0.04);
   --shadow-2: 0 0 0 1px rgb(0 0 0 / 0.08), 0 12px 32px -8px rgb(0 0 0 / 0.16),

@@ -1,9 +1,9 @@
-"""VMBrowser — the agent's browser is web fetch's Chromium in the platform VM.
+"""VMBrowser — the agent's browser is web fetch's Chromium in the services VM.
 
 Each conversation attaches its own browser context to it over CDP, so tabs and history
 stay per conversation, while the logins they carry are one profile the session manager
 keeps on the host. Page JavaScript never runs on the operator's machine, and every
-request leaves through the platform proxy, which reaches public addresses only.
+request leaves a VM that reaches public addresses only.
 
 Web fetch owns the browser's lifecycle (start, offline suspension, restart after a VM
 reset); this only waits for it and hands out where to attach.

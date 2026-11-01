@@ -176,6 +176,19 @@ export function groupSessions(
   return groups;
 }
 
+/** The list split into the Private area's threads and the rest, each keeping its order.
+ *  Private threads file only under the area's own section, never by project, pin or
+ *  recency, so none of them can surface beside an ordinary thread. */
+export function splitPrivate(sessions: ChatSummary[]): {
+  ordinary: ChatSummary[];
+  privateRows: ChatSummary[];
+} {
+  const ordinary: ChatSummary[] = [];
+  const privateRows: ChatSummary[] = [];
+  for (const s of sessions) (s.private ? privateRows : ordinary).push(s);
+  return { ordinary, privateRows };
+}
+
 /** The list with every thread that names a parent present in it moved directly beneath
  *  that parent, depth-first. Each entry carries the top-level thread it hangs from — the
  *  one whose project, pin and recency decide the section — so a thread opened from an

@@ -11,10 +11,9 @@ the work in its own format rather than a re-rendered transcript of it.
 
 Three things keep it a *side* run rather than a turn:
 
-- **``tool_choice='none'``**, so the tool definitions stay in the request (the prefix is
-  unchanged) while the model is told to answer in text. Some local servers ignore the
-  setting; a reply that calls a tool anyway is a failed fold, and the call never runs —
-  the node that would execute it is never reached.
+- **The tool calls never run.** The tool definitions stay in the request so the prefix is
+  unchanged, and the instructions ask for text. A reply that calls a tool anyway is retried
+  once under ``tool_choice='none'``; the node that would execute a call is never reached.
 - **It is marked a side run** (``agent.emit.SIDE_RUN``), and its stream goes nowhere but
   the summary deltas. The capabilities that observe a request each handle that on their
   own terms: ``MeasureOverhead`` measures and emits into nothing, so ``Run.context_overhead``
@@ -23,34 +22,23 @@ Three things keep it a *side* run rather than a turn:
   request the turn never sent; ``ReinjectSystemPrompt`` and the tool-search and code-mode
   capabilities run as they would on any request, because they shape the prefix that has to
   match; the harness's ``WarnOnCacheBusts`` keeps its state per run and may usefully warn.
-- **Only the answer text is kept.** The model may think — its normal reasoning settings
+- **Only the briefing is kept.** The model may think — its normal reasoning settings
   apply — but a ``ThinkingPart`` is never part of the summary, and a ``<think>`` block
-  inlined into the content is stripped before the text can become the thread's memory.
+  inlined into the content is stripped before the text can become the thread's memory. So
+  is the ``<analysis>`` pass the instructions ask for ahead of the briefing.
 
 No call is bounded by time or output length: the summary is the thread's only memory of
 what it replaces.
 
-**Handling what comes back is text-only.** The summary is asked for in fixed sections
-(``prompts/utility.py``'s ``COMPACT_INSTRUCTIONS``) for two reasons that need the text to
-be *parseable*, not merely readable:
-
-- **Anchors survive every fold.** Exact paths, ids, names and numbers are what a
-  re-summarized summary loses first — each pass paraphrases a little more until the file
-  path the thread was working on is "the config file". So a second fold carries the
-  previous checkpoint's Anchors section forward **verbatim** instead of asking a model to
-  restate it.
-- **Tool-sourced facts stay marked as data.** The checkpoint is replayed as a
-  user-shaped message, which is the most authoritative voice in the history; the one
-  section that repeats what a web page or a document said is fenced before it is stored,
-  so a fold cannot promote fetched text into an instruction the model trusts.
-
-Both operations are text-in/text-out and model-free: a summary that comes back without the
-headings degrades to "no carry-forward, nothing fenced" rather than failing the fold.
+**Tool-sourced facts stay marked as data.** The checkpoint is replayed as a user-shaped
+message, which is the most authoritative voice in the history, so the one section that
+repeats what a web page or a document said is fenced before it is stored. What is copied
+in verbatim lives in :mod:`agent.compaction_carry`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Protocol
 
 from pydantic_ai import (
     Agent,
@@ -66,48 +54,59 @@ from pydantic_ai import (
 )
 from pydantic_ai.settings import ModelSettings
 
-from core.compaction_sections import (
-    is_checkpoint,
-    replace_section,
-    section_body,
-    section_key,
-    strip_preamble,
-    without_fenced,
-)
+from core.compaction_sections import first_section_start, replace_section, section_body
 from core.text import strip_think_blocks
-from core.untrusted import new_nonce, untrusted_fence, untrusted_preamble
+from core.untrusted import neutralize_tags, new_nonce, untrusted_fence, untrusted_preamble
 from prompts.compaction import (
-    COMPACT_ANCHORS_SECTION,
+    COMPACT_ANALYSIS_CLOSE,
+    COMPACT_ANALYSIS_OPEN,
+    COMPACT_FOCUS_LEAD,
+    COMPACT_FOCUS_TAG,
     COMPACT_INSTRUCTIONS,
     COMPACT_TOOLS_SECTION,
 )
-from services.conversation_view import flatten_content
 from tools import RunDeps
 
 from .emit import SIDE_RUN
 from .factory import TurnAgent
 from .history import drop_dangling_tool_calls, merge_consecutive_requests
 
-#: Where a fold's summary text goes while it is being written. Synchronous and
-#: fire-and-forget: it is a progress signal, so it must not be able to fail a fold or slow
-#: the model call down, and the caller that supplies one is the caller that owns a stream.
-type DeltaSink = Callable[[str], None]
 
-#: The run-level settings a summary is written under, merged over the agent's own. Only
-#: the tool choice: the model's reasoning settings are the session's, and there is
-#: deliberately no ``max_tokens`` — the endpoint's own ceiling is the only one.
+class DeltaSink(Protocol):
+    """Where a fold's summary text goes while it is being written. Synchronous and
+    fire-and-forget: it is a progress signal, so it must not be able to fail a fold or slow
+    the model call down. ``restart`` discards the text sent so far."""
+
+    def __call__(self, text: str, *, restart: bool = False) -> None: ...
+
+
+#: The settings a summary is retried under when the first answer called a tool. Only the
+#: tool choice, and no ``max_tokens``: the endpoint's own ceiling is the only one.
 FOLD_SETTINGS: ModelSettings = {"tool_choice": "none"}
 
 
 class SummaryCalledTool(Exception):
     """The model answered the request for a summary with a tool call.
 
-    ``tool_choice='none'`` asks it not to, and some local servers ignore that. The call is
-    never executed — a side run that acted on the world would be a turn nobody asked for —
-    so the fold fails instead."""
+    The call is never executed: a side run that acted on the world would be a turn nobody
+    asked for. Some local servers ignore ``tool_choice='none'`` too, so a retry under it
+    can still raise this, and the fold fails."""
 
 
-def summary_request(messages: list[ModelMessage]) -> list[ModelMessage]:
+def compact_instructions(focus: str | None = None) -> str:
+    """The request a fold appends, with the operator's focus when they gave one."""
+    if not focus or not focus.strip():
+        return COMPACT_INSTRUCTIONS
+    safe = neutralize_tags(focus.strip(), (COMPACT_FOCUS_TAG,))
+    return (
+        f"{COMPACT_INSTRUCTIONS}\n\n{COMPACT_FOCUS_LEAD}\n"
+        f"<{COMPACT_FOCUS_TAG}>\n{safe}\n</{COMPACT_FOCUS_TAG}>"
+    )
+
+
+def summary_request(
+    messages: list[ModelMessage], *, focus: str | None = None
+) -> list[ModelMessage]:
     """The history a summary is written against: ``messages`` normalised exactly as a
     turn's replay is (``agent/prelude.py``), then the compaction instructions as one more
     user message.
@@ -120,7 +119,7 @@ def summary_request(messages: list[ModelMessage]) -> list[ModelMessage]:
     library would join them anyway."""
     replay = merge_consecutive_requests(drop_dangling_tool_calls(messages))
     return merge_consecutive_requests(
-        [*replay, ModelRequest(parts=[UserPromptPart(COMPACT_INSTRUCTIONS)])]
+        [*replay, ModelRequest(parts=[UserPromptPart(compact_instructions(focus))])]
     )
 
 
@@ -129,6 +128,7 @@ async def write_summary(
     deps: RunDeps,
     messages: list[ModelMessage],
     *,
+    focus: str | None = None,
     on_delta: DeltaSink | None = None,
 ) -> str | None:
     """The briefing the turn's own model writes for ``messages``, or ``None`` when it wrote
@@ -143,12 +143,33 @@ async def write_summary(
     raw** — unstripped, not yet merged with carried anchors and not yet fenced — because
     they are for a human watching a pause go by. Everything that makes the text *safe to
     store* is done to the settled string, never to a delta: a fence cannot be applied to
-    half a section, and a ``<think>`` block cannot be recognised until it closes."""
+    half a section, and a ``<think>`` block cannot be recognised until it closes.
+
+    Asked first with the turn's own settings, so the request reads the conversation from
+    the provider's cache (a ``tool_choice`` change invalidates the messages cache). A
+    model that answers with a tool call is asked once more under :data:`FOLD_SETTINGS`."""
+    history = summary_request(messages, focus=focus)
+    try:
+        return await _write_once(agent, deps, history, settings=None, on_delta=on_delta)
+    except SummaryCalledTool:
+        if on_delta is not None:
+            on_delta("", restart=True)
+        return await _write_once(agent, deps, history, settings=FOLD_SETTINGS, on_delta=on_delta)
+
+
+async def _write_once(
+    agent: TurnAgent,
+    deps: RunDeps,
+    history: list[ModelMessage],
+    *,
+    settings: ModelSettings | None,
+    on_delta: DeltaSink | None,
+) -> str | None:
     async with agent.iter(
         None,
         deps=deps,
-        message_history=summary_request(messages),
-        model_settings=FOLD_SETTINGS,
+        message_history=history,
+        model_settings=settings,
         metadata={SIDE_RUN: True},
     ) as agent_run:
         node = agent_run.next_node
@@ -175,7 +196,7 @@ async def write_summary(
     # in the content would otherwise store that scratch work as the thread's memory, to be
     # replayed as established fact for the rest of the conversation.
     text = "".join(part.content for part in response.parts if isinstance(part, TextPart))
-    return strip_think_blocks(text).strip() or None
+    return strip_analysis(strip_think_blocks(text)).strip() or None
 
 
 def fence_tool_facts(summary: str) -> str:
@@ -192,64 +213,18 @@ def fence_tool_facts(summary: str) -> str:
     return replace_section(summary, COMPACT_TOOLS_SECTION, fenced)
 
 
-def carried_anchors(messages: list[ModelMessage]) -> list[str]:
-    """The Anchors lines of any checkpoint among the messages being folded.
+def strip_analysis(text: str) -> str:
+    """``text`` without the leading ``<analysis>`` pass.
 
-    A fold's input contains the previous checkpoint whenever the thread has compacted
-    before; it is recognised by the label the store wrote in front of it, the same marker
-    the reviewer and the operator's transcript key on."""
-    lines: list[str] = []
-    for text in _checkpoint_texts(messages):
-        lines.extend(_bullets(section_body(text, COMPACT_ANCHORS_SECTION)))
-    return _dedupe(lines)
-
-
-def merge_anchors(summary: str, carried: list[str]) -> str:
-    """Fold ``carried`` anchor lines into the summary's Anchors section, keeping the new
-    ones first and dropping duplicates. Appends the section when the summary has none."""
-    if not carried:
-        return summary
-    existing = _bullets(section_body(summary, COMPACT_ANCHORS_SECTION))
-    merged = _dedupe(existing + carried)
-    if merged == existing:
-        return summary
-    body = "\n".join(merged)
-    if section_body(summary, COMPACT_ANCHORS_SECTION) is None:
-        return f"{summary.rstrip()}\n\n## {COMPACT_ANCHORS_SECTION}\n{body}"
-    return replace_section(summary, COMPACT_ANCHORS_SECTION, body)
-
-
-def _bullets(body: str | None) -> list[str]:
-    """A section's non-empty lines, as written."""
-    if not body:
-        return []
-    return [line.rstrip() for line in body.splitlines() if line.strip()]
-
-
-def _dedupe(lines: list[str]) -> list[str]:
-    """Order-preserving dedupe, comparing on the line's words rather than its bullet
-    marker or spacing — the same anchor rewritten as "- x" and "* x" is one anchor."""
-    seen: set[str] = set()
-    out: list[str] = []
-    for line in lines:
-        key = section_key(line)
-        if key and key not in seen:
-            seen.add(key)
-            out.append(line)
-    return out
-
-
-def _checkpoint_texts(messages: list[ModelMessage]) -> list[str]:
-    """The stored checkpoint texts among a fold's messages, newest last — **with every
-    fenced region removed**, so what is carried forward is only what the summarizer wrote
-    in its own voice."""
-    texts: list[str] = []
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in message.parts:
-            if isinstance(part, UserPromptPart):
-                text = flatten_content(part.content).strip()
-                if is_checkpoint(text):
-                    texts.append(without_fenced(strip_preamble(text)))
-    return texts
+    Only a block that opens the text is the pass we asked for; one further down is quoted
+    from somewhere. An unclosed block runs to the first heading of ours after it, and with
+    none the whole text was analysis."""
+    stripped = text.lstrip()
+    if not stripped.lower().startswith(COMPACT_ANALYSIS_OPEN):
+        return text
+    rest = stripped[len(COMPACT_ANALYSIS_OPEN) :]
+    close = rest.lower().find(COMPACT_ANALYSIS_CLOSE)
+    if close >= 0:
+        return rest[close + len(COMPACT_ANALYSIS_CLOSE) :].strip()
+    start = first_section_start(rest)
+    return "" if start is None else rest[start:].strip()

@@ -67,6 +67,8 @@ export function createComposerMenuController(
     if (!menu || !field || deps.suspended()) return;
     const next = tokenAt(field.value, field.selectionStart);
     const current = token();
+    // Plain typing: no menu before or after, so nothing to measure.
+    if (!next && !current) return;
     if (next?.trigger === current?.trigger && next?.query === current?.query) {
       // Same token, moved: keep the rows, re-measure in case the field grew a line.
       setToken(next);

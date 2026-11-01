@@ -23,25 +23,23 @@ import {
   type MenuItem,
 } from "~/ui";
 import { createListView } from "~/lib/list";
-import { isRetitling } from "../conversationActions";
 import type { ChatSummary } from "../model";
 import {
-  isPinned,
   orderSessions,
   pinnedIds,
   setWorkspaceOpen,
-  titleReveals,
   workspaceOpen,
 } from "../data";
 import {
   groupSessions,
+  splitPrivate,
   type DirectoryGroup,
   type RecencyGroup,
   type SessionGroup,
   type WorkspaceDirectory,
 } from "../sessionGroups";
-import { SessionRow } from "./SessionRow";
-import { ThreadLog, createThreadFold } from "./ThreadLog";
+import { PrivateSection, type PrivateSectionProps } from "./PrivateSection";
+import { SessionRows } from "./SessionRows";
 
 /** What a directory's heading reports about the repository under it. Resolved by the
  *  caller from the live project listing — this component renders it and reads nothing. */
@@ -84,6 +82,12 @@ export interface SessionListProps {
   query: () => string;
   /** Whether a thread has something the operator has not seen. */
   unread?: (id: string) => boolean;
+  /** The Private area's lock and controls. Its threads are drawn only in its own section,
+   *  last; omitted, they are not drawn at all. */
+  privateArea?: Pick<
+    PrivateSectionProps,
+    "unlocked" | "onUnlock" | "onLock" | "onNewThread"
+  >;
 }
 
 /** Searchable, pinnable thread list shared by the desktop rail and mobile
@@ -112,10 +116,11 @@ export function SessionList(props: SessionListProps): JSX.Element {
   /** The grouping, or undefined while the directories are still loading. One value
    *  rather than a second flag the render has to keep in step with the first — see
    *  `directories` above for why the wait matters. */
+  const split = createMemo(() => splitPrivate(view.items()));
   const grouped = createMemo(() => {
     const dirs = props.directories;
     if (!dirs) return undefined;
-    const all = groupSessions(orderSessions(view.items()), {
+    const all = groupSessions(orderSessions(split().ordinary), {
       directories: dirs,
       pinned: pinnedIds(),
     });
@@ -217,90 +222,22 @@ export function SessionList(props: SessionListProps): JSX.Element {
           )}
         </For>
       </Show>
+      <Show when={props.privateArea}>
+        {(area) => (
+          <PrivateSection
+            unlocked={area().unlocked}
+            onUnlock={area().onUnlock}
+            onLock={area().onLock}
+            onNewThread={area().onNewThread}
+            sessions={split().privateRows}
+            currentId={props.currentId}
+            menu={props.menu}
+            onSelect={props.onSelect}
+            unread={props.unread}
+          />
+        )}
+      </Show>
     </Show>
-  );
-}
-
-/** The rows themselves — a component rather than a shared JSX value, so the
- *  headed and unheaded branches below each render their own nodes instead of
- *  passing one set of DOM back and forth across a `Show`. */
-function SessionRows(props: {
-  sessions: ChatSummary[];
-  currentId: string | null;
-  menu: ContextMenuApi;
-  onSelect: (id: string) => void;
-  unread?: (id: string) => boolean;
-}): JSX.Element {
-  // An agent thread the operator opened sits in its parent's thread log rather than
-  // in the list, and only a parent that is itself listed here can hold it.
-  const listed = createMemo(() => new Set(props.sessions.map((s) => s.id)));
-  const childrenOf = (id: string) =>
-    props.sessions.filter((s) => s.parentId === id && s.id !== id);
-  const top = createMemo(() =>
-    props.sessions.filter((s) => !s.parentId || !listed().has(s.parentId)),
-  );
-  /* Iterated by id: every read of the list mints new summaries, and a
-     reference-keyed list would remount each row on every refetch, cutting off a
-     thread's arrival halfway through. */
-  const topIds = createMemo(() => top().map((s) => s.id));
-  const byId = createMemo(
-    () => new Map(props.sessions.map((s) => [s.id, s] as const)),
-  );
-  return (
-    <For each={topIds()}>
-      {(id) => (
-        <Show when={byId().get(id)}>
-          {(s) => {
-            const threads = () => childrenOf(id);
-            const fold = createThreadFold(
-              threads,
-              childrenOf,
-              () => props.currentId,
-            );
-            return (
-              <>
-                <SessionRow
-                  title={s().title}
-                  selected={id === props.currentId}
-                  pinned={isPinned(id)}
-                  unread={props.unread?.(id)}
-                  reveal={titleReveals[id]}
-                  retitling={isRetitling(id)}
-                  activity={s().activity}
-                  lastOutcome={s().lastOutcome}
-                  updatedAt={s().updatedAt}
-                  onOpen={() => props.onSelect(id)}
-                  // The thread's id is the menu's key, which is what lets one panel serve the
-                  // whole list: it tells the rail which thread to build items for, and tells
-                  // the row whether the open menu is its own.
-                  onContextMenu={(e) => props.menu.openAt(e, id)}
-                  menuTrigger={props.menu.triggerProps(id)}
-                  menuOpen={props.menu.isOpen(id)}
-                  fold={
-                    threads().length > 0
-                      ? {
-                          open: fold.open(),
-                          onToggle: fold.toggle,
-                          label: `Agent threads of ${s().title}`,
-                        }
-                      : undefined
-                  }
-                />
-                <Show when={threads().length > 0}>
-                  <ThreadLog
-                    threads={threads()}
-                    open={fold.open()}
-                    childrenOf={childrenOf}
-                    currentId={props.currentId}
-                    onSelect={props.onSelect}
-                  />
-                </Show>
-              </>
-            );
-          }}
-        </Show>
-      )}
-    </For>
   );
 }
 

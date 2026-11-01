@@ -1,9 +1,10 @@
 import { createMemo, For, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
+import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import {
+  CodeSpanText,
   EmptyState,
   LoadingText,
-  Panel,
   Row,
   Stack,
   StatusFlag,
@@ -57,28 +58,29 @@ export function AgentToolsPanel(): JSX.Element {
   };
 
   return (
-    <Panel
-      label="Agent tools"
-      meta={
-        <Show when={offCount()}>
-          <StatusFlag status="warn">{`${offCount()} OFF`}</StatusFlag>
-        </Show>
-      }
-    >
+    <Stack gap={6}>
+      <SettingsPageHeader
+        section="agent-tools"
+        status={
+          <Show when={offCount()}>
+            <StatusFlag>{`${offCount()} OFF`}</StatusFlag>
+          </Show>
+        }
+      />
       <Show when={settled(tools)} fallback={<LoadingText />}>
         <Show
           when={(settled(tools) ?? []).length}
           fallback={<EmptyState icon="cpu" message="No tools registered" />}
         >
           <Stack gap={4}>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               A tool switched off here is never offered to the agent and can
               never be invoked by it — on a live chat, on an unattended
               scheduled task, and on the resume of a run waiting for your
               approval alike.
             </Text>
             <Show when={hasDormant()}>
-              <Text variant="micro" tone="dim">
+              <Text variant="caption" tone="dim">
                 A tool marked DORMANT is on and available — it simply sits
                 outside the agent's opening tool list, and the agent loads its
                 group when a task calls for it.
@@ -87,8 +89,8 @@ export function AgentToolsPanel(): JSX.Element {
             <For each={grouped()}>
               {([category, entries]) => (
                 <Stack gap={3} class="pt-3">
-                  <Text variant="label" tone="dim">
-                    {category.toUpperCase()}
+                  <Text variant="plate" tone="dim">
+                    {category}
                   </Text>
                   <For each={entries}>
                     {(tool) => (
@@ -104,9 +106,9 @@ export function AgentToolsPanel(): JSX.Element {
                               <StatusFlag>DORMANT</StatusFlag>
                             </Show>
                           </Row>
-                          <Text variant="micro" tone="dim">
+                          <CodeSpanText tone="dim">
                             {tool.description}
-                          </Text>
+                          </CodeSpanText>
                         </Stack>
                         <Toggle
                           checked={tool.enabled}
@@ -121,6 +123,6 @@ export function AgentToolsPanel(): JSX.Element {
           </Stack>
         </Show>
       </Show>
-    </Panel>
+    </Stack>
   );
 }

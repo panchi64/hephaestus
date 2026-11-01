@@ -20,7 +20,7 @@
  *  test`, and keyed as neither.
  *
  *  It cannot promise the grant will exist. The backend refuses a scope for reasons no
- *  reading of the words can see — a path leaving the worktree, a wider declared reach —
+ *  reading of the words can see — a path leaving the worktree, a command run on the host —
  *  and says so on the approve response, which is where that is reported (`stream/
  *  approvals.ts`). This file names the act; it does not vouch for it.
  */

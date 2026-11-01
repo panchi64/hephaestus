@@ -17,6 +17,14 @@ export interface LibraryEntry {
   published: boolean;
 }
 
+/** A headed section of directory rows. */
+export interface LibraryGroup<T> {
+  key: string;
+  label: string;
+  note: string;
+  items: T[];
+}
+
 /** The rows a tab shows. Published and draft partition the list. */
 export function filterByTab<T extends { published: boolean }>(
   items: readonly T[],

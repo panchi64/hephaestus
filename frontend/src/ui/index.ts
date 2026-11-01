@@ -6,13 +6,14 @@
  *  - tokens.css is the single source of truth for colors/spacing/type.
  *  - Cosmetic differences are variant props, never forked components.
  *  - No eased/decorative spinners — use LoadingText / EmptyState. (The one live
- *    "working" indicator is Frames: hard-stepped glyph cycling, see design §8.)
+ *    "working" indicator is Frames: hard-stepped glyph cycling.)
  */
 
 // utils
 export { cx, type ClassValue } from "./cx";
 export { copyToClipboard } from "./clipboard";
 export { REVEAL_BASE, REVEAL_ON_GROUP_HOVER } from "./reveal";
+export { ASSET_IDS, type AssetId } from "./assetIds";
 
 // theme
 export {
@@ -96,20 +97,19 @@ export {
   type InstrumentBandProps,
   type BandCell,
 } from "./components/InstrumentBand";
-// The mission-control register (§10.14–10.16, §11.1). A console group is the frame
-// the other two sit in; the dot field is the one expressive device per screen, and
-// belongs only in a region with nothing to compete with.
+// The mission-control register.
 export {
   ConsoleGroup,
   type ConsoleGroupProps,
 } from "./components/ConsoleGroup";
-export {
-  AnnunciatorGrid,
-  type AnnunciatorGridProps,
-  type AnnunciatorCell,
-} from "./components/AnnunciatorGrid";
 export { MetClock, type MetClockProps } from "./components/MetClock";
-export { DotField, type DotFieldProps } from "./components/DotField";
+export { DitherField, type DitherFieldProps } from "./components/DitherField";
+export {
+  STRIKE_LIFE_MS,
+  strikePoint,
+  type Strike,
+  type StrikeTone,
+} from "./theme/dither";
 export { Tile, type TileProps } from "./components/Tile";
 export { Chip, type ChipProps } from "./components/Chip";
 export {
@@ -123,8 +123,10 @@ export {
 export {
   ActionFrame,
   ActionButtons,
+  ACTION_TONES,
   type ActionFrameProps,
   type ActionTone,
+  type ActionToneSpec,
   type ActionButtonsProps,
   type ActionButtonSpec,
 } from "./components/ActionFrame";
@@ -137,7 +139,6 @@ export {
   ScrollFade,
   type ScrollFadeProps,
   type ScrollFadeEdge,
-  type ScrollFadeVariant,
   type ScrollFadeGround,
 } from "./components/ScrollFade";
 export { ListRow, type ListRowProps } from "./components/ListRow";
@@ -179,7 +180,7 @@ export type {
   ComposerMenuApi,
   ComposerRecallApi,
 } from "./components/composer/types";
-export { moveDraft } from "./components/composer/composerDraft";
+export { moveDraft, saveDraft } from "./components/composer/composerDraft";
 export {
   ComposerMenu,
   type ComposerMenuProps,
@@ -244,11 +245,16 @@ export {
   ExpandableText,
   type ExpandableTextProps,
 } from "./components/ExpandableText";
+export {
+  CodeSpanText,
+  type CodeSpanTextProps,
+} from "./components/CodeSpanText";
 export { ColorField, type ColorFieldProps } from "./components/ColorField";
 export {
   ConstructionReveal,
   type ConstructionRevealProps,
 } from "./components/ConstructionReveal";
+export { Plate, type PlateProps } from "./components/Plate";
 export {
   FramedOverlay,
   type FramedOverlayProps,
@@ -301,12 +307,12 @@ export {
 } from "./components/Toast";
 export {
   confirm,
-  confirmChoice,
+  choose,
   ConfirmHost,
-  type ConfirmTone,
   type ConfirmChoice,
+  type ChooseOptions,
+  type ConfirmTone,
   type ConfirmOptions,
-  type ConfirmChoiceOptions,
 } from "./components/Confirm";
 export {
   ForbiddenView,

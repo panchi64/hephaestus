@@ -16,12 +16,17 @@ export interface AuthStatus {
   /** The keyfile outlived its database — the operator cleared `app.db` expecting a
    *  reset and is being asked to unlock a key that now protects nothing. */
   db_missing: boolean;
+  /** Whether the decrypted workspace (database and encrypted volume) is up. */
+  workspace: "closed" | "opening" | "open" | "failed";
+  /** Why the last open failed, such as no encrypted-volume backend on this host. */
+  workspace_failure: string | null;
 }
 
 /** Map the backend's vault state (plus whether we hold a token) to our status. */
 export function classify(s: AuthStatus, hasToken: boolean): SessionStatus {
   if (!s.initialized) return "uninitialized";
-  if (!s.unlocked) return "locked";
+  // Unlocked but not yet open answers 423 to everything, so it is still locked to us.
+  if (!s.unlocked || s.workspace !== "open") return "locked";
   if (!s.auth_enabled) return "unlocked"; // gate disabled — no token needed
   return hasToken ? "unlocked" : "locked";
 }

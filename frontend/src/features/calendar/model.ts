@@ -36,3 +36,19 @@ export interface CalendarEvent {
   allDay?: boolean;
   description?: string;
 }
+
+export type CalendarMarkPattern = "filled" | "hollow" | "hatched" | "crossed";
+
+const MARK_PATTERN: Record<Calendar["tone"], CalendarMarkPattern> = {
+  nominal: "filled",
+  info: "hollow",
+  warn: "hatched",
+  alert: "crossed",
+};
+
+/** The grayscale fill pattern that identifies a calendar in place of a hue. */
+export function calendarMarkPattern(
+  tone: Calendar["tone"],
+): CalendarMarkPattern {
+  return MARK_PATTERN[tone];
+}

@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from services.sandbox import SandboxSessionManager
+from services.home.scratch import ScratchDirs
 from services.sandbox.walk import excluded, walk_files
 from services.workspace import SANDBOX_MOUNT, scratch_key
 
@@ -164,21 +164,21 @@ async def workspace_context(req: PromptContextRequest) -> str:
     is a heading the model has to read. A project is never listed: it is the operator's
     repository, with git to say what is in it.
     """
-    sessions = req.caps.get_optional(SandboxSessionManager)
-    if sessions is None:
+    scratch = req.caps.get_optional(ScratchDirs)
+    if scratch is None:
         return ""
-    root = sessions.settled_workspace(scratch_key(req.workspace_key))
+    root = scratch.settled_workspace(scratch_key(req.workspace_key))
     if root is None:
         return ""
-    # The manager's own tuple, not a fresh read of the setting: `walk.py` is one answer
-    # four readers must agree on, and a second source that merely happens to match is
-    # how they drift.
+    # The scratch folders' own tuple, not a fresh read of the setting: `walk.py` is one
+    # answer four readers must agree on, and a second source that merely happens to match
+    # is how they drift.
     #
     # Off the loop: a walk over a directory whose size the *agent* decides is not
     # something to run inline in the turn prelude, where it would stall every other
     # conversation's stream for as long as it takes. Same seam `tools/view.py` puts
     # `collect_text_files` behind, for the same reason.
-    return await asyncio.to_thread(_render, root, sessions.walk_excludes)
+    return await asyncio.to_thread(_render, root, scratch.walk_excludes)
 
 
 def _render(root: Path, excludes: tuple[str, ...]) -> str:

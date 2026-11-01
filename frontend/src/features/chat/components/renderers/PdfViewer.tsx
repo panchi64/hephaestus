@@ -111,10 +111,7 @@ export function PdfViewer(props: {
       when={!doc.error}
       fallback={<ErrorState message="Could not load this PDF." />}
     >
-      <Show
-        when={settled(doc)}
-        fallback={<LoadingText label="Loading view…" />}
-      >
+      <Show when={settled(doc)} fallback={<LoadingText label="Loading view" />}>
         {(d) => (
           <div class="flex h-full min-h-0 flex-col">
             <div class="flex shrink-0 items-center justify-center gap-3 px-2 py-1.5">

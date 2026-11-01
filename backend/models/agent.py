@@ -43,6 +43,8 @@ class Agent(Table, table=True):
     wall_clock_timeout_s: float | None = Field(default=None)
     can_delegate: bool = Field(default=False)
     max_depth: int | None = Field(default=None)
+    # Model requests one run of this agent may make; null is unbounded.
+    max_requests: int | None = Field(default=None)
     # Nothing runs a draft: an agent an agent wrote is inert until the operator publishes it.
     published: bool = Field(default=False, index=True)
     # user | agent

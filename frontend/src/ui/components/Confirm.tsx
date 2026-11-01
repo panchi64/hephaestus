@@ -5,14 +5,7 @@ import { Input } from "./Input";
 import { Stack } from "../primitives/Stack";
 import { Text } from "../primitives/Text";
 
-/** Promise-based confirmation gate for destructive / consequential actions.
- *  Built on Modal + Button so every guard looks and behaves the same. */
 export type ConfirmTone = "alert" | "default";
-
-/** The outcome of a three-way prompt: the primary (destructive) action, the
- *  secondary (alternative) action, or dismissal. `confirm` collapses this to a
- *  boolean (primary ⇒ true, everything else ⇒ false). */
-export type ConfirmChoice = "primary" | "secondary" | "cancel";
 
 export interface ConfirmOptions {
   title: string;
@@ -22,53 +15,50 @@ export interface ConfirmOptions {
   cancelLabel?: string;
   /** alert => danger confirm button (destructive). default => primary. */
   tone?: ConfirmTone;
-  /** When set, the confirm button stays disabled until the operator types this
-   *  word exactly. For the small class of actions where a mis-click is
-   *  unrecoverable — not a general "are you sure" upgrade, which would only
-   *  train the reflex it exists to interrupt. */
+  /** The confirm button stays disabled until the operator types this word exactly.
+   *  Only for actions where a mis-click is unrecoverable; routine use trains the reflex it interrupts. */
   requireText?: string;
+  /** Rendered under the detail line, for a body the plain sentence cannot carry. */
+  content?: () => JSX.Element;
 }
 
-export interface ConfirmChoiceOptions extends ConfirmOptions {
-  /** When set, a third (middle) button offering an alternative to the primary
-   *  action — e.g. "Keep images" beside a "Delete images" primary. */
-  secondaryLabel: string;
+export type ConfirmChoice = "confirm" | "alternate" | "cancel";
+
+/** A dialog with a third way out, between confirming and cancelling. */
+export interface ChooseOptions extends ConfirmOptions {
+  /** The middle button: go on without what the confirm button does. */
+  alternateLabel: string;
 }
 
-interface ConfirmState extends ConfirmOptions {
-  secondaryLabel?: string;
+interface ConfirmState extends ChooseOptions {
   resolve: (choice: ConfirmChoice) => void;
 }
 
 const [current, setCurrent] = createSignal<ConfirmState | null>(null);
 
-/** Await a user's confirmation before a dangerous action:
- *  `if (await confirm({ title: "Delete report?", tone: "alert" })) remove();`
- *  Cancel, the X, the backdrop, and Escape all resolve `false`.
- *  Render <ConfirmHost/> once at the app root. */
-export function confirm(opts: ConfirmOptions): Promise<boolean> {
-  return choose(opts).then((choice) => choice === "primary");
-}
-
-/** Three-way variant: a destructive primary, an alternative secondary, and
- *  cancel. `await confirmChoice({ ..., confirmLabel: "Delete images",
- *  secondaryLabel: "Keep images" })` ⇒ "primary" | "secondary" | "cancel".
- *  Cancel / X / backdrop / Escape resolve "cancel". Same outlet as confirm. */
-export function confirmChoice(
-  opts: ConfirmChoiceOptions,
-): Promise<ConfirmChoice> {
-  return choose(opts);
-}
-
-function choose(
-  opts: ConfirmOptions | ConfirmChoiceOptions,
+function open(
+  opts: ConfirmOptions & { alternateLabel?: string },
 ): Promise<ConfirmChoice> {
   return new Promise((resolve) => {
     setCurrent((prev) => {
       prev?.resolve("cancel"); // supersede any open dialog as cancelled
-      return { ...opts, resolve };
+      return { alternateLabel: "", ...opts, resolve };
     });
   });
+}
+
+/** Await a user's confirmation before a dangerous action:
+ *  `if (await confirm({ title: "Delete report?", tone: "alert" })) remove();`
+ *  Cancel, the X, the backdrop, and Escape all resolve `false`.
+ *  Render <ConfirmHost/> once at the app root. */
+export async function confirm(opts: ConfirmOptions): Promise<boolean> {
+  return (await open(opts)) === "confirm";
+}
+
+/** Like `confirm`, with a middle choice. Cancel, the X, the backdrop and Escape resolve
+ *  `"cancel"`. */
+export function choose(opts: ChooseOptions): Promise<ConfirmChoice> {
+  return open(opts);
 }
 
 function settle(choice: ConfirmChoice): void {
@@ -79,8 +69,7 @@ function settle(choice: ConfirmChoice): void {
   c.resolve(choice);
 }
 
-/** The gate word as typed so far. Held beside `current` rather than inside it so
- *  opening a dialog can't inherit the previous one's progress. */
+/** Held beside `current` so a new dialog can't inherit the previous one's progress. */
 const [typed, setTyped] = createSignal("");
 
 const gated = (): boolean => {
@@ -100,9 +89,9 @@ export function ConfirmHost(): JSX.Element {
           <Button variant="ghost" onClick={() => settle("cancel")}>
             {current()?.cancelLabel ?? "Cancel"}
           </Button>
-          <Show when={current()?.secondaryLabel}>
+          <Show when={current()?.alternateLabel}>
             {(label) => (
-              <Button variant="default" onClick={() => settle("secondary")}>
+              <Button variant="default" onClick={() => settle("alternate")}>
                 {label()}
               </Button>
             )}
@@ -110,7 +99,7 @@ export function ConfirmHost(): JSX.Element {
           <Button
             variant={current()?.tone === "alert" ? "danger" : "primary"}
             disabled={gated()}
-            onClick={() => settle("primary")}
+            onClick={() => settle("confirm")}
           >
             {current()?.confirmLabel ?? "Confirm"}
           </Button>
@@ -121,6 +110,7 @@ export function ConfirmHost(): JSX.Element {
         <Text tone="dim">
           {current()?.detail ?? "This action cannot be undone."}
         </Text>
+        {current()?.content?.()}
         <Show when={current()?.requireText}>
           {(word) => (
             <Input

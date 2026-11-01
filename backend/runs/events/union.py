@@ -10,11 +10,10 @@ from typing import Annotated
 from pydantic import Field
 
 from .approvals import (
+    ApprovalDecided,
     ApprovalRequired,
     QuestionAnswered,
     QuestionAsked,
-    ReviewCompleted,
-    ReviewStarted,
 )
 from .browser import BrowserOpened
 from .citations import CitationAdded
@@ -48,6 +47,7 @@ from .messages import (
 )
 from .metrics import RunMetrics
 from .plan import PermissionChanged, PlanUpdated, TasksUpdated
+from .plugins import PluginWindowOpened
 from .tools import ToolCompleted, ToolFailed, ToolPreparing, ToolProgress, ToolStarted
 from .view import ViewLive, ViewLiveStopped, ViewSnapshot
 
@@ -78,6 +78,7 @@ EventBody = Annotated[
     | ToolFailed
     | CitationAdded
     | BrowserOpened
+    | PluginWindowOpened
     | ViewLive
     | ViewLiveStopped
     | ViewSnapshot
@@ -88,10 +89,9 @@ EventBody = Annotated[
     | ConversationCompacted
     | ContextInjected
     | ApprovalRequired
+    | ApprovalDecided
     | QuestionAsked
     | QuestionAnswered
-    | ReviewStarted
-    | ReviewCompleted
     | MessageQueued
     | MessageEdited
     | MessageWithdrawn

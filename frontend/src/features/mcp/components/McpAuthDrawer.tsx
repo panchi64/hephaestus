@@ -61,7 +61,7 @@ export function McpAuthDrawer(props: McpAuthDrawerProps): JSX.Element {
       <Show when={props.server}>
         {(srv) => (
           <Stack gap={4}>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               Credentials are stored encrypted at rest and never read back —
               saving replaces what is stored. Server:{" "}
               <span class="text-bright">{srv().name}</span>

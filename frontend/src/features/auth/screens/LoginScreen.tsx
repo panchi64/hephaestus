@@ -2,7 +2,16 @@ import { createSignal, Show, type JSX } from "solid-js";
 import { isApiError } from "~/lib/api";
 import { useSession } from "~/lib/stores/session";
 import { bytes } from "~/lib/format";
-import { Button, confirm, Input, Stack, StatusFlag, Text, toast } from "~/ui";
+import {
+  Button,
+  confirm,
+  Input,
+  Reveal,
+  Stack,
+  StatusFlag,
+  Text,
+  toast,
+} from "~/ui";
 
 /**
  * Unlock the workspace. The vault key is password-derived and memory-only, so
@@ -31,9 +40,13 @@ export function LoginScreen(): JSX.Element {
       await session.unlock(password());
     } catch (err) {
       setError(
-        isApiError(err) && err.status === 401
-          ? "Incorrect password."
-          : "Unable to unlock. Check the backend connection.",
+        !isApiError(err)
+          ? "Unable to unlock. Check the backend connection."
+          : err.status === 401
+            ? "Incorrect password."
+            : err.status === 503
+              ? err.detail
+              : "Unable to unlock. Check the backend connection.",
       );
     } finally {
       setLoading(false);
@@ -85,7 +98,7 @@ export function LoginScreen(): JSX.Element {
           <StatusFlag status="idle" dot>
             Workspace locked
           </StatusFlag>
-          <Text variant="micro" tone="dim">
+          <Text variant="caption" tone="dim">
             Enter the operator password to unlock encrypted storage.
           </Text>
         </Stack>
@@ -98,7 +111,7 @@ export function LoginScreen(): JSX.Element {
             <StatusFlag status="warn" dot>
               Database missing
             </StatusFlag>
-            <Text variant="micro" tone="dim">
+            <Text variant="caption" tone="dim">
               The workspace database is gone, but its encryption key is still
               here. Unlock with your existing password to carry on in an empty
               workspace, or start fresh to delete the key and everything sealed
@@ -109,8 +122,16 @@ export function LoginScreen(): JSX.Element {
 
         <Show when={session.probeError}>
           {(detail) => (
-            <Text variant="micro" tone="alert">
+            <Text variant="caption" tone="alert">
               The backend answered with an error: {detail()}
+            </Text>
+          )}
+        </Show>
+
+        <Show when={session.workspaceFailure}>
+          {(detail) => (
+            <Text variant="caption" tone="alert">
+              Encrypted storage did not open: {detail()}
             </Text>
           )}
         </Show>
@@ -127,21 +148,29 @@ export function LoginScreen(): JSX.Element {
           autocomplete="current-password"
         />
         <Show when={error()}>
-          <Text variant="micro" tone="alert">
-            {error()}
-          </Text>
+          <Reveal>
+            <Text variant="caption" tone="alert">
+              {error()}
+            </Text>
+          </Reveal>
         </Show>
-        <Button variant="primary" type="submit" disabled={loading()}>
-          {loading() ? "Unlocking…" : "Unlock"}
+        <Button
+          variant="primary"
+          type="submit"
+          pending={loading()}
+          pendingLabel="Unlocking"
+        >
+          Unlock
         </Button>
         <Show when={session.dbMissing}>
           <Button
             variant="danger"
             type="button"
-            disabled={resetting()}
+            pending={resetting()}
+            pendingLabel="Clearing"
             onClick={handleReset}
           >
-            {resetting() ? "Clearing…" : "Start fresh"}
+            Start fresh
           </Button>
         </Show>
       </Stack>

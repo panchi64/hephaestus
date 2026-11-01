@@ -1,3 +1,5 @@
+import { pluginEnabled } from "~/lib/stores/builtinPlugins";
+import { PLUGIN_SETTINGS } from "~/plugins/registry";
 import type { IconName } from "~/ui";
 
 /**
@@ -7,11 +9,8 @@ import type { IconName } from "~/ui";
  * `id` is what the URL carries (`?settings=<id>`), so it is a slug and not a
  * label — a deep link names it, and a renderer keys off it.
  *
- * The **title** of the pane is not here. Every section component already carries
- * its own `PageHeader variant="section"` or `Panel label`, and a second copy in
- * this file would be the one that goes stale — `label` is the row's name in the
- * column, and `description` is what the row's tooltip and the search field match
- * against.
+ * `label` and `description` are also the pane's title and subtitle: every pane
+ * opens with `SettingsPageHeader`, which reads them from here.
  */
 export interface SettingsSection {
   id: string;
@@ -42,13 +41,9 @@ export interface SettingsGroup {
  * discipline `nav/areas.ts` keeps: what exists and how it is labelled lives
  * here, and the components that render it derive everything else.
  *
- * **Each row is one surface, not an umbrella.** The dialog used to list six
- * categories, each stacking three-to-five unrelated sections into one long pane,
- * so finding the offline switch meant knowing it lived under GENERAL and then
- * scrolling past the theme picker. An operator does not think in categories —
- * they think in the thing they came to change. So the column lists the things,
- * the groups only sort them, and the search field above skips the hierarchy
- * altogether.
+ * Each row is one surface, not an umbrella of unrelated sections: the column lists
+ * the things an operator comes to change, the groups only sort them, and the
+ * search field skips the hierarchy altogether.
  *
  * Ordering is deliberate rather than alphabetical: GENERAL first because it is
  * what an operator opens the dialog for most often, SYSTEM last because it is
@@ -121,7 +116,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "agents",
         label: "Agents",
         icon: "cpu",
-        description: "Named agents a thread can run as, with their own limits",
+        description:
+          "Named agents a thread can run as, with their own instructions, tools and limits",
         keywords: ["custom", "persona", "subagent", "delegate", "instructions"],
       },
       {
@@ -129,7 +125,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         label: "Plugins",
         icon: "plug",
         description:
-          "Python tools agents write, which run in the platform VM once you publish them",
+          "Tools, agents, skills and small apps that agents write. Python tools run in a VM once you review and publish them; a plugin of windows alone goes live as written.",
         keywords: ["tool", "python", "extension", "egress", "secret", "draft"],
       },
       {
@@ -180,7 +176,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "integrations",
         label: "Integrations",
         icon: "link",
-        description: "Third-party connectors the agent can act through",
+        description:
+          "HTTP service connectors the agent can act through. Credentials are encrypted at rest.",
         keywords: ["connector", "service", "webhook", "oauth"],
       },
       {
@@ -200,21 +197,32 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "vault",
         label: "Secrets vault",
         icon: "lock",
-        description: "Encrypted secrets this workspace holds",
+        description:
+          "Encrypted credential store. Agent reads require explicit approval.",
         keywords: ["password", "secret", "encryption", "unlock"],
+      },
+      {
+        id: "private-chats",
+        label: "Private chats",
+        icon: "lock",
+        description:
+          "The PIN-locked area for sensitive chats: hidden from other sessions, and every read asks first.",
+        keywords: ["pin", "lock", "hidden", "sensitive", "private"],
       },
       {
         id: "service-keys",
         label: "Service keys",
         icon: "key",
-        description: "Outbound keys for the third-party services you use",
+        description:
+          "Outbound keys this system uses to reach third-party services. Stored encrypted at rest; never displayed.",
         keywords: ["api key", "credential", "token", "outbound"],
       },
       {
         id: "access-tokens",
         label: "Access tokens",
         icon: "terminal",
-        description: "Inbound scoped tokens for reaching this workspace",
+        description:
+          "Scoped tokens that let your own clients call this API. Shown once at issue; only a one-way hash is kept.",
         keywords: ["api", "bearer", "scope", "inbound", "cli"],
       },
     ],
@@ -227,8 +235,16 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "backup",
         label: "Backup",
         icon: "archive",
-        description: "Snapshots of this workspace, and restoring from one",
+        description:
+          "Export an encrypted archive of your workspace, or merge one back in",
         keywords: ["export", "import", "restore", "snapshot"],
+      },
+      {
+        id: "data",
+        label: "Data",
+        icon: "trash",
+        description: "Delete all chats, memories, notifications or uploads",
+        keywords: ["clear", "delete", "wipe", "reset", "history", "privacy"],
       },
       {
         id: "platform-vm",
@@ -241,16 +257,31 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "health",
         label: "Health",
         icon: "activity",
-        description: "The state of the machine and its services",
+        description: "Live service diagnostics and degradation tracking",
         keywords: ["status", "diagnostics", "latency", "uptime"],
       },
     ],
   },
 ];
 
+const PLUGIN_GROUP = "connections";
+
+/** The groups as the column shows them: the fixed ones, plus a section for each
+ *  built-in plugin that is switched on, appended to CONNECTIONS. Reactive, since
+ *  switching a plugin changes the list. */
+export function settingsGroups(): SettingsGroup[] {
+  const extra = PLUGIN_SETTINGS.filter((e) => pluginEnabled(e.plugin)).map(
+    (e) => e.section,
+  );
+  if (extra.length === 0) return SETTINGS_GROUPS;
+  return SETTINGS_GROUPS.map((g) =>
+    g.id === PLUGIN_GROUP ? { ...g, sections: [...g.sections, ...extra] } : g,
+  );
+}
+
 /** Every section, in column order. */
 export function allSections(): SettingsSection[] {
-  return SETTINGS_GROUPS.flatMap((g) => g.sections);
+  return settingsGroups().flatMap((g) => g.sections);
 }
 
 /** Every section id — what the renderer map is checked against. */
@@ -268,5 +299,15 @@ export function sectionById(id: string | undefined): SettingsSection {
 /** The group a section sits under — the breadcrumb the dialog shows, and the
  *  meta on a search result row. */
 export function groupForSection(id: string): SettingsGroup | undefined {
-  return SETTINGS_GROUPS.find((g) => g.sections.some((s) => s.id === id));
+  return settingsGroups().find((g) => g.sections.some((s) => s.id === id));
+}
+
+/** The name and one-line purpose a pane titles itself with, or undefined for an
+ *  id no section carries. Unlike `sectionById` it never falls back, so a typo
+ *  can't title one pane with another's name. */
+export function sectionHeading(
+  id: string,
+): Pick<SettingsSection, "label" | "description"> | undefined {
+  const section = allSections().find((s) => s.id === id);
+  return section && { label: section.label, description: section.description };
 }

@@ -219,8 +219,8 @@ class ExternalCategoryToolset(AbstractToolset[RunDeps]):
             _ = await self._stack.__aenter__()
         try:
             _ = await self._stack.enter_async_context(client)
-        except Exception as exc:  # noqa: BLE001 - one dead server must not fail the run
-            logger.info("external: MCP server %r is unreachable this run: %s", label, exc)
+        except Exception:  # one dead server must not fail the run
+            logger.info("external: MCP server %r is unreachable this run", label, exc_info=True)
             return False
         return True
 

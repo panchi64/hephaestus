@@ -3,9 +3,11 @@ import {
   AgentToolsPanel,
   AppearanceSection,
   ChatSection,
+  ClearDataSection,
   ModelsScreen,
   OfflineSection,
   PlatformVmSection,
+  PrivateChatsSection,
   SearchProvidersPanel,
 } from "~/features/settings";
 import { McpScreen } from "~/features/mcp";
@@ -21,7 +23,9 @@ import { AccessTokensScreen } from "~/features/access-tokens";
 import { IntegrationsScreen } from "~/features/integrations";
 import { BackupScreen } from "~/features/backup";
 import { HealthScreen } from "~/features/health";
+import { PLUGIN_SETTINGS } from "~/plugins/registry";
 import type { SettingsSection } from "./sections";
+import { useSettingsRoute } from "./useSettingsRoute";
 
 /**
  * The one place a section id becomes a component. `sections.ts` says what
@@ -53,9 +57,11 @@ export const SECTION_RENDERERS: Record<string, () => JSX.Element> = {
   integrations: () => <IntegrationsScreen />,
   "web-search": () => <SearchProvidersPanel />,
   vault: () => <VaultScreen />,
+  "private-chats": () => <PrivateChatsSection />,
   "service-keys": () => <ApiTokensScreen />,
   "access-tokens": () => <AccessTokensScreen />,
   backup: () => <BackupScreen />,
+  data: () => <ClearDataSection />,
   health: () => <HealthScreen />,
 };
 
@@ -69,10 +75,14 @@ export const SECTION_RENDERERS: Record<string, () => JSX.Element> = {
  * gate, applied one level down.
  */
 export function SettingsPane(props: { section: SettingsSection }): JSX.Element {
+  const route = useSettingsRoute();
   return (
     <Show keyed when={props.section}>
       {(section) => {
-        const render = SECTION_RENDERERS[section.id];
+        const plugin = PLUGIN_SETTINGS.find((e) => e.section.id === section.id);
+        const render: (() => JSX.Element) | undefined = plugin
+          ? () => <plugin.section.component openSection={route.show} />
+          : SECTION_RENDERERS[section.id];
         // A section listed in `sections.ts` with no renderer here is a silently
         // blank pane — the exact failure a build cannot see. Say so in dev; in
         // production, render nothing rather than throw.

@@ -12,8 +12,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import cast
 
-from services.mail.errors import MailError, MailUnsupportedError
-from services.mail.models import (
+from plugins.mail.services.errors import MailError, MailUnsupportedError
+from plugins.mail.services.models import (
     ROLE_INBOX,
     ROLE_SENT,
     MailAddress,
@@ -23,8 +23,8 @@ from services.mail.models import (
     OutgoingMail,
     TransportCapabilities,
 )
-from services.mail.service import LiveTransport, MailService
-from services.mail.transport import MailTransport
+from plugins.mail.services.service import LiveTransport, MailService
+from plugins.mail.services.transport import MailTransport
 
 
 def sample_header(uid: str = "1", **overrides: object) -> MailHeader:
@@ -57,7 +57,7 @@ async def install_transport(
 
 
 class FakeTransport:
-    """An in-memory mailbox implementing :class:`services.mail.transport.MailTransport`."""
+    """An in-memory mailbox implementing :class:`plugins.mail.services.transport.MailTransport`."""
 
     def __init__(self, *, messages: dict[str, list[MailBody]] | None = None) -> None:
         self.messages: dict[str, list[MailBody]] = messages or {

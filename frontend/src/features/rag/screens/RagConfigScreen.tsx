@@ -19,6 +19,7 @@ import {
   Panel,
   Row,
   Stack,
+  ASSET_IDS,
   StatusFlag,
   Text,
   Tooltip,
@@ -39,7 +40,7 @@ import {
   reindexSource,
   rebuildAllFolders,
 } from "../data";
-import type { RagIndexStatus, RagSource } from "../model";
+import { documentCount, type RagIndexStatus, type RagSource } from "../model";
 
 const indexStatusFlag: Record<RagIndexStatus, Status> = {
   indexed: "nominal",
@@ -235,7 +236,7 @@ export function RagConfigScreen(): JSX.Element {
       <PageHeader
         title="Knowledge base"
         subtitle="The unified retrieval corpus — every source Talos can search."
-        assetId="HEPH-RAG-01.0"
+        assetId={ASSET_IDS.knowledgeBase}
         actions={
           <Row gap={2}>
             <Show when={errorSources().length > 0}>
@@ -257,7 +258,11 @@ export function RagConfigScreen(): JSX.Element {
         <InstrumentBand
           items={[
             {
-              label: "Total docs",
+              label: "Documents",
+              value: sources() ? String(documentCount(all())) : "—",
+            },
+            {
+              label: "Chunks",
               value:
                 stats()?.totalDocs != null ? String(stats()!.totalDocs) : "—",
             },
@@ -331,7 +336,7 @@ export function RagConfigScreen(): JSX.Element {
               Add
             </Button>
           </Row>
-          <Text variant="micro" tone="dim">
+          <Text variant="caption" tone="dim">
             Paths must be accessible to the Hephaestus server process. The
             folder will be crawled and all supported file types indexed.
           </Text>

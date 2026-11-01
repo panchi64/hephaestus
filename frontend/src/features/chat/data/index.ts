@@ -42,13 +42,13 @@ export {
   deleteConversation,
   fetchAutoCompactOverride,
   fetchGrants,
-  fetchOrphanImageAttachments,
   fetchPlan,
   forkConversation,
   regenerateTitle,
   renameConversation,
   revokeGrant,
   setAutoCompactOverride,
+  setConversationPrivate,
   useChatSession,
 } from "./conversations";
 
@@ -86,6 +86,7 @@ export {
 } from "./changes";
 
 export {
+  fetchOwnCallsign,
   fetchSubagents,
   isLive,
   openSubagentThread,

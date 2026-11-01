@@ -17,6 +17,7 @@ from typing import override
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext, Tool
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
+from core.config import get_settings
 from core.diagnostics import render_tool_error
 from services.agents import (
     AgentDefinition,
@@ -37,6 +38,7 @@ from services.subagents.callsigns import class_display
 from tools.child_worktrees import discard_child, merge_child, worktree_paths
 from tools.deps import RunDeps
 from tools.describe import registered_tools
+from tools.home import ledger_prompt, ledger_thread
 from tools.project_agents import run_roster
 
 #: The spawn tool's name inside the category, before the prefix makes it ``agents_spawn``.
@@ -59,8 +61,8 @@ it finishes. Not for work you could do in a couple of tool calls. It may do what
 its first message and stands alone: the agent never sees this conversation, so say what to
 do, where to start, and what a finished answer looks like.
 
-`worktree` gives it its own branch and worktree of your project, so you can keep editing
-meanwhile. Its work waits there for you to review, fix, and `agents_merge` or discard.
+`worktree` gives it its own branch and worktree of your project; its work waits there for
+you to review, fix, and `agents_merge` or discard.
 """
 
 
@@ -128,16 +130,22 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
 
     @toolset.tool(name="message")
     async def message(ctx: RunContext[RunDeps], to: str, text: str) -> dict[str, object]:
-        """Send a message to another agent of your delegation tree: a handle or callsign
-        from `agents_list`, `parent` for the agent that spawned you, or `main` for the thread at
-        the top. It reaches a running agent at its next step and wakes an idle one; you are
-        not waiting on a reply, which arrives as a message of its own if one comes."""
+        """Message another agent of your tree: a handle or callsign from `agents_list`,
+        `parent` for your spawner, or `main` for the top thread. It reaches a running agent at
+        its next step and wakes an idle one."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"sent": False, "detail": _UNAVAILABLE}
         conversation_id = ctx.deps.conversation_id or ""
         try:
-            label = await launcher.message(ctx.deps.owner_id, conversation_id, to, text)
+            label = await launcher.message(
+                ctx.deps.owner_id,
+                conversation_id,
+                to,
+                text,
+                ledger_prompt_message_id=ledger_prompt(ctx.deps),
+                ledger_thread=ledger_thread(ctx.deps),
+            )
         except SubagentUnavailableError as exc:
             return {"sent": False, "detail": str(exc)}
         return {"sent": True, "to": label}
@@ -155,9 +163,9 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
 
     @toolset.tool(name="list")
     async def list_agents(ctx: RunContext[RunDeps]) -> dict[str, object]:
-        """Every agent of your delegation tree, with who spawned it, whether it is still
-        working, and the worktree of each you spawned into one. Check it before concluding
-        while agents you spawned are still out."""
+        """Every agent of your tree: who spawned it, whether it is still working, and the
+        worktree of each you spawned into one. Check it before concluding while agents you
+        spawned are still out."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"available": False, "detail": _UNAVAILABLE}
@@ -184,9 +192,9 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         }
 
     @toolset.tool(name="read")
-    async def read(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
-        """An agent of your tree: its status, and its report, or its latest answer while it
-        works. You do not need this to receive a report."""
+    async def read(ctx: RunContext[RunDeps], name: str, start: int = 0) -> dict[str, object]:
+        """An agent of your tree: its status and report, or its latest answer while it works.
+        A long report comes in pages: pass `next_start` as `start`."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"available": False, "detail": _UNAVAILABLE}
@@ -194,12 +202,15 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
             view = await launcher.read(ctx.deps.owner_id, ctx.deps.conversation_id or "", name)
         except SubagentUnavailableError as exc:
             raise ModelRetry(f"could not read {name!r}:\n{exc}") from exc
-        return {**_read_out(view), **(await worktree_paths(ctx)).get(view.handle, {})}
+        return {
+            **_paged(_read_out(view), start),
+            **(await worktree_paths(ctx)).get(view.handle, {}),
+        }
 
     @toolset.tool(name="stop")
     async def stop(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
-        """Stop an agent you spawned, or one below it, along with everything it spawned.
-        Each stopped agent reports what it got through."""
+        """Stop an agent you spawned, or one below it, and everything it spawned. Each
+        reports what it got through."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"stopped": [], "detail": _UNAVAILABLE}
@@ -247,6 +258,20 @@ class ProjectRoster(WrapperToolset[RunDeps]):
         }
 
 
+def _paged(out: dict[str, object], start: int) -> dict[str, object]:
+    """One page of the report, sized to stay under the tool-output spill so the whole of
+    it reaches the model; ``next_start`` is there while more remains."""
+    report = out.get("report")
+    page = get_settings().tool_output_spill_chars // 2
+    if not isinstance(report, str) or (start <= 0 and len(report) <= page):
+        return out
+    start = max(start, 0)
+    paged = {**out, "report": report[start : start + page], "report_length": len(report)}
+    if start + page < len(report):
+        paged["next_start"] = start + page
+    return paged
+
+
 def _read_out(view: SubagentView) -> dict[str, object]:
     return {
         "available": True,
@@ -270,4 +295,5 @@ def _parent(ctx: RunContext[RunDeps]) -> SubagentParent:
         permission=ctx.deps.permission,
         workspace_key=ctx.deps.workspace_key,
         run_id=ctx.deps.run.id,
+        ledger_prompt_message_id=ledger_prompt(ctx.deps),
     )
