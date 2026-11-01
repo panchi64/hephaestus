@@ -12,36 +12,17 @@ from fastapi import FastAPI
 from sqlmodel import Session, select
 
 from agent.recompose import recompose
-from core.config import get_settings
 from core.db import in_session
 from models.parked_turn import ParkedTurnRecord
-from routes.chat.thread_composer import ThreadComposer
 from routes.deps import app_state
 from services.agents import builtin_roster
 from services.agents.thread import DELEGATION_TOOLS, as_thread
 from services.conversations import ConversationBinding
 from services.subagents import SubagentLauncher
 
-from ._helpers import await_parked, client_app, parked_turn, swap_tool_catalog
+from ._helpers import await_parked, client_app, composer_of, parked_turn, swap_tool_catalog
 from ._json import json_body, s
 from .test_approval_routes import danger_categories, install_sensitive_tool
-
-
-def _composer(app: FastAPI) -> ThreadComposer:
-    state = app_state(app)
-    return ThreadComposer(
-        agents=state.agents,
-        model_registry=state.models,
-        conversations=state.conversations,
-        settings_store=state.settings_store,
-        offline=state.offline,
-        settings=get_settings(),
-        capabilities=state.capabilities,
-        categories=state.tool_categories,
-        dormant=state.dormant_summaries,
-        instruction_providers=state.instruction_providers,
-        availability=state.category_availability,
-    )
 
 
 @pytest.mark.parametrize("kind", ["task", "wake", "linked"])
@@ -52,7 +33,7 @@ async def test_the_agents_withheld_tools_reach_every_kinds_disabled_set(kind: st
             as_thread(explorer, ConversationBinding()), withheld=frozenset({"files_write_file"})
         )
 
-        disabled = await _composer(app).disabled(
+        disabled = await composer_of(app).disabled(
             "operator", kind=kind, vision=True, applied=applied, depth=1
         )
 

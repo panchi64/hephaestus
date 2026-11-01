@@ -26,6 +26,8 @@ const agent = (id: string, over: Partial<Subagent> = {}): Subagent => ({
   error: null,
   contextUsed: null,
   contextWindow: null,
+  model: "",
+  modelSource: "",
   startedAt: "2026-10-16T10:00:00Z",
   endedAt: null,
   parentConversationId: "root",

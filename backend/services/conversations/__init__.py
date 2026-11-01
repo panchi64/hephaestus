@@ -41,7 +41,13 @@ drains the cleartext away once the vault is unlocked.
 from __future__ import annotations
 
 from .paths import ReplayHistory
-from .records import CompactionPlan, ConversationBinding, ConversationSummaryView, TurnStamps
+from .records import (
+    CompactionPlan,
+    ConversationBinding,
+    ConversationSummaryView,
+    ModelChoice,
+    TurnStamps,
+)
 from .store import ConversationStore
 from .usage import (
     ConversationTotals,
@@ -57,6 +63,7 @@ __all__ = [
     "ConversationStore",
     "ConversationSummaryView",
     "ConversationTotals",
+    "ModelChoice",
     "ReplayHistory",
     "TurnStamps",
     "context_footprint",

@@ -4,35 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from evals.drive.render import TASK_MARK as _TASK_MARK
+from evals.drive.render import quote as _quote
+from evals.drive.render import tool_line as _tool_line
+
 from .lint import Flag, lint_reply
 from .record import Approval, Error, Question, Run, Sample, Tasks, Text, Tool, Turn
 from .spec import Scenario
-
-_TASK_MARK = {"completed": "x", "in_progress": "~", "cancelled": "-"}
-
-
-def _quote(text: str) -> str:
-    return "\n".join(f"> {line}" if line else ">" for line in text.strip().splitlines())
 
 
 def _flags(flags: Iterable[Flag]) -> str:
     listed = [f"`{flag.rule}`: {flag.match}" for flag in flags]
     return f"*Lint:* {'; '.join(listed)}" if listed else "*Lint:* none"
-
-
-def _tool_line(tool: Tool) -> str:
-    indent = "  " if tool.nested else ""
-    mark = {"ok": "ok", "failed": "FAILED", "running": "no result"}[tool.status]
-    lines = [f"{indent}- **tool** `{tool.name}` ({mark})"]
-    if tool.narration:
-        lines.append(f"{indent}  - narration: {tool.narration}")
-    if tool.args:
-        lines.append(f"{indent}  - args: `{tool.args.replace('`', "'")}`")
-    if tool.outcome:
-        lines.append(
-            f"{indent}  - {'error' if tool.status == 'failed' else 'result'}: {tool.outcome}"
-        )
-    return "\n".join(lines)
 
 
 def _turn(turn: Turn, index: int) -> list[str]:

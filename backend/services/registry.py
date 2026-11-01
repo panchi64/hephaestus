@@ -76,6 +76,10 @@ class ResolvedModel:
     #: The chain rebuilt with a thread's effort on each link whose adapter reads one, so
     #: a fallback link never gets a level it can't take. None when the primary reads none.
     with_effort: Callable[[ThinkingEffort], Model] | None = None
+    #: The primary as the operator names it: ``<endpoint name>/<model>``.
+    label: str = ""
+    #: The primary's model id.
+    model_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -380,8 +384,8 @@ class ModelRegistry:
         override_endpoint_id: str | None = None,
         override_model: str | None = None,
     ) -> list[EndpointSpec]:
-        """The ordered, decrypted endpoint specs ``role`` resolves to: a
-        per-conversation ``main`` override → the role's own chain. Shared by every
+        """The ordered, decrypted endpoint specs ``role`` resolves to: an override (the
+        picker's, an agent's pin) → the role's own chain. Shared by every
         resolution entry point — :meth:`resolve_detailed`, :meth:`resolve_background`,
         :meth:`main_context_window` — so all of them see identical resolution.
 
@@ -390,12 +394,14 @@ class ModelRegistry:
         server-initiated resolution (research, tasks, titling) sees the same model
         the operator pinned, not only the per-conversation override path. The pin
         names a model served by the head's provider, so it can't describe a fallback
-        tail; tail endpoints keep their own default. A ``main`` model override with no
-        endpoint (an agent that names only a model) replaces the pin on the role's head."""
+        tail; tail endpoints keep their own default. A model override with no endpoint (an
+        agent that names only a model) replaces the pin on the role's head. Overrides apply
+        to any tool-calling role and are ignored for ``embedding``."""
         if role not in llm.ROLES:
             raise ValueError(f"unknown model role: {role!r}")
+        overridable = role in llm.TOOL_CALLING_ROLES
 
-        if override_endpoint_id is not None and role == "main":
+        if override_endpoint_id is not None and overridable:
             endpoint = await self.get_endpoint(owner_id, override_endpoint_id)
             # A benched endpoint is skipped by resolution everywhere — including a
             # per-conversation override (e.g. regenerating an old turn whose endpoint has
@@ -408,7 +414,7 @@ class ModelRegistry:
             )
 
         chain_ids, pinned_model = await self.get_role_binding(owner_id, role)
-        if override_model is not None and role == "main":
+        if override_model is not None and overridable:
             pinned_model = override_model
         if not chain_ids and role == "main":
             # An unbound `main` with a usable model available resolves to it rather than
@@ -599,6 +605,8 @@ class ModelRegistry:
                 if get_provider(primary.provider).preset.uses_effort
                 else None
             ),
+            label=f"{primary.name}/{primary.model}",
+            model_name=primary.model,
         )
 
     def _chain_with_effort(self, specs: Sequence[EndpointSpec], effort: ThinkingEffort) -> Model:

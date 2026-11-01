@@ -24,6 +24,7 @@ from core.ratelimit import RateLimiter
 from core.vault import Vault
 from core.workspace import Workspace
 from runs import ConversationBusyError, InboxDispatch, RunRegistry
+from services.agent_models import AgentModels
 from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
@@ -120,6 +121,7 @@ class AppState(State):
         self.platform_skills: PlatformSkills
         self.agents: AgentCatalog
         self.agent_store: AgentStore
+        self.agent_models: AgentModels
         self.plugins: PluginStore
         self.commands: CommandRegistry
         self.command_store: CommandStore
@@ -379,6 +381,10 @@ def agents(request: Source) -> AgentCatalog:
 
 def agent_store(request: Request) -> AgentStore:
     return app_state(request).agent_store
+
+
+def agent_models(request: Source) -> AgentModels:
+    return app_state(request).agent_models
 
 
 def plugins(request: Request) -> PluginStore:

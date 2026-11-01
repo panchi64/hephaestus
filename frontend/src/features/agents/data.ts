@@ -186,6 +186,20 @@ export async function updateAgent(
   return toAgent(dto);
 }
 
+/** Pin the model any agent runs on, built-in and project agents included; both
+ *  null clears the pin. A non-tool-calling endpoint is a 422. */
+export async function setAgentModel(
+  id: string,
+  pin: { endpoint_id: string | null; model: string | null },
+): Promise<Agent> {
+  const dto = await api.put<AgentOut>(
+    `/agents/${encodeURIComponent(id)}/model`,
+    pin,
+  );
+  refreshAll();
+  return toAgent(dto);
+}
+
 export async function setAgentPublished(
   id: string,
   published: boolean,

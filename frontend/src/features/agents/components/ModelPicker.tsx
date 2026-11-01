@@ -13,9 +13,10 @@ export interface ModelChoice {
   model: string | null;
 }
 
-/** The model an agent runs on: one of the configured models, or the thread's
- *  own. The model is not part of an agent's file, so this is the one agent
- *  setting edited outside the document. */
+/** The model an agent runs on: one of the configured models, or its default —
+ *  the sub-agent model when spawned, the chat model when it runs a thread. The
+ *  model is not part of an agent's file, so this is the one agent setting edited
+ *  outside the document. */
 export function ModelPicker(props: {
   value: ModelChoice;
   onChange: (choice: ModelChoice) => void;
@@ -32,7 +33,7 @@ export function ModelPicker(props: {
     const all = [
       {
         label: "Default",
-        options: [{ value: THREAD_MODEL, label: "Thread's model" }],
+        options: [{ value: THREAD_MODEL, label: "Sub-agent default" }],
       },
       ...modelPickerGroups(),
     ];

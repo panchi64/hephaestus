@@ -39,6 +39,9 @@ export interface Subagent {
   error: string | null;
   contextUsed: number | null;
   contextWindow: number | null;
+  /** `<endpoint>/<model>` it runs on, and what chose it; empty on older rows. */
+  model: string;
+  modelSource: SubagentModelSource | "";
   startedAt: string;
   endedAt: string | null;
   /** The thread this agent was spawned from: the viewed conversation, or another
@@ -54,6 +57,28 @@ export interface Subagent {
  *  ended, with partial work its parent may continue. */
 export type SubagentStatus =
   "running" | "blocked" | "done" | "failed" | "cancelled" | "stopped";
+
+/** `pin` is the operator's model on the agent; `spawn`, one the launching agent picked
+ *  from the operator's list; `role`, the sub-agent model; `parent`, the launcher's own. */
+export type SubagentModelSource = "pin" | "spawn" | "role" | "parent";
+
+const MODEL_SOURCE_LABEL: Record<SubagentModelSource, string> = {
+  pin: "pinned",
+  spawn: "chosen at launch",
+  role: "sub-agent model",
+  parent: "parent's model",
+};
+
+/** `local/qwen3 · pinned`, or "" for a row written before models were recorded. */
+export function modelText(who: {
+  model: string;
+  modelSource: SubagentModelSource | "";
+}): string {
+  if (!who.model) return "";
+  return who.modelSource
+    ? `${who.model} · ${MODEL_SOURCE_LABEL[who.modelSource]}`
+    : who.model;
+}
 
 /** `BRAX · Tripodes` as plain text, or "" when it has no callsign. */
 export function designationText(who: {
@@ -84,6 +109,8 @@ interface SubagentDTO {
   error: string | null;
   context_used: number | null;
   context_window: number | null;
+  model?: string;
+  model_source?: SubagentModelSource | "";
   started_at: string;
   ended_at: string | null;
   parent_conversation_id: string;
@@ -108,6 +135,8 @@ function toSubagent(dto: SubagentDTO): Subagent {
     error: dto.error,
     contextUsed: dto.context_used,
     contextWindow: dto.context_window,
+    model: dto.model ?? "",
+    modelSource: dto.model_source ?? "",
     startedAt: dto.started_at,
     endedAt: dto.ended_at,
     parentConversationId: dto.parent_conversation_id,

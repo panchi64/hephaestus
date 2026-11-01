@@ -15,7 +15,7 @@ from pathlib import Path
 from core.exceptions import NotFoundError
 from services.agents.catalog import AgentCatalog, lower_of
 from services.agents.definition import DEFAULT_AGENT, AgentDefinition
-from services.conversations import ConversationBinding
+from services.conversations import ConversationBinding, ModelChoice
 from services.permissions import permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.tree import thread_tree
@@ -51,6 +51,14 @@ async def resolve_thread_agent(
     root = await _project_root(projects, worktrees, owner_id, binding, conversation_id)
     agent = await catalog.resolve(owner_id, binding.agent_name, project_root=root)
     return as_thread(agent, binding)
+
+
+def thread_choice(binding: ConversationBinding, agent: AgentDefinition) -> ModelChoice:
+    """The model a thread's turns run on: the one fixed at its launch, else its agent's
+    pin over ``main``."""
+    if binding.model_choice is not None:
+        return binding.model_choice
+    return ModelChoice(endpoint_id=agent.endpoint_id, model=agent.model)
 
 
 def agent_is_gone(applied: ThreadAgent, binding: ConversationBinding) -> bool:

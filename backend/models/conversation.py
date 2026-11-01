@@ -112,6 +112,12 @@ class Conversation(Table, table=True):
     # The workspace every turn of this thread works in, when it is not its own: a spawned
     # agent shares or forks its parent's.
     workspace_key: str | None = Field(default=None)
+    # The model a spawned agent's thread runs on, fixed at launch so its later turns and a
+    # restored park resume on it (`services/subagents/models.py`). A null role leaves it to
+    # the thread's agent and the `main` role, as for an operator's thread.
+    model_role: str | None = Field(default=None)
+    model_endpoint_id: str | None = Field(default=None)
+    model_name: str | None = Field(default=None)
     # Per-conversation override of the global conversation auto-compaction toggle (folding
     # older turns into a summary the thread's own model writes once the context footprint
     # nears the model's window): null inherits the operator default, True/False forces it

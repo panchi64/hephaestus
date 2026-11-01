@@ -9,8 +9,10 @@ none always runs what ships.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import replace
 from pathlib import Path
 
+from services.agent_models import AgentModels
 from services.agents.builtin import BUILTIN, builtin_roster, merged_roster
 from services.agents.definition import DEFAULT_AGENT, AgentDefinition
 from services.agents.files import project_agents
@@ -20,9 +22,25 @@ type AgentSource = Callable[[str], Awaitable[Iterable[AgentDefinition]]]
 
 
 class AgentCatalog:
-    def __init__(self, store: AgentStore) -> None:
+    def __init__(self, store: AgentStore, models: AgentModels | None = None) -> None:
         self._store: AgentStore = store
+        self._models: AgentModels | None = models
         self._contributors: list[AgentSource] = []
+
+    async def pinned(
+        self, owner_id: str, agents: Iterable[AgentDefinition]
+    ) -> list[AgentDefinition]:
+        """``agents`` with the operator's pins applied to those that have no row to hold one.
+        The default agent is never pinned: it runs on ``main``."""
+        pins = await self._models.pins(owner_id) if self._models is not None else {}
+        out: list[AgentDefinition] = []
+        for agent in agents:
+            pin = pins.get(f"{agent.source}:{agent.name}")
+            if pin is None or agent.id is not None or agent.name == DEFAULT_AGENT:
+                out.append(agent)
+            else:
+                out.append(replace(agent, endpoint_id=pin.endpoint_id, model=pin.model))
+        return out
 
     def contribute(self, source: AgentSource) -> None:
         """Add agents another feature supplies per owner, below every other source."""
@@ -41,7 +59,11 @@ class AgentCatalog:
         """The agents by name. Drafts are included only for the operator's own listing."""
         stored = await self._store.list(owner_id, published_only=not include_drafts)
         declared = project_agents(project_root) if project_root is not None else ()
-        roster = merged_roster(await self.contributed(owner_id), BUILTIN, declared, stored)
+        # One layer in precedence order, so the pins are read once.
+        unrowed = await self.pinned(
+            owner_id, (*await self.contributed(owner_id), *BUILTIN, *declared)
+        )
+        roster = merged_roster(unrowed, stored)
         roster[DEFAULT_AGENT] = builtin_roster()[DEFAULT_AGENT]
         return roster
 

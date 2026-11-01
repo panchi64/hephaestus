@@ -233,8 +233,7 @@ async def wire_workspace(
     # Recall and memory tools keep private threads out unless the area is open and the
     # operator approves.
     agent_capabilities.add(state.private_area)
-    # Sub-agents resolve the `utility` model via the same `resolve_background` rule as
-    # titling and verification.
+    # `agents_models` and a spawn's `model` resolve the operator's choosable list here.
     agent_capabilities.add(state.models)
     # The operator's first-token wait and step-limit overrun, read per turn by the engine.
     agent_capabilities.add(TurnTuning(state.settings_store))

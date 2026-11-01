@@ -9,9 +9,9 @@ import httpx
 import pytest
 
 from devkit.instance import DevInstance
-from evals.tasks.client import DevClient
+from evals.drive.client import DevClient
+from evals.drive.keys import provider_key
 from evals.voice.collect import HOSTED, Collector
-from evals.voice.keys import provider_key
 
 
 def test_the_environment_beats_the_key_file(

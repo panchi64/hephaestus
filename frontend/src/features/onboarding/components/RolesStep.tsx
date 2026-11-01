@@ -64,7 +64,7 @@ export function RolesStep(props: {
     (role: AssignableRole, name: string) =>
     async (id: string): Promise<void> => {
       if (id === DEFAULT_PICK) await a.clearRole(role, name);
-      else if (role === "utility") await a.pickBackground(id);
+      else if (role === "utility") await a.pickOrInherit(role, id);
       else await a.bindPicked(role, name, id);
     };
 

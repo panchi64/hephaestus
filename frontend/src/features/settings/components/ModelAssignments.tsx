@@ -12,11 +12,13 @@ import {
   useModelAssignments,
   type AssignableRole,
 } from "../useModelAssignments";
+import { ChoosableModels } from "./ChoosableModels";
 import { EmbeddingRoleControls } from "./EmbeddingRoleControls";
 import { ModelRoleCard } from "./ModelRoleCard";
 
 /** The role cards, named by job rather than by role id: the model that answers you
- *  (`main`), the cheap one for background work (`utility`), and the one behind recall
+ *  (`main`), the cheap one for background work (`utility`), the default for spawned
+ *  agents (`subagent`, with the list Talos may choose from), and the one behind recall
  *  (`embedding`). Each offers the same discovery groups the composer's model picker
  *  reads. */
 export function ModelAssignments(): JSX.Element {
@@ -30,11 +32,8 @@ export function ModelAssignments(): JSX.Element {
       toast.success(`Chat model set to ${sel.model}.`);
   };
 
-  const backgroundGroups = () => [
-    {
-      label: "Default",
-      options: [{ value: SAME_AS_CHAT, label: "Same as chat model" }],
-    },
+  const withDefault = (label: string) => [
+    { label: "Default", options: [{ value: SAME_AS_CHAT, label }] },
     ...modelPickerGroups(),
   ];
 
@@ -57,14 +56,28 @@ export function ModelAssignments(): JSX.Element {
       <ModelRoleCard
         label="Background model"
         description="Titles, summaries, verification. A cheaper model is usually the right call."
-        groups={backgroundGroups()}
+        groups={withDefault("Same as chat model")}
         value={a.roleValue("utility")}
-        onChange={(v) => void a.pickBackground(v)}
+        onChange={(v) => void a.pickOrInherit("utility", v)}
         onOpen={a.rediscover}
         placeholder="Same as chat model"
         endpoint={a.roleEndpoint("utility")}
         contextWindow={roleWindow("utility")}
       />
+
+      <ModelRoleCard
+        label="Sub-agent model"
+        description="What a spawned agent runs on unless the agent is pinned to a model of its own."
+        groups={withDefault("Same as parent agent")}
+        value={a.roleValue("subagent")}
+        onChange={(v) => void a.pickOrInherit("subagent", v)}
+        onOpen={a.rediscover}
+        placeholder="Same as parent agent"
+        endpoint={a.roleEndpoint("subagent")}
+        contextWindow={roleWindow("subagent")}
+      >
+        <ChoosableModels />
+      </ModelRoleCard>
 
       <ModelRoleCard
         label="Search & memory model"

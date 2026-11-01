@@ -133,6 +133,30 @@ by the task's policy, and questions are answered with "use your best judgement".
 go to `evals/tasks/results/<label>.jsonl`, with a markdown summary of outcomes and causes
 beside it. Tasks that need the VM are skipped without `--with-vm`.
 
+## Measuring harness behaviour
+
+`evals/harness/` drives the platform the way the operator does: the main agent's answers
+and memory, tool use, delegation, sub-agent intercommunication and behaviour, model
+routing, problem solving, and operator flow (steering, cancelling, approvals, plan mode).
+Each scenario is scored by deterministic checks, then graded:
+
+```bash
+uv run python -m evals.harness.run --label plumbing     # on the stub: scripted scenarios only
+uv run python -m evals.harness.run --local lmstudio/qwen3-30b --hosted anthropic/claude-sonnet-5-5
+```
+
+On the stub only the scenarios with `stub` replies run, and the run adds a second stub
+endpoint, `stub-local`, for them to route to. On a real model, `--local` and `--hosted`
+name the two models the routing scenarios choose between. Every endpoint the run touches
+sits behind a recording proxy, so the transcript shows which model each agent ran on.
+
+Runs go to `evals/harness/runs/<label>/`. Grade them with `.claude/workflows/eval-grade.js`
+(args `{suite: "harness", backend, group, runs, date}`), the same Sonnet-then-Opus
+pipeline the voice suite uses. Its last step runs `python -m evals.harness.issues <group>`,
+which writes the group's `issues.md` and merges it into the tracked backlog,
+`evals/harness/backlog.json`, rendered as `ISSUES.md`. Mark an issue fixed with
+`issues set H-004 fixed --note "…"`; a fixed issue that recurs comes back as `regressed`.
+
 ## The VMs, and why they are off
 
 The VMs — the per-conversation machines behind the shell and `code_execute`, and the

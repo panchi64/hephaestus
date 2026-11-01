@@ -20,7 +20,7 @@ from agent.recompose import ParkedFacts, Recomposed, RecomposeError
 from agent.summarize import resolve_auto_compact_policy
 from core.config import Settings
 from core.container import ServiceContainer
-from routes.chat.turn import TurnModels, resolve_turn_models
+from routes.chat.turn import TurnModels, resolve_choice
 from services.agents import AgentCatalog
 from services.agents.thread import (
     DELEGATION_TOOLS,
@@ -28,8 +28,9 @@ from services.agents.thread import (
     agent_is_gone,
     may_delegate,
     resolve_thread_agent,
+    thread_choice,
 )
-from services.conversations import ConversationStore
+from services.conversations import ConversationStore, ModelChoice
 from services.offline import OfflineModeService
 from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
@@ -64,17 +65,18 @@ class ThreadComposer:
     worktrees: WorktreeManager | None = None
 
     async def resolve(self, owner_id: str, conversation_id: str) -> ThreadTurn:
-        """The thread's agent and the model it names. Raises when either is gone."""
+        """The thread's agent and the model it runs on. Raises when either is gone."""
+        binding = await self.conversations.binding(conversation_id)
         applied = await resolve_thread_agent(
             self.agents,
             owner_id,
-            await self.conversations.binding(conversation_id),
+            binding,
             conversation_id,
             projects=self.projects,
             worktrees=self.worktrees,
         )
-        models = await resolve_turn_models(
-            self.model_registry, applied.agent.endpoint_id, applied.agent.model, owner_id=owner_id
+        models = await resolve_choice(
+            self.model_registry, thread_choice(binding, applied.agent), owner_id=owner_id
         )
         return ThreadTurn(applied, models, (*self.instruction_providers, *applied.instructions))
 
@@ -115,11 +117,14 @@ class ThreadComposer:
             )
             if agent_is_gone(applied, binding):
                 raise RecomposeError(f"the agent {binding.agent_name!r} is gone")
-            endpoint_id, model = facts.endpoint_id, facts.model
-            if endpoint_id is None and model is None:
-                endpoint_id, model = applied.agent.endpoint_id, applied.agent.model
-            models = await resolve_turn_models(
-                self.model_registry, endpoint_id, model, owner_id=owner_id
+            # A launch-fixed model outranks what the park held, which it chose in the first place.
+            choice = binding.model_choice
+            if choice is None and (facts.endpoint_id is not None or facts.model is not None):
+                choice = ModelChoice(endpoint_id=facts.endpoint_id, model=facts.model)
+            models = await resolve_choice(
+                self.model_registry,
+                choice or thread_choice(binding, applied.agent),
+                owner_id=owner_id,
             )
         except HTTPException as exc:
             raise RecomposeError(str(exc.detail)) from exc

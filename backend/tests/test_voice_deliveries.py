@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from devkit.instance import DevInstance
-from evals.tasks.client import DevClient, refusal
+from evals.drive.client import DevClient, refusal
 from evals.voice.collect import Collector
 from evals.voice.document import render
 from evals.voice.record import Approval, Run, Sample, Timeline, Turn
@@ -74,7 +74,10 @@ def _sse(*bodies: EventBody) -> str:
     )
 
 
-async def test_a_wake_run_is_recorded_as_a_delivery_turn(tmp_path: Path) -> None:
+async def test_a_wake_run_is_recorded_as_a_delivery_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("evals.drive.instance._DELIVERY_POLL_S", 0.0)
     wake = {
         "id": "w1",
         "kind": "wake",
@@ -96,6 +99,8 @@ async def test_a_wake_run_is_recorded_as_a_delivery_turn(tmp_path: Path) -> None
             case "/conversations/c1/subagents":
                 card = {"handle": "rev", "task": "review", "status": "done", "summary": "Two."}
                 return httpx.Response(200, json={"subagents": [card]})
+            case "/conversations/c1/inbox":
+                return httpx.Response(200, json={"messages": [], "agents_paused": False})
             case _:
                 return httpx.Response(404)
 

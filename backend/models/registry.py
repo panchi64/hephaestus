@@ -99,7 +99,7 @@ class ModelRole(Table, table=True):
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
-    role: str  # main | utility | embedding | vision | image-gen
+    role: str  # main | utility | subagent | embedding (`services.llm.ROLES`)
     # The ordered fallback chain, by endpoint id. First is primary; the rest are
     # tried in order. Stored as JSON so order and length are one row, one write.
     endpoint_ids: list[str] = Field(sa_column=Column(JSON, nullable=False, default=list))

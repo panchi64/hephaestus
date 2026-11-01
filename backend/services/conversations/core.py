@@ -23,7 +23,7 @@ from services.permissions import DEFAULT_PERMISSION, permission_level
 from services.sealing import open_sealed
 
 from .projection import MESSAGE
-from .records import ConversationBinding, ConversationSummaryView
+from .records import ConversationBinding, ConversationSummaryView, ModelChoice
 from .rows import HydratedRow, PersistJob, defer_fk
 from .tree import Node, Tree
 
@@ -229,15 +229,17 @@ class StoreCore:
         parent_id: str | None = None,
         workspace_key: str | None = None,
         private: bool = False,
+        model_choice: ModelChoice | None = None,
     ) -> str:
         """Start a thread. ``project_id`` files it (null is unfiled, which is visible
         under every scope) and lets it write that project.
 
         ``permission`` is the level it *starts* at and moves freely afterwards; absent, the
         default level applies. ``agent_name`` is the agent it runs; absent, the default.
-        ``parent_id`` and ``workspace_key`` are a spawned agent's: the thread that spawned it,
-        and the workspace every turn of it works in. A child of a private thread is private
-        whatever ``private`` says, so delegation can't carry its content out of the area."""
+        ``parent_id``, ``workspace_key`` and ``model_choice`` are a spawned agent's: the
+        thread that spawned it, the workspace every turn of it works in, and the model they
+        run on. A child of a private thread is private whatever ``private`` says, so
+        delegation can't carry its content out of the area."""
 
         def work(session: Session) -> str:
             parent = session.get(Conversation, parent_id) if parent_id is not None else None
@@ -250,6 +252,9 @@ class StoreCore:
                 agent_name=agent_name,
                 parent_id=parent_id,
                 workspace_key=workspace_key or None,
+                model_role=model_choice.role if model_choice is not None else None,
+                model_endpoint_id=model_choice.endpoint_id if model_choice is not None else None,
+                model_name=model_choice.model if model_choice is not None else None,
                 permission_level=(
                     DEFAULT_PERMISSION if permission is None else permission_level(permission)
                 ),

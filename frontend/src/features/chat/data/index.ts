@@ -89,10 +89,12 @@ export {
   fetchOwnCallsign,
   fetchSubagents,
   isLive,
+  modelText,
   openSubagentThread,
   stopSubagent,
   designationText,
   type Subagent,
+  type SubagentModelSource,
   type SubagentsRead,
   type SubagentStatus,
 } from "./subagents";

@@ -17,6 +17,7 @@ import json
 import socket
 import sys
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
@@ -30,7 +31,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
-from .record import redact_home
+from .timeline import redact_home
 from .usage import Kind, ResponseUsage, TokenWindow, Usage
 
 #: Headers that describe one hop, not the message, so they are never passed along.
@@ -51,24 +52,50 @@ def _free_port() -> int:
 
 class _Request(BaseModel):
     tools: list[object] = Field(default_factory=list)
+    model: str = ""
+
+
+def _read(body: bytes) -> _Request:
+    try:
+        return _Request.model_validate_json(body)
+    except ValidationError:
+        return _Request()
 
 
 def carries_tools(body: bytes) -> bool:
-    try:
-        return bool(_Request.model_validate_json(body).tools)
-    except ValidationError:
-        return False
+    return bool(_read(body).tools)
+
+
+@dataclass(frozen=True, slots=True)
+class Proxied:
+    """One request the proxy forwarded: which bucket, endpoint and model it went to."""
+
+    bucket: str
+    endpoint: str
+    model: str
+    tools: bool
 
 
 class RecordingProxy:
-    def __init__(self, upstream: str, *, tokens_per_minute: int | None = None) -> None:
+    """``tag`` names the endpoint in :attr:`log`; proxies in one run share ``window``."""
+
+    def __init__(
+        self,
+        upstream: str,
+        *,
+        tokens_per_minute: int | None = None,
+        tag: str = "",
+        window: TokenWindow | None = None,
+    ) -> None:
         parts = urlsplit(upstream)
         self._origin: str = f"{parts.scheme}://{parts.netloc}"
         self._path: str = parts.path.rstrip("/")
         self._armed: Path | None = None
         self._bucket: str = ""
         self._usage: dict[str, dict[Kind, Usage]] = {}
-        self.window: TokenWindow = TokenWindow(tokens_per_minute or sys.maxsize)
+        self._tag: str = tag
+        self._log: dict[str, list[Proxied]] = {}
+        self.window: TokenWindow = window or TokenWindow(tokens_per_minute or sys.maxsize)
         self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=None)
         self._port: int = _free_port()
         app = Starlette(routes=[Route("/{path:path}", self._forward, methods=_METHODS)])
@@ -92,6 +119,10 @@ class RecordingProxy:
         """``bucket``'s tally so far, removed from the proxy."""
         return self._usage.pop(bucket, {})
 
+    def take_requests(self, bucket: str) -> list[Proxied]:
+        """The requests forwarded under ``bucket`` so far, removed from the proxy."""
+        return self._log.pop(bucket, [])
+
     async def start(self) -> None:
         self._task = asyncio.create_task(self._server.serve())
         while not self._server.started:
@@ -107,7 +138,10 @@ class RecordingProxy:
 
     async def _forward(self, request: Request) -> StreamingResponse:
         body = await request.body()
-        tools = carries_tools(body)
+        parsed = _read(body)
+        tools = bool(parsed.tools)
+        entry = Proxied(self._bucket, self._tag, parsed.model, tools)
+        self._log.setdefault(self._bucket, []).append(entry)
         if self._armed is not None and tools:
             self._armed.parent.mkdir(parents=True, exist_ok=True)
             text = json.dumps(json.loads(body), indent=2) + "\n"

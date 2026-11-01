@@ -60,6 +60,8 @@ class SubagentStore:
         ledger_prompt_message_id: str | None = None,
         agent_class: str = "",
         callsign: str = "",
+        model_label: str = "",
+        model_source: str = "",
     ) -> None:
         """Open a row for a sub-agent that has just been submitted.
 
@@ -86,6 +88,8 @@ class SubagentStore:
             project_id=project_id,
             base_ref=base_ref,
             ledger_prompt_message_id=ledger_prompt_message_id,
+            model_label=model_label,
+            model_source=model_source,
         )
 
         def work(session: Session) -> None:
@@ -317,6 +321,8 @@ class SubagentStore:
             error=None if row.error_enc is None else self._vault.decrypt_str(row.error_enc),
             context_used=context_used if context_used is not None else row.context_used,
             context_window=(context_window if context_window is not None else row.context_window),
+            model_label=row.model_label,
+            model_source=row.model_source,
             started_at=row.started_at,
             ended_at=row.ended_at,
         )

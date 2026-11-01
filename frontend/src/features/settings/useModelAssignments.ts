@@ -18,11 +18,26 @@ import {
 } from "./data";
 
 /** The jobs a model can be given, by the backend's role id. */
-export type AssignableRole = "main" | "utility" | "embedding";
+export type AssignableRole = "main" | "utility" | "subagent" | "embedding";
 
-/** An unbound `utility` is not a broken state: the backend degrades background work onto
- *  the chat model, so "same as chat model" is spelled as the empty binding it already is. */
+/** The roles an empty binding is a default for rather than a gap: background work runs on
+ *  the chat model, and a spawned agent on the model of the agent that launched it. */
+export type InheritingRole = "utility" | "subagent";
+
+/** The empty binding, which is how "same as chat model" and "same as parent agent" are
+ *  spelled. */
 export const SAME_AS_CHAT = "";
+
+const INHERITING: Record<InheritingRole, { name: string; cleared: string }> = {
+  utility: {
+    name: "Background model",
+    cleared: "Background work now uses the chat model.",
+  },
+  subagent: {
+    name: "Sub-agent model",
+    cleared: "Sub-agents now run on the model of the agent that launches them.",
+  },
+};
 
 /** Reads and writes for "which model does what", shared by Settings › Models and the
  *  first-run walkthrough. Every write goes through the store's role actions, and the chat
@@ -74,23 +89,24 @@ export function useModelAssignments() {
     return model ? encodeModelValue({ endpointId: ep.id, model }) : "";
   };
 
-  const pickBackground = async (value: string): Promise<void> => {
+  /** Binds `role` to the pick, or unbinds it back to its default for the empty value. */
+  const pickOrInherit = async (
+    role: InheritingRole,
+    value: string,
+  ): Promise<void> => {
     const sel = value === SAME_AS_CHAT ? null : decodeModelValue(value);
     if (value !== SAME_AS_CHAT && !sel) return;
+    const { name, cleared } = INHERITING[role];
     try {
       await setRoleBinding(
-        "utility",
-        sel ? chainHeadedBy("utility", sel.endpointId) : [],
+        role,
+        sel ? chainHeadedBy(role, sel.endpointId) : [],
         sel?.model ?? null,
       );
-      toast.success(
-        sel
-          ? `Background model set to ${sel.model}.`
-          : "Background work now uses the chat model.",
-      );
+      toast.success(sel ? `${name} set to ${sel.model}.` : cleared);
     } catch (e) {
       toast.error(
-        isApiError(e) ? e.detail : "Unable to set the background model.",
+        isApiError(e) ? e.detail : `Unable to set the ${name.toLowerCase()}.`,
       );
     }
   };
@@ -143,7 +159,7 @@ export function useModelAssignments() {
     pickChat,
     roleEndpoint,
     roleValue,
-    pickBackground,
+    pickOrInherit,
     bindPicked,
     clearRole,
   };

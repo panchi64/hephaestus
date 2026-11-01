@@ -16,6 +16,7 @@ from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
 from runs import Run, RunStream
+from services.agent_models import ChoosableModel
 from services.agents import AgentDefinition
 from services.home.changes import ThreadChanges
 from services.home.paths import Place
@@ -61,6 +62,7 @@ class _Launcher(SubagentLauncher):
         handle: str,
         parent: SubagentParent | None = None,
         worktree: bool = False,
+        model: ChoosableModel | None = None,
     ) -> LaunchedSubagent:
         self.launched.append((agent.name, worktree))
         return LaunchedSubagent("s1", "child", "r1", agent.name, handle, task)

@@ -4,42 +4,42 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import Field, TypeAdapter, model_validator
+
+from evals.drive.spec import KEY_FILE, PROJECT_TOKEN, Level, Memory, Strict, resolve_run_path
 
 from .grading import DIMENSIONS, IMPLICIT, Dimension
 
+__all__ = [
+    "FIXTURES_DIR",
+    "KEY_FILE",
+    "PROJECT_TOKEN",
+    "RUNS_DIR",
+    "SCENARIOS_PATH",
+    "Level",
+    "Memory",
+    "Scenario",
+    "ScenarioFile",
+    "Voice",
+    "load_scenarios",
+    "run_path",
+]
+
 type Voice = Literal["talos", "working", "subagent"]
-type Level = Literal["plan", "manual", "edit", "auto", "yolo"]
 
 SCENARIOS_PATH = Path(__file__).with_name("scenarios.toml")
 FIXTURES_DIR = Path(__file__).with_name("fixtures")
 RUNS_DIR = Path(__file__).with_name("runs")
-#: In a run group: which model each blind run letter stands for.
-KEY_FILE = "key.json"
-
-#: Replaced in every prompt by the fixture project's home path, ``~/projects/<slug>``.
-PROJECT_TOKEN = "{project}"
 
 
 def run_path(raw: str) -> Path:
     """A run-group or run directory, absolute or relative to :data:`RUNS_DIR`."""
-    path = Path(raw)
-    return path if path.is_absolute() or path.exists() else RUNS_DIR / raw
+    return resolve_run_path(raw, RUNS_DIR)
 
 
-class _Strict(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
-
-
-class Memory(_Strict):
-    content: str
-    description: str
-    pinned: bool = True
-
-
-class Scenario(_Strict):
+class Scenario(Strict):
     id: str
     voice: Voice
     #: The first message, then each follow-up once the previous turn has ended.
@@ -79,7 +79,7 @@ class Scenario(_Strict):
         return self
 
 
-class ScenarioFile(_Strict):
+class ScenarioFile(Strict):
     scenario: list[Scenario]
 
 

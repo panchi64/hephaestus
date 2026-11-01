@@ -10,6 +10,7 @@ the project's files and published stored agents — because that is where the mo
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import override
@@ -19,6 +20,8 @@ from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from core.config import get_settings
 from core.diagnostics import render_tool_error
+from core.exceptions import DegradedCapabilityError, NotFoundError
+from services.agent_models import AgentModels, ChoosableModel
 from services.agents import (
     AgentDefinition,
     AgentNameError,
@@ -27,6 +30,7 @@ from services.agents import (
     describe_roster,
     normalize_agent_name,
 )
+from services.registry import ModelRegistry
 from services.subagents import (
     ROOT_HANDLE,
     SubagentLauncher,
@@ -35,6 +39,7 @@ from services.subagents import (
     SubagentView,
 )
 from services.subagents.callsigns import class_display
+from services.subagents.models import UnpickableModelError, is_pinned, offered, pick
 from tools.child_worktrees import discard_child, merge_child, worktree_paths
 from tools.deps import RunDeps
 from tools.describe import registered_tools
@@ -63,6 +68,10 @@ do, where to start, and what a finished answer looks like.
 
 `worktree` gives it its own branch and worktree of your project; its work waits there for
 you to review, fix, and `agents_merge` or discard.
+
+`model` runs it on another model, by an id from `agents_models`. Leave it unset unless the
+brief clearly calls for a model the operator meant for such work: unset, it runs on its
+default. An agent the operator pinned to a model always runs on that one.
 """
 
 
@@ -75,6 +84,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         agent_name: str,
         task: str,
         worktree: bool = False,
+        model: str | None = None,
     ) -> dict[str, object]:
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
@@ -100,6 +110,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
                     ],
                 )
             )
+        requested = await _requested_model(ctx, agent, model) if model is not None else None
         try:
             started = await launcher.launch(
                 ctx.deps.owner_id,
@@ -108,6 +119,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
                 handle=name,
                 parent=_parent(ctx),
                 worktree=worktree,
+                model=requested,
             )
         except SubagentUnavailableError as exc:
             return {"spawned": False, "detail": str(exc)}
@@ -127,6 +139,55 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
 
     spawn.__doc__ = spawn_description(delegable(builtin_roster()))
     _ = toolset.add_function(spawn, name=SPAWN_TOOL)
+
+    @toolset.tool(name="models")
+    async def models(ctx: RunContext[RunDeps]) -> dict[str, object]:
+        """The models the operator lets you choose for an agent you spawn, each with what
+        they meant it for (`use_for`), and which agents are pinned to a model of their own.
+        Pass a model's `id` as `agents_spawn`'s `model`."""
+        registry = ctx.deps.caps.get_optional(ModelRegistry)
+        settings = ctx.deps.caps.get_optional(AgentModels)
+        if registry is None or settings is None:
+            return {"choice_offered": False, "detail": _UNAVAILABLE}
+        owner_id = ctx.deps.owner_id
+        roster = sorted(delegable(await run_roster(ctx)).items())
+        pinned = [(name, agent) for name, agent in roster if is_pinned(agent)]
+        # Each lookup may ask a provider for its limits, so they run together.
+        offers, default, pins = await asyncio.gather(
+            offered(registry, settings, owner_id),
+            _label(registry, owner_id, "subagent"),
+            asyncio.gather(*(_label(registry, owner_id, "main", agent) for _, agent in pinned)),
+        )
+        pinned_to = {name: pin for (name, _), pin in zip(pinned, pins, strict=True)}
+        agents: list[dict[str, object]] = [
+            {"name": name, "pinned_to": pinned_to[name] or "an unavailable model"}
+            if name in pinned_to
+            else {"name": name, "default": default or "your own model"}
+            for name, _ in roster
+        ]
+        return {
+            "choice_offered": bool(offers),
+            "models": [
+                {
+                    "id": offer.id,
+                    "use_for": offer.entry.note,
+                    "provider": offer.provider,
+                    "local": offer.local,
+                    "context_window": offer.context_window,
+                    "vision": offer.vision,
+                }
+                for offer in offers
+            ],
+            "agents": agents,
+            **(
+                {}
+                if offers
+                else {
+                    "detail": "The operator has listed no models to choose; spawn without "
+                    + "`model` and each agent runs on its default."
+                }
+            ),
+        }
 
     @toolset.tool(name="message")
     async def message(ctx: RunContext[RunDeps], to: str, text: str) -> dict[str, object]:
@@ -182,6 +243,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
                     "callsign": view.callsign,
                     "class": class_display(view.agent_class),
                     "agent_name": view.name,
+                    "model": view.model_label,
                     "parent": handles.get(view.parent_conversation_id, ROOT_HANDLE),
                     "task": view.task,
                     "status": view.status,
@@ -279,10 +341,45 @@ def _read_out(view: SubagentView) -> dict[str, object]:
         "callsign": view.callsign,
         "class": class_display(view.agent_class),
         "agent_name": view.name,
+        "model": view.model_label,
         "status": view.status,
         "report": view.summary,
         "error": view.error,
     }
+
+
+async def _requested_model(
+    ctx: RunContext[RunDeps], agent: AgentDefinition, model: str
+) -> ChoosableModel:
+    """The choosable entry ``model`` names, or a retry saying why it can't be used."""
+    registry = ctx.deps.caps.get_optional(ModelRegistry)
+    settings = ctx.deps.caps.get_optional(AgentModels)
+    offers = (
+        None
+        if registry is None or settings is None or is_pinned(agent)
+        else await offered(registry, settings, ctx.deps.owner_id)
+    )
+    try:
+        return pick(agent, model, offers)
+    except UnpickableModelError as exc:
+        raise ModelRetry(render_tool_error(exc.problem, hints=[exc.hint])) from exc
+
+
+async def _label(
+    registry: ModelRegistry, owner_id: str, role: str, agent: AgentDefinition | None = None
+) -> str | None:
+    """``<endpoint name>/<model>`` a role or an agent's pin resolves to; None when it
+    resolves to nothing."""
+    try:
+        specs = await registry.resolve_specs(
+            role,
+            owner_id=owner_id,
+            override_endpoint_id=agent.endpoint_id if agent is not None else None,
+            override_model=agent.model if agent is not None else None,
+        )
+    except DegradedCapabilityError, NotFoundError:
+        return None
+    return f"{specs[0].name}/{specs[0].model}"
 
 
 def _parent(ctx: RunContext[RunDeps]) -> SubagentParent:
