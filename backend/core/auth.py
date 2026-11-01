@@ -47,6 +47,7 @@ def via_api_token(state: State) -> bool:
     """Whether the request owning ``state`` came in on an API token, not the operator's session."""
     return bool(getattr(state, _VIA_API_TOKEN, False))
 
+
 # Password guesses and token guesses are the same attack, so they share one limiter under
 # separate key namespaces. Generous enough that a human never meets it and a script does.
 _AUTH_ATTEMPT_RATE_PER_MINUTE = 12.0

@@ -163,12 +163,14 @@ async def test_unlock_moves_a_v1_keyfile_to_v2_without_changing_the_dek(tmp_path
     salt = crypto.generate_salt()
     kek = crypto.derive_kek("pw", salt, crypto.KDF_V1)
     _ = path.write_text(
-        json.dumps({
-            "version": 1,
-            "verifier": crypto.hash_password("pw"),
-            "kek_salt": base64.b64encode(salt).decode(),
-            "wrapped_dek": base64.b64encode(crypto.aead_encrypt(kek, dek)).decode(),
-        })
+        json.dumps(
+            {
+                "version": 1,
+                "verifier": crypto.hash_password("pw"),
+                "kek_salt": base64.b64encode(salt).decode(),
+                "wrapped_dek": base64.b64encode(crypto.aead_encrypt(kek, dek)).decode(),
+            }
+        )
     )
     sealed = crypto.aead_encrypt(dek, b"old row")
 

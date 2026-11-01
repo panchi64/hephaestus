@@ -28,6 +28,7 @@ __all__ = [
     "select_volume",
 ]
 
+
 class UnavailableVolume:
     """Stands in when no backend works, so the reason reaches the unlock screen."""
 
