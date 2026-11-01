@@ -48,4 +48,10 @@ describe("GREETINGS", () => {
       expect(g.text.toLowerCase()).not.toContain("hephaestus");
     }
   });
+
+  it("has no stock machine line and no remark on the operator's hours", () => {
+    const stock =
+      /\b(coffee|sleep|asleep|bed|tired|circuits|feelings|late|still up|still at it|one more thing)\b/i;
+    for (const g of GREETINGS) expect(g.text).not.toMatch(stock);
+  });
 });

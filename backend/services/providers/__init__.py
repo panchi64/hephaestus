@@ -15,7 +15,14 @@ from pydantic_ai.settings import ModelSettings
 
 from services.providers.base import Provider, ProviderPreset
 
-__all__ = ["Provider", "ProviderPreset", "all_providers", "get_provider", "run_settings"]
+__all__ = [
+    "Provider",
+    "ProviderPreset",
+    "all_providers",
+    "get_provider",
+    "one_shot_settings",
+    "run_settings",
+]
 
 DEFAULT_PROVIDER_ID = "openai-compatible"
 
@@ -66,4 +73,13 @@ def run_settings(*, attended: bool) -> ModelSettings:
     merged: ModelSettings = {}
     for provider in all_providers():
         merged.update(provider.run_settings(attended=attended))
+    return merged
+
+
+def one_shot_settings() -> ModelSettings:
+    """Every adapter's :meth:`Provider.one_shot_settings`, merged, for the same reason as
+    :func:`run_settings`."""
+    merged: ModelSettings = {}
+    for provider in all_providers():
+        merged.update(provider.one_shot_settings())
     return merged

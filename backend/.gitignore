@@ -11,3 +11,8 @@ data/
 *.db-journal
 *.db-wal
 .env
+
+# The voice suite's sample projects: their data/ and logs/ are fixture source.
+!evals/voice/fixtures/**/data/
+!evals/voice/fixtures/**/logs/
+!evals/voice/fixtures/**/*.log

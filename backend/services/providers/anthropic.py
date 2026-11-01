@@ -208,6 +208,17 @@ class AnthropicNativeProvider(Provider):
         return settings
 
     @override
+    def one_shot_settings(self) -> AnthropicModelSettings:
+        # A breakpoint on a prompt nothing repeats is a 1.25-2x write that is never read,
+        # and every one-shot instruction block is below the minimum cacheable prefix.
+        # False sends no `cache_control`, so it is safe behind any proxy.
+        return {
+            "anthropic_cache": False,
+            "anthropic_cache_instructions": False,
+            "anthropic_cache_tool_definitions": False,
+        }
+
+    @override
     def run_settings(self, *, attended: bool) -> AnthropicModelSettings:
         return _cache_settings(_ttl(attended=attended))
 

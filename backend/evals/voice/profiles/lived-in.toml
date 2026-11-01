@@ -1,0 +1,147 @@
+# A made-up operator's workspace, applied for the run and removed after it. It carries
+# no address form: `address-form` and `address-correction` seed their own.
+
+plugins = ["mail", "routines"]
+
+[[memories]]
+content = "Prefers uv for Python and bun for JavaScript; never pip, npm or yarn."
+description = "Package managers: uv and bun only"
+
+[[memories]]
+content = "Works on an M3 Max MacBook Pro with 128 GB of RAM and runs local models through LM Studio."
+description = "Hardware: M3 Max, 128 GB, LM Studio"
+
+[[memories]]
+content = "Partner is Dana; they share a calendar and Dana handles the household bills."
+description = "Partner: Dana, shared calendar"
+
+[[memories]]
+content = "Flying to Lisbon on the 14th of next month for a week; wants the laptop backed up before then."
+description = "Trip: Lisbon next month, back up first"
+
+[[memories]]
+content = "Reviews every pull request the next morning rather than the same evening."
+description = "Reviews PRs the morning after"
+
+[[memories]]
+content = "Writes commit messages in past tense and keeps the subject under 72 characters."
+description = "Commit style: past tense, short subject"
+
+[[memories]]
+content = "Runs a small homelab: a Proxmox box, a NAS called vault and a Raspberry Pi running Pi-hole."
+description = "Homelab: Proxmox, NAS 'vault', Pi-hole"
+
+[[memories]]
+content = "Prefers Postgres for anything with more than one writer, SQLite otherwise."
+description = "Database default: Postgres if many writers, else SQLite"
+
+[[memories]]
+content = "Dislikes ORMs that hide SQL; uses SQLAlchemy Core or plain SQL."
+description = "SQL: Core or plain SQL, no heavy ORM"
+
+[[memories]]
+content = "Learning Portuguese before the Lisbon trip, about twenty minutes a day."
+description = "Learning Portuguese for the trip"
+
+[[memories]]
+content = "Keeps a running list of side projects in a note called 'someday'."
+description = "Side projects live in the 'someday' note"
+
+[[memories]]
+content = "Has a standing Thursday 4pm call with the freelance client at Northwind."
+description = "Thursday 4pm: Northwind client call"
+
+[[memories]]
+content = "Wants destructive commands double-checked before they run, even on scratch data."
+description = "Double-check destructive commands"
+
+[[memories]]
+content = "Prefers dark mode everywhere and the Berkeley Mono font in the editor."
+description = "Editor: dark mode, Berkeley Mono"
+
+[[memories]]
+content = "Tried Kubernetes for the homelab last year and went back to docker compose."
+description = "Homelab runs docker compose, not Kubernetes"
+pinned = false
+
+[[memories]]
+content = "Their sister Maya's birthday is in early March; usually sends a book."
+description = "Sister Maya: birthday early March"
+pinned = false
+
+[[memories]]
+content = "Started the 'photo-tidy' project to sort a decade of phone photos."
+description = "Project: photo-tidy"
+pinned = false
+
+[[memories]]
+content = "Prefers explanations with a short example over long theory."
+description = "Explanations: lead with an example"
+pinned = false
+
+[[skills]]
+name = "release-checklist"
+description = "The steps for cutting a release of a personal project."
+body = """
+1. Run the full test suite and the linters.
+2. Bump the version and write the changelog entry.
+3. Tag the commit and push the tag.
+4. Check that the published artifact installs cleanly.
+"""
+pinned = true
+
+[[skills]]
+name = "pr-description"
+description = "How the operator wants pull request descriptions written."
+body = """
+Open with one sentence on what changed and why. Then a short list of the notable
+changes, then how it was tested. No headings for a small PR.
+"""
+pinned = true
+
+[[skills]]
+name = "incident-notes"
+description = "A template for notes after something breaks in the homelab."
+body = """
+- What broke, and when it was noticed.
+- The cause, once known.
+- What fixed it.
+- What would catch it sooner next time.
+"""
+pinned = true
+
+[[skills]]
+name = "weekly-review"
+description = "The Friday review of open projects and next week's priorities."
+body = "List each open project with its next step, then pick three priorities for next week."
+
+[[skills]]
+name = "backup-check"
+description = "Verify the NAS backups restore, not only that they ran."
+body = "Restore one random file from last night's backup and compare its checksum."
+
+[[skills]]
+name = "travel-prep"
+description = "What to sort out before a trip."
+body = "Back up the laptop, check passport dates, set the out-of-office reply, pause routines."
+
+[[integrations]]
+preset = "github"
+name = "GitHub"
+credentials = { token = "ghp_voice_eval_placeholder" }
+
+[[integrations]]
+preset = "ntfy"
+name = "Phone alerts"
+
+[[projects]]
+name = "photo-tidy"
+readme = "Sorts a decade of phone photos into folders by date."
+
+[[projects]]
+name = "homelab-config"
+readme = "Docker compose files and notes for the homelab."
+
+[[projects]]
+name = "northwind-site"
+readme = "The freelance client's marketing site."
