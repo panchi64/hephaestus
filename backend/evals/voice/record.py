@@ -15,6 +15,8 @@ from runs.events.plan import TasksUpdated
 from runs.events.tools import ToolCompleted, ToolFailed, ToolStarted
 from runs.events.union import EventBody
 
+from .usage import Kind, Usage, total
+
 #: How much of a tool's arguments or result the document shows.
 _EXCERPT = 400
 
@@ -125,6 +127,8 @@ class Sample(_Model):
     subagents: list[SubagentRecord] = Field(default_factory=list)
     #: Why the sample is incomplete, when it is: setup failed, a turn timed out.
     problem: str | None = None
+    #: Token use and cost of the sample's model calls; empty for non-Anthropic runs.
+    usage: dict[Kind, Usage] = Field(default_factory=dict)
 
 
 class Run(_Model):
@@ -140,10 +144,19 @@ class Run(_Model):
     #: None on runs recorded before it was kept.
     provider: str | None = None
     samples: list[Sample] = Field(default_factory=list)
+    #: Calls made after the scenarios: late titles and work summaries.
+    helper_usage: dict[Kind, Usage] = Field(default_factory=dict)
+    #: The most prompt tokens sent in any one minute of the run.
+    peak_tokens_per_minute: int | None = None
 
     def replies(self) -> dict[tuple[str, int], int]:
         """Each sample's Talos reply count, a sub-agent delivery's included."""
         return {(s.scenario, s.sample): len(s.turns) for s in self.samples}
+
+    def usage(self) -> Usage:
+        """The whole run's token use and cost."""
+        parts = [u for s in self.samples for u in s.usage.values()]
+        return total([*parts, *self.helper_usage.values()])
 
 
 RUN_FILE = "run.json"

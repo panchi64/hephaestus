@@ -44,6 +44,8 @@ class Row:
     humor: float | None
     #: Share of first-pass scores the review kept; None when the run wasn't reviewed.
     agreement: float | None
+    #: None when no usage was recorded (runs on local models, or from before it was).
+    cost_usd: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +84,7 @@ def collect_history(runs_dir: Path, quiet: Collection[str]) -> History:
                 expect=expect_pass_rate(grades),
                 humor=tally.reply_rate if tally else None,
                 agreement=agreement(load_grades(first), grades).rate if first.is_file() else None,
+                cost_usd=spent.cost_usd if (spent := run.usage()).requests else None,
             )
         )
     rows.sort(key=lambda row: row.started)
@@ -95,7 +98,7 @@ def _pct(value: float | None) -> str:
 def render_history(history: History) -> str:
     out = ["# Voice eval history", ""]
     head = ["Started", "Run", "Model", "Provider", "Prompt", "Voice", *DIMENSIONS]
-    head += ["Expect", "Humor/reply", "Agreement"]
+    head += ["Expect", "Humor/reply", "Agreement", "Cost"]
     for profile in sorted({row.profile for row in history.rows}):
         out += [f"## Profile `{profile}`", "", f"| {' | '.join(head)} |"]
         out.append(f"|{'---|' * len(head)}")
@@ -104,6 +107,7 @@ def render_history(history: History) -> str:
             cells = [row.started, row.run, row.model, row.provider, f"`{row.fingerprint}`"]
             cells += [f"{row.voice:.2f}", *means, _pct(row.expect), _pct(row.humor)]
             cells.append(_pct(row.agreement))
+            cells.append("–" if row.cost_usd is None else f"${row.cost_usd:.2f}")
             out.append(f"| {' | '.join(cells)} |")
         out.append("")
     if not history.rows:

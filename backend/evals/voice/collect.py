@@ -1,12 +1,16 @@
 """Run the voice scenarios on each model and write one blind transcript per model.
 
     uv run python -m evals.voice.collect --models M [M ...] [--only ID ...] [--label NAME]
-        [--samples N] [--summary-wait S] [--profile NAME] [--provider anthropic]
+        [--samples N] [--summary-wait S] [--profile NAME] [--provider anthropic] [--tpm N]
 
 The dev instance must be up (``dev_instance.py up --detach --with-vm``) with its ``main``
 role bound to the endpoint serving the models, or ``--provider`` given: the run then adds
 a temporary endpoint keyed from the environment or ``evals/voice/.env`` and deletes it at
-the end. The label defaults to the UTC start time and the profile. Each model's pass
+the end. For Anthropic runs, start the instance with ``HEPHAESTUS_ANTHROPIC_CACHE_TTL=5m``:
+the eval sends requests back to back, so the one-hour cache chat uses only costs more to
+write. Each run's ``cost.md`` breaks down its token use and cost, and ``--tpm`` caps the
+prompt tokens sent per minute. The label defaults to the UTC start time and the profile.
+Each model's pass
 rebinds ``main`` and ``utility`` to it, so the voice under test also writes the titles and
 summaries; the original bindings are restored at the end. Output lands in
 ``evals/voice/runs/<label>/``: ``A/``, ``B/``… each with ``transcript.md`` and ``run.json``,
@@ -38,6 +42,7 @@ from devkit.prompts import render as render_prompt
 from evals.tasks.client import DevClient, Settler
 from runs.events.approvals import ApprovalRequired, QuestionAsked
 
+from .cost import COST_FILE, render_cost
 from .document import render
 from .keys import ENV_FILE, provider_key
 from .profile import Applied, available, load_profile
@@ -49,6 +54,11 @@ from .spec import FIXTURES_DIR, KEY_FILE, PROJECT_TOKEN, RUNS_DIR, Scenario, loa
 
 _POLL_S = 15.0
 _DELIVERY_POLL_S = 5.0
+#: The usage bucket for calls made after the scenarios.
+_HELPERS = "helpers"
+#: Prompt tokens per minute a hosted run stays under: 80% of a 2M limit, leaving room
+#: for the requests already in flight when the window fills.
+_DEFAULT_TPM = 1_600_000
 
 #: The run kind the inbox starts to hand a thread its sub-agents' reports.
 _WAKE_KIND = "wake"
@@ -355,6 +365,7 @@ class _Args(argparse.Namespace):
     summary_wait: float = 600.0
     profile: str | None = None
     provider: str | None = None
+    tpm: int | None = None
 
 
 def _save(run: Run, run_dir: Path, scenarios: list[Scenario]) -> None:
@@ -378,13 +389,27 @@ async def _pass(
             print(f"  {scenario.id} #{number} …", flush=True)
             if number == 1:
                 proxy.arm(run_dir / CONTEXT_DIR / f"{scenario.id}.json")
+            bucket = f"{scenario.id}#{number}"
+            proxy.attribute(bucket)
             record = await collector.sample(scenario, number)
+            record.usage = proxy.take(bucket)
             run.samples.append(record)
             _save(run, run_dir, scenarios)
             print(f"    {record.problem or 'ok'}", flush=True)
     print("  waiting for titles and work summaries …", flush=True)
+    proxy.attribute(_HELPERS)
     await collector.helpers(run.samples, summary_wait)
+    run.helper_usage = proxy.take(_HELPERS)
+    run.peak_tokens_per_minute = proxy.window.peak
     _save(run, run_dir, scenarios)
+    _ = (run_dir / COST_FILE).write_text(render_cost(run))
+    spent = run.usage()
+    if spent.requests:
+        print(
+            f"  cost ${spent.cost_usd:.2f} over {spent.requests} requests, "
+            + f"{spent.cache_read_share:.0%} of prompt tokens from cache",
+            flush=True,
+        )
 
 
 async def main(argv: list[str]) -> int:
@@ -403,6 +428,12 @@ async def main(argv: list[str]) -> int:
         "--provider",
         choices=sorted(HOSTED),
         help=f"run on a temporary endpoint for this provider, keyed from env or {ENV_FILE}",
+    )
+    _ = parser.add_argument(
+        "--tpm",
+        type=int,
+        help=f"prompt tokens per minute to stay under (default {_DEFAULT_TPM:,} "
+        + "with --provider, none otherwise)",
     )
     args = parser.parse_args(argv, namespace=_Args())
     try:
@@ -460,7 +491,8 @@ async def main(argv: list[str]) -> int:
         endpoint = await collector.endpoint(original["main"].endpoint_ids[0])
         temporary = False
     stub = urlparse(endpoint.base_url).port == instance.stub_port
-    proxy = RecordingProxy(endpoint.base_url)
+    tpm = args.tpm or (_DEFAULT_TPM if hosted else None)
+    proxy = RecordingProxy(endpoint.base_url, tokens_per_minute=tpm)
     try:
         await proxy.start()
         await collector.point(endpoint.id, proxy.base_url)
