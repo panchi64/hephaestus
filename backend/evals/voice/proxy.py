@@ -30,6 +30,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
+from .record import redact_home
 from .usage import Kind, ResponseUsage, TokenWindow, Usage
 
 #: Headers that describe one hop, not the message, so they are never passed along.
@@ -109,7 +110,8 @@ class RecordingProxy:
         tools = carries_tools(body)
         if self._armed is not None and tools:
             self._armed.parent.mkdir(parents=True, exist_ok=True)
-            _ = self._armed.write_text(json.dumps(json.loads(body), indent=2) + "\n")
+            text = json.dumps(json.loads(body), indent=2) + "\n"
+            _ = self._armed.write_text(redact_home(text))
             self._armed = None
         bucket = self._bucket
         kind: Kind = "agent" if tools else "utility"

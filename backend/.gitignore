@@ -16,3 +16,6 @@ data/
 !evals/voice/fixtures/**/data/
 !evals/voice/fixtures/**/logs/
 !evals/voice/fixtures/**/*.log
+
+# Voice eval runs hold full transcripts and tool output from the operator's machine.
+evals/voice/runs/

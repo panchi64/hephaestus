@@ -49,7 +49,17 @@ from .profile import Applied, available, load_profile
 from .profile import apply as apply_profile
 from .profile import remove as remove_profile
 from .proxy import RecordingProxy
-from .record import BARE, CONTEXT_DIR, RUN_FILE, Run, Sample, SubagentRecord, Timeline, Turn
+from .record import (
+    BARE,
+    CONTEXT_DIR,
+    RUN_FILE,
+    Run,
+    Sample,
+    SubagentRecord,
+    Timeline,
+    Turn,
+    redact_home,
+)
 from .spec import FIXTURES_DIR, KEY_FILE, PROJECT_TOKEN, RUNS_DIR, Scenario, load_scenarios
 
 _POLL_S = 15.0
@@ -369,8 +379,8 @@ class _Args(argparse.Namespace):
 
 
 def _save(run: Run, run_dir: Path, scenarios: list[Scenario]) -> None:
-    _ = (run_dir / RUN_FILE).write_text(run.model_dump_json(indent=2))
-    _ = (run_dir / "transcript.md").write_text(render(run, scenarios))
+    _ = (run_dir / RUN_FILE).write_text(redact_home(run.model_dump_json(indent=2)))
+    _ = (run_dir / "transcript.md").write_text(redact_home(render(run, scenarios)))
 
 
 async def _pass(

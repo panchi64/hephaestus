@@ -134,8 +134,8 @@ def memory_toolset() -> FunctionToolset[RunDeps]:
     ) -> dict[str, object]:
         """Correct, re-describe, pin or unpin a memory.
 
-        Use it when the operator revises something memory holds ("call me Fran, not
-        Francisco"), so the old version stops steering you. Pass only what changes;
+        Use it when the operator revises something memory holds ("call me Sam, not
+        Samuel"), so the old version stops steering you. Pass only what changes;
         ``content`` replaces the whole text. Pin by `memory_remember`'s rule. To fold
         several memories into one, use `memory_consolidate`."""
         store = ctx.deps.caps.get_optional(MemoryStore)

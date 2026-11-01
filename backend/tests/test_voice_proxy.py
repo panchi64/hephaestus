@@ -56,6 +56,7 @@ async def test_the_proxy_forwards_and_captures_once(tmp_path: Path) -> None:
     target = tmp_path / "context" / "banter.json"
     title = {"messages": [{"role": "user", "content": "name this"}]}
     turn = {"messages": [{"role": "system", "content": "You are Talos."}], "tools": [{"x": 1}]}
+    leaky = {**turn, "messages": [{"role": "tool", "content": f"open {Path.home()}/.docker"}]}
     async with (
         _proxied(app, "/v1") as proxy,
         httpx.AsyncClient(headers={"Authorization": "Bearer secret"}) as client,
@@ -68,10 +69,13 @@ async def test_the_proxy_forwards_and_captures_once(tmp_path: Path) -> None:
         assert response.content == b"".join(CHUNKS)
         assert response.headers["x-auth"] == "Bearer secret"
         _ = await client.post(url, json={**turn, "tools": [{"y": 2}]})
+        proxy.arm(tmp_path / "leaky.json")
+        _ = await client.post(url, json=leaky)
 
     saved = target.read_text()
     assert json.loads(saved) == turn
     assert "secret" not in saved
+    assert "open ~/.docker" in (tmp_path / "leaky.json").read_text()
 
 
 START: dict[str, object] = {

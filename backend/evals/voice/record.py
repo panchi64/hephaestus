@@ -160,6 +160,13 @@ class Run(_Model):
 
 
 RUN_FILE = "run.json"
+
+
+def redact_home(text: str) -> str:
+    """``text`` with the home directory, which names the operator's account, as ``~``."""
+    return text.replace(str(Path.home()), "~")
+
+
 #: Inside a run directory: the exact request Talos received, one file per scenario.
 CONTEXT_DIR = "context"
 

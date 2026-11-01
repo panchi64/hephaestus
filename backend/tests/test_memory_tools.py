@@ -50,7 +50,7 @@ async def _unlocked() -> MemoryStore:
 
 async def test_catalog_lists_pins_sorted_by_id_and_counts_the_rest():
     store = await _unlocked()
-    a = await store.remember(OWNER, "Call them Fran.", description="Form of address", pinned=True)
+    a = await store.remember(OWNER, "Call them Sam.", description="Form of address", pinned=True)
     b = await store.remember(OWNER, "Answers short.", description="Answer length", pinned=True)
     _ = await store.remember(OWNER, "The boiler is in the cellar.")
 
@@ -76,7 +76,7 @@ async def test_catalog_caps_the_pinned_list_and_counts_the_overflow():
 
 async def test_catalog_is_byte_stable_across_an_unrelated_save():
     store = await _unlocked()
-    _ = await store.remember(OWNER, "Call them Fran.", description="Form of address", pinned=True)
+    _ = await store.remember(OWNER, "Call them Sam.", description="Form of address", pinned=True)
     _ = await store.remember(OWNER, "x", description="x")
     before = await memory_catalog_instructions(_ctx(store))
     _ = await store.update(OWNER, (await store.list_memories(OWNER))[0].id, content="y")
@@ -91,7 +91,7 @@ async def test_catalog_is_empty_without_pins_store_or_unlocked_vault():
     _ = await store.remember(OWNER, "unpinned")
     assert await memory_catalog_instructions(_ctx(store)) == ""
 
-    _ = await store.remember(OWNER, "Call them Fran.", pinned=True)
+    _ = await store.remember(OWNER, "Call them Sam.", pinned=True)
     assert await memory_catalog_instructions(_ctx(store)) != ""
     vault.lock()
     assert await memory_catalog_instructions(_ctx(store)) == ""
@@ -102,14 +102,14 @@ async def test_catalog_is_empty_without_pins_store_or_unlocked_vault():
 
 async def test_open_returns_the_full_memory():
     store = await _unlocked()
-    view = await store.remember(OWNER, "Call them Fran.\nNever Francisco.", description="Name")
+    view = await store.remember(OWNER, "Call them Sam.\nNever Samuel.", description="Name")
 
     result = await _invoke("open", _ctx(store), id=view.id)
 
     assert result == {
         "id": view.id,
         "description": "Name",
-        "content": "Call them Fran.\nNever Francisco.",
+        "content": "Call them Sam.\nNever Samuel.",
         "pinned": False,
     }
 
@@ -124,13 +124,11 @@ async def test_open_unknown_id_retries_with_a_help_line():
 
 async def test_update_changes_only_what_is_given():
     store = await _unlocked()
-    view = await store.remember(OWNER, "Call them Francisco.", description="Name")
+    view = await store.remember(OWNER, "Call them Samuel.", description="Name")
 
-    result = await _invoke(
-        "update", _ctx(store), id=view.id, content="Call them Fran.", pinned=True
-    )
+    result = await _invoke("update", _ctx(store), id=view.id, content="Call them Sam.", pinned=True)
 
-    assert result["content"] == "Call them Fran."
+    assert result["content"] == "Call them Sam."
     assert result["description"] == "Name"
     assert result["pinned"] is True
     assert "Name" in await memory_catalog_instructions(_ctx(store))
@@ -191,7 +189,7 @@ async def test_audit_names_each_groups_members():
 
 async def test_forget_asks_with_the_stored_description_then_deletes():
     store = await _unlocked()
-    view = await store.remember(OWNER, "Call them Francisco.", description="Old name")
+    view = await store.remember(OWNER, "Call them Samuel.", description="Old name")
 
     with pytest.raises(ApprovalRequired) as asked:
         _ = await _call("forget", _ctx(store), id=view.id)
