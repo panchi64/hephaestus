@@ -83,10 +83,10 @@ class RecordingProxy:
             self._armed.parent.mkdir(parents=True, exist_ok=True)
             _ = self._armed.write_text(json.dumps(json.loads(body), indent=2) + "\n")
             self._armed = None
+        query = f"?{request.url.query}" if request.url.query else ""
         upstream = self._client.build_request(
             request.method,
-            f"{self._origin}{request.url.path}",
-            params=request.query_params.multi_items(),
+            f"{self._origin}{request.url.path}{query}",
             headers=[(k, v) for k, v in request.headers.items() if k.lower() not in _HOP],
             content=body,
         )
