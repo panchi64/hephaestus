@@ -1,6 +1,7 @@
-/** The home page's welcome line: Talos's voice (`docs/voice.md` §4, §9), drawn at
+/** The home page's welcome line: Talos's voice (`docs/voice.md` §4, §6, §9), drawn at
  *  random from the lines for the time of day plus the ones that fit any hour. A
- *  greeting never claims system state, because it is chosen before any is known. */
+ *  greeting never claims system state, because it is chosen before any is known, and
+ *  its humor stays light enough to survive being read every day. */
 
 export type DayPart = "morning" | "afternoon" | "evening" | "late";
 
@@ -13,7 +14,7 @@ export const GREETINGS: readonly Greeting[] = [
   { when: "morning", text: "Good morning. Shall we begin?" },
   {
     when: "morning",
-    text: "Morning. Coffee is your department; the rest is mine.",
+    text: "Good morning. What's first, and how ambitious are we feeling?",
   },
   { when: "morning", text: "Good morning. Where would you like to start?" },
   { when: "morning", text: "Morning. What's first on the list?" },
@@ -33,21 +34,18 @@ export const GREETINGS: readonly Greeting[] = [
     text: "Good evening. Something small, or something ambitious?",
   },
   { when: "evening", text: "Evening. What are we looking at?" },
-  { when: "evening", text: "Good evening. One more thing, or a new one?" },
-  { when: "late", text: "Still at it. What's the last thing tonight?" },
-  { when: "late", text: "It's late. Shall we keep this one brief?" },
-  { when: "late", text: "Still up. What are we looking at?" },
   {
-    when: "late",
-    text: "The quiet hours. Ideal for thinking, or for regrettable commits.",
+    when: "evening",
+    text: "Good evening. Something to finish, or something to start?",
   },
+  { when: "late", text: "Good evening. What are we working on?" },
+  { when: "late", text: "The quiet hours. Good for the careful work." },
+  { when: "late", text: "Evening. What needs a steady hand?" },
+  { when: "late", text: "Good evening. What shall we take on?" },
   { when: "any", text: "At your service." },
   { when: "any", text: "Ready when you are." },
   { when: "any", text: "What shall we build?" },
-  {
-    when: "any",
-    text: "What are we making? I'll have the objections ready.",
-  },
+  { when: "any", text: "What are we making? I'll bring the edge cases." },
   { when: "any", text: "Where would you like to start?" },
   { when: "any", text: "Go ahead. I'm listening." },
   { when: "any", text: "What needs doing?" },

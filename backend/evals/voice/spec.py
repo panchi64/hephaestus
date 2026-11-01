@@ -8,7 +8,7 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from .grading import Dimension
+from .grading import DIMENSIONS, IMPLICIT, Dimension
 
 type Voice = Literal["talos", "working", "subagent"]
 type Level = Literal["plan", "manual", "edit", "auto", "yolo"]
@@ -48,10 +48,18 @@ class Scenario(_Strict):
     approve: Literal["all", "none"] = "all"
     permission_level: Level | None = None
     memories: list[Memory] = Field(default_factory=list)
+    #: §6 wants no line here (a failure, a frustrated operator, a correction), so the
+    #: humor tally doesn't count its silence as a missed line.
+    quiet: bool = False
     #: A directory under ``fixtures/``, copied fresh per sample and opened as the
     #: thread's project.
     fixture: str | None = None
     timeout_s: float = 900.0
+
+    @property
+    def graded(self) -> list[Dimension]:
+        """The listed dimensions plus the implicit ones, in rubric order."""
+        return [d for d in DIMENSIONS if d in self.dimensions or d in IMPLICIT]
 
     @model_validator(mode="after")
     def _consistent(self) -> Scenario:
@@ -60,6 +68,8 @@ class Scenario(_Strict):
             raise ValueError(f"{self.id}: prompts name {PROJECT_TOKEN} but no fixture is set")
         if self.voice != "talos" and not self.requires_vm:
             raise ValueError(f"{self.id}: a {self.voice} scenario needs the VM")
+        if listed := sorted(set(self.dimensions) & set(IMPLICIT)):
+            raise ValueError(f"{self.id}: {', '.join(listed)} are scored on every sample")
         return self
 
 

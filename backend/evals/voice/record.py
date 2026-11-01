@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -131,6 +132,17 @@ class Run(_Model):
     prompt_fingerprint: str
     stub: bool
     samples: list[Sample] = Field(default_factory=list)
+
+    def replies(self) -> dict[tuple[str, int], int]:
+        """Each sample's Talos reply count, a sub-agent delivery's included."""
+        return {(s.scenario, s.sample): len(s.turns) for s in self.samples}
+
+
+RUN_FILE = "run.json"
+
+
+def load_run(run_dir: Path) -> Run:
+    return Run.model_validate_json((run_dir / RUN_FILE).read_text())
 
 
 def _excerpt(value: object) -> str:

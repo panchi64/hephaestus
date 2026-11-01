@@ -10,21 +10,26 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from .grading import (
     DIMENSIONS,
+    FAULTS,
     GRADES_FILE,
     Grades,
+    HumorTally,
     ScenarioGrade,
     dimension_means,
     expect_pass_rate,
+    humor_tally,
     load_grades,
     scenario_means,
     voice_score,
 )
-from .spec import KEY_FILE, RUNS_DIR
+from .record import load_run
+from .spec import KEY_FILE, RUNS_DIR, load_scenarios
 
 #: A scenario mean that moves this much between two runs is listed with its quotes.
 MOVED = 1.0
@@ -34,6 +39,8 @@ MOVED = 1.0
 class Graded:
     name: str
     grades: Grades
+    #: Each sample's Talos reply count, from the run's ``run.json``.
+    replies: Mapping[tuple[str, int], int]
 
 
 def _resolve(raw: str) -> Path:
@@ -55,7 +62,7 @@ def load_runs(args: list[str]) -> list[Graded]:
         dirs = sorted(d for d in group.iterdir() if (d / GRADES_FILE).is_file())
     else:
         dirs = [_resolve(arg) for arg in args]
-    return [Graded(_named(d), load_grades(d)) for d in dirs]
+    return [Graded(_named(d), load_grades(d), load_run(d).replies()) for d in dirs]
 
 
 def _fmt(value: float | None) -> str:
@@ -92,7 +99,29 @@ def _warnings(runs: list[Graded], *, same_prompt_expected: bool) -> list[str]:
     return out
 
 
-def report(runs: list[Graded], *, same_prompt_expected: bool) -> str:
+def _humor_rows(runs: list[Graded], quiet: Collection[str]) -> list[list[str]]:
+    """The humor tally per run; "–" for a run graded before the tally existed."""
+    tallies = [humor_tally(run.grades, run.replies, quiet) for run in runs]
+
+    def row(label: str, cell: Callable[[HumorTally], str]) -> list[str]:
+        return [label, *("–" if t is None else cell(t) for t in tallies)]
+
+    rows = [
+        row("humor lines", lambda t: str(t.lines)),
+        row("replies with a line", lambda t: f"{t.reply_rate:.0%}"),
+        row("conversations with a line", lambda t: f"{t.conversation_rate:.0%}"),
+        row("devices used", lambda t: str(t.devices)),
+        row("lines back to back", lambda t: str(t.back_to_back)),
+    ]
+    rows += [
+        row(f"{fault} lines", lambda t, fault=fault: str(t.faults[fault]))
+        for fault in FAULTS
+        if any(t is not None and t.faults[fault] for t in tallies)
+    ]
+    return rows
+
+
+def report(runs: list[Graded], *, same_prompt_expected: bool, quiet: Collection[str]) -> str:
     names = [run.name for run in runs]
     pair = len(runs) == 2
     header = ["", *names, *(["Δ"] if pair else [])]
@@ -120,6 +149,9 @@ def report(runs: list[Graded], *, same_prompt_expected: bool) -> str:
     ]
     out += ["", "| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     out += ["| " + " | ".join(row) + " |" for row in rows]
+
+    out += ["", "## Humor", "", "| | " + " | ".join(names) + " |", "|" + "---|" * (len(names) + 1)]
+    out += ["| " + " | ".join(row) + " |" for row in _humor_rows(runs, quiet)]
 
     per_scenario = [scenario_means(run.grades) for run in runs]
     ids = list(dict.fromkeys(i for m in per_scenario for i in m))
@@ -186,7 +218,8 @@ def main(argv: list[str]) -> int:
     if len(runs) < 2:
         print("Need at least two graded runs.")
         return 2
-    print(report(runs, same_prompt_expected=len(argv) == 1))
+    quiet = {s.id for s in load_scenarios() if s.quiet}
+    print(report(runs, same_prompt_expected=len(argv) == 1, quiet=quiet))
     return 0
 
 

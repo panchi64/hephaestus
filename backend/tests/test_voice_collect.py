@@ -111,6 +111,6 @@ def test_the_document_is_blind_and_carries_lint() -> None:
     assert "# Voice run g / A" in text
     assert "> Great question! It's 429." in text
     assert "`stock-opener`: Great question" in text
-    assert "Dimensions: `shape`, `helper`" in text
+    assert "Dimensions: `character`, `shape`, `humor`, `helper`" in text
     assert "- title: 'HTTP rate limit code'" in text
     assert "stub" not in text

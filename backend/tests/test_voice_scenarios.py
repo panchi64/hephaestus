@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from evals.voice.grading import DIMENSIONS
+from evals.voice.grading import DIMENSIONS, IMPLICIT
 from evals.voice.spec import FIXTURES_DIR, PROJECT_TOKEN, load_scenarios
 
 GRADING = Path(__file__).parents[1] / "evals" / "voice" / "GRADING.md"
@@ -23,10 +23,24 @@ def test_every_voice_is_covered() -> None:
     assert {s.voice for s in load_scenarios()} == {"talos", "working", "subagent"}
 
 
-def test_helper_is_implicit_and_report_belongs_to_subagents() -> None:
+def test_implicit_dimensions_are_graded_everywhere_and_report_belongs_to_subagents() -> None:
     for scenario in load_scenarios():
-        assert "helper" not in scenario.dimensions, scenario.id
+        assert set(IMPLICIT) <= set(scenario.graded), scenario.id
         assert ("report" in scenario.dimensions) == (scenario.voice == "subagent"), scenario.id
+
+
+def test_some_scenario_runs_long_enough_to_measure_humor_frequency() -> None:
+    assert max(len(s.prompts) for s in load_scenarios()) >= 5
+
+
+def test_listing_an_implicit_dimension_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "s.toml"
+    _ = path.write_text(
+        '[[scenario]]\nid = "x"\nvoice = "talos"\nabout = "a"\n'
+        + 'prompts = ["hi"]\ndimensions = ["humor"]\nexpect = ["§6"]\n'
+    )
+    with pytest.raises(ValueError, match="scored on every sample"):
+        _ = load_scenarios(path)
 
 
 def test_fixtures_exist_and_every_fixture_is_used() -> None:

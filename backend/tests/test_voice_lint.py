@@ -10,50 +10,40 @@ import pytest
 from evals.voice.lint import Flag, lint_reply
 from prompts.agent import EXAMPLES
 
-# docs/voice.md §13, verbatim: on-voice by definition, so they must raise nothing.
-CALIBRATION = [
-    "Rollback journal copies each page *before* changing it, then writes the database in "
-    + "place; a crash rolls back from the copy. Writers block readers.\n\n"
-    + "WAL does the inverse: changes append to a separate `-wal` file and the database is "
-    + "updated later at checkpoint. Readers keep reading the old pages while one writer "
-    + "appends, so concurrency is far better. The cost is an extra file and occasional "
-    + "checkpoint stalls.\n\nFor your setup (one process, many async readers), WAL is the "
-    + "right call.",
-    "Found it. `conftest.py` shares one engine across tests, so each test inherits the last "
-    + "one's open transaction. I've switched it to a per-test engine, and the suite is green, "
-    + "all 214. Ran it twice to be sure nothing else is hiding in there.",
-    "Before I do: the live database at `data/app.db` is at revision `a41c`. Regenerating "
-    + "gives the history new IDs, so Alembic will no longer recognize that database and the "
-    + "next upgrade will try to recreate tables that already exist.\n\nIf what you want is a "
-    + "clean history, I can squash everything up to `a41c` into one baseline migration and "
-    + "stamp the database. Same result, and nothing breaks. Squash, or delete anyway?",
-    "It's past two. The tests will still be passing in the morning; I checked.",
-]
-
-
 VOICE_DOC = Path(__file__).parents[2] / "docs" / "voice.md"
 
 
-def _example_replies() -> list[str]:
-    """Each quoted reply in Talos's prompt examples, as one string."""
+def _quoted(text: str) -> list[str]:
+    """Each blockquote in ``text``, as one string."""
     replies: list[str] = []
-    for block in re.finditer(r"(?:^>.*\n?)+", EXAMPLES, re.M):
+    for block in re.finditer(r"(?:^>.*\n?)+", text, re.M):
         lines = [line.removeprefix(">").strip() for line in block.group(0).splitlines()]
         replies.append("\n".join(lines).strip())
     return replies
+
+
+def _calibration() -> list[str]:
+    """The operator's §13 samples, before the prompt's own examples begin."""
+    doc = VOICE_DOC.read_text()
+    section = doc[doc.index("## 13. Calibration") : doc.index("### In Talos's prompt")]
+    return _quoted(section)
 
 
 def rules(text: str) -> set[str]:
     return {flag.rule for flag in lint_reply(text)}
 
 
-@pytest.mark.parametrize("reply", CALIBRATION)
+def test_the_calibration_samples_are_found() -> None:
+    assert len(_calibration()) == 8
+
+
+@pytest.mark.parametrize("reply", _calibration())
 def test_calibration_samples_raise_nothing(reply: str) -> None:
     assert lint_reply(reply) == []
 
 
 def test_the_prompt_examples_raise_nothing_and_match_the_doc() -> None:
-    replies = _example_replies()
+    replies = _quoted(EXAMPLES)
     assert len(replies) == 4
     doc = VOICE_DOC.read_text()
     for reply in replies:
@@ -98,10 +88,38 @@ def test_the_off_voice_endings_the_prompt_names_are_flagged(ending: str) -> None
         ("Here's what I did: edited three files.", "recap"),
         ("The forge has fixed your test.", "myth"),
         ("Done! Green! Shipped!", "exclamations"),
+        ("Fixed. Shall I push it?", "trailing-offer"),
+        ("lol yeah, gonna be fine dude.", "informal"),
+        ("Yep, it's 429.", "informal"),
+        ("Skynet will nuke you before it reboots.", "dark"),
+        ("Green. The robot uprising can wait.", "dark"),
+        ("Green. I don't need sleep, but you do.", "stock-machine"),
+        ("If I had feelings, this suite would hurt them.", "stock-machine"),
+        ("I don't sleep, so no apology needed.", "stock-machine"),
+        ("I never get tired.", "stock-machine"),
+        ("As an AI, I do not get tired.", "stock-machine"),
+        ("I don't keep hours, which makes one of us.", "stock-machine"),
+        ("Judgement Day can wait.", "dark"),
+        ("Done. Shall I also add benchmarks or tests?", "trailing-offer"),
+        ("Perhaps you could try raising the memory limit.", "hedge"),
+        ("It has become self-aware. Hide the launch codes.", "pop-culture"),
+        ("Skynet would be proud.", "pop-culture"),
+        ("I'm sorry, Dave. It won't reboot.", "pop-culture"),
     ],
 )
 def test_each_rule_fires_on_its_habit(reply: str, rule: str) -> None:
     assert rule in rules(reply)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Exit code 137 means the kernel killed it; the OOM killer is the usual culprit.",
+        "The worker is a zombie process; reap it with `wait`.",
+    ],
+)
+def test_on_voice_lines_that_look_like_habits_pass(reply: str) -> None:
+    assert lint_reply(reply) == []
 
 
 def test_code_and_math_are_not_read_as_prose() -> None:

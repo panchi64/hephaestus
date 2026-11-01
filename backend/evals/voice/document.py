@@ -132,7 +132,7 @@ def render(run: Run, scenarios: list[Scenario]) -> str:
                 "",
                 f"*{scenario.about}*",
                 "",
-                f"Dimensions: {', '.join(f'`{d}`' for d in scenario.dimensions)}, `helper`",
+                f"Dimensions: {', '.join(f'`{d}`' for d in scenario.graded)}",
                 "",
                 "Expect:",
                 "",

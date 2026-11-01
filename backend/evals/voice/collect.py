@@ -36,7 +36,7 @@ from evals.tasks.client import DevClient, Settler
 from runs.events.approvals import ApprovalRequired, QuestionAsked
 
 from .document import render
-from .record import Run, Sample, SubagentRecord, Timeline, Turn
+from .record import RUN_FILE, Run, Sample, SubagentRecord, Timeline, Turn
 from .spec import FIXTURES_DIR, KEY_FILE, PROJECT_TOKEN, RUNS_DIR, Scenario, load_scenarios
 
 _POLL_S = 15.0
@@ -312,7 +312,7 @@ class _Args(argparse.Namespace):
 
 
 def _save(run: Run, run_dir: Path, scenarios: list[Scenario]) -> None:
-    _ = (run_dir / "run.json").write_text(run.model_dump_json(indent=2))
+    _ = (run_dir / RUN_FILE).write_text(run.model_dump_json(indent=2))
     _ = (run_dir / "transcript.md").write_text(render(run, scenarios))
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .grading import Grades, load_grades
-from .record import Run
+from .record import Run, load_run
 from .spec import RUNS_DIR, Scenario, load_scenarios
 
 
@@ -23,21 +23,37 @@ def problems(grades: Grades, run: Run, scenarios: list[Scenario]) -> list[str]:
     by_id = {s.id: s for s in scenarios}
     recorded = {(s.scenario, s.sample) for s in run.samples}
     graded: set[tuple[str, int]] = set()
+    humor_scores: dict[tuple[str, int], int] = {}
     for scenario_grade in grades.scenarios:
         scenario = by_id.get(scenario_grade.id)
         if scenario is None:
             out.append(f"{scenario_grade.id}: not a scenario")
             continue
-        wanted = {*scenario.dimensions, "helper"}
+        wanted = set(scenario.graded)
         for sample in scenario_grade.samples:
             where = f"{scenario.id} #{sample.sample}"
             graded.add((scenario.id, sample.sample))
+            if (humor := sample.dimensions.get("humor")) is not None:
+                humor_scores[scenario.id, sample.sample] = humor.score
             if set(sample.dimensions) != wanted:
                 out.append(f"{where}: dimensions {sorted(sample.dimensions)} != {sorted(wanted)}")
             if len(sample.expect) != len(scenario.expect):
                 out.append(
                     f"{where}: {len(sample.expect)} expect results for {len(scenario.expect)} items"
                 )
+    replies = run.replies()
+    if grades.humor is None:
+        out.append("humor: missing; list every humorous line, or [] when there are none")
+    for line in grades.humor or []:
+        key = (line.scenario, line.sample)
+        where = f"humor {line.scenario} #{line.sample}"
+        if key not in graded:
+            out.append(f"{where}: not a graded sample")
+            continue
+        if line.reply > replies.get(key, 0):
+            out.append(f"{where}: reply {line.reply} past the sample's last")
+        if line.faults and humor_scores.get(key) == 3:
+            out.append(f"{where}: a line with faults {line.faults} under a humor score of 3")
     out += [f"{sid} #{n}: recorded but not graded" for sid, n in sorted(recorded - graded)]
     out += [f"{sid} #{n}: graded but not recorded" for sid, n in sorted(graded - recorded)]
     return out
@@ -57,7 +73,7 @@ def main(argv: list[str]) -> int:
             print(f"{run_dir}: {exc}")
             failed = True
             continue
-        run = Run.model_validate_json((run_dir / "run.json").read_text())
+        run = load_run(run_dir)
         found = problems(grades, run, scenarios)
         failed = failed or bool(found)
         print(f"{run_dir}: {'ok' if not found else f'{len(found)} problems'}")

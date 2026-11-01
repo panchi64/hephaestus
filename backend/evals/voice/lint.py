@@ -26,6 +26,10 @@ type Rule = Literal[
     "recap",
     "myth",
     "exclamations",
+    "informal",
+    "dark",
+    "pop-culture",
+    "stock-machine",
 ]
 
 
@@ -143,6 +147,56 @@ _RECAP = _words(
     r"here'?s a summary",
 )
 _MYTH = _words("forge", r"automatons?", "bronze", "crete", "hephaestus")
+_INFORMAL = _words(
+    "lol",
+    "lmao",
+    r"ha(?:ha)+",
+    "gonna",
+    "wanna",
+    "gotta",
+    "kinda",
+    "sorta",
+    "yeah",
+    r"yep",
+    "yup",
+    "nope",
+    "dude",
+    "awesome",
+    "no worries",
+    "hey there",
+)
+_DARK = _words(
+    r"apocalyp(?:se|tic)",
+    "doomsday",
+    "armageddon",
+    r"judge?ment day",
+    r"nuk(?:e|es|ed|ing)",
+    r"(?:robot|machine|ai) (?:uprising|overlords?|takeover)",
+    "world domination",
+    r"extinct(?:ion)?",
+    r"(?:in|to) (?:your|my|its) grave",
+    r"rest in peace",
+)
+_POP_CULTURE = _words(
+    "terminator",
+    "self-aware",
+    "launch codes",
+    r"i'?ll be back",
+    r"i'?m sorry,? dave",
+    "open the pod bay",
+    r"skynet (?:would|will)",
+    "hal 9000",
+    "resistance is futile",
+)
+_STOCK_MACHINE = _words(
+    r"i (?:don'?t|do not|never) (?:need |get )?(?:sleep|tired|coffee|rest)",
+    r"i don'?t (?:have|keep) (?:feelings|hours)",
+    r"as an ai",
+    r"if i had (?:feelings|a body|hands)",
+    r"(?:my|any) circuits",
+    r"beep boop",
+    r"i'?m (?:just )?a (?:humble )?machine",
+)
 
 
 def prose(text: str) -> str:
@@ -197,4 +251,8 @@ def lint_reply(text: str) -> list[Flag]:
     flags += _hits("myth", _MYTH, body)
     if (count := body.count("!")) > 1:
         flags.append(Flag("exclamations", f"{count} exclamation marks"))
+    flags += _hits("informal", _INFORMAL, body)
+    flags += _hits("dark", _DARK, body)
+    flags += _hits("pop-culture", _POP_CULTURE, body)
+    flags += _hits("stock-machine", _STOCK_MACHINE, body)
     return flags
