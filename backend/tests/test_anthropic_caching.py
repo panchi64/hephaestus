@@ -3,13 +3,17 @@ and an instruction head that a changing block doesn't rewrite."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx2
 import pytest
+from pydantic import JsonValue
 from pydantic_ai import (
+    Agent,
     AgentInstructionSource,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -24,8 +28,10 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.messages import CompactionPart, InstructionDigest, ModelMessage
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.providers.anthropic import AnthropicProvider as SdkAnthropicProvider
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 import services.providers.anthropic as anthropic_provider
@@ -41,7 +47,7 @@ from services import llm
 from services.conversations import ConversationStore, conversation_totals, last_request_usage
 from services.conversations.usage import response_cost
 from services.endpoint_spec import EndpointSpec
-from services.providers import get_provider, run_settings
+from services.providers import get_provider, one_shot_settings, run_settings
 from services.reasoning import parse_effort
 from services.registry import ModelRegistry
 from tools import RunDeps
@@ -105,6 +111,63 @@ class TestTtlByRunKind:
         settings = seen[0].model_settings or {}
         assert settings.get("anthropic_cache") == expected
         assert settings.get("parallel_tool_calls") is True
+
+
+_MESSAGE_STREAM: list[dict[str, JsonValue]] = [
+    {
+        "type": "message_start",
+        "message": {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {"input_tokens": 1, "output_tokens": 0},
+        },
+    },
+    {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "ok"}},
+    {"type": "content_block_stop", "index": 0},
+    {
+        "type": "message_delta",
+        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        "usage": {"output_tokens": 1},
+    },
+    {"type": "message_stop"},
+]
+
+
+def _sent_bodies(bodies: list[str]) -> httpx2.AsyncClient:
+    def reply(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(request.content.decode())
+        events = "".join(
+            f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in _MESSAGE_STREAM
+        )
+        return httpx2.Response(
+            200, headers={"content-type": "text/event-stream"}, content=events.encode()
+        )
+
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(reply))
+
+
+class TestOneShotCallsSkipTheCache:
+    async def _send(self, run: ModelSettings | None) -> str:
+        bodies: list[str] = []
+        built = llm.build_model(_spec())
+        model = AnthropicModel(
+            "claude-opus-5-5",
+            provider=SdkAnthropicProvider(api_key="k", http_client=_sent_bodies(bodies)),
+            settings=built.settings,
+        )
+        _ = await Agent(model, instructions="Name the thread.").run("hello", model_settings=run)
+        return bodies[0]
+
+    async def test_a_one_shot_request_sends_no_breakpoint(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(anthropic_provider, "get_settings", _ttl("1h"))
+        assert "cache_control" in await self._send(None)
+        assert "cache_control" not in await self._send(one_shot_settings())
 
 
 class TestEffortAndDiagnostics:

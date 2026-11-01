@@ -35,7 +35,7 @@ from models.registry import ModelEndpoint, ModelRole
 from runs import Endpoint, EndpointGate
 from services import embeddings, llm, reasoning
 from services.endpoint_spec import EndpointSpec
-from services.providers import DEFAULT_PROVIDER_ID, get_provider
+from services.providers import DEFAULT_PROVIDER_ID, get_provider, one_shot_settings
 from services.providers.base import ModelLimits
 
 
@@ -59,7 +59,8 @@ def _same_server(one: str, two: str) -> bool:
 @dataclass(frozen=True)
 class ResolvedModel:
     """A resolved role: the model to run, plus ``reasoning_off``, the settings
-    background callers (titling) merge over their caps (see ``Provider.reasoning_off``).
+    background callers (titling) merge over their caps (``Provider.reasoning_off`` over
+    every adapter's ``Provider.one_shot_settings``).
     ``context_window`` is the primary endpoint's window (None when undeclared) —
     the chat layer forwards it so the run can report context fullness. ``vision`` is
     true only when **every** endpoint in the resolved fallback chain can see — the chat
@@ -579,7 +580,11 @@ class ModelRegistry:
         # The provider adapter owns the "turn thinking off" shape for its own models;
         # the openai-compatible/local adapters fall back to the model-name heuristics
         # in `services/reasoning` because a generic gateway can front any family.
-        reasoning_off = get_provider(primary.provider).reasoning_off(llm.descriptor_of(primary))
+        # Every background caller makes one-shot requests, so no link of the chain caches.
+        reasoning_off: ModelSettings = {
+            **one_shot_settings(),
+            **get_provider(primary.provider).reasoning_off(llm.descriptor_of(primary)),
+        }
         return ResolvedModel(
             model=llm.build_chain(specs, self._gate),
             reasoning_off=reasoning_off,
