@@ -63,6 +63,51 @@ def spawn_model(
     return SpawnModel(parent, "parent")
 
 
+class UnpickableModelError(Exception):
+    """The spawning agent asked for a model it may not have: ``problem`` says why, ``hint``
+    what to do instead."""
+
+    def __init__(self, problem: str, hint: str) -> None:
+        super().__init__(f"{problem}. {hint}")
+        self.problem: str = problem
+        self.hint: str = hint
+
+
+def pick(agent: AgentDefinition, model: str, offers: list[OfferedModel] | None) -> ChoosableModel:
+    """The choosable entry ``model`` names among ``offers``.
+
+    Args:
+        agent: The agent being spawned; a pinned one takes no requested model.
+        model: The id the spawning agent passed, ``<endpoint name>/<model>``.
+        offers: What :func:`offered` returned, or None when choosing is unavailable.
+
+    Raises:
+        UnpickableModelError: The agent is pinned, choosing is unavailable, the operator
+            listed nothing, or ``model`` isn't on the list.
+    """
+    if is_pinned(agent):
+        raise UnpickableModelError(
+            f"`{agent.name}` is pinned to a model the operator chose for it",
+            "spawn it without `model`",
+        )
+    if offers is None:
+        raise UnpickableModelError(
+            "choosing a model is unavailable in this deployment", "spawn without `model`"
+        )
+    if not offers:
+        raise UnpickableModelError(
+            "the operator has listed no models to choose",
+            "spawn without `model`; the agent runs on its default",
+        )
+    match = next((offer for offer in offers if offer.id == model), None)
+    if match is None:
+        raise UnpickableModelError(
+            f"{model!r} is not a model you may choose",
+            f"choose one of {', '.join(offer.id for offer in offers)}, or leave `model` unset",
+        )
+    return match.entry
+
+
 def is_local(base_url: str) -> bool:
     """Whether an endpoint is on this machine or its network: loopback, a private address,
     or a ``.local``/``localhost`` name."""

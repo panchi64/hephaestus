@@ -17,7 +17,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
-from evals.voice.proxy import RecordingProxy, carries_tools
+from evals.drive.proxy import RecordingProxy, carries_tools
 
 CHUNKS = [b"data: one\n\n", b"data: two\n\n", b"data: [DONE]\n\n"]
 

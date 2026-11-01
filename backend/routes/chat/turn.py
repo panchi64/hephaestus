@@ -50,8 +50,9 @@ class TurnModels(NamedTuple):
     endpoint: Endpoint | None = None
     #: ``ResolvedModel.with_effort`` for the main model.
     with_effort: Callable[[ThinkingEffort], Model] | None = None
-    #: ``ResolvedModel.label`` for the main model.
+    #: ``ResolvedModel.label`` and ``model_name`` for the main model.
     label: str = ""
+    model_name: str = ""
 
 
 class WallClockOverride(TypedDict, total=False):
@@ -134,6 +135,7 @@ async def resolve_turn_models(
         main.endpoint,
         main.with_effort,
         main.label,
+        main.model_name,
     )
 
 

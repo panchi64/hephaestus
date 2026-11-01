@@ -1,7 +1,7 @@
 """Provider keys for eval runs, read from the environment or ``evals/voice/.env``.
 
-The ``.env`` file is gitignored. The key is only ever sent to the dev instance, which
-stores it on a temporary endpoint that the run deletes when it ends.
+The ``.env`` file is gitignored and shared by every suite. The key is only ever sent to
+the dev instance, which stores it on a temporary endpoint that the run deletes when it ends.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-ENV_FILE = Path(__file__).with_name(".env")
+ENV_FILE = Path(__file__).parent.parent / "voice" / ".env"
 
 
 def _from_file(path: Path, name: str) -> str | None:

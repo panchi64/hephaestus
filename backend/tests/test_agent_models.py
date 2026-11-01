@@ -11,13 +11,21 @@ from pydantic_ai.models.test import TestModel
 
 from core.db import init_db, make_engine
 from routes.deps import app_state
+from runs import Endpoint
 from services.agent_models import AgentModels, ChoosableModel, ModelPin
-from services.agents import builtin_roster
+from services.agents import AgentDefinition, builtin_roster
 from services.conversations import ConversationBinding, ModelChoice
 from services.registry import ModelRegistry, ResolvedModel
 from services.settings_store import SettingsStore
 from services.subagents import SubagentParent
-from services.subagents.models import is_local, offered, spawn_model
+from services.subagents.models import (
+    OfferedModel,
+    UnpickableModelError,
+    is_local,
+    offered,
+    pick,
+    spawn_model,
+)
 from tests._helpers import client_app, composer_of, register_stub_provider, stub_resolution
 from tests._json import arr, json_body, json_list, obj
 from tests.test_subagents_launch import launcher_of, records_of, settle_run
@@ -50,7 +58,13 @@ def _record_resolution(monkeypatch: pytest.MonkeyPatch, subagent_bound: bool = F
     ) -> ResolvedModel:
         calls.append((role, override_endpoint_id, override_model))
         resolved = await stub_resolution(self, TestModel(custom_output_text="done"))
-        return replace(resolved, label=f"{role}:{override_endpoint_id}/{override_model}")
+        endpoint_id = override_endpoint_id or f"{role}-endpoint"
+        return replace(
+            resolved,
+            label=f"{role}:{override_endpoint_id}/{override_model}",
+            endpoint=Endpoint(id=endpoint_id, name=endpoint_id, capacity=None),
+            model_name=override_model or f"{role}-model",
+        )
 
     real_binding = ModelRegistry.get_role_binding
 
@@ -119,6 +133,43 @@ class TestSpawnModel:
 )
 def test_local_means_this_machine_or_its_network(url: str, local: bool):
     assert is_local(url) is local
+
+
+def _offer(endpoint: str, model: str) -> OfferedModel:
+    entry = ChoosableModel(endpoint_id=endpoint, model=model)
+    return OfferedModel(
+        id=f"{endpoint}/{model}",
+        entry=entry,
+        provider="p",
+        local=True,
+        context_window=None,
+        vision=False,
+    )
+
+
+class TestPick:
+    def test_an_offered_id_picks_its_entry(self):
+        offers = [_offer("local", "small"), _offer("cloud", "big")]
+        assert pick(EXPLORER, "cloud/big", offers) == offers[1].entry
+
+    @pytest.mark.parametrize(
+        ("agent", "model", "offers", "says"),
+        [
+            (replace(EXPLORER, model="m"), "local/small", [_offer("local", "small")], "pinned"),
+            (EXPLORER, "local/small", None, "unavailable"),
+            (EXPLORER, "local/small", [], "listed no models"),
+            (EXPLORER, "local/old", [_offer("local", "small")], "local/small"),
+        ],
+    )
+    def test_anything_else_is_refused(
+        self,
+        agent: AgentDefinition,
+        model: str,
+        offers: list[OfferedModel] | None,
+        says: str,
+    ):
+        with pytest.raises(UnpickableModelError, match=says):
+            _ = pick(agent, model, offers)
 
 
 class TestSettings:
@@ -324,7 +375,9 @@ class TestLaunch:
             assert row is not None
             assert (row.model_source, row.model_label) == ("parent", "main:None/None")
             binding = await app_state(app).conversations.binding(started.conversation_id)
-            assert binding.model_choice == ModelChoice()
+            assert binding.model_choice == ModelChoice(
+                endpoint_id="main-endpoint", model="main-model"
+            )
             assert calls[0] == ("main", None, None)
             cards = obj(json_body(await client.get(f"/conversations/{root}/subagents")))
             card = obj(arr(cards["subagents"])[0])
@@ -345,6 +398,17 @@ class TestLaunch:
             assert row is not None and row.model_source == "role"
             assert calls[0] == ("subagent", None, None)
             await settle_run(app, started.run_id)
+
+            # Unbinding the role afterwards doesn't move the child off what it launched on.
+            async def unbound(
+                self: ModelRegistry, owner_id: str, role: str
+            ) -> tuple[list[str], str | None]:
+                return [], None
+
+            monkeypatch.setattr(ModelRegistry, "get_role_binding", unbound)
+            calls.clear()
+            _ = await composer_of(app).resolve(OWNER, started.conversation_id)
+            assert calls[0] == ("main", "subagent-endpoint", "subagent-model")
 
     async def test_a_requested_model_is_fixed_for_the_childs_later_turns(
         self, monkeypatch: pytest.MonkeyPatch

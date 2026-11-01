@@ -39,7 +39,7 @@ from services.subagents import (
     SubagentView,
 )
 from services.subagents.callsigns import class_display
-from services.subagents.models import is_pinned, offered
+from services.subagents.models import UnpickableModelError, is_pinned, offered, pick
 from tools.child_worktrees import discard_child, merge_child, worktree_paths
 from tools.deps import RunDeps
 from tools.describe import registered_tools
@@ -352,30 +352,17 @@ async def _requested_model(
     ctx: RunContext[RunDeps], agent: AgentDefinition, model: str
 ) -> ChoosableModel:
     """The choosable entry ``model`` names, or a retry saying why it can't be used."""
-    if is_pinned(agent):
-        raise ModelRetry(
-            f"`{agent.name}` is pinned to a model the operator chose for it. Spawn it "
-            + "without `model`."
-        )
     registry = ctx.deps.caps.get_optional(ModelRegistry)
     settings = ctx.deps.caps.get_optional(AgentModels)
-    if registry is None or settings is None:
-        raise ModelRetry(
-            "Choosing a model is unavailable in this deployment. Spawn without `model`."
-        )
-    offers = await offered(registry, settings, ctx.deps.owner_id)
-    if not offers:
-        raise ModelRetry(
-            "The operator has listed no models to choose. Spawn without `model`; the agent "
-            + "runs on its default."
-        )
-    match = next((offer for offer in offers if offer.id == model), None)
-    if match is None:
-        raise ModelRetry(
-            f"{model!r} is not a model you may choose. Choose one of: "
-            + f"{', '.join(offer.id for offer in offers)}, or leave `model` unset."
-        )
-    return match.entry
+    offers = (
+        None
+        if registry is None or settings is None or is_pinned(agent)
+        else await offered(registry, settings, ctx.deps.owner_id)
+    )
+    try:
+        return pick(agent, model, offers)
+    except UnpickableModelError as exc:
+        raise ModelRetry(render_tool_error(exc.problem, hints=[exc.hint])) from exc
 
 
 async def _label(

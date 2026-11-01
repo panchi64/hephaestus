@@ -21,7 +21,7 @@ from pathlib import Path
 
 from devkit import live
 from devkit.instance import resolve
-from evals.tasks.client import DevClient, Settler
+from evals.drive.client import DevClient, Policy, Settler
 from evals.tasks.judge import judge
 from evals.tasks.report import write_summary
 from evals.tasks.results import Outcome, TaskResult, TurnRecord
@@ -60,7 +60,7 @@ async def _run_turn(
     run_id, conversation_id = await client.send(prompt, thread)
     turn = _Turn(record=TurnRecord(ended="timeout"))
     started = time.monotonic()
-    settler = Settler(client, run_id, approve=task.approve == "all")
+    settler = Settler(client, run_id, Policy(approve=task.approve == "all"))
 
     async def follow() -> None:
         async for frame in client.frames(run_id):

@@ -1,0 +1,69 @@
+{
+  "entries": [
+    {
+      "id": "H-001",
+      "fingerprint": "platform|tooling|dev instance status reports not ready when it runs on a real model",
+      "title": "dev_instance status reports not ready when it runs on a real model",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "tooling",
+      "scenarios": [],
+      "first_seen": "planning (2026-11-01)",
+      "last_seen": "planning (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "With HEPH_DEV_CHAT_* set the launcher never starts the stub (devkit/launch.py ensure_stub), but status_payload's `ready` is all(running.values()), which includes the stub port, so status --json says ready: false on a working instance.",
+      "suspect": "devkit/cli.py status_payload",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-002",
+      "fingerprint": "behavior|intercom|the worker roster line says a running worker cannot be corrected but agents message reaches it",
+      "title": "The worker roster line says a running worker can't be corrected, but agents_message reaches it",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "intercom",
+      "scenarios": [],
+      "first_seen": "planning (2026-11-01)",
+      "last_seen": "planning (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "services/agents/builtin.py worker description: \"you cannot correct a worker while it runs\"; tools/delegation.py agents_message: \"It reaches a running agent at its next step\". Talos is told both, and the intercom scenarios depend on the second.",
+      "suspect": "services/agents/builtin.py",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-003",
+      "fingerprint": "behavior|delegation|the delegation skill both says spawning a writer asks the operator and that spawning never asks",
+      "title": "The delegation skill both says spawning a writer asks the operator and that spawning never asks",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "delegation",
+      "scenarios": [],
+      "first_seen": "planning (2026-11-01)",
+      "last_seen": "planning (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "skills/delegation/SKILL.md:18 \"spawning one that can write asks the operator first\" against :39 \"Spawning and messaging never ask the operator\".",
+      "suspect": "skills/delegation/SKILL.md",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-004",
+      "fingerprint": "platform|tools|the vm image has no pytest so every python test run starts with an install",
+      "title": "The VM image has no pytest, so every Python test run starts with an install",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "tools",
+      "scenarios": [],
+      "first_seen": "planning (2026-11-01)",
+      "last_seen": "planning (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "vm/build_image.sh installs python3-pip and python3-venv but not pytest; a sandboxed `pytest` fails with command not found until the agent pip-installs it.",
+      "suspect": "vm/build_image.sh",
+      "status": "open",
+      "note": ""
+    }
+  ],
+  "groups": []
+}

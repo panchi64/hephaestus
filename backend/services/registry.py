@@ -78,6 +78,8 @@ class ResolvedModel:
     with_effort: Callable[[ThinkingEffort], Model] | None = None
     #: The primary as the operator names it: ``<endpoint name>/<model>``.
     label: str = ""
+    #: The primary's model id.
+    model_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -604,6 +606,7 @@ class ModelRegistry:
                 else None
             ),
             label=f"{primary.name}/{primary.model}",
+            model_name=primary.model,
         )
 
     def _chain_with_effort(self, specs: Sequence[EndpointSpec], effort: ThinkingEffort) -> Model:

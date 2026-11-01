@@ -220,6 +220,11 @@ class ConversationSubagents(SubagentLauncher):
             models = await resolve_choice(self._models, chosen.choice, owner_id=owner_id)
         except Exception as exc:
             raise SubagentUnavailableError(f"No usable model is configured: {exc}") from exc
+        # A role or the parent's choice can name a role, which a later rebind would move;
+        # the child keeps the model it launched on.
+        choice = chosen.choice
+        if chosen.source in ("role", "parent") and models.endpoint is not None:
+            choice = ModelChoice(endpoint_id=models.endpoint.id, model=models.model_name)
 
         # Capped by the spawning thread: one approved launch must not buy an unchosen level.
         permission = permission_level(agent.permission_ceiling or DEFAULT_PERMISSION)
@@ -276,7 +281,7 @@ class ConversationSubagents(SubagentLauncher):
             workspace_key=workspace_key,
             # Hidden from the session list until the operator opens it.
             ephemeral=True,
-            model_choice=chosen.choice,
+            model_choice=choice,
         )
         # Read back as every later turn reads it (`ConversationBinding.leases_from`).
         stored = await self._conversations.binding(conversation_id)

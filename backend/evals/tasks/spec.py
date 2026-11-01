@@ -9,6 +9,18 @@ from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from evals.drive.checks import AnswerContains, Check, FileContains, FileExists, Root
+
+__all__ = [
+    "AnswerContains",
+    "Evidence",
+    "FileContains",
+    "FileExists",
+    "Task",
+    "ToolUsed",
+    "load_tasks",
+]
+
 type Area = Literal["build", "research", "admin", "personal"]
 #: Both need a VM: web search is SearXNG in the services VM.
 type Requirement = Literal["vm", "search"]
@@ -23,59 +35,11 @@ class Evidence:
     #: The thread's sandbox on the host, the model's ``/work``.
     workdir: Path
 
-
-def _mentions(haystack: str, needles: list[str]) -> list[bool]:
-    return [needle.lower() in haystack.lower() for needle in needles]
-
-
-class _Check(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+    def file(self, root: Root, path: str) -> Path | None:
+        return self.workdir / path if root == "sandbox" else None
 
 
-class AnswerContains(_Check):
-    """The final answer mentions these strings, case-insensitively."""
-
-    kind: Literal["answer_contains"] = "answer_contains"
-    text: list[str]
-    mode: Literal["all", "any"] = "all"
-
-    def passes(self, evidence: Evidence) -> bool:
-        hits = _mentions(evidence.answer, self.text)
-        return all(hits) if self.mode == "all" else any(hits)
-
-    def label(self) -> str:
-        return f"answer {self.mode} of {self.text}"
-
-
-class FileExists(_Check):
-    """A file exists in the thread's sandbox, at a path relative to ``/work``."""
-
-    kind: Literal["file_exists"] = "file_exists"
-    path: str
-
-    def passes(self, evidence: Evidence) -> bool:
-        return (evidence.workdir / self.path).is_file()
-
-    def label(self) -> str:
-        return f"file {self.path}"
-
-
-class FileContains(_Check):
-    """A sandbox file contains these strings, case-insensitively."""
-
-    kind: Literal["file_contains"] = "file_contains"
-    path: str
-    text: list[str]
-
-    def passes(self, evidence: Evidence) -> bool:
-        target = evidence.workdir / self.path
-        return target.is_file() and all(_mentions(target.read_text(errors="replace"), self.text))
-
-    def label(self) -> str:
-        return f"{self.path} contains {self.text}"
-
-
-class ToolUsed(_Check):
+class ToolUsed(Check):
     """At least one tool whose name starts with ``prefix`` completed."""
 
     kind: Literal["tool_used"] = "tool_used"
@@ -88,7 +52,7 @@ class ToolUsed(_Check):
         return f"tool {self.prefix}*"
 
 
-type Check = Annotated[
+type TaskCheck = Annotated[
     AnswerContains | FileExists | FileContains | ToolUsed, Field(discriminator="kind")
 ]
 
@@ -105,7 +69,7 @@ class Task(BaseModel):
     approve: Literal["all", "none"] = "all"
     requires: list[Requirement] = Field(default_factory=list)
     timeout_s: float = 900.0
-    checks: list[Check] = Field(default_factory=list)
+    checks: list[TaskCheck] = Field(default_factory=list)
     #: Scored 0–2 by the judge when set, in addition to the checks.
     rubric: str | None = None
 

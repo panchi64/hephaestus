@@ -24,9 +24,11 @@ from routes.chat.schemas import (
     RegenerateCreate,
 )
 from routes.chat.submit import resolve_models, submit_turn, thread_agent, thread_models
+from routes.chat.turn import resolve_choice
 from routes.deps import OPERATOR_ID
 from runs import ConversationBusyError, RunRegistry, TurnPayload
 from services.agents import DEFAULT_AGENT
+from services.agents.thread import thread_choice
 from services.conversations import ConversationBinding, ConversationStore
 from services.turn_stamps import still_named
 
@@ -186,8 +188,13 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
     if agent_name is not None and applied.agent.name != agent_name:
         raise HTTPException(status_code=422, detail=f"no published agent named {agent_name!r}")
 
-    # Before creating, so a model failure leaves no empty orphan conversation.
-    models = await resolve_models(request, body.endpoint_id, body.model, agent=applied.agent)
+    # Before creating, so a model failure leaves no empty orphan conversation. An existing
+    # thread keeps its own choice (a sub-agent's launch model) unless this send picks one.
+    unpicked = body.endpoint_id is None and body.model is None
+    if body.conversation_id is not None and body.agent is None and unpicked:
+        models = await resolve_choice(deps.models(request), thread_choice(binding, applied.agent))
+    else:
+        models = await resolve_models(request, body.endpoint_id, body.model, agent=applied.agent)
 
     if body.conversation_id is not None:
         conversation_id = body.conversation_id
