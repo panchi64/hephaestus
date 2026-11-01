@@ -20,6 +20,7 @@ from pydantic_ai import Agent, BinaryContent
 
 from agent.meta import make_utility_agent
 from prompts.utility import OCR_INSTRUCTIONS
+from services.providers import one_shot_settings
 from services.registry import ModelRegistry
 
 # The per-call nudge that accompanies a page image; the standing transcription rules
@@ -36,7 +37,10 @@ class _PreparedTranscriber:
 
     async def transcribe(self, image: bytes) -> str:
         result = await asyncio.wait_for(
-            self._agent.run([_OCR_PROMPT, BinaryContent(data=image, media_type="image/jpeg")]),
+            self._agent.run(
+                [_OCR_PROMPT, BinaryContent(data=image, media_type="image/jpeg")],
+                model_settings=one_shot_settings(),
+            ),
             timeout=self._timeout_s,
         )
         return str(result.output).strip()

@@ -334,6 +334,16 @@ async def test_resolve_background_falls_back_to_picked_main_when_utility_unbound
     assert resolved.reasoning_off is not None
 
 
+async def test_background_settings_skip_the_prompt_cache_on_every_link():
+    """Merged across adapters, so an Anthropic fallback behind a local head skips it too."""
+    reg = await make_registry()
+    ep = await reg.create_endpoint(OWNER, name="m", base_url="http://m/v1", model="qwen3")
+    resolved = await reg.resolve_background(
+        owner_id=OWNER, override_endpoint_id=ep.id, override_model="qwen3"
+    )
+    assert resolved.reasoning_off.get("anthropic_cache") is False
+
+
 async def test_a_threads_effort_reaches_only_the_links_that_read_one():
     """A local fallback behind Claude must not be sent ``max``, which its server may reject."""
     reg = await make_registry()

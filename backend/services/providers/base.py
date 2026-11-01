@@ -187,6 +187,12 @@ class Provider(Protocol):
         """
         return {}
 
+    def one_shot_settings(self) -> ModelSettings:
+        """Settings for a request whose prompt no later request repeats (a title, a summary,
+        a page distillation). Keys must be this provider's own prefixed ones, as for
+        :meth:`run_settings`."""
+        return {}
+
     def run_settings(self, *, attended: bool) -> ModelSettings:
         """Settings that depend on who is waiting on the run, merged over
         :meth:`model_settings` per request. Keys must be this provider's own prefixed
