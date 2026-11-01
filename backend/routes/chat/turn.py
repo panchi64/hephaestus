@@ -32,7 +32,7 @@ from runs import (
 )
 from runs.registry import UNSET, Unset
 from services.commands import Invocation
-from services.conversations import ConversationBinding, ConversationStore
+from services.conversations import ConversationBinding, ConversationStore, ModelChoice
 from services.registry import ModelRegistry
 from services.uploads import UploadStore
 from tools import NO_DISABLED_TOOLS, InstructionProvider, PromptContextProvider, RunDeps
@@ -50,6 +50,8 @@ class TurnModels(NamedTuple):
     endpoint: Endpoint | None = None
     #: ``ResolvedModel.with_effort`` for the main model.
     with_effort: Callable[[ThinkingEffort], Model] | None = None
+    #: ``ResolvedModel.label`` for the main model.
+    label: str = ""
 
 
 class WallClockOverride(TypedDict, total=False):
@@ -65,13 +67,15 @@ async def resolve_turn_models(
     model: str | None,
     *,
     owner_id: str = OPERATOR_ID,
+    role: str = "main",
 ) -> TurnModels:
-    """Resolve the `main` model plus the background (utility/title) pair, raising a clear
+    """Resolve the turn's model plus the background (utility/title) pair, raising a clear
     4xx/503 on misconfiguration.
 
-    Returns the main model, the background model with its reasoning-off settings, the main
-    model's context window and vision. The compaction summary is written by the main model,
-    so the operator's own fold resolves through here too.
+    ``role`` is ``main`` except for a spawned agent on the ``subagent`` role. Returns the
+    turn's model, the background model with its reasoning-off settings, the turn model's
+    context window and vision. The compaction summary is written by the turn's model, so
+    the operator's own fold resolves through here too.
 
     Separate from the submit step so it runs before any conversation mutation: a
     regenerate/edit must not reposition the active leaf only to fail here, leaving the
@@ -80,7 +84,7 @@ async def resolve_turn_models(
     # a run that starts and errors.
     try:
         main = await model_registry.resolve_detailed(
-            "main",
+            role,
             owner_id=owner_id,
             override_endpoint_id=endpoint_id,
             override_model=model,
@@ -129,6 +133,16 @@ async def resolve_turn_models(
         main.vision,
         main.endpoint,
         main.with_effort,
+        main.label,
+    )
+
+
+async def resolve_choice(
+    model_registry: ModelRegistry, choice: ModelChoice, *, owner_id: str = OPERATOR_ID
+) -> TurnModels:
+    """:func:`resolve_turn_models` for a stored :class:`ModelChoice`."""
+    return await resolve_turn_models(
+        model_registry, choice.endpoint_id, choice.model, owner_id=owner_id, role=choice.role
     )
 
 

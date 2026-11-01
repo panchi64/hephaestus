@@ -102,6 +102,7 @@ _PINNED_CATALOG = {
     "agents_discard",
     "agents_list",
     "agents_merge",
+    "agents_models",
     "agents_message",
     "agents_publish",
     "agents_read",

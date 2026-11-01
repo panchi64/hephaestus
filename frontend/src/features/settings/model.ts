@@ -30,7 +30,22 @@ export interface EndpointInput {
 /** Roles that resolve against an ordered fallback chain (ordered in
  *  `FallbackChainsSection`). `main` is absent: it is single-endpoint. The binding shape
  *  (`RoleBinding`/`RoleBindings`) lives in `~/lib/stores/models`. */
-export const BINDABLE_ROLES = ["utility", "embedding"] as const;
+export const BINDABLE_ROLES = ["utility", "subagent", "embedding"] as const;
+
+/** The longest note the backend keeps on a choosable model. */
+export const CHOOSABLE_NOTE_MAX = 200;
+
+/** A model Talos may pick when it spawns an agent with no pin. The note is the
+ *  operator's, shown to Talos as what the model is for. */
+export interface ChoosableModel {
+  endpointId: string;
+  model: string;
+  note: string;
+  /** What Talos passes as `model`; empty while unavailable. */
+  id: string;
+  available: boolean;
+  local: boolean;
+}
 
 /** Progress of the background re-embed of every memory and chat message after the
  *  embedding model changes; semantic recall is degraded until it finishes. */

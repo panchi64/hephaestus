@@ -18,6 +18,7 @@ import {
   getAgentDocument,
   putAgentDocument,
   refreshAgentDetail,
+  setAgentModel,
   setAgentPublished,
   updateAgent,
   useAgentClasses,
@@ -104,8 +105,15 @@ export function AgentDetailScreen(props: {
         value:
           editing && a.editable ? (
             <ModelPicker value={choiceOf(a)} onChange={setModelDraft} />
+          ) : !a.editable && a.delegable ? (
+            // The rest of a read-only agent is its file's; the model is the operator's.
+            <ModelPicker
+              value={{ endpointId: a.endpointId, model: a.model }}
+              onChange={(choice) => void pinModel(a, choice)}
+            />
           ) : (
-            (a.model ?? "Thread's model")
+            // An agent nobody launches runs only as a thread's own, on the chat model.
+            (a.model ?? (a.delegable ? "Sub-agent default" : "Chat model"))
           ),
       },
       {
@@ -143,6 +151,22 @@ export function AgentDetailScreen(props: {
           `Could not ${next ? "publish" : "unpublish"} the agent.`,
         ),
       );
+    }
+  }
+
+  async function pinModel(a: Agent, choice: ModelChoice): Promise<void> {
+    try {
+      await setAgentModel(a.id, {
+        endpoint_id: choice.endpointId,
+        model: choice.model,
+      });
+      toast.success(
+        choice.model
+          ? `${agentDisplayName(a.name)} now runs on ${choice.model}.`
+          : `${agentDisplayName(a.name)} runs on the sub-agent default.`,
+      );
+    } catch (err) {
+      toast.error(agentErrorMessage(err, "Could not set the agent's model."));
     }
   }
 

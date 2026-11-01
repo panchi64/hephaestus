@@ -22,6 +22,7 @@ import {
 import type {
   AgentTool,
   CapabilityHealth,
+  ChoosableModel,
   ChatSettings,
   EndpointInput,
   OfflineState,
@@ -478,6 +479,50 @@ export async function clearData(kind: DataKind): Promise<ClearResult> {
    enumerated here — so this is a plain read plus a per-tool flip. `/tools` is a
    snake_case surface whose field names are all single words, so the DTO and the model
    shape coincide and no mapper is needed. */
+
+interface ChoosableModelDTO {
+  endpoint_id: string;
+  model: string;
+  note: string;
+  id: string;
+  available: boolean;
+  local: boolean;
+}
+
+const toChoosable = (dto: ChoosableModelDTO): ChoosableModel => ({
+  endpointId: dto.endpoint_id,
+  model: dto.model,
+  note: dto.note,
+  id: dto.id,
+  available: dto.available,
+  local: dto.local,
+});
+
+const [choosableTick, setChoosableTick] = createSignal(0);
+
+/** The models Talos may pick for a spawned agent with no pin, as the operator saved
+ *  them; an entry whose endpoint is gone reads `available: false`. */
+export function useChoosableModels(): Resource<ChoosableModel[]> {
+  const [data] = createResource(choosableTick, async () =>
+    (await api.get<ChoosableModelDTO[]>("/models/choosable")).map(toChoosable),
+  );
+  return data;
+}
+
+/** Replace the whole list. A new entry on a non-tool-calling endpoint is a 422, on a
+ *  missing one a 404; an entry already saved stays even while unavailable. */
+export async function saveChoosableModels(
+  entries: readonly Pick<ChoosableModel, "endpointId" | "model" | "note">[],
+): Promise<void> {
+  await api.put("/models/choosable", {
+    models: entries.map((e) => ({
+      endpoint_id: e.endpointId,
+      model: e.model,
+      note: e.note,
+    })),
+  });
+  setChoosableTick((n) => n + 1);
+}
 
 const [toolsTick, setToolsTick] = createSignal(0);
 

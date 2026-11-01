@@ -1,6 +1,6 @@
 import { Show, type JSX } from "solid-js";
 import { Button, MetClock, RailTag, Text, cx } from "~/ui";
-import { isLive, type Subagent, type SubagentStatus } from "../data";
+import { isLive, modelText, type Subagent, type SubagentStatus } from "../data";
 import { fullness, gaugeTone, latestLine } from "../subagentRoster";
 
 /** The ledger's tracks: three below the pane's `@2xl`, five at it. The roster's column
@@ -142,6 +142,13 @@ export function SubagentCard(props: {
           >
             {s().task}
           </Text>
+          <Show when={modelText(s())}>
+            {(text) => (
+              <Text variant="micro" tone="dim" class="truncate">
+                {text()}
+              </Text>
+            )}
+          </Show>
           <Text
             variant="micro"
             tone={failed() ? "alert" : "dim"}

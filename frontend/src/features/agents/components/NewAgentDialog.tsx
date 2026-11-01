@@ -9,11 +9,14 @@ import {
   useAgentClasses,
 } from "../data";
 import { AGENT_DESCRIPTION_MAX, AGENT_NAME_PATTERN } from "../model";
+import { ModelPicker, type ModelChoice } from "./ModelPicker";
+
+const NO_MODEL: ModelChoice = { endpointId: null, model: null };
 
 type Errors = Partial<Record<"name" | "description" | "agent_class", string>>;
 
-/** Create an agent from the fields that identify it: name, description and class.
- *  Everything else is set in the editor; a new agent starts as a draft. */
+/** Create an agent from the fields that identify it (name, description, class) and the
+ *  model it runs on. Everything else is set in the editor; a new agent starts as a draft. */
 export function NewAgentDialog(props: {
   open: boolean;
   onClose: () => void;
@@ -23,6 +26,7 @@ export function NewAgentDialog(props: {
   const [description, setDescription] = createSignal("");
   // Unset means the backend's default class, which is also what the picker shows.
   const [agentClass, setAgentClass] = createSignal<string | undefined>();
+  const [model, setModel] = createSignal<ModelChoice>(NO_MODEL);
   const [errors, setErrors] = createSignal<Errors>({});
   const [formError, setFormError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -42,6 +46,7 @@ export function NewAgentDialog(props: {
     setName("");
     setDescription("");
     setAgentClass(undefined);
+    setModel(NO_MODEL);
     setErrors({});
     setFormError("");
   });
@@ -68,6 +73,8 @@ export function NewAgentDialog(props: {
         name: name().trim(),
         description: description().trim(),
         agent_class: shownClass(),
+        endpoint_id: model().endpointId,
+        model: model().model,
       });
       props.onCreated(agent.id);
     } catch (err) {
@@ -136,6 +143,14 @@ export function NewAgentDialog(props: {
           hint={classHint()}
           disabled={busy()}
         />
+        <Stack gap={1}>
+          <Text variant="caption">Model</Text>
+          <ModelPicker value={model()} onChange={setModel} />
+          <Text variant="caption" tone="dim">
+            What it runs on wherever it is launched. The default is the
+            sub-agent model, or the launching agent's own.
+          </Text>
+        </Stack>
         <Show when={formError()}>
           <Text variant="caption" tone="alert">
             {formError()}

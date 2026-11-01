@@ -16,6 +16,16 @@ from services.permissions import DEFAULT_PERMISSION, PermissionLevel
 
 
 @dataclass(frozen=True)
+class ModelChoice:
+    """What a turn resolves its model from: a role, with an endpoint and model overriding
+    the role's head. Empty overrides are the role's own binding."""
+
+    role: str = "main"
+    endpoint_id: str | None = None
+    model: str | None = None
+
+
+@dataclass(frozen=True)
 class ConversationBinding:
     """How a thread works: the project it is filed under, and how far the model may go on
     its own.
@@ -48,6 +58,9 @@ class ConversationBinding:
     workspace_key: str = ""
     #: Whether another agent spawned this thread, which then owes that agent a report.
     spawned: bool = False
+    #: The model fixed for the thread at launch; None for a thread its agent and the
+    #: ``main`` role decide.
+    model_choice: ModelChoice | None = None
 
 
 @dataclass(frozen=True)

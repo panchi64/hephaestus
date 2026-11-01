@@ -59,8 +59,8 @@ class Subagent(BaseModel):
     callsign: str
     agent_class: str
     task: str
-    #: ``running`` | ``blocked`` | ``done`` | ``failed`` | ``cancelled``. The first two are
-    #: live; blocked waits on the operator.
+    #: ``running`` | ``blocked`` | ``done`` | ``failed`` | ``cancelled`` | ``stopped`` (ended
+    #: at a time or turn limit). The first two are live; blocked waits on the operator.
     status: str
     #: Its report once filed; while it runs, its latest answer (a current best, not a
     #: report). This is the prose: the machine-readable block is served as `findings`,
@@ -75,6 +75,12 @@ class Subagent(BaseModel):
     #: its last figures.
     context_used: int | None = None
     context_window: int | None = None
+    #: ``<endpoint name>/<model>`` it runs on, and what chose it: ``pin`` (the operator's,
+    #: on the agent), ``spawn`` (picked by the launching agent from the choosable list),
+    #: ``role`` (the ``subagent`` role) or ``parent`` (the launching agent's own model).
+    #: Empty on sub-agents launched before it was recorded.
+    model: str = ""
+    model_source: str = ""
     #: The thread that spawned it: the viewed thread, or another card's conversation.
     parent_conversation_id: str
     #: How far below the tree's root it runs; the root's own agents are 1.
@@ -117,6 +123,8 @@ def _card(view: SubagentView, tasks: list[TaskOut], opened: bool) -> Subagent:
         error=view.error,
         context_used=view.context_used,
         context_window=view.context_window,
+        model=view.model_label,
+        model_source=view.model_source,
         started_at=view.started_at,
         ended_at=view.ended_at,
     )

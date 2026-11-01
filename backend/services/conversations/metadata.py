@@ -20,7 +20,7 @@ from services.sealing import open_sealed
 from services.workspace import DELEGATION_SEP
 
 from .core import StoreCore
-from .records import ConversationBinding
+from .records import ConversationBinding, ModelChoice
 
 
 def _has_worktree(session: Session, conversation_id: str) -> bool:
@@ -157,6 +157,15 @@ class MetadataMixin(StoreCore):
                 effort=parse_effort(conversation.effort),
                 workspace_key=conversation.workspace_key or "",
                 spawned=conversation.parent_id is not None,
+                model_choice=(
+                    None
+                    if conversation.model_role is None
+                    else ModelChoice(
+                        role=conversation.model_role,
+                        endpoint_id=conversation.model_endpoint_id,
+                        model=conversation.model_name,
+                    )
+                ),
             )
 
         return await in_session(self._engine, work)

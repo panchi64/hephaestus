@@ -31,10 +31,11 @@ from harness.manifest import HarnessContext
 from harness.turns import UnattendedTurns
 from models.subagent import SubagentRecord
 from prompts.voice import CLASSES
-from routes.chat import resolve_turn_models
+from routes.chat import resolve_choice
 from routes.chat.thread_composer import ThreadComposer
 from runs import RunRegistry, RunStatus
 from runs.run import StopCause
+from services.agent_models import ChoosableModel
 from services.agents import (
     AgentCatalog,
     AgentDefinition,
@@ -43,8 +44,8 @@ from services.agents import (
     normalize_agent_name,
 )
 from services.agents.definition import WorkspacePolicy
-from services.agents.thread import as_thread, may_delegate, resolve_thread_agent
-from services.conversations import ConversationBinding, ConversationStore
+from services.agents.thread import as_thread, may_delegate, resolve_thread_agent, thread_choice
+from services.conversations import ConversationBinding, ConversationStore, ModelChoice
 from services.permissions import DEFAULT_PERMISSION, permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.repo import WorktreeError
@@ -76,6 +77,7 @@ from services.subagents.launcher import (
     SubagentUnavailableError,
     SubagentView,
 )
+from services.subagents.models import spawn_model
 from services.workspace import DELEGATION_SEP, split_workspace_key
 from tools import InstructionProvider, RunDeps
 
@@ -166,6 +168,7 @@ class ConversationSubagents(SubagentLauncher):
         handle: str,
         parent: SubagentParent | None = None,
         worktree: bool = False,
+        model: ChoosableModel | None = None,
     ) -> LaunchedSubagent:
         task = task.strip()
         if not task:
@@ -173,7 +176,8 @@ class ConversationSubagents(SubagentLauncher):
         parent = parent or SubagentParent()
         thread = parent.conversation_id or ""
         position = await self._position(owner_id, thread)
-        await self._check_depth(owner_id, thread, position)
+        binding, spawner = await self._spawner(owner_id, thread)
+        self._check_depth(spawner, position)
         await self._check_capacity(owner_id, position.root)
         handle, callsign = await self._names_for(owner_id, position.root, handle, agent)
         try:
@@ -186,6 +190,8 @@ class ConversationSubagents(SubagentLauncher):
                 parent=parent,
                 position=position,
                 worktree=worktree,
+                model=model,
+                parent_choice=thread_choice(binding, spawner) if thread else ModelChoice(),
             )
         finally:
             async with self._reserve_lock:
@@ -204,12 +210,14 @@ class ConversationSubagents(SubagentLauncher):
         parent: SubagentParent,
         position: _Position,
         worktree: bool,
+        model: ChoosableModel | None,
+        parent_choice: ModelChoice,
     ) -> LaunchedSubagent:
         began = time.monotonic()
+        chain, _ = await self._models.get_role_binding(owner_id, "subagent")
+        chosen = spawn_model(agent, model, role_bound=bool(chain), parent=parent_choice)
         try:
-            models = await resolve_turn_models(
-                self._models, agent.endpoint_id, agent.model, owner_id=owner_id
-            )
+            models = await resolve_choice(self._models, chosen.choice, owner_id=owner_id)
         except Exception as exc:
             raise SubagentUnavailableError(f"No usable model is configured: {exc}") from exc
 
@@ -268,6 +276,7 @@ class ConversationSubagents(SubagentLauncher):
             workspace_key=workspace_key,
             # Hidden from the session list until the operator opens it.
             ephemeral=True,
+            model_choice=chosen.choice,
         )
         # Read back as every later turn reads it (`ConversationBinding.leases_from`).
         stored = await self._conversations.binding(conversation_id)
@@ -323,6 +332,8 @@ class ConversationSubagents(SubagentLauncher):
             project_id=parent.project_id,
             base_ref=base_ref,
             ledger_prompt_message_id=parent.ledger_prompt_message_id,
+            model_label=models.label,
+            model_source=chosen.source,
         )
         stopped_by = self._stopper.stopped_since(thread, began) if thread else None
         if stopped_by is not None:
@@ -341,8 +352,7 @@ class ConversationSubagents(SubagentLauncher):
             task=task,
         )
 
-    async def _check_depth(self, owner_id: str, thread: str, position: _Position) -> None:
-        spawner = await self._thread_agent(owner_id, thread)
+    def _check_depth(self, spawner: AgentDefinition, position: _Position) -> None:
         if not spawner.can_delegate:
             raise SubagentUnavailableError(
                 f"`{spawner.name}` is not allowed to delegate. Do the work yourself."
@@ -354,18 +364,23 @@ class ConversationSubagents(SubagentLauncher):
                 + "it needs splitting further."
             )
 
-    async def _thread_agent(self, owner_id: str, thread: str) -> AgentDefinition:
+    async def _spawner(
+        self, owner_id: str, thread: str
+    ) -> tuple[ConversationBinding, AgentDefinition]:
+        """The spawning thread's binding and the agent it runs; the default agent for a run
+        with no thread."""
         if not thread:
-            return await self._agents.resolve(owner_id, None)
+            return ConversationBinding(), await self._agents.resolve(owner_id, None)
+        binding = await self._conversations.binding(thread)
         applied = await resolve_thread_agent(
             self._agents,
             owner_id,
-            await self._conversations.binding(thread),
+            binding,
             thread,
             projects=self._ctx.services.get_optional(ProjectStore),
             worktrees=self._ctx.services.get_optional(WorktreeManager),
         )
-        return applied.agent
+        return binding, applied.agent
 
     async def _names_for(
         self, owner_id: str, root: str, requested: str, agent: AgentDefinition

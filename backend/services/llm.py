@@ -37,9 +37,11 @@ from services.shapes import as_dict, as_list, dict_list
 
 logger = logging.getLogger(__name__)
 
-ROLES = frozenset({"main", "utility", "embedding"})
+#: ``subagent`` is the default for a spawned agent with no pin; unbound, a child runs on
+#: its parent's model (``services/subagents/models.py``).
+ROLES = frozenset({"main", "utility", "subagent", "embedding"})
 # Roles that drive the agent loop must support native tool-calling.
-TOOL_CALLING_ROLES = frozenset({"main", "utility"})
+TOOL_CALLING_ROLES = frozenset({"main", "utility", "subagent"})
 
 # Parallel tool calls, on for every endpoint so independent calls cost one round-trip. A
 # flat default, not per-provider, because both model classes that read the field omit it

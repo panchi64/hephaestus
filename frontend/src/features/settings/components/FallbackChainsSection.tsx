@@ -15,7 +15,7 @@ import { BINDABLE_ROLES } from "../model";
 import { healthStatus } from "./EndpointHealthFlag";
 import type { ModelEndpoint } from "~/lib/stores/models";
 
-/* The second half of a role binding: `utility` and `embedding` each resolve
+/* The second half of a role binding: `utility`, `subagent` and `embedding` each resolve
    against an ordered fallback chain (first = primary), and the control below
    captures that order explicitly — membership *and* position — so it doesn't ride
    on endpoint creation order. WHICH model each job uses is picked on its card
@@ -77,10 +77,10 @@ export function FallbackChainsSection(): JSX.Element {
     <Panel label="Fallback chains">
       <Stack gap={4}>
         <Text variant="caption" tone="dim">
-          Where a request goes when the primary endpoint is down. The background
-          and search &amp; memory jobs each bind an ordered chain (first =
-          primary) and auto-switch past dead or disabled endpoints. The chat
-          model is single-endpoint and has no chain.
+          Where a request goes when the primary endpoint is down. The
+          background, sub-agent and search &amp; memory jobs each bind an
+          ordered chain (first = primary) and auto-switch past dead or disabled
+          endpoints. The chat model is single-endpoint and has no chain.
         </Text>
         <Show
           when={(endpoints() ?? []).length}

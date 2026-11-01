@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from services.agent_models import ChoosableModel
 from services.agents.definition import AgentDefinition
 
 
@@ -110,6 +111,10 @@ class SubagentView:
     #: How full its own context window is. Null while unknown.
     context_used: int | None = None
     context_window: int | None = None
+    #: ``<endpoint name>/<model>`` and the rule that chose it
+    #: (``services.subagents.models.ModelSource``). Empty on rows from before either.
+    model_label: str = ""
+    model_source: str = ""
     started_at: datetime | None = None
     ended_at: datetime | None = None
 
@@ -181,13 +186,16 @@ class SubagentLauncher(ABC):
         handle: str,
         parent: SubagentParent | None = None,
         worktree: bool = False,
+        model: ChoosableModel | None = None,
     ) -> LaunchedSubagent:
         """Spawn ``agent`` on ``task`` and return as soon as its first turn is submitted.
 
         ``handle`` is normalised and made unique within the tree, so the one to use is the
         returned one. ``worktree`` puts it on a branch and worktree of its own, cut from
         where the parent works, which only the parent merges; a definition that declares
-        ``isolated`` gets one either way.
+        ``isolated`` gets one either way. ``model`` is an entry of the operator's choosable
+        list, already checked by the caller; a pinned agent ignores it
+        (``services/subagents/models.py``).
 
         Raises :class:`SubagentUnavailableError` for every state that prevents a launch:
         the parent may not delegate, the tree is at its depth or concurrency limit, no

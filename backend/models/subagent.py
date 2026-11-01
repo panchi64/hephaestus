@@ -94,5 +94,9 @@ class SubagentRecord(Table, table=True):
     #: written per progress frame, which would be a database write per token.
     context_used: int | None = Field(default=None)
     context_window: int | None = Field(default=None)
+    #: The model it runs on, as ``<endpoint name>/<model>``, and which rule chose it
+    #: (``services.subagents.models.ModelSource``). Empty on rows written before either.
+    model_label: str = Field(default="")
+    model_source: str = Field(default="")
     started_at: datetime = Field(default_factory=utcnow)
     ended_at: datetime | None = Field(default=None)

@@ -353,6 +353,7 @@ class TestWhatTheModelActuallySees:
             "merge",
             "discard",
             "list",
+            "models",
             "read",
             "stop",
         }

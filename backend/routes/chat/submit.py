@@ -17,10 +17,15 @@ from agent.summarize import AutoCompactPolicy, resolve_auto_compact_policy
 from core.container import ServiceContainer
 from routes import deps
 from routes.chat.schemas import ChatCreated
-from routes.chat.turn import TurnModels, compose_turn, resolve_turn_models
+from routes.chat.turn import TurnModels, compose_turn, resolve_choice, resolve_turn_models
 from routes.deps import OPERATOR_ID
 from services.agents import AgentDefinition, lower_of
-from services.agents.thread import ThreadAgent, agent_is_gone, resolve_thread_agent
+from services.agents.thread import (
+    ThreadAgent,
+    agent_is_gone,
+    resolve_thread_agent,
+    thread_choice,
+)
 from services.commands import Invocation, expand
 from services.conversations import ConversationBinding
 from services.settings_store import (
@@ -49,9 +54,12 @@ async def resolve_models(
 async def thread_models(
     request: deps.Source, conversation_id: str, endpoint_id: str | None, model: str | None
 ) -> TurnModels:
-    """The models a turn on an existing thread runs on, its agent's pick included."""
+    """The models a turn on an existing thread runs on: the request's own pick, else the
+    thread's (``thread_choice``)."""
     binding = await deps.store(request).binding(conversation_id)
     applied = await thread_agent(request, binding, conversation_id)
+    if endpoint_id is None and model is None:
+        return await resolve_choice(deps.models(request), thread_choice(binding, applied.agent))
     return await resolve_models(request, endpoint_id, model, agent=applied.agent)
 
 
@@ -211,7 +219,12 @@ async def recompose_chat(source: deps.Source, facts: ParkedFacts) -> Recomposed:
         applied = await thread_agent(source, binding, conversation_id)
         if agent_is_gone(applied, binding):
             raise RecomposeError(f"the agent {binding.agent_name!r} is gone")
-        models = await resolve_models(source, facts.endpoint_id, facts.model, agent=applied.agent)
+        if binding.model_choice is not None:
+            models = await resolve_choice(deps.models(source), binding.model_choice)
+        else:
+            models = await resolve_models(
+                source, facts.endpoint_id, facts.model, agent=applied.agent
+            )
     except HTTPException as exc:
         raise RecomposeError(str(exc.detail)) from exc
     scope = await turn_scope(source, conversation_id, vision=models.vision)

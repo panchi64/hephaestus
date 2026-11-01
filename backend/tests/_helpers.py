@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     import pytest
 
     from agent.factory import TurnAgent
+    from routes.chat.thread_composer import ThreadComposer
     from services.approval_grants import ApprovalGrantStore
     from services.endpoint_spec import EndpointSpec
     from services.registry import ModelRegistry, ResolvedModel
@@ -240,6 +241,27 @@ async def granting_store(
     for name in tool_names:
         _ = await store.grant(owner, conv, name)
     return store
+
+
+def composer_of(app: FastAPI) -> ThreadComposer:
+    """A ``ThreadComposer`` over the booted app's own services."""
+    from core.config import get_settings
+    from routes.chat.thread_composer import ThreadComposer
+
+    state = app_state(app)
+    return ThreadComposer(
+        agents=state.agents,
+        model_registry=state.models,
+        conversations=state.conversations,
+        settings_store=state.settings_store,
+        offline=state.offline,
+        settings=get_settings(),
+        capabilities=state.capabilities,
+        categories=state.tool_categories,
+        dormant=state.dormant_summaries,
+        instruction_providers=state.instruction_providers,
+        availability=state.category_availability,
+    )
 
 
 def swap_tool_catalog(app: FastAPI, categories: Mapping[str, AbstractToolset[RunDeps]]) -> None:

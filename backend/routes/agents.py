@@ -13,13 +13,15 @@ from typing import Annotated
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
-from core.exceptions import AgentValidationError, NotFoundError
+from core.exceptions import AgentValidationError, DegradedCapabilityError, NotFoundError
 from prompts.voice import CLASSES
 from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
+from services.agent_models import ModelPin
 from services.agents import BUILTIN, AgentDefinition, ToolAccess, project_agents
 from services.agents.definition import (
+    DEFAULT_AGENT,
     DEFAULT_CLASS,
     ROOT_CLASS,
     UNASSIGNABLE_CLASSES,
@@ -114,10 +116,8 @@ async def list_agents(request: Request, project_id: str | None = None) -> list[A
     catalog = deps.agents(request)
     contributed = await catalog.contributed(OPERATOR_ID)
     effective = await catalog.agents(OPERATOR_ID, project_root=root)
-    return [
-        _out(agent, active=effective.get(agent.name) == agent)
-        for agent in (*BUILTIN, *declared, *contributed, *stored)
-    ]
+    unrowed = await catalog.pinned(OPERATOR_ID, (*BUILTIN, *declared, *contributed))
+    return [_out(agent, active=effective.get(agent.name) == agent) for agent in (*unrowed, *stored)]
 
 
 @router.get("/classes", response_model=AgentClasses)
@@ -243,6 +243,46 @@ async def delete_agent(request: Request, agent_id: str) -> None:
     await deps.agent_store(request).delete(OPERATOR_ID, agent_id)
 
 
+@router.put("/{agent_id}/model", response_model=AgentOut)
+async def set_agent_model(
+    request: Request, agent_id: str, body: ModelPin, project_id: str | None = None
+) -> AgentOut:
+    """Pin the model any agent runs on, read-only ones included; both fields null clear it.
+    A stored agent keeps its pin on its row, the rest in the operator's settings. The
+    default agent runs on the chat model and can't be pinned."""
+    root = await deps.composer_root(request, project_id, None)
+    agent = await _find(request, agent_id, root)
+    if agent.name == DEFAULT_AGENT:
+        raise HTTPException(
+            status_code=422, detail="the default agent runs on the chat model; set that instead"
+        )
+    if not body.empty:
+        try:
+            specs = await deps.models(request).resolve_specs(
+                "main",
+                owner_id=OPERATOR_ID,
+                override_endpoint_id=body.endpoint_id,
+                override_model=body.model,
+            )
+        except DegradedCapabilityError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Stored with the model it resolved to, so a pin always names the model it runs.
+        if body.endpoint_id is not None and body.model is None:
+            body = ModelPin(endpoint_id=body.endpoint_id, model=specs[0].model)
+    if agent.source in _READ_ONLY_SOURCES:
+        await deps.agent_models(request).set_pin(OPERATOR_ID, f"{agent.source}:{agent.name}", body)
+        agent = await _find(request, agent_id, root)
+    else:
+        try:
+            agent = await deps.agent_store(request).update(
+                OPERATOR_ID, agent_id, {"endpoint_id": body.endpoint_id, "model": body.model}
+            )
+        except AgentValidationError as exc:
+            raise _invalid(exc) from None
+    effective = await deps.agents(request).agents(OPERATOR_ID, project_root=root)
+    return _out(agent, active=effective.get(agent.name) == agent)
+
+
 async def _find(request: Request, agent_id: str, root: Path | None) -> AgentDefinition:
     source, _, name = agent_id.partition(":")
     if source == "builtin":
@@ -256,7 +296,8 @@ async def _find(request: Request, agent_id: str, root: Path | None) -> AgentDefi
         agent = await deps.agent_store(request).get(OPERATOR_ID, agent_id)
     if agent is None:
         raise NotFoundError("agent not found")
-    return agent
+    (pinned,) = await deps.agents(request).pinned(OPERATOR_ID, (agent,))
+    return pinned
 
 
 async def _resolved(request: Request, agent: AgentDefinition) -> AgentOut:
