@@ -1,7 +1,16 @@
-import { createResource, Match, Show, Switch, type JSX } from "solid-js";
+import {
+  createMemo,
+  createResource,
+  Match,
+  Show,
+  Switch,
+  type JSX,
+} from "solid-js";
+import { settled } from "~/lib/resource";
 import { FramedOverlay, Icon, Panel, Tabs, Text } from "~/ui";
 import type { ConversationStats } from "~/features/chat/model";
 import { fetchConversationTurns } from "../data";
+import type { TurnSummary } from "../model";
 import {
   closeStatsDialog,
   selectStatsTab,
@@ -30,19 +39,22 @@ export function StatsDialog(props: {
   liveRunId: () => string | null;
   grantsRevalidate: () => unknown;
 }): JSX.Element {
+  // Open, not the whole dialog state, so switching tab or turn doesn't refetch.
+  const open = createMemo(() => statsDialog() !== null);
   // Keyed on the stats too: a turn's rollup lands when its run reports its metrics.
-  const [turns] = createResource(
+  const [turnsResource] = createResource(
     () => {
       const id = props.conversationId();
-      return statsDialog() && id ? { id, stats: props.stats() } : null;
+      return open() && id ? { id, stats: props.stats() } : null;
     },
     ({ id }) => fetchConversationTurns(id),
   );
+  const turns = (): TurnSummary[] => settled(turnsResource) ?? [];
   const tab = (): StatsTab => statsDialog()?.tab ?? "overview";
 
   return (
     <FramedOverlay
-      open={statsDialog() !== null}
+      open={open()}
       onClose={closeStatsDialog}
       labelledBy={TITLE_ID}
       class="h-[80vh] max-w-5xl"
@@ -80,7 +92,7 @@ export function StatsDialog(props: {
                 <OverviewTab
                   conversationId={props.conversationId}
                   stats={props.stats() ?? null}
-                  turns={turns() ?? []}
+                  turns={turns()}
                   grantsRevalidate={props.grantsRevalidate}
                   onOpenTurn={(runId) => selectStatsTab("turns", runId)}
                 />
@@ -95,7 +107,7 @@ export function StatsDialog(props: {
                   }
                 >
                   <TurnsTab
-                    turns={turns() ?? []}
+                    turns={turns()}
                     liveRunId={props.liveRunId()}
                     target={{
                       runId: statsDialog()?.runId ?? null,

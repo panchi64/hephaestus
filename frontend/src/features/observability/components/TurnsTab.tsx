@@ -1,5 +1,5 @@
 import { createMemo, For, Show, type JSX } from "solid-js";
-import { duration, relativeTime, usd } from "~/lib/format";
+import { duration, longTimestamp, usd } from "~/lib/format";
 import { cx, Text } from "~/ui";
 import type { TurnTarget } from "../dialogState";
 import { turnAt, type TurnSummary } from "../model";
@@ -21,14 +21,12 @@ export function TurnsTab(props: {
   onSelect: (runId: string) => void;
 }): JSX.Element {
   const entries = createMemo((): TurnEntry[] => {
-    const rows = props.turns.map((t, i) => ({
+    // Only traced turns are listed, so each is labelled by time, as the transcript
+    // stamps it.
+    const rows = props.turns.map((t) => ({
       runId: t.runId,
-      label: `Turn ${i + 1}`,
-      meta: [
-        relativeTime(t.startedAt),
-        duration(t.durationMs),
-        t.costUsd !== null ? usd(t.costUsd) : null,
-      ]
+      label: longTimestamp(t.startedAt),
+      meta: [duration(t.durationMs), t.costUsd !== null ? usd(t.costUsd) : null]
         .filter(Boolean)
         .join(" · "),
       live: t.runId === props.liveRunId,
@@ -44,11 +42,14 @@ export function TurnsTab(props: {
     }
     return rows.reverse();
   });
-  const current = (): string | null =>
-    props.target.runId ??
-    (props.target.at ? turnAt(props.turns, props.target.at)?.runId : null) ??
-    entries()[0]?.runId ??
-    null;
+  // A saved message whose time matches no traced turn (older than tracing, or pruned)
+  // picks nothing rather than another turn's trace.
+  const current = (): string | null => {
+    const { runId, at } = props.target;
+    if (runId) return runId;
+    if (at) return turnAt(props.turns, at)?.runId ?? null;
+    return entries()[0]?.runId ?? null;
+  };
 
   return (
     <Show
@@ -87,8 +88,18 @@ export function TurnsTab(props: {
           </For>
         </ul>
         <div class="min-w-0 flex-1">
-          <Show when={current()} keyed>
-            {(runId) => <TraceWaterfall runId={runId} />}
+          <Show
+            when={current()}
+            keyed
+            fallback={
+              <Text variant="body" tone="dim">
+                That turn has no saved trace. Traces are kept for 30 days.
+              </Text>
+            }
+          >
+            {(runId) => (
+              <TraceWaterfall runId={runId} live={runId === props.liveRunId} />
+            )}
           </Show>
         </div>
       </div>

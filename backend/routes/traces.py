@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -48,9 +49,12 @@ async def background_traces(
         return activity
     # Costs still count; only the link to a private thread is withheld.
     area = deps.private_area(request)
+    linked = sorted({c.conversation_id for c in activity.recent if c.conversation_id})
+    flags = await asyncio.gather(*(area.is_private(cid) for cid in linked))
+    private = {cid for cid, flag in zip(linked, flags, strict=True) if flag}
     recent = [
         call.model_copy(update={"conversation_id": None})
-        if call.conversation_id and await area.is_private(call.conversation_id)
+        if call.conversation_id in private
         else call
         for call in activity.recent
     ]

@@ -19,6 +19,7 @@ from runs.scope import current_run
 from services.pricing import price_usage
 
 _KINDS: dict[str, SpanKind] = {"invoke_agent": "run", "chat": "model", "execute_tool": "tool"}
+_DETAILS = "gen_ai.usage.details."
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,12 +141,7 @@ def to_record(span: ReadableSpan, run: Run | None) -> SpanRecord | None:
         # to matching by provider name; see `price_usage` for why that is wrong here.
         address = _str(attrs.get("server.address"))
         priced = price_usage(
-            RequestUsage(
-                input_tokens=input_tokens or 0,
-                output_tokens=output_tokens or 0,
-                cache_read_tokens=cache_read or 0,
-                cache_write_tokens=cache_write or 0,
-            ),
+            _request_usage(attrs, input_tokens, output_tokens, cache_read, cache_write),
             model,
             f"https://{address}" if address else None,
             started_at,
@@ -171,6 +167,35 @@ def to_record(span: ReadableSpan, run: Run | None) -> SpanRecord | None:
         run_id=run.id if run else None,
         conversation_id=run.conversation_id if run else None,
         owner_id=run.owner_id if run else None,
+    )
+
+
+def _request_usage(
+    attrs: Mapping[str, AttributeValue],
+    input_tokens: int | None,
+    output_tokens: int | None,
+    cache_read: int | None,
+    cache_write: int | None,
+) -> RequestUsage:
+    """The request's usage as `response_cost` sees it. The fields a span carries only
+    under `gen_ai.usage.details.*` change the price too: Anthropic bills one-hour cache
+    writes above five-minute ones, and audio tokens at their own rates."""
+
+    def detail(*keys: str) -> int:
+        return sum(_int(attrs.get(f"{_DETAILS}{key}")) or 0 for key in keys)
+
+    return RequestUsage(
+        input_tokens=input_tokens or 0,
+        output_tokens=output_tokens or 0,
+        cache_read_tokens=cache_read or 0,
+        cache_write_tokens=cache_write or 0,
+        # Compaction writes use the request's TTL; pydantic-ai sums them back the same way.
+        cache_write_1h_tokens=detail(
+            "ephemeral_1h_input_tokens", "compaction_ephemeral_1h_input_tokens"
+        ),
+        input_audio_tokens=detail("input_audio_tokens"),
+        cache_audio_read_tokens=detail("cache_audio_read_tokens"),
+        output_audio_tokens=detail("output_audio_tokens"),
     )
 
 

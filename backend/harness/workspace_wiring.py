@@ -117,6 +117,7 @@ async def wire_workspace(
 
     state.db_engine = engine
     state.traces = TraceStore(engine, owner_id=OPERATOR_ID)
+    container.add(state.traces)
     await lifecycle.start("traces", start=state.traces.start, stop=state.traces.stop)
     # Registered after the store, so at lock the sink lets go before the final flush.
     state.span_sink.attach(state.traces)

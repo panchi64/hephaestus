@@ -90,9 +90,6 @@ export function turnAt(turns: TurnSummary[], at: string): TurnSummary | null {
   return found;
 }
 
-/** Agents that answer the operator; every other name is background work. */
-export const TURN_AGENTS: ReadonlySet<string> = new Set(["main", "subagent"]);
-
 /** A traced agent's name as the operator reads it. */
 export function agentLabel(name: string): string {
   return AGENT_LABELS[name] ?? name.replaceAll("_", " ");

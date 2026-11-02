@@ -18,6 +18,7 @@ import { batch, createEffect, createSignal, on, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 import { toSpan } from "~/features/observability/data";
 import { recordLiveSpan } from "~/features/observability/live";
+import { liveRunIdOf } from "./liveRun";
 import { withPrivateAccess } from "~/features/private";
 import { api } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
@@ -575,8 +576,10 @@ export function createChatStream(
     runClock,
     /** Where the run waits for its model endpoint, or null when it is not waiting. */
     runQueue,
-    /** The run currently streaming into this store, or null. */
+    /** The run currently streaming into this store, or null. Not reactive. */
     activeRunId: () => foldState.activeRunId,
+    /** The same run, read reactively off the transcript (see `liveRunIdOf`). */
+    liveRunId: () => liveRunIdOf(messages, foldState.activeRunId),
     /** Highest event seq folded so far — the resume point for a reattach. */
     lastSeq: () => foldState.maxFoldedSeq,
     send,

@@ -18,7 +18,7 @@ export interface ConversationStatusProps {
   /** The agent's task list for this thread (backend-owned, read-only). */
   tasks: () => TaskItem[];
   /** The run streaming into this thread, or null. */
-  activeRunId: () => string | null;
+  liveRunId: () => string | null;
   /** Ticks when a grant may have changed, so the stats dialog's grants row refetches. */
   grantsRevalidate: () => unknown;
 }
@@ -113,7 +113,7 @@ export function createConversationStatus(
       <StatsDialog
         conversationId={props.conversationId}
         stats={props.stats}
-        liveRunId={props.activeRunId}
+        liveRunId={props.liveRunId}
         grantsRevalidate={props.grantsRevalidate}
       />
 

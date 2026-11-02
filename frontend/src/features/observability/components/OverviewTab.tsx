@@ -1,5 +1,11 @@
 import { createMemo, Show, type JSX } from "solid-js";
-import { compactCount, duration, plural, usd } from "~/lib/format";
+import {
+  compactCount,
+  duration,
+  longTimestamp,
+  plural,
+  usd,
+} from "~/lib/format";
 import { InfoHint, ProgressBar, Text } from "~/ui";
 import type { ConversationStats } from "~/features/chat/model";
 import { ConversationCompactionToggle } from "~/features/chat/components/ConversationCompactionToggle";
@@ -51,9 +57,9 @@ export function OverviewTab(props: {
                 label="COST"
                 value={s().costUsd !== null ? usd(s().costUsd!) : "—"}
                 sub={
-                  <Show when={s().savedUsd !== null}>
-                    saved {usd(s().savedUsd!)} by caching
-                  </Show>
+                  s().savedUsd !== null
+                    ? `saved ${usd(s().savedUsd!)} by caching`
+                    : undefined
                 }
                 hint="This thread's chat requests at list price. Only shown for endpoints with a published price; a local server has none."
               />
@@ -65,9 +71,9 @@ export function OverviewTab(props: {
                     : "—"
                 }
                 sub={
-                  <Show when={s().outputTokens !== null}>
-                    in · {compactCount(s().outputTokens!)} out
-                  </Show>
+                  s().outputTokens !== null
+                    ? `in · ${compactCount(s().outputTokens!)} out`
+                    : undefined
                 }
                 hint="Input counts every turn's replayed history, so it grows far faster than output."
               />
@@ -77,21 +83,16 @@ export function OverviewTab(props: {
                   timeTotal(s()) !== null ? duration(timeTotal(s())!) : "—"
                 }
                 sub={
-                  <Show when={s().ttftAvgMs !== null}>
-                    first token {duration(s().ttftAvgMs!)} avg
-                  </Show>
+                  s().ttftAvgMs !== null
+                    ? `first token ${duration(s().ttftAvgMs!)} avg`
+                    : undefined
                 }
                 hint="Wall-clock spent waiting on the model plus running its tools, measured here so it means the same on every endpoint."
               />
               <Figure
                 label="WORK"
                 value={plural(s().turns, "turn")}
-                sub={
-                  <>
-                    {plural(s().steps, "step")} ·{" "}
-                    {plural(s().toolCalls, "tool call")}
-                  </>
-                }
+                sub={`${plural(s().steps, "step")} · ${plural(s().toolCalls, "tool call")}`}
                 hint="Exchanges you've had, the model round-trips they took, and the tools those called. Many steps per turn means a lot of tool work per question."
               />
             </div>
@@ -161,9 +162,9 @@ export function OverviewTab(props: {
                 </div>
                 <CostColumns
                   aria-label="Cost per turn; pick one to open its trace"
-                  columns={props.turns.map((t, i) => ({
+                  columns={props.turns.map((t) => ({
                     key: t.runId,
-                    title: `Turn ${i + 1}: ${usd(t.costUsd ?? 0)}, ${duration(t.durationMs)}, ${plural(t.modelCalls, "model call")}`,
+                    title: `${longTimestamp(t.startedAt)}: ${usd(t.costUsd ?? 0)}, ${duration(t.durationMs)}, ${plural(t.modelCalls, "model call")}`,
                     totalUsd: t.costUsd ?? 0,
                     primaryUsd: t.chatCostUsd ?? 0,
                   }))}

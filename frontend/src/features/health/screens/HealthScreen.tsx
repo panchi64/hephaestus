@@ -10,15 +10,18 @@ import {
 import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { timestamp } from "~/lib/format";
 import { settled } from "~/lib/resource";
-import { overallStatus } from "~/features/dashboard/activity";
 import { useRuntime, useServiceHealth } from "../data";
 import type { ServiceHealth } from "../model";
 import { RuntimeCard } from "../components/RuntimeCard";
 import { ServiceGrid } from "../components/ServiceGrid";
 import { ServiceDrawer } from "../components/ServiceDrawer";
-import { healthFlag } from "../components/status";
+import {
+  healthFlag,
+  overallHealth,
+  type OverallHealth,
+} from "../components/status";
 
-const overallTone: Record<ReturnType<typeof overallStatus>, TextTone> = {
+const overallTone: Record<OverallHealth, TextTone> = {
   nominal: "bright",
   warn: "warn",
   alert: "alert",
@@ -43,7 +46,7 @@ export function HealthScreen(): JSX.Element {
   }
 
   const rows = () => settled(services.data) ?? [];
-  const overall = () => overallStatus(rows());
+  const overall = () => overallHealth(rows());
   const count = (s: ServiceHealth["status"]) =>
     rows().filter((r) => r.status === s).length;
 

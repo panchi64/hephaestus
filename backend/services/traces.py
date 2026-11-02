@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
-from datetime import date, datetime, timedelta
+from collections.abc import Collection, Iterable, Sequence
+from datetime import UTC, date, datetime, time, timedelta
 
 from pydantic import BaseModel
 from sqlalchemy import Engine
@@ -83,6 +84,8 @@ class TraceStore:
         self._engine: Engine = engine
         self._owner_id: str = owner_id
         self._pending: list[TraceSpan] = []
+        # Held across a write, so a reader's flush waits for a batch already in flight.
+        self._flush_lock: asyncio.Lock = asyncio.Lock()
         self._flusher: PeriodicTask = PeriodicTask(
             "trace-flush", interval_s=_FLUSH_INTERVAL_S, work=self.flush, logger=logger
         )
@@ -130,15 +133,26 @@ class TraceStore:
         )
 
     async def flush(self) -> None:
-        batch, self._pending = self._pending, []
-        if not batch:
-            return
+        async with self._flush_lock:
+            batch, self._pending = self._pending, []
+            if batch:
+                await in_session(self._engine, lambda s: s.add_all(batch))
 
-        def write(session: Session) -> None:
-            for row in batch:
-                _ = session.merge(row)
+    async def delete_for_conversations(
+        self, owner_id: str, conversation_ids: Collection[str]
+    ) -> None:
+        async with self._flush_lock:
+            self._pending = [r for r in self._pending if r.conversation_id not in conversation_ids]
 
-        await in_session(self._engine, write)
+            def drop(session: Session) -> None:
+                _ = session.exec(
+                    delete(TraceSpan).where(
+                        col(TraceSpan.owner_id) == owner_id,
+                        col(TraceSpan.conversation_id).in_(conversation_ids),
+                    )
+                )
+
+            await in_session(self._engine, drop)
 
     async def prune(self, *, now: datetime | None = None) -> None:
         cutoff = (now or utcnow()) - RETENTION
@@ -173,35 +187,38 @@ class TraceStore:
         return sorted(turns, key=lambda t: t.started_at)
 
     async def background(self, days: int, *, now: datetime | None = None) -> BackgroundActivity:
+        """The last ``days`` calendar days (UTC), today included."""
         await self.flush()
-        since = (now or utcnow()) - timedelta(days=days)
+        first_day = (now or utcnow()).date() - timedelta(days=days - 1)
         spans = await self._select(
             select(TraceSpan).where(
                 TraceSpan.owner_id == self._owner_id,
                 col(TraceSpan.agent_name).not_in(TURN_AGENTS),
-                col(TraceSpan.started_at) >= since,
+                col(TraceSpan.started_at) >= datetime.combine(first_day, time.min, UTC),
             )
         )
-        cost_by_trace: dict[str, list[float | None]] = defaultdict(list)
+        # By the agent run a request was made under, not by trace: every background agent
+        # a turn starts shares that turn's trace.
+        cost_by_run: dict[str, list[float | None]] = defaultdict(list)
         for span in spans:
-            if span.kind == "model":
-                cost_by_trace[span.trace_id].append(span.cost_usd)
+            if span.kind == "model" and span.parent_span_id is not None:
+                cost_by_run[span.parent_span_id].append(span.cost_usd)
         runs = sorted(
             (s for s in spans if s.kind == "run"), key=lambda s: s.started_at, reverse=True
         )
 
         by_agent: dict[str, list[TraceSpan]] = defaultdict(list)
-        per_day: dict[date, float] = defaultdict(float)
+        per_day: dict[date, float] = {first_day + timedelta(days=i): 0.0 for i in range(days)}
         for run in runs:
             by_agent[run.agent_name].append(run)
-            cost = _sum(cost_by_trace[run.trace_id])
-            if cost is not None:
+            cost = _sum(cost_by_run[run.span_id])
+            if cost is not None and run.started_at.date() in per_day:
                 per_day[run.started_at.date()] += cost
         agents = [
             AgentActivity(
                 agent_name=name,
                 calls=len(rows),
-                cost_usd=_sum(c for r in rows for c in cost_by_trace[r.trace_id]),
+                cost_usd=_sum(c for r in rows for c in cost_by_run[r.span_id]),
                 avg_duration_ms=sum(r.duration_ms for r in rows) // len(rows),
                 last_run_at=rows[0].started_at,
             )
@@ -215,7 +232,7 @@ class TraceStore:
                 conversation_id=run.conversation_id,
                 started_at=run.started_at,
                 duration_ms=run.duration_ms,
-                cost_usd=_sum(cost_by_trace[run.trace_id]),
+                cost_usd=_sum(cost_by_run[run.span_id]),
                 error_type=run.error_type,
             )
             for run in runs[:_RECENT_LIMIT]
@@ -223,7 +240,7 @@ class TraceStore:
         return BackgroundActivity(
             days=days,
             agents=sorted(agents, key=lambda a: a.cost_usd or 0.0, reverse=True),
-            per_day=[DayCost(day=d, cost_usd=c) for d, c in sorted(per_day.items())],
+            per_day=[DayCost(day=d, cost_usd=c) for d, c in per_day.items()],
             recent=recent,
         )
 
@@ -244,20 +261,15 @@ def _summarize_turn(run_id: str, rows: Sequence[TraceSpan]) -> TurnSummary:
         duration_ms=int((end - start).total_seconds() * 1000),
         model_calls=len(models),
         tool_calls=sum(1 for r in rows if r.kind == "tool"),
-        input_tokens=_sum_int(r.input_tokens for r in models),
-        output_tokens=_sum_int(r.output_tokens for r in models),
+        input_tokens=_sum(r.input_tokens for r in models),
+        output_tokens=_sum(r.output_tokens for r in models),
         cost_usd=_sum(r.cost_usd for r in models),
         chat_cost_usd=_sum(r.cost_usd for r in models if r.agent_name == MAIN_AGENT),
         errors=sum(1 for r in rows if r.error_type is not None),
     )
 
 
-def _sum(values: Iterable[float | None]) -> float | None:
-    """None when nothing was priced, so an unpriced model reads as absent rather than free."""
+def _sum[N: (int, float)](values: Iterable[N | None]) -> N | None:
+    """None when nothing was reported, so an unpriced model reads as absent rather than free."""
     present = [v for v in values if v is not None]
-    return sum(present) if present else None
-
-
-def _sum_int(values: Iterable[int | None]) -> int | None:
-    present = [v for v in values if v is not None]
-    return sum(present) if present else None
+    return sum(present[1:], present[0]) if present else None

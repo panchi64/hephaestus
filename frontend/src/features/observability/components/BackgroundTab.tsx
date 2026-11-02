@@ -1,5 +1,6 @@
 import { createResource, createSignal, For, Show, type JSX } from "solid-js";
 import { date, duration, plural, relativeTime, usd } from "~/lib/format";
+import { settled } from "~/lib/resource";
 import { Segmented, Text } from "~/ui";
 import { fetchBackground } from "../data";
 import { agentLabel } from "../model";
@@ -31,7 +32,14 @@ export function BackgroundTab(): JSX.Element {
         />
       </div>
 
-      <Show when={activity()} fallback={<Text tone="dim">Loading…</Text>}>
+      <Show
+        when={settled(activity)}
+        fallback={
+          <Text tone="dim">
+            {activity.error ? "Couldn't load background work." : "Loading…"}
+          </Text>
+        }
+      >
         {(a) => (
           <Show
             when={a().agents.length > 0}
@@ -41,21 +49,19 @@ export function BackgroundTab(): JSX.Element {
               </Text>
             }
           >
-            <Show when={a().perDay.length > 0}>
-              <section class="flex flex-col gap-2">
-                <Text variant="meta" tone="dim">
-                  COST PER DAY
-                </Text>
-                <CostColumns
-                  aria-label="Background cost per day"
-                  columns={a().perDay.map((d) => ({
-                    key: d.day,
-                    title: `${date(d.day)}: ${usd(d.costUsd)}`,
-                    totalUsd: d.costUsd,
-                  }))}
-                />
-              </section>
-            </Show>
+            <section class="flex flex-col gap-2">
+              <Text variant="meta" tone="dim">
+                COST PER DAY
+              </Text>
+              <CostColumns
+                aria-label="Background cost per day"
+                columns={a().perDay.map((d) => ({
+                  key: d.day,
+                  title: `${date(d.day)}: ${usd(d.costUsd)}`,
+                  totalUsd: d.costUsd,
+                }))}
+              />
+            </section>
 
             <section class="flex flex-col gap-1">
               <Text variant="meta" tone="dim">

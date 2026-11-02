@@ -17,6 +17,7 @@ from services.private_uploads import UploadPrivacy
 from services.projects import ProjectStore, WorktreeManager
 from services.subagent_store import SubagentStore
 from services.task_list import ConversationTasks
+from services.traces import TraceStore
 from services.uploads import UploadStore
 from services.vm import ConversationMachines
 from services.workspace_history import WorkspaceHistoryStore
@@ -33,6 +34,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         workspace_history=services.get(WorkspaceHistoryStore),
         conversation_tasks=services.get(ConversationTasks),
         plan_mode=services.get(PlanMode),
+        traces=services.get(TraceStore),
         projects=services.get(ProjectStore),
         worktrees=services.get(WorktreeManager),
         egress=services.get(EgressPolicy),

@@ -7,6 +7,7 @@ import {
   type JSX,
 } from "solid-js";
 import { compactCount, duration, usd } from "~/lib/format";
+import { settled } from "~/lib/resource";
 import { cx, Text } from "~/ui";
 import { fetchRunTrace } from "../data";
 import { liveSpans } from "../live";
@@ -28,10 +29,18 @@ function rowLabel(span: TraceSpan): string {
 
 /** One turn as a waterfall: every agent run, model request and tool call, nested and
  *  placed in time, with what each cost. Live spans fill in while the turn runs. */
-export function TraceWaterfall(props: { runId: string }): JSX.Element {
-  const [saved] = createResource(() => props.runId, fetchRunTrace);
+export function TraceWaterfall(props: {
+  runId: string;
+  live: boolean;
+}): JSX.Element {
+  // Read again when the run stops: its own agent span ends after its stream closes, so
+  // it only ever arrives saved.
+  const [saved] = createResource(
+    () => ({ runId: props.runId, live: props.live }),
+    ({ runId }) => fetchRunTrace(runId),
+  );
   const layout = createMemo(() =>
-    layoutWaterfall(mergeSpans(saved() ?? [], liveSpans(props.runId))),
+    layoutWaterfall(mergeSpans(settled(saved) ?? [], liveSpans(props.runId))),
   );
   const [selected, setSelected] = createSignal<string | null>(null);
   const picked = createMemo(
@@ -55,9 +64,11 @@ export function TraceWaterfall(props: { runId: string }): JSX.Element {
         when={layout().rows.length > 0}
         fallback={
           <Text variant="body" tone="dim">
-            {saved.loading
-              ? "Loading the trace…"
-              : "No traced calls for this turn."}
+            {saved.error
+              ? "Couldn't load this turn's trace."
+              : saved.loading
+                ? "Loading the trace…"
+                : "No traced calls for this turn."}
           </Text>
         }
       >

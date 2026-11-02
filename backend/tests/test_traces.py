@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.trace import SpanContext
 from pydantic_ai import Agent, InstrumentationSettings, ModelResponse, TextPart
@@ -76,6 +77,8 @@ async def test_a_run_yields_run_model_and_tool_spans_attributed_to_the_current_r
     root = next(r for r in records if r.kind == "run")
     assert tool.parent_span_id == root.span_id
     model = next(r for r in records if r.kind == "model")
+    # Background cost is attributed through this link (`TraceStore.background`).
+    assert model.parent_span_id == root.span_id
     assert model.model == "test"
     assert model.input_tokens is not None and model.output_tokens is not None
 
@@ -103,6 +106,7 @@ def _record(
     run_id: str | None = "run-1",
     conversation_id: str | None = "conv-1",
     trace_id: str = "t1",
+    parent: str | None = None,
     cost: float | None = 0.01,
     started_at: datetime | None = None,
     duration_ms: int = 100,
@@ -110,7 +114,7 @@ def _record(
     return SpanRecord(
         span_id=span_id,
         trace_id=trace_id,
-        parent_span_id=None,
+        parent_span_id=parent,
         kind=kind,
         agent_name=agent,
         model="claude-haiku-5-5",
@@ -150,9 +154,13 @@ async def test_turns_roll_up_per_run_and_split_out_background_cost():
 async def test_background_groups_every_non_chat_agent_by_name_and_day():
     store = TraceStore(_engine(), owner_id="operator")
     store.add(_record("r1", kind="run", agent="mail_triage", run_id=None, conversation_id=None))
-    store.add(_record("m1", agent="mail_triage", run_id=None, conversation_id=None, cost=0.003))
+    store.add(
+        _record(
+            "m1", agent="mail_triage", parent="r1", cost=0.003, run_id=None, conversation_id=None
+        )
+    )
     store.add(_record("r2", kind="run", agent="title", trace_id="t2"))
-    store.add(_record("m2", agent="title", trace_id="t2", cost=0.001))
+    store.add(_record("m2", agent="title", trace_id="t2", parent="r2", cost=0.001))
     store.add(_record("m3", agent="main", trace_id="t3", cost=0.5))
 
     activity = await store.background(7)
@@ -160,8 +168,37 @@ async def test_background_groups_every_non_chat_agent_by_name_and_day():
     assert set(by_name) == {"mail_triage", "title"}
     assert by_name["mail_triage"].calls == 1
     assert by_name["mail_triage"].cost_usd == 0.003
+    assert len(activity.per_day) == 7
+    assert activity.per_day[-1].day == datetime.now(UTC).date()
     assert sum(d.cost_usd for d in activity.per_day) == 0.004
     assert {c.agent_name for c in activity.recent} == {"mail_triage", "title"}
+
+
+async def test_background_agents_sharing_a_turn_trace_are_each_charged_their_own_requests():
+    store = TraceStore(_engine(), owner_id="operator")
+    for run, model, cost in (("d1", "dm1", 0.002), ("d2", "dm2", 0.005)):
+        store.add(_record(run, kind="run", agent="page_distill"))
+        store.add(_record(model, agent="page_distill", parent=run, cost=cost))
+    store.add(_record("main-m", agent="main", cost=0.5))
+
+    activity = await store.background(7)
+    (distill,) = activity.agents
+    assert distill.cost_usd == 0.007
+    assert sorted(c.cost_usd or 0.0 for c in activity.recent) == [0.002, 0.005]
+    assert sum(d.cost_usd for d in activity.per_day) == 0.007
+
+
+async def test_deleting_a_thread_drops_its_spans_saved_and_pending():
+    store = TraceStore(_engine(), owner_id="operator")
+    store.add(_record("saved"))
+    store.add(_record("other", run_id="run-2", conversation_id="conv-2"))
+    await store.flush()
+    store.add(_record("pending"))
+
+    await store.delete_for_conversations("operator", {"conv-1"})
+
+    assert await store.run_trace("run-1") == []
+    assert [r.span_id for r in await store.run_trace("run-2")] == ["other"]
 
 
 async def test_prune_drops_spans_past_the_retention_window():
@@ -209,7 +246,11 @@ async def test_install_tracing_is_idempotent_and_undo_only_detaches_its_own_sink
 _HAIKU = "claude-3-5-haiku-20241022"
 
 
-def _chat_span(address: str) -> ReadableSpan:
+_CACHED_READ = RequestUsage(input_tokens=12_000, output_tokens=800, cache_read_tokens=9_000)
+
+
+def _chat_span(address: str, usage: RequestUsage = _CACHED_READ) -> ReadableSpan:
+    """A model span carrying ``usage`` the way pydantic-ai writes it onto one."""
     start = 1_780_000_000_000_000_000
     return ReadableSpan(
         name=f"chat {_HAIKU}",
@@ -219,22 +260,34 @@ def _chat_span(address: str) -> ReadableSpan:
             "gen_ai.agent.name": "main",
             "gen_ai.response.model": _HAIKU,
             "server.address": address,
-            "gen_ai.usage.input_tokens": 12_000,
-            "gen_ai.usage.output_tokens": 800,
-            "gen_ai.usage.cache_read.input_tokens": 9_000,
+            **usage.opentelemetry_attributes(),
         },
         start_time=start,
         end_time=start + 2_000_000_000,
     )
 
 
-def test_a_model_span_is_priced_exactly_as_the_conversation_totals_price_it():
-    span = _chat_span("api.anthropic.com")
-    record = to_record(span, None)
+@pytest.mark.parametrize(
+    "usage",
+    [
+        _CACHED_READ,
+        # Anthropic's one-hour writes reach the span only as a usage detail.
+        RequestUsage(
+            input_tokens=12_000,
+            output_tokens=800,
+            cache_write_tokens=6_000,
+            cache_write_1h_tokens=6_000,
+            details={"ephemeral_1h_input_tokens": 6_000},
+        ),
+    ],
+    ids=["cache-read", "one-hour-cache-write"],
+)
+def test_a_model_span_is_priced_exactly_as_the_conversation_totals_price_it(usage: RequestUsage):
+    record = to_record(_chat_span("api.anthropic.com", usage), None)
     assert record is not None
     response = ModelResponse(
         parts=[TextPart("ok")],
-        usage=RequestUsage(input_tokens=12_000, output_tokens=800, cache_read_tokens=9_000),
+        usage=usage,
         model_name=_HAIKU,
         provider_url="https://api.anthropic.com",
         timestamp=record.started_at,
