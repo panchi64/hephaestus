@@ -72,6 +72,7 @@ describe("reading the runtime", () => {
           { role: "utility", endpoint: null, model: null, implicit: false },
         ],
         tools: { total: 40, enabled: 38 },
+        tracing: true,
       }),
     ).toEqual({
       version: "0.1.0",
@@ -88,6 +89,7 @@ describe("reading the runtime", () => {
         },
       ],
       tools: { total: 40, enabled: 38 },
+      tracing: true,
     });
   });
 });

@@ -28,6 +28,7 @@ async def test_runtime_reports_versions_and_unbound_roles():
     assert body["pydantic_ai"] == version("pydantic-ai")
     assert body["pydantic_ai_harness"] == version("pydantic-ai-harness")
     assert body["python"] == platform.python_version()
+    assert body["tracing"] is True
     roles = [obj(r) for r in arr(body["roles"])]
     assert [r["role"] for r in roles] == list(ROLE_ORDER)
     assert all(r["endpoint"] is None and r["model"] is None for r in roles)

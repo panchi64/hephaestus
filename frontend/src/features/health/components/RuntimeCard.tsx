@@ -41,6 +41,12 @@ export function RuntimeCard(props: { runtime: RuntimeInfo }): JSX.Element {
         <Text variant="micro" tone="bright">
           {`${props.runtime.tools.enabled} of ${props.runtime.tools.total} enabled`}
         </Text>
+        <Text variant="meta" tone="dim" class="uppercase">
+          Tracing
+        </Text>
+        <Text variant="micro" tone={props.runtime.tracing ? "bright" : "dim"}>
+          {props.runtime.tracing ? "On, kept for 30 days" : "Off"}
+        </Text>
       </div>
     </Panel>
   );

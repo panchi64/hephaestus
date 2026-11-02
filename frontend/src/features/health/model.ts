@@ -35,4 +35,6 @@ export interface RuntimeInfo {
   python: string;
   roles: RoleModel[];
   tools: { total: number; enabled: number };
+  /** Agent calls are traced in-process, feeding the Stats dialog's trace views. */
+  tracing: boolean;
 }

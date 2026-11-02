@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from core.config import get_settings
+from observability import tracing_active
 from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.tools import assembled_catalog
@@ -43,6 +44,8 @@ class Runtime(BaseModel):
     python: str
     roles: list[RoleModel]
     tools: ToolCounts
+    # Whether agent calls are being traced in-process (`observability/tracing.py`).
+    tracing: bool
 
 
 async def _role_models(request: Request) -> list[RoleModel]:
@@ -89,4 +92,5 @@ async def get_runtime(request: Request) -> Runtime:
             total=len(catalog),
             enabled=sum(1 for t in catalog if t.name not in disabled),
         ),
+        tracing=tracing_active(),
     )

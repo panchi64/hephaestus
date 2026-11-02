@@ -33,6 +33,7 @@ export interface RuntimeDTO {
   python: string;
   roles: RoleModelDTO[];
   tools: { total: number; enabled: number };
+  tracing: boolean;
 }
 
 /** Backend remediation paths → the settings section that fixes them. The paths predate
@@ -79,5 +80,6 @@ export function toRuntimeInfo(dto: RuntimeDTO): RuntimeInfo {
     python: dto.python,
     roles: dto.roles.map(toRoleModel),
     tools: { total: dto.tools.total, enabled: dto.tools.enabled },
+    tracing: dto.tracing,
   };
 }
