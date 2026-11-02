@@ -36,6 +36,7 @@ import { FOLD_RUN_KIND, foldCompaction } from "./fold/compaction";
 import { foldLifecycle } from "./fold/lifecycle";
 import { foldMessages } from "./fold/messages";
 import { foldMeta } from "./fold/meta";
+import { foldSpans } from "./fold/spans";
 import { foldTools } from "./fold/tools";
 import type { FoldContext, FoldDeps } from "./fold/types";
 
@@ -45,6 +46,7 @@ export type { FoldDeps, FoldState, RunClock, RunQueue } from "./fold/types";
 /** The event families, each a handler that says whether the event was its own. */
 const FAMILIES: ((ev: RunEvent, c: FoldContext) => boolean)[] = [
   foldTools,
+  foldSpans,
   foldMeta,
   foldMessages,
   foldCompaction,

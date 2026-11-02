@@ -21,6 +21,8 @@ class _Score(BaseModel):
 
 async def judge_answer(model: Model, *, asked: str, rubric: str, answer: str) -> int:
     """How well ``answer`` to ``asked`` meets ``rubric``: 0, 1 or 2."""
-    agent = make_utility_agent(model, output_type=_Score, instructions=_INSTRUCTIONS)
+    agent = make_utility_agent(
+        model, name="eval_judge", output_type=_Score, instructions=_INSTRUCTIONS
+    )
     result = await agent.run(f"Asked:\n{asked}\n\nRubric: {rubric}\n\nAnswer:\n{answer}")
     return max(0, min(2, result.output.score))

@@ -33,6 +33,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import WarnOnCacheBusts
 
 from core.timezone import local_zone_key
+from observability.names import MAIN_AGENT, SUBAGENT_AGENT
 from prompts.agent import (
     CURRENT_DATE,
     INSTRUCTIONS,
@@ -105,6 +106,7 @@ def build_agent(
     names_by_category = category_names(categories) if categories is not None else {}
     agent = Agent(
         model,
+        name=SUBAGENT_AGENT if spawned else MAIN_AGENT,
         deps_type=RunDeps,
         system_prompt=SPAWNED_SYSTEM_PROMPT if spawned else SYSTEM_PROMPT,
         instructions=SPAWNED_INSTRUCTIONS if spawned else INSTRUCTIONS,

@@ -29,6 +29,7 @@ import { createMemo, createSignal, untrack, type Accessor } from "solid-js";
 import { api, isApiError } from "~/lib/api";
 import { toast, type ActionTone } from "~/ui";
 import { awaitingKindOf } from "./awaitingKind";
+import { liveRunIdOf } from "./liveRun";
 import { bumpGrantsRevision } from "../data/conversations";
 import type { ApprovalOutcomeDTO } from "../data/wire";
 import { isAnswered } from "../model";
@@ -171,21 +172,6 @@ const inLiveRun =
       ? m.runId === runId
       : Boolean(m.streaming || m.detached);
 
-/**
- * The run the transcript is attached to, **read reactively**.
- *
- * The controller's own `activeRunId` is a field on a plain object, not a signal — so a
- * memo that read it alone would not re-run when it changed, and would go on answering
- * from whichever run happened to be live the last time the messages moved. The messages
- * carry the same fact and are a store: the turn in flight is the last message still
- * streaming or detached, and its `runId` is the run. The controller's value is the
- * fallback for the one moment the messages cannot answer — the placeholder pushed before
- * `run.started` has patched an id onto it.
- */
-const liveRunIdOf = (deps: ApprovalDeps): string | null =>
-  deps.messages.findLast((m) => m.streaming || m.detached)?.runId ??
-  deps.activeRunId();
-
 const parkedIn =
   (runId: string | null) =>
   (m: ChatMessage): boolean =>
@@ -242,7 +228,9 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
   // server-side.
   const park = createMemo<Park | null>(() => {
     if (!deps.sending()) return null;
-    const live = deps.messages.findLast(parkedIn(liveRunIdOf(deps)));
+    const live = deps.messages.findLast(
+      parkedIn(liveRunIdOf(deps.messages, deps.activeRunId())),
+    );
     if (!live) return null;
     const approvals: Approval[] = [];
     const questions: QuestionBlock["question"][] = [];
@@ -282,7 +270,7 @@ export function createApprovalOps(deps: ApprovalDeps): ApprovalOps {
     if (p || !deps.sending()) return awaitingKindOf(p, false);
     // Keyed to the run for the same reason the park is: a terminal awaiting its first
     // decision does not stop waiting because a steering message split the flow under it.
-    const runId = liveRunIdOf(deps);
+    const runId = liveRunIdOf(deps.messages, deps.activeRunId());
     return awaitingKindOf(
       null,
       deps.messages.some(

@@ -47,6 +47,7 @@ export function WorkLog(
      *  call is now pinned *inside* the log rather than lifted out of it. */
     activeIds?: ReadonlySet<string>;
     streaming?: boolean;
+    onTrace?: () => void;
   } & RowHandlers,
 ): JSX.Element {
   /* Two readings of the run, over two different sets.
@@ -146,6 +147,7 @@ export function WorkLog(
         open={props.open}
         foldable={foldable()}
         onToggle={() => props.onToggle()}
+        onTrace={props.onTrace}
       />
       {/* Keyed on the block, and open only while shut: open, the same step is the
           last row of the list below.

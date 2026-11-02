@@ -123,4 +123,7 @@ def test_a_toolless_utility_agent_is_left_alone():
     # summarizer — keeps whatever its caller hands `.run()`.
     from agent.meta import make_utility_agent
 
-    assert make_utility_agent(TestModel(), instructions="name it").model_settings is None
+    assert (
+        make_utility_agent(TestModel(), name="title", instructions="name it").model_settings
+        is None
+    )

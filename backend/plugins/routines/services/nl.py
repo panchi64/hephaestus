@@ -56,7 +56,12 @@ class ScheduleNaturalLanguage:
                 "natural-language schedules need a utility model to be configured"
             ) from exc
 
-        agent = Agent(model, output_type=_Draft, instructions=ROUTINE_SCHEDULE_INSTRUCTIONS)
+        agent = Agent(
+            model,
+            name="routine_parse",
+            output_type=_Draft,
+            instructions=ROUTINE_SCHEDULE_INSTRUCTIONS,
+        )
         prompt = (
             f"CURRENT DATE AND TIME: {moment:%Y-%m-%dT%H:%M:%S} ({moment:%A})\n"
             f"OPERATOR TIME ZONE: {timezone}\n"

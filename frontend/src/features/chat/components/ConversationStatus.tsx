@@ -2,8 +2,12 @@ import { createMemo, createSignal, Show, type JSX } from "solid-js";
 import { StatusCell } from "~/ui";
 import type { TaskItem } from "~/lib/stream";
 import type { ContextUsage, ConversationStats } from "../model";
+import {
+  openStatsDialog,
+  StatsDialog,
+  statsDialog,
+} from "~/features/observability";
 import { ContextBar } from "./ContextBar";
-import { ConversationStatsPanel } from "./ConversationStatsPanel";
 import { taskSummary } from "../taskItems";
 import { TaskRows } from "./TaskRows";
 
@@ -13,7 +17,9 @@ export interface ConversationStatusProps {
   usage: () => ContextUsage | null;
   /** The agent's task list for this thread (backend-owned, read-only). */
   tasks: () => TaskItem[];
-  /** Ticks when a grant may have changed, so the stats panel's grants row refetches. */
+  /** The run streaming into this thread, or null. */
+  liveRunId: () => string | null;
+  /** Ticks when a grant may have changed, so the stats dialog's grants row refetches. */
   grantsRevalidate: () => unknown;
 }
 
@@ -44,8 +50,8 @@ export interface ConversationStatus {
  *
  *  **What remains on the row is what changes turn to turn.** The task count, and the
  *  context bar (the one figure with a ceiling). Every tally — turns, time, speed,
- *  cache, tokens — and the thread's two settings moved behind `Stats`: individually each
- *  was small enough to dismiss, together they buried the input they sat under.
+ *  cache, tokens — the per-turn traces and the thread's two settings live in the
+ *  dialog `Stats` opens: together on the row they buried the input they sat under.
  *
  *  Every piece is a `StatusCell` of the composer's status bar: the same mono line as
  *  the readouts beside it, with only the hover saying which cells act. */
@@ -88,9 +94,26 @@ export function createConversationStatus(
         </StatusCell>
       </Show>
 
-      <ConversationStatsPanel
+      {/* Offered once there is anything behind it: figures, or a saved thread whose
+          settings and turns the dialog holds. */}
+      <Show
+        when={
+          props.conversationId() !== null || (props.stats()?.steps ?? 0) > 0
+        }
+      >
+        <StatusCell
+          active={statsDialog() !== null}
+          aria-haspopup="dialog"
+          aria-label="Conversation stats, traces and settings"
+          onClick={() => openStatsDialog("overview")}
+        >
+          Stats
+        </StatusCell>
+      </Show>
+      <StatsDialog
         conversationId={props.conversationId}
         stats={props.stats}
+        liveRunId={props.liveRunId}
         grantsRevalidate={props.grantsRevalidate}
       />
 

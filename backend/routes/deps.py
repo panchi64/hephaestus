@@ -23,6 +23,7 @@ from core.exceptions import DegradedCapabilityError, NotFoundError, PermissionDe
 from core.ratelimit import RateLimiter
 from core.vault import Vault
 from core.workspace import Workspace
+from observability import SpanSink
 from runs import ConversationBusyError, InboxDispatch, RunRegistry
 from services.agent_models import AgentModels
 from services.agents import AgentCatalog, AgentStore
@@ -65,6 +66,7 @@ from services.skills.platform import PlatformSkills
 from services.subagent_store import SubagentStore
 from services.task_list import ConversationTasks
 from services.tool_policy import CategoryAvailability, effective_disabled_tools
+from services.traces import TraceStore
 from services.uploads import UploadStore
 from services.vm import ConversationMachines, Previews, ServicesMachine
 from services.webfetch import BrowserFetcher, ManagedBrowser
@@ -167,6 +169,8 @@ class AppState(State):
         self.conversation_teardown: ConversationTeardown
         self.discovery_client: httpx.AsyncClient
         self.work_summaries: WorkSummaryService
+        self.span_sink: SpanSink
+        self.traces: TraceStore
         self.corpus_uploads: UploadsAdapter
         self.corpus_folder: FolderAdapter
         self.corpus_chunk_store: CorpusChunkStore
@@ -655,6 +659,10 @@ def workspace_db_intact(request: Request) -> bool:
 
 def mark_workspace_db_intact(request: Request) -> None:
     app_state(request).workspace_db_intact = True
+
+
+def traces(request: Request) -> TraceStore:
+    return app_state(request).traces
 
 
 def db_engine(request: Request) -> Engine:

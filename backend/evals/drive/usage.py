@@ -20,7 +20,8 @@ from pydantic_ai import ModelResponse
 from pydantic_ai.models.anthropic._response import map_usage
 from pydantic_ai.usage import RequestUsage
 
-from services.conversations.usage import Cost, response_cost
+from services.conversations.usage import response_cost
+from services.pricing import Cost
 
 #: ``agent`` is a call that carried tools (Talos or a sub-agent); ``utility`` is one that
 #: didn't (titles, work summaries).

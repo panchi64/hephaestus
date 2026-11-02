@@ -120,7 +120,9 @@ class CalendarNaturalLanguage:
                 "natural-language event entry needs a utility model to be configured"
             ) from exc
 
-        agent = Agent(model, output_type=_Draft, instructions=CALENDAR_NL_INSTRUCTIONS)
+        agent = Agent(
+            model, name="calendar_parse", output_type=_Draft, instructions=CALENDAR_NL_INSTRUCTIONS
+        )
         prompt = (
             f"CURRENT DATE AND TIME: {moment:%Y-%m-%dT%H:%M:%S} ({moment:%A})\n"
             f"OPERATOR TIME ZONE: {timezone}\n"

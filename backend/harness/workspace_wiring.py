@@ -40,6 +40,7 @@ from services.registry import ModelRegistry
 from services.sealing import seal_legacy_column
 from services.settings_store import SettingsStore, TurnTuning
 from services.task_list import ConversationTasks
+from services.traces import TraceStore
 from services.vm import ConversationMachines, Platform, Previews, ServicesMachine
 from services.vm.target import machine_prefix
 from services.work_summaries import WorkSummaryService
@@ -115,6 +116,12 @@ async def wire_workspace(
     )
 
     state.db_engine = engine
+    state.traces = TraceStore(engine, owner_id=OPERATOR_ID)
+    container.add(state.traces)
+    await lifecycle.start("traces", start=state.traces.start, stop=state.traces.stop)
+    # Registered after the store, so at lock the sink lets go before the final flush.
+    state.span_sink.attach(state.traces)
+    lifecycle.on_stop("trace-sink", partial(state.span_sink.attach, None))
     # Shared by the auth gate and `/tokens`: two stores with separate verification caches
     # would let a revoked token stay trusted.
     state.api_tokens = ApiTokenStore(engine, state.api_scope_table)

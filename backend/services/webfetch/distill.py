@@ -73,7 +73,9 @@ class WebDistiller:
         try:
             async with asyncio.timeout(self._timeout_s):
                 model, settings = await self._resolve_model()
-                agent = Agent(model, output_type=str, instructions=self._instructions)
+                agent = Agent(
+                    model, name="page_distill", output_type=str, instructions=self._instructions
+                )
                 for window in windows:  # sequential: a local utility model serves one request well
                     result = await agent.run(
                         f"GOAL: {goal}\n\nEXCERPT:\n{window}", model_settings=settings

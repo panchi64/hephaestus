@@ -60,5 +60,7 @@ class VisionTranscriber:
 
     async def prepare(self, owner_id: str) -> _PreparedTranscriber:
         model = await self._registry.resolve_vision(owner_id)
-        agent = make_utility_agent(model, output_type=str, instructions=OCR_INSTRUCTIONS)
+        agent = make_utility_agent(
+            model, name="vision", output_type=str, instructions=OCR_INSTRUCTIONS
+        )
         return _PreparedTranscriber(agent, self._timeout_s)

@@ -20,6 +20,7 @@ from services.private_uploads import UploadPrivacy
 from services.projects import ProjectStore, WorktreeManager
 from services.subagent_store import SubagentStore
 from services.task_list import ConversationTasks
+from services.traces import TraceStore
 from services.uploads import UploadStore
 from services.workspace_history import WorkspaceHistoryStore
 
@@ -59,6 +60,7 @@ class ConversationTeardown:
         workspace_history: WorkspaceHistoryStore,
         conversation_tasks: ConversationTasks,
         plan_mode: PlanMode,
+        traces: TraceStore,
         projects: ProjectStore,
         worktrees: WorktreeManager,
         egress: EgressPolicy,
@@ -77,6 +79,7 @@ class ConversationTeardown:
         self._workspace_history: WorkspaceHistoryStore = workspace_history
         self._conversation_tasks: ConversationTasks = conversation_tasks
         self._plan_mode: PlanMode = plan_mode
+        self._traces: TraceStore = traces
         self._projects: ProjectStore = projects
         self._worktrees: WorktreeManager = worktrees
         self._egress: EgressPolicy = egress
@@ -125,6 +128,7 @@ class ConversationTeardown:
                 await self._changes.delete_for_conversation(owner_id, conversation_id)
             await self._discard_subagents(conversation_id, subagents)
             _ = await self._notifications.delete_for_conversations(owner_id, thread_ids)
+            await self._traces.delete_for_conversations(owner_id, thread_ids)
             if purge_images:
                 await self.purge_unreferenced_images(owner_id, attached)
                 await self._upload_privacy.reconcile(owner_id, attached)

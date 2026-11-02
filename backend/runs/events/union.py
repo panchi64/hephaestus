@@ -48,6 +48,7 @@ from .messages import (
 from .metrics import RunMetrics
 from .plan import PermissionChanged, PlanUpdated, TasksUpdated
 from .plugins import PluginWindowOpened
+from .spans import SpanCompleted
 from .tools import ToolCompleted, ToolFailed, ToolPreparing, ToolProgress, ToolStarted
 from .view import ViewLive, ViewLiveStopped, ViewSnapshot
 
@@ -76,6 +77,7 @@ EventBody = Annotated[
     | ToolProgress
     | ToolCompleted
     | ToolFailed
+    | SpanCompleted
     | CitationAdded
     | BrowserOpened
     | PluginWindowOpened
