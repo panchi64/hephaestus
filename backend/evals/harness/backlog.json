@@ -69,8 +69,8 @@
       "suspect": "vm/build_image.sh",
       "gap": "",
       "principle": null,
-      "status": "open",
-      "note": "Added to vm/build_image.sh; fixed once the image is rebuilt."
+      "status": "fixed",
+      "note": "The rebuilt image (5dcf35c6939916fb) has pytest. Confirm on the next harness run."
     },
     {
       "id": "H-005",
@@ -610,8 +610,8 @@
       "suspect": "project_active",
       "gap": "",
       "principle": null,
-      "status": "regressed",
-      "note": "Path half fixed: project_active now reports the sub-agent's own worktree path (tools/projects.py). The git half is unresolved: a throwaway VM resolves a host-path git-dir bind correctly, and the run kept only the worker's paraphrase ('Not a git repository'), not the raw output. Next run: capture the worker's raw git output."
+      "status": "fixed",
+      "note": "Guest identity: the agent runs as the operator's uid (6db20ca6); tests/test_vm_guest_live.py covers git in a checkout, a worktree and a child worktree. Confirm on the next harness run."
     },
     {
       "id": "H-032",
