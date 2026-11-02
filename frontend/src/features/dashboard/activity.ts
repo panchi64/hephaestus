@@ -4,7 +4,7 @@
 import type { ChatSummary } from "~/features/chat/model";
 import { resolveRunState, type RunState } from "~/features/chat/runState";
 import { parseInstant } from "~/lib/format";
-import type { ActionTone } from "~/ui";
+import type { ActionTone, Status } from "~/ui";
 import type { ActiveRun, CapabilityHealth } from "./model";
 
 export interface ActivityItem {
@@ -117,6 +117,17 @@ export function buildActivity(
     ).length,
   };
   return { items: all.slice(0, limit), total: all.length, counts };
+}
+
+/** Overall status. Any down capability is an alert; a degraded *critical* one is a
+ *  warning. The backend's `critical` flag is the severity policy, and this is the
+ *  roll-up of it, not a second one. */
+export function overallStatus(
+  caps: readonly Pick<CapabilityHealth, "status" | "critical">[],
+): Extract<Status, "nominal" | "warn" | "alert"> {
+  if (caps.some((c) => c.status === "alert")) return "alert";
+  if (caps.some((c) => c.critical && c.status === "warn")) return "warn";
+  return "nominal";
 }
 
 /** Degraded capabilities, alerts before warnings. */
