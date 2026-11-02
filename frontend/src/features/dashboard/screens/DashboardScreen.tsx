@@ -6,10 +6,14 @@ import {
   type JSX,
 } from "solid-js";
 import { useNavigate } from "@solidjs/router";
-import { Composer, toast, type Status } from "~/ui";
+import { Composer, toast } from "~/ui";
 import { overviewBand, useActiveRuns, useOverview } from "../data";
-import type { CapabilityHealth } from "../model";
-import { buildActivity, degraded, homeDigest } from "../activity";
+import {
+  buildActivity,
+  degraded,
+  homeDigest,
+  overallStatus,
+} from "../activity";
 import { dayPartOf, pickGreeting } from "../greetings";
 import { HomePlate } from "../components/HomePlate";
 import { ActivityLedger } from "../components/ActivityLedger";
@@ -50,15 +54,6 @@ const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
   month: "short",
   year: "numeric",
 });
-
-/** Overall status for the plate's flag. Any down capability is an alert; a degraded
- *  *critical* one is a warning. The backend's `critical` flag is the severity policy,
- *  and this is the roll-up of it, not a second one. */
-function overallStatus(caps: readonly CapabilityHealth[]): Status {
-  if (caps.some((c) => c.status === "alert")) return "alert";
-  if (caps.some((c) => c.critical && c.status === "warn")) return "warn";
-  return "nominal";
-}
 
 /** The launchpad. */
 export function DashboardScreen(): JSX.Element {
@@ -104,7 +99,7 @@ export function DashboardScreen(): JSX.Element {
       s === "warn" ? c.critical : c.status === "alert",
     );
     return {
-      tone: s as "warn" | "alert",
+      tone: s,
       label: s === "alert" ? "System alert" : "System warning",
       reason: triggering.map((c) => `${c.label}: ${c.detail}`).join(" · "),
     };
