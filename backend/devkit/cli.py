@@ -23,7 +23,7 @@ from typing import TypedDict
 
 import core.volume
 from core.config import Settings
-from devkit import doctor, launch, live, ports, processes, surfaces
+from devkit import doctor, launch, ports, processes, surfaces
 from devkit.instance import DevInstance, resolve
 from devkit.processes import Supervisor
 from services.workspace_reset import reset_workspace
@@ -95,8 +95,10 @@ def status_payload(instance: DevInstance) -> StatusPayload:
             "stub": instance.stub_port,
         },
         "running": running,
-        # The stub isn't started when a real endpoint is configured (`launch.ensure_stub`).
-        "ready": all(up for name, up in running.items() if name != "stub" or not live.configured()),
+        # The stub isn't started when the launch used a real endpoint (`launch.ensure_stub`).
+        "ready": all(
+            up for name, up in running.items() if name != "stub" or not instance.live_endpoint
+        ),
         "seeded": instance.seeded or None,
         "auth": instance.auth,
         "vm": instance.vm,

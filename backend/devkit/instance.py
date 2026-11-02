@@ -49,6 +49,7 @@ class _StoredState(_SlotRecord):
     seeded: str = ""
     auth: bool = False
     vm: bool = False
+    live_endpoint: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,9 @@ class DevInstance:
     #: default: they cost an image build, memory and boot time that most visual checks
     #: never need. The image lives under this instance's own data dir.
     vm: bool = False
+    #: Whether the last launch used the endpoint in ``HEPH_DEV_CHAT_*`` instead of the
+    #: stub, so a later ``status`` from a shell without those variables still knows.
+    live_endpoint: bool = False
 
     @property
     def data_dir(self) -> Path:
@@ -166,6 +170,7 @@ class DevInstance:
                     "seeded": self.seeded,
                     "auth": self.auth,
                     "vm": self.vm,
+                    "live_endpoint": self.live_endpoint,
                 },
                 indent=2,
             )
@@ -244,6 +249,7 @@ def resolve(
             seeded=stored.seeded,
             auth=stored.auth,
             vm=stored.vm,
+            live_endpoint=stored.live_endpoint,
         )
         instance = stored_instance
     else:

@@ -186,6 +186,22 @@ async def test_an_approved_write_leases_the_project_to_the_thread(tmp_path: Path
     assert (root / "more.md").read_text() == "more"
 
 
+async def test_putting_back_a_write_removes_the_folders_it_created(tmp_path: Path):
+    caps, root, _leases = await _with_project(tmp_path)
+    args: dict[str, object] = {"path": "~/projects/api/docs/2026/notes.md", "content": "hi"}
+    _ = await _call("write_file", args, manager=ScratchDirs(tmp_path), caps=caps, approved=True)
+    assert (root / "docs/2026/notes.md").read_text() == "hi"
+
+    projects = caps.get(ProjectStore)
+    (project,) = await projects.list("operator")
+    report = await caps.get(ThreadChanges).revert(
+        "operator", "conv-1", {project.id: Path(project.root_path)}
+    )
+
+    assert report.reverted == ["docs/2026/notes.md"]
+    assert not (root / "docs").exists()
+
+
 async def test_a_relative_write_into_an_unmounted_project_asks_to_mount_it(tmp_path: Path):
     caps, root, _leases = await _with_project(tmp_path)
     manager = ScratchDirs(tmp_path)

@@ -5,7 +5,7 @@ edits the operator's working copy directly. The first time a turn changes a file
 is recorded as it was before that turn, so the operator can put it back: all the way to
 before the thread's first change, or to before any one turn. Only the file tools record;
 a shell command writes through the VM's live mount and is left to git. Directories are
-not recorded; their files are.
+recorded only as the folders a new file needed, which putting it back removes when empty.
 
 A file is put back only if it still holds what the thread left: one the operator, or
 another thread, has changed since is reported rather than overwritten.
@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Literal
+from pathlib import Path, PurePosixPath
+from typing import Literal, cast
 
 from sqlalchemy import Engine, delete
 from sqlmodel import Session, col, select
@@ -68,6 +69,8 @@ class RevertReport:
 class _Before:
     content: bytes | None
     too_large: bool = False
+    #: Missing folders above a missing file, deepest first.
+    missing_dirs: tuple[str, ...] = ()
 
 
 def sha(data: bytes) -> str:
@@ -87,10 +90,34 @@ def _read(root: Path, rel: str, limit: int) -> _Before | None:
     if target is None or target.is_dir():
         return None
     if not target.is_file():
-        return _Before(None)
+        return _Before(None, missing_dirs=_missing_dirs(root, rel))
     if target.stat().st_size > limit:
         return _Before(None, too_large=True)
     return _Before(target.read_bytes())
+
+
+def _missing_dirs(root: Path, rel: str) -> tuple[str, ...]:
+    missing: list[str] = []
+    for parent in PurePosixPath(rel).parents:
+        folder = target_of(root, str(parent)) if str(parent) != "." else None
+        if folder is None or folder.exists():
+            break
+        missing.append(str(parent))
+    return tuple(missing)
+
+
+def _remove_if_empty(root: Path, folders: Sequence[str]) -> None:
+    """Remove each folder, deepest first, stopping at the first that holds anything."""
+    for rel in folders:
+        folder = target_of(root, rel)
+        if folder is None:
+            return
+        try:
+            folder.rmdir()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return
 
 
 def sha_now(root: Path, rel: str) -> str | None:
@@ -167,6 +194,11 @@ class ThreadChanges:
                 row.original_enc = None if content is None else self._vault.encrypt_bytes(content)
                 row.original_sha = None if content is None else sha(content)
                 row.original_kept = not before.too_large
+                row.created_dirs_enc = (
+                    self._vault.encrypt_str(json.dumps(before.missing_dirs))
+                    if before.missing_dirs
+                    else None
+                )
                 row.current_sha = row.original_sha
                 row.reverted_at = None
                 row.created_at = now
@@ -300,6 +332,11 @@ class ThreadChanges:
             return "it has changed since this conversation last wrote it"
         if first.original_enc is None:
             target.unlink(missing_ok=True)
+            if first.created_dirs_enc is not None:
+                folders = cast(
+                    list[str], json.loads(self._vault.decrypt_str(first.created_dirs_enc))
+                )
+                _remove_if_empty(root, folders)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             _ = target.write_bytes(self._vault.decrypt_bytes(first.original_enc))

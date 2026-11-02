@@ -7,6 +7,7 @@ port to a worktree that had not asked for one.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
@@ -200,19 +201,24 @@ def test_seeding_is_recorded_against_a_version(tmp_path: Path):
 def test_a_missing_stub_only_counts_against_ready_when_the_stub_is_used(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, endpoint: bool, ready: bool
 ):
-    instance = DevInstance(name="x", slot=3, root=tmp_path, password="p")
+    instance = DevInstance(name="x", slot=3, root=tmp_path, password="p", live_endpoint=endpoint)
 
     def up_but_the_stub(port: int) -> bool:
         return port == instance.stub_port
 
     monkeypatch.setattr(ports, "is_free", up_but_the_stub)
+    # Read from a shell without the endpoint's variables: the launch's choice decides.
     for name in live.REQUIRED:
-        if endpoint:
-            monkeypatch.setenv(name, "set")
-        else:
-            monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name, raising=False)
 
     assert status_payload(instance)["ready"] is ready
+
+
+def test_the_launchs_endpoint_choice_is_remembered(tmp_path: Path):
+    instance = resolve(root=tmp_path, name="alpha")
+    replace(instance, live_endpoint=True).save()
+
+    assert resolve(root=tmp_path, name="alpha").live_endpoint is True
 
 
 def test_ports_within_a_slot_stay_a_fixed_distance_apart(tmp_path: Path):

@@ -39,6 +39,9 @@ class ThreadChange(Table, table=True):
     original_enc: bytes | None = None
     original_sha: str | None = None
     original_kept: bool = True
+    #: For a file that did not exist, the folders above it that did not either, deepest
+    #: first, as a sealed JSON list: putting the file back removes those left empty.
+    created_dirs_enc: str | None = None
     #: The file as the thread last left it; null when the thread deleted it.
     current_sha: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
