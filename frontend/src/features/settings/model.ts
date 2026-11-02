@@ -120,8 +120,6 @@ export interface SearchProviderInput {
  *  window that triggers folding earlier turns into a utility-model summary.
  *  `inactivityTimeoutS` is how long (seconds) a run may emit nothing before the watchdog
  *  stops it.
- *  `wallClockTimeoutS` bounds total run duration; `null` means no bound. It catches runs
- *  that keep emitting and so keep refreshing the inactivity watchdog.
  *  `contextWarnThreshold`/`contextAlertThreshold` are the fractions where the composer's
  *  context gauge turns amber and red; `warn` is strictly below `alert` (the backend
  *  refuses otherwise).
@@ -139,20 +137,11 @@ export interface ChatSettings {
    *  inactivity watchdog. */
   firstTokenTimeoutS: number | null;
   inactivityTimeoutS: number;
-  wallClockTimeoutS: number | null;
   subagentMaxConcurrent: number | null;
 }
 
 /** Seed for `subagentMaxConcurrent` when switched on with nothing stored; matches the backend default. */
 export const DEFAULT_SUBAGENT_LIMIT = 8;
-
-/** Seed for `wallClockTimeoutS` when switched on; a frontend suggestion, the backend has no default. */
-export const DEFAULT_WALL_CLOCK_S = 1800;
-
-/** `wallClockTimeoutS` as whole minutes for the Chat panel; takes a real duration, not "no bound". */
-export function wallClockMinutes(seconds: number): number {
-  return Math.max(1, Math.round(seconds / 60));
-}
 
 /** Offline mode, decided by the backend. `effectiveOffline` is
  *  manual OR (auto AND NOT online): web services are down and the agent's web tools hidden. */

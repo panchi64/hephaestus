@@ -8,7 +8,7 @@ sub-agent's wake) drives an ordinary turn through the same path a route does.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple
 
 from fastapi import HTTPException
 from pydantic_ai import AbstractToolset
@@ -53,13 +53,6 @@ class TurnModels(NamedTuple):
     #: ``ResolvedModel.label`` and ``model_name`` for the main model.
     label: str = ""
     model_name: str = ""
-
-
-class WallClockOverride(TypedDict, total=False):
-    """``compose_turn`` keyword arguments for a caller that sets the wall clock only
-    sometimes: absent means the registry default, which ``None`` would not."""
-
-    wall_clock_timeout_s: float | None
 
 
 async def resolve_turn_models(
@@ -176,7 +169,6 @@ def compose_turn(
     auto_compact: AutoCompactPolicy | None = None,
     context_thresholds: ContextThresholds = DEFAULT_CONTEXT_THRESHOLDS,
     inactivity_timeout_s: float | None | Unset = UNSET,
-    wall_clock_timeout_s: float | None | Unset = UNSET,
     kind: str = "chat",
     workspace_key: str = "",
     run_id: str | None = None,
@@ -245,11 +237,9 @@ def compose_turn(
             run_id=run_id,
             conversation_id=conversation_id,
             endpoint=endpoint,
-            # Resolved by the interactive caller; the unattended path leaves both UNSET for
-            # the registry default, so a task is wall-clock unbounded unless the deploy set
-            # `run_wall_clock_timeout_s`.
+            # Resolved by the interactive caller; the unattended path leaves it UNSET for the
+            # registry default.
             inactivity_timeout_s=inactivity_timeout_s,
-            wall_clock_timeout_s=wall_clock_timeout_s,
         )
     except ConversationBusyError as exc:
         # The registry's atomic check caught a race the caller's earlier guard couldn't.

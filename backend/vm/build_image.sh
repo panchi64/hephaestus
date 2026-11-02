@@ -16,7 +16,7 @@ ca=${1:-}
 apt-get update
 apt-get install -y --no-install-recommends \
     build-essential ca-certificates curl git python3 python3-dev libnss3-tools \
-    python3-pip python3-venv python-is-python3 ripgrep tar unzip util-linux
+    python3-pip python3-pytest python3-venv python-is-python3 ripgrep tar unzip util-linux
 if [ -n "$ca" ]; then
     install -D -m 0644 "$ca" /usr/local/share/ca-certificates/hephaestus-extra.crt
     update-ca-certificates

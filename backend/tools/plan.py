@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import ApprovalRequired
 from runs.lanes import is_attended
 from services.permissions import stricter_permission
 from services.plan_mode import ACTING_LEVEL, PLAN_SUBMIT_TOOL, PLANNING_LEVEL, Plan, PlanMode
+from services.task_list import seeded_task_id
 
 from .deps import RunDeps
 
@@ -231,12 +232,17 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
                 # — and leave Stop as the only way out. Say so instead.
                 return NO_RECORD
             raise ApprovalRequired()
-        _, level = await plans.approve(owner_id, conversation_id, run=ctx.deps.run)
+        plan, level = await plans.approve(owner_id, conversation_id, run=ctx.deps.run)
         retarget(ctx, ACTING_LEVEL)
+        steps = plan.steps if plan is not None else []
+        ids = "".join(
+            f"\n- `{seeded_task_id(index)}`: {step}" for index, step in enumerate(steps, start=1)
+        )
         return (
             f"The operator approved this plan. The conversation is now at the {level} "
             "level and its task list holds your steps. Carry the plan out now, marking "
             "each task in_progress as you start it and completed as you finish it."
+            + (f" The tasks' ids:{ids}" if ids else "")
         )
 
     return toolset

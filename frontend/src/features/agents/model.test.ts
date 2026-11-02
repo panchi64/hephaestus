@@ -120,7 +120,6 @@ function agent(over: Partial<Agent> = {}): Agent {
     denyTools: [],
     permissionCeiling: null,
     workspace: "shared",
-    wallClockTimeoutS: null,
     canDelegate: false,
     maxDepth: null,
     delegable: true,

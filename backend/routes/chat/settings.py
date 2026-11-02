@@ -17,14 +17,12 @@ from services.settings_store import (
     get_first_token_timeout,
     get_inactivity_timeout,
     get_subagent_limit,
-    get_wall_clock_timeout,
     get_work_summary_idle_minutes,
     set_auto_compact,
     set_context_thresholds,
     set_first_token_timeout,
     set_inactivity_timeout,
     set_subagent_limit,
-    set_wall_clock_timeout,
     set_work_summary_idle_minutes,
 )
 
@@ -43,7 +41,6 @@ async def _current(store: SettingsStore) -> ChatSettings:
         context_alert_threshold=context.alert,
         first_token_timeout_s=await get_first_token_timeout(store, OPERATOR_ID),
         inactivity_timeout_s=await get_inactivity_timeout(store, OPERATOR_ID),
-        wall_clock_timeout_s=await get_wall_clock_timeout(store, OPERATOR_ID),
         subagent_max_concurrent=await get_subagent_limit(store, OPERATOR_ID),
     )
 
@@ -65,12 +62,8 @@ async def update_chat_settings(body: ChatSettings, request: Request) -> ChatSett
         _ = await set_first_token_timeout(store, OPERATOR_ID, body.first_token_timeout_s)
     if body.inactivity_timeout_s is not None:
         _ = await set_inactivity_timeout(store, OPERATOR_ID, body.inactivity_timeout_s)
-    # `null` here means "remove the bound", so presence in the body — not a non-None
-    # value — is what says the client touched it.
-    if "wall_clock_timeout_s" in body.model_fields_set:
-        _ = await set_wall_clock_timeout(store, OPERATOR_ID, body.wall_clock_timeout_s)
-    # `null` removes the cap here too, so presence rather than a non-None value is what
-    # says the client touched it.
+    # `null` removes the cap, so presence in the body, not a non-None value, is what says
+    # the client touched it.
     if "subagent_max_concurrent" in body.model_fields_set:
         _ = await set_subagent_limit(store, OPERATOR_ID, body.subagent_max_concurrent)
     if body.work_summary_idle_minutes is not None:

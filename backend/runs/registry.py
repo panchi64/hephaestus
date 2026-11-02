@@ -2,8 +2,8 @@
 
 Runs are in-process asyncio tasks gated by a per-lane concurrency semaphore (bursts wait
 in ``queued``); the lane follows from the run's ``kind`` (``runs/lanes.py``). The registry
-owns queued→running, the terminal-state mapping, the wall-clock and inactivity bounds, and
-cancellation, so every orchestrator inherits them.
+owns queued→running, the terminal-state mapping, the inactivity bound, and cancellation, so
+every orchestrator inherits them. No run has an elapsed-time bound.
 """
 
 from __future__ import annotations
@@ -68,11 +68,11 @@ class ConversationBusyError(Exception):
         self.conversation_id: str = conversation_id
 
 
-type TimeoutKind = Literal["wall_clock", "inactivity"]
+type TimeoutKind = Literal["inactivity"]
 
 
 class RunTimeout(Exception):
-    """A Run exceeded a bound. ``kind`` is ``wall_clock`` or ``inactivity``.
+    """A Run stalled past its inactivity bound. Runs have no elapsed-time bound.
 
     The message reaches the operator verbatim (toast and ``blockedDetail`` marker), so it is
     built from the configured duration as a plain sentence.
@@ -91,14 +91,6 @@ def _fmt_minutes(minutes: float) -> str:
     return f"{minutes:.1f}"
 
 
-def adj_duration(bound_s: float) -> str:
-    """A hyphenated adjective phrase for a duration, e.g. ``30-minute``/``45-second``."""
-    minutes = bound_s / 60
-    if minutes >= 1:
-        return f"{_fmt_minutes(minutes)}-minute"
-    return f"{max(1, round(bound_s))}-second"
-
-
 def count_duration(bound_s: float) -> str:
     """A counted-noun phrase for a duration, e.g. ``2 minutes``/``1 second``."""
     minutes = bound_s / 60
@@ -110,10 +102,6 @@ def count_duration(bound_s: float) -> str:
 
 
 def _timeout_message(kind: str, bound_s: float | None) -> str:
-    if kind == "wall_clock":
-        if not bound_s:
-            return "this run hit its overall time limit"
-        return f"this run hit the {adj_duration(bound_s)} overall limit"
     if kind == "inactivity":
         if not bound_s:
             return "no activity for too long"
@@ -132,7 +120,6 @@ class RunRegistry:
         *,
         lanes: LaneLimits | None = None,
         endpoints: EndpointGate | None = None,
-        wall_clock_timeout_s: float | None = None,
         inactivity_timeout_s: float | None = None,
         max_retained: int = 200,
         on_terminal: Callable[[Run], None] | None = None,
@@ -140,7 +127,6 @@ class RunRegistry:
         self._runs: dict[str, Run] = {}
         self._lanes: LaneGate = LaneGate(lanes)
         self._endpoints: EndpointGate = endpoints or EndpointGate()
-        self._wall_clock: float | None = wall_clock_timeout_s
         self._inactivity: float | None = inactivity_timeout_s
         self._max_retained: int = max_retained
         # (owner_id, conversation_id) pairs held via `claim`: in-flight requests that may
@@ -377,7 +363,6 @@ class RunRegistry:
         run_id: str | None = None,
         conversation_id: str | None = None,
         endpoint: Endpoint | None = None,
-        wall_clock_timeout_s: float | None | Unset = UNSET,
         inactivity_timeout_s: float | None | Unset = UNSET,
     ) -> Run:
         # No ``await`` between this check and registering, closing the race a caller's own
@@ -398,10 +383,9 @@ class RunRegistry:
             run.inbox = self.inbox(conversation_id, owner_id)
         self.register(run)
         self._evict_old()
-        wall = self._wall_clock if wall_clock_timeout_s is UNSET else wall_clock_timeout_s
         idle = self._inactivity if inactivity_timeout_s is UNSET else inactivity_timeout_s
         run.task = asyncio.create_task(
-            self._execute(run, orchestrator, wall, idle),
+            self._execute(run, orchestrator, idle),
             name=f"run:{run.id}",
         )
         return run
@@ -507,7 +491,6 @@ class RunRegistry:
         run_id: str,
         orchestrator: Orchestrator,
         *,
-        wall_clock_timeout_s: float | None | Unset = UNSET,
         inactivity_timeout_s: float | None | Unset = UNSET,
     ) -> Run | None:
         """Continue a parked run with a fresh orchestrator on the same Run and stream (no new
@@ -523,10 +506,9 @@ class RunRegistry:
             return None  # cancelled (or already resumed) while we waited
         run.status = RunStatus.queued
         self._forget_park(run.id)
-        wall = self._wall_clock if wall_clock_timeout_s is UNSET else wall_clock_timeout_s
         idle = self._inactivity if inactivity_timeout_s is UNSET else inactivity_timeout_s
         run.task = asyncio.create_task(
-            self._execute(run, orchestrator, wall, idle, resuming=True),
+            self._execute(run, orchestrator, idle, resuming=True),
             name=f"run:{run.id}:resume",
         )
         return run
@@ -536,7 +518,6 @@ class RunRegistry:
         self,
         run: Run,
         orchestrator: Orchestrator,
-        wall_clock: float | None,
         inactivity: float | None,
         *,
         resuming: bool = False,
@@ -555,7 +536,7 @@ class RunRegistry:
                 if not resuming:
                     run.started_at = now_utc()
                     _ = run.emit(RunStarted(run_id=run.id, kind=run.kind))
-                await self._supervise(run, orchestrator, wall_clock, inactivity)
+                await self._supervise(run, orchestrator, inactivity)
                 if run.is_parked:
                     # Stream stays open and the slot frees; resume or cancel comes out of band.
                     _ = self._journal_park(run)
@@ -571,8 +552,8 @@ class RunRegistry:
             parked = run.status is RunStatus.awaiting_input
             run.block(str(timeout))
             run.end_code = timeout.kind
-            if timeout.kind == "wall_clock":
-                run.stop_cause = StopCause.time_limit
+            # A stalled sub-agent then reports `blocked (stalled)`, recoverable, not `failed`.
+            run.stop_cause = StopCause.time_limit
             if parked:
                 # Tripped after the park but before the task unwound: persistence was
                 # deferred to a resume that won't happen and `on_timeout` is already
@@ -626,40 +607,25 @@ class RunRegistry:
         self,
         run: Run,
         orchestrator: Orchestrator,
-        wall_clock: float | None,
         inactivity: float | None,
     ) -> None:
-        """Run the orchestrator under wall-clock + inactivity bounds."""
+        """Run the orchestrator under the inactivity bound."""
         # So `Run.keepalive` beats inside the bound instead of a fixed interval.
         run.inactivity_timeout_s = inactivity
-        if not wall_clock and not inactivity:
+        if not inactivity:
             await orchestrator(run)
             return
 
         loop = asyncio.get_running_loop()
         main = asyncio.ensure_future(orchestrator(run))
-        deadline = loop.time() + wall_clock if wall_clock else None
         try:
             while True:
-                now = loop.time()
-                waits: list[float] = []
-                if deadline is not None:
-                    waits.append(deadline - now)
-                if inactivity is not None:
-                    waits.append(run.last_activity_mono + inactivity - now)
-                timeout = min(waits) if waits else None
-                done, _ = await asyncio.wait(
-                    {main}, timeout=max(0.0, timeout) if timeout is not None else None
-                )
+                timeout = run.last_activity_mono + inactivity - loop.time()
+                done, _ = await asyncio.wait({main}, timeout=max(0.0, timeout))
                 if main in done:
                     main.result()  # propagate any orchestrator exception
                     return
-                now = loop.time()
-                if deadline is not None and now >= deadline:
-                    timeout_exc = RunTimeout("wall_clock", wall_clock)
-                    self._flush_timeout(run, str(timeout_exc))
-                    raise timeout_exc
-                if inactivity is not None and now >= run.last_activity_mono + inactivity:
+                if loop.time() >= run.last_activity_mono + inactivity:
                     timeout_exc = RunTimeout("inactivity", inactivity)
                     self._flush_timeout(run, str(timeout_exc))
                     raise timeout_exc

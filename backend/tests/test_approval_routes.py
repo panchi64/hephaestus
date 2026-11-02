@@ -101,14 +101,12 @@ async def test_approve_flow_resumes_and_completes(monkeypatch: pytest.MonkeyPatc
 
 async def test_approve_resumes_under_the_operators_bounds(monkeypatch: pytest.MonkeyPatch):
     # The continuation is a turn like any other, so it must run under the operator's own
-    # bounds rather than the registry defaults — a wall clock that applied to send but not
-    # to the resumed half of an approval-gated turn would be a setting that lies.
+    # bounds rather than the registry defaults: a bound that applied to send but not to the
+    # resumed half of an approval-gated turn would be a setting that lies.
     install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
-        _ = await client.put(
-            "/chat/settings", json={"wall_clock_timeout_s": 900, "inactivity_timeout_s": 45}
-        )
+        _ = await client.put("/chat/settings", json={"inactivity_timeout_s": 45})
         run_id = await _chat(client, "delete it")
         run = await await_parked(app, run_id)
 
@@ -130,7 +128,7 @@ async def test_approve_resumes_under_the_operators_bounds(monkeypatch: pytest.Mo
         assert resp.status_code == 202
         _ = await collect_sse_events(client, run_id)
 
-    assert seen == {"wall_clock_timeout_s": 900, "inactivity_timeout_s": 45}
+    assert seen == {"inactivity_timeout_s": 45}
 
 
 async def test_approve_rejects_unknown_and_unparked():

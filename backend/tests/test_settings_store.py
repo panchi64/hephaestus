@@ -9,16 +9,13 @@ from services.settings_store import (
     AUTO_COMPACT_THRESHOLD_KEY,
     INACTIVITY_TIMEOUT_KEY,
     SUBAGENT_LIMIT_KEY,
-    WALL_CLOCK_TIMEOUT_KEY,
     SettingsStore,
     get_auto_compact,
     get_inactivity_timeout,
     get_subagent_limit,
-    get_wall_clock_timeout,
     resolve_compaction_enabled,
     set_inactivity_timeout,
     set_subagent_limit,
-    set_wall_clock_timeout,
 )
 
 OWNER = "op"
@@ -142,36 +139,3 @@ async def test_corrupted_inactivity_timeout_falls_back_to_the_config_default():
     assert await get_inactivity_timeout(store, OWNER) == cfg.run_inactivity_timeout_s
     await store.set(OWNER, INACTIVITY_TIMEOUT_KEY, "not-a-number")
     assert await get_inactivity_timeout(store, OWNER) == cfg.run_inactivity_timeout_s
-
-
-async def test_get_wall_clock_timeout_uses_config_default_when_unset():
-    # Which is None out of the box — a run is bounded by its request limit, not a clock.
-    store = _store()
-    assert await get_wall_clock_timeout(store, OWNER) == get_settings().run_wall_clock_timeout_s
-
-
-async def test_wall_clock_timeout_round_trips_an_override():
-    store = _store()
-    stored = await set_wall_clock_timeout(store, OWNER, 3600.0)
-    assert stored == 3600.0
-    assert await get_wall_clock_timeout(store, OWNER) == 3600.0
-
-
-async def test_wall_clock_timeout_off_is_stored_rather_than_falling_back():
-    # The one getter where "no value" is a real answer: an operator who switches the bound
-    # off must stay off even against a deploy that sets `run_wall_clock_timeout_s`.
-    store = _store()
-    _ = await set_wall_clock_timeout(store, OWNER, 3600.0)
-    assert await set_wall_clock_timeout(store, OWNER, None) is None
-    assert await get_wall_clock_timeout(store, OWNER) is None
-    assert await store.get(OWNER, WALL_CLOCK_TIMEOUT_KEY) == ""
-
-
-async def test_corrupted_wall_clock_timeout_falls_back_to_the_config_default():
-    # 0, negative, and non-numeric are corruption, not the operator saying "off" — that is
-    # the empty value above, and only that one.
-    store = _store()
-    cfg = get_settings()
-    for bad in ("0", "-5", "not-a-number"):
-        await store.set(OWNER, WALL_CLOCK_TIMEOUT_KEY, bad)
-        assert await get_wall_clock_timeout(store, OWNER) == cfg.run_wall_clock_timeout_s

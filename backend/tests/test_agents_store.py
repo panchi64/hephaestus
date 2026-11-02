@@ -62,7 +62,6 @@ async def test_names_are_normalised(stores: Stores):
         ({"description": "  "}, "description"),
         ({"permission_ceiling": "godmode"}, "permission_ceiling"),
         ({"workspace": "elsewhere"}, "workspace"),
-        ({"wall_clock_timeout_s": -1.0}, "wall_clock_timeout_s"),
         ({"max_depth": -1}, "max_depth"),
         ({"source": "builtin"}, "source"),
     ],
@@ -82,7 +81,6 @@ async def test_every_field_round_trips(stores: Stores):
             tools=ToolAccess(allow=frozenset({"files", "web_search"}), deny=frozenset({"shell"})),
             permission_ceiling="plan",
             workspace="own",
-            wall_clock_timeout_s=30.0,
             can_delegate=True,
             max_depth=2,
             endpoint_id="ep",
@@ -95,7 +93,7 @@ async def test_every_field_round_trips(stores: Stores):
     assert got.tools.allow == frozenset({"files", "web_search"})
     assert got.tools.deny == frozenset({"shell"})
     assert (got.permission_ceiling, got.workspace) == ("plan", "own")
-    assert (got.wall_clock_timeout_s, got.max_depth) == (30.0, 2)
+    assert got.max_depth == 2
     assert got.can_delegate is True
 
 

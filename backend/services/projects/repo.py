@@ -165,9 +165,24 @@ async def run_git_ok(tree: Path, *args: str, root: Path | None = None) -> str:
     return out
 
 
+#: Interpreter and tool caches a run leaves behind, kept out of every commit even when the
+#: project's own `.gitignore` doesn't cover them. Build output stays in: a project may track it.
+_NEVER_STAGED = tuple(
+    f":(exclude,glob){pattern}"
+    for pattern in (
+        "**/__pycache__/**",
+        "**/*.pyc",
+        "**/*.pyo",
+        "**/.pytest_cache/**",
+        "**/.mypy_cache/**",
+        "**/.ruff_cache/**",
+    )
+)
+
+
 async def commit_worktree(path: Path, *, root: Path, message: str | None = None) -> bool:
-    """Stage and commit everything in ``path``, a worktree of ``root`` or ``root`` itself,
-    or return False if it was clean.
+    """Stage and commit every change in ``path``, a worktree of ``root`` or ``root`` itself,
+    except new cache files, or return False if it was clean.
 
     Best-effort by design: a worktree that isn't there, or a git that refuses, must
     not take down the read that asked for this. `.hephaestus/` ignores itself, so the
@@ -175,7 +190,9 @@ async def commit_worktree(path: Path, *, root: Path, message: str | None = None)
     """
     if not (path / ".git").exists():
         return False
-    _ = await run_git(path, "add", "-A", root=root)
+    # Tracked files first, cache or not, so a branch that already tracks one ends clean.
+    _ = await run_git(path, "add", "-u", "--", ".", root=root)
+    _ = await run_git(path, "add", "-A", "--", ".", *_NEVER_STAGED, root=root)
     # Exits 0 when nothing is staged.
     clean, _, _ = await run_git(path, "diff", "--cached", "--quiet", root=root)
     if clean == 0:

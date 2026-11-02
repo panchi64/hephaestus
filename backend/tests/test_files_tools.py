@@ -229,6 +229,13 @@ async def test_write_lands_in_the_conversation_workspace(tmp_path: Path):
     assert (manager.path("conv-1") / "result.txt").read_text() == "hello"
 
 
+async def test_a_write_creates_the_folders_it_needs(tmp_path: Path):
+    manager = ScratchDirs(tmp_path)
+    args: dict[str, object] = {"path": "summaries/2026/notes.txt", "content": "hello"}
+    _ = await _call("write_file", args, manager=manager)
+    assert (manager.path("conv-1") / "summaries/2026/notes.txt").read_text() == "hello"
+
+
 async def test_paths_outside_the_workspace_are_refused(tmp_path: Path):
     manager = ScratchDirs(tmp_path)
     secret = tmp_path / "secret.txt"

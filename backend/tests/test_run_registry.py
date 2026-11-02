@@ -150,26 +150,22 @@ async def test_cancel_running_run():
     assert await reg.cancel(run.id) is False
 
 
-async def test_wall_clock_timeout():
-    reg = RunRegistry(wall_clock_timeout_s=0.05, inactivity_timeout_s=None)
+async def test_a_busy_run_outlasts_any_multiple_of_the_inactivity_bound():
+    reg = RunRegistry(inactivity_timeout_s=0.05)
 
     async def orch(run: Run) -> None:
-        _ = run.emit(AnswerDelta(text="start"))
-        await asyncio.sleep(5)
+        for _ in range(15):
+            _ = run.emit(AnswerDelta(text="."))
+            await asyncio.sleep(0.02)
 
     run = reg.submit(kind="research", owner_id="operator", orchestrator=orch)
     await run.wait()
 
-    assert run.status is RunStatus.blocked
-    events = run.stream.replay()
-    notice = next(e.body for e in events if e.body.type == "limit.notice")
-    assert notice.limit == "time"
-    assert events[-1].body.type == "run.ended"
-    assert events[-1].body.outcome == "blocked"
+    assert run.status is RunStatus.done
 
 
 async def test_inactivity_timeout():
-    reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.05)
+    reg = RunRegistry(inactivity_timeout_s=0.05)
 
     async def orch(run: Run) -> None:
         _ = run.emit(AnswerDelta(text="start"))
@@ -188,7 +184,7 @@ async def test_inactivity_timeout():
 
 async def test_keepalive_holds_a_long_silent_call_open_past_the_inactivity_bound():
     # A non-streaming model call emits nothing between phase boundaries but is making progress.
-    reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.1)
+    reg = RunRegistry(inactivity_timeout_s=0.1)
 
     async def orch(run: Run) -> None:
         _ = run.emit(AnswerDelta(text="start"))
@@ -204,7 +200,7 @@ async def test_keepalive_holds_a_long_silent_call_open_past_the_inactivity_bound
 
 async def test_the_bound_applies_again_the_moment_the_call_returns():
     # The scope covers one awaited call; leaving it must re-arm the watchdog.
-    reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.1)
+    reg = RunRegistry(inactivity_timeout_s=0.1)
 
     async def orch(run: Run) -> None:
         async with run.keepalive():
@@ -221,7 +217,7 @@ async def test_the_bound_applies_again_the_moment_the_call_returns():
 
 async def test_keepalive_beats_inside_a_bound_shorter_than_its_default_interval():
     # The interval is a ceiling: a tight inactivity bound gets a proportionally faster heartbeat.
-    reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.06)
+    reg = RunRegistry(inactivity_timeout_s=0.06)
 
     async def orch(run: Run) -> None:
         async with run.keepalive():
@@ -234,7 +230,7 @@ async def test_keepalive_beats_inside_a_bound_shorter_than_its_default_interval(
 
 
 async def test_keepalive_does_not_hide_a_failure_raised_inside_it():
-    reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=1.0)
+    reg = RunRegistry(inactivity_timeout_s=1.0)
 
     async def orch(run: Run) -> None:
         async with run.keepalive():
@@ -646,16 +642,6 @@ async def test_shutdown_cancels_a_parked_run_whose_park_was_not_stored():
     await reg.shutdown()
 
     assert idle.status is RunStatus.cancelled and idle.stream.closed
-
-
-def test_adj_duration_reports_a_fractional_bound_exactly():
-    from runs.registry import adj_duration
-
-    assert adj_duration(1800) == "30-minute"
-    assert adj_duration(45) == "45-second"
-    # round() is half-to-even and would turn 2.5 minutes into "2-minute".
-    assert adj_duration(150) == "2.5-minute"
-    assert adj_duration(90) == "1.5-minute"
 
 
 def test_count_duration_reports_a_fractional_bound_exactly():

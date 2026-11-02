@@ -27,9 +27,6 @@ from .workspace import resolve_run_workspace
 
 _UNAVAILABLE = "Worktrees are unavailable in this deployment."
 
-#: The statuses of a sub-agent that is still writing to its worktree.
-_WORKING = frozenset({"running", "blocked"})
-
 
 async def worktree_paths(ctx: RunContext[RunDeps]) -> dict[str, dict[str, str]]:
     """Each open worktree of a sub-agent this thread spawned, by handle: its path in the
@@ -116,7 +113,17 @@ async def _settled_child(ctx: RunContext[RunDeps], name: str) -> ChildWorktree:
     except SubagentUnavailableError as exc:
         hints = ["call agents_list for your agents and their worktrees"]
         raise ModelRetry(render_tool_error(str(exc), hints=hints)) from exc
-    if view.status in _WORKING:
+    if view.status == "blocked":
+        raise ModelRetry(
+            render_tool_error(
+                f"`{child.handle}` is blocked on a question and may still write to its worktree",
+                hints=[
+                    "answer it with agents_message and merge once it reports done, or "
+                    + "settle it with agents_stop and merge then"
+                ],
+            )
+        )
+    if view.status == "running":
         raise ModelRetry(
             render_tool_error(
                 f"`{child.handle}` is still working in its worktree",

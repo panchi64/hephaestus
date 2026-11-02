@@ -2,7 +2,7 @@
 
 Three things can end a turn without its own code path reaching ``finalize``:
 
-- a **wall-clock or inactivity bound** — the registry calls ``run.on_timeout`` and then
+- the **inactivity bound**: the registry calls ``run.on_timeout`` and then
   force-cancels the task;
 - an **operator cancel** — the registry calls ``run.on_cancel`` from its own coroutine,
   before cancelling;

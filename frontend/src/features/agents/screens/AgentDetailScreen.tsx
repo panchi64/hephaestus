@@ -124,13 +124,6 @@ export function AgentDetailScreen(props: {
       { label: "Required tools", value: list(a.required) },
       { label: "Permission ceiling", value: a.permissionCeiling ?? "None" },
       { label: "Workspace", value: a.workspace },
-      {
-        label: "Wall-clock timeout",
-        value:
-          a.wallClockTimeoutS === null
-            ? "No timeout"
-            : `${a.wallClockTimeoutS} s`,
-      },
     ];
   }
 

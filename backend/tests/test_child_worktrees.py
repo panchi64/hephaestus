@@ -265,6 +265,15 @@ async def test_a_child_still_working_is_not_merged(tmp_path: Path):
         _ = await merge_child(world.ctx(), "fixer")
 
 
+async def test_a_blocked_child_names_how_to_settle_it(tmp_path: Path):
+    world = await _world(tmp_path)
+    _ = await world.cut(None, status="blocked")
+
+    with pytest.raises(ModelRetry, match="blocked on a question") as raised:
+        _ = await merge_child(world.ctx(), "fixer")
+    assert "agents_stop" in str(raised.value)
+
+
 async def test_discarding_drops_the_worktree_and_its_branch(tmp_path: Path):
     world = await _world(tmp_path)
     child = await world.cut(None)

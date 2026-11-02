@@ -44,13 +44,6 @@ CONTEXT_ALERT_THRESHOLD_KEY = "chat.context_alert_threshold"
 # applies when unset.
 INACTIVITY_TIMEOUT_KEY = "chat.inactivity_timeout_s"
 
-# Operator override of `run_wall_clock_timeout_s` (runs/registry.py): total seconds a run
-# may take, however busy; it stops a run that keeps emitting and never trips the inactivity
-# watchdog. Unlike other keys, unset and off differ: an empty stored value means off and
-# must not fall back to the config default.
-WALL_CLOCK_TIMEOUT_KEY = "chat.wall_clock_timeout_s"
-_DISABLED = ""
-
 # How long a turn waits for a model's first streamed token (`first_token_timeout_s`); a
 # local model reading a long cold prompt can be silent for minutes.
 FIRST_TOKEN_TIMEOUT_KEY = "chat.first_token_timeout_s"
@@ -59,6 +52,7 @@ FIRST_TOKEN_TIMEOUT_KEY = "chat.first_token_timeout_s"
 # `DEFAULT_MAX_CONCURRENT` (8). Unset and off are the same state: disabling sub-agents is
 # the catalog's tool switch, not a zero here.
 SUBAGENT_LIMIT_KEY = "chat.subagent_max_concurrent"
+_DISABLED = ""
 
 # Offline mode (services/offline.py): the manual force-offline toggle and the auto-detect
 # master switch, as "true"/"false" strings.
@@ -149,27 +143,6 @@ async def get_inactivity_timeout(store: SettingsStore, owner_id: str) -> float |
 async def set_inactivity_timeout(store: SettingsStore, owner_id: str, value: float) -> float:
     """Persist the inactivity timeout in seconds; the route rejects non-positive values."""
     await store.set(owner_id, INACTIVITY_TIMEOUT_KEY, str(value))
-    return value
-
-
-async def get_wall_clock_timeout(store: SettingsStore, owner_id: str) -> float | None:
-    """The wall-clock bound in seconds: the valid override, else the config default
-    (``None``, no bound, unless the deploy sets one).
-
-    The empty stored value must not fall back: it is the operator's "no bound". A 0,
-    negative or non-numeric value is corruption and falls back."""
-    raw = await store.get(owner_id, WALL_CLOCK_TIMEOUT_KEY)
-    if raw == _DISABLED:
-        return None
-    return _positive_float_or(raw, get_settings().run_wall_clock_timeout_s)
-
-
-async def set_wall_clock_timeout(
-    store: SettingsStore, owner_id: str, value: float | None
-) -> float | None:
-    """Persist the wall-clock bound in seconds, or ``None`` to remove it; the route rejects
-    non-positive numbers and distinguishes ``None`` from an omission."""
-    await store.set(owner_id, WALL_CLOCK_TIMEOUT_KEY, _DISABLED if value is None else str(value))
     return value
 
 

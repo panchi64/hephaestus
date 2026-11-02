@@ -203,6 +203,31 @@ async def test_stopping_an_idle_thread_with_nothing_live_changes_nothing(
         assert not app_state(app).runs.inbox(root, "operator").waiting_for_operator
 
 
+async def test_stopping_a_blocked_agent_with_no_run_left_names_it(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _hold_every_model(monkeypatch, only="slow task")
+    async with client_app() as (_client, app):
+        root = await _thread(app)
+        child = await launcher_of(app).launch(
+            "operator",
+            EXPLORER,
+            "plain task",
+            handle="asker",
+            parent=SubagentParent(conversation_id=root),
+        )
+        await settle_run(app, child.run_id)
+        row = await records_of(app).by_child(child.conversation_id)
+        assert row is not None
+        await records_of(app).settle(row.id, status="blocked")
+
+        stopped = await launcher_of(app).stop("operator", root, "asker")
+
+        assert stopped == ["asker"]
+        settled = await records_of(app).by_child(child.conversation_id)
+        assert settled is not None and settled.status == "cancelled"
+
+
 async def test_a_stop_with_only_finished_agents_leaves_their_inboxes_alone(
     monkeypatch: pytest.MonkeyPatch,
 ):

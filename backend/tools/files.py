@@ -18,8 +18,10 @@ files (``tools/briefing.py``).
 
 from __future__ import annotations
 
+import posixpath
 import re
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import cast, override
 
@@ -115,6 +117,11 @@ class _HomeFiles(WrapperToolset[RunDeps]):
             if leased:
                 # The lease is on the run's memo, which the workspace reads its home from.
                 home = await resolve_run_home(ctx.deps) or home
+            parent = posixpath.dirname(path)
+            if name == "write_file" and parent and not await home.backend.exists(parent):
+                # A failure here is left for the write itself to report.
+                with suppress(OSError, ValueError):
+                    await home.backend.make_dir(parent)
         located = home.locate(path) if isinstance(path, str) else None
         log = change_log(ctx.deps) if name in _FILE_WRITES and located is not None else None
         if log is not None and located is not None:

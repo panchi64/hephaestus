@@ -106,8 +106,8 @@ async def fold(
     it is emitted only once there is genuinely something to fold and can state what.
 
     **A fold has no time limit.** The summarizer runs until it finishes, and the whole
-    fold sits inside ``Run.keepalive`` so the inactivity watchdog cannot end it — the
-    run's own wall clock, when one is set, is the only bound left."""
+    fold sits inside ``Run.keepalive`` so the inactivity watchdog cannot end it; the
+    request's own timeouts and the operator's Stop still can."""
     try:
         # The summarizer has no time limit, so the run's inactivity watchdog must not stand
         # in for one: a local model prefilling a long thread can go minutes before its

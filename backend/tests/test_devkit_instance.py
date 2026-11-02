@@ -12,7 +12,8 @@ from typing import ClassVar
 
 import pytest
 
-from devkit import ports
+from devkit import live, ports
+from devkit.cli import status_payload
 from devkit.instance import DevInstance, claimed_slots, resolve
 
 from ._json import arr, obj, parse_json
@@ -193,6 +194,25 @@ def test_seeding_is_recorded_against_a_version(tmp_path: Path):
     assert instance.seeded == ""
     instance.with_seeded("v7").save()
     assert resolve(root=tmp_path, name="alpha").seeded == "v7"
+
+
+@pytest.mark.parametrize(("endpoint", "ready"), [(False, False), (True, True)])
+def test_a_missing_stub_only_counts_against_ready_when_the_stub_is_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, endpoint: bool, ready: bool
+):
+    instance = DevInstance(name="x", slot=3, root=tmp_path, password="p")
+
+    def up_but_the_stub(port: int) -> bool:
+        return port == instance.stub_port
+
+    monkeypatch.setattr(ports, "is_free", up_but_the_stub)
+    for name in live.REQUIRED:
+        if endpoint:
+            monkeypatch.setenv(name, "set")
+        else:
+            monkeypatch.delenv(name, raising=False)
+
+    assert status_payload(instance)["ready"] is ready
 
 
 def test_ports_within_a_slot_stay_a_fixed_distance_apart(tmp_path: Path):

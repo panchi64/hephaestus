@@ -162,7 +162,6 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
             tools=_declared_tools(fields),
             permission_ceiling=_declared_ceiling(fields, name=spec_name),
             workspace=_declared_workspace(fields, name=spec_name),
-            wall_clock_timeout_s=_positive(fields.get("wall-clock-timeout"), float),
             can_delegate=fields.get("can-delegate") is True,
             max_depth=_positive(fields.get("max-depth"), int),
             max_requests=_positive(fields.get("max-requests"), int),
@@ -188,8 +187,6 @@ def render_agent_file(agent: AgentDefinition) -> str:
         front["permission"] = agent.permission_ceiling
     if agent.workspace != "shared":
         front["workspace"] = agent.workspace
-    if agent.wall_clock_timeout_s is not None:
-        front["wall-clock-timeout"] = agent.wall_clock_timeout_s
     if agent.can_delegate:
         front["can-delegate"] = True
     if agent.max_depth is not None:

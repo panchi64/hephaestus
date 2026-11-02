@@ -164,8 +164,7 @@ class TestWhatItMayDo:
             await settle_run(app, started.run_id)
 
             assert composed["kind"] == "linked"
-            # The inactivity watchdog cannot end an unattended run that keeps streaming.
-            assert composed["wall_clock_timeout_s"]
+            assert "wall_clock_timeout_s" not in composed
 
     async def test_a_spec_needing_a_withheld_tool_refuses_rather_than_pretends(
         self, monkeypatch: pytest.MonkeyPatch

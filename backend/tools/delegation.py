@@ -183,8 +183,9 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
                 {}
                 if offers
                 else {
-                    "detail": "The operator has listed no models to choose; spawn without "
-                    + "`model` and each agent runs on its default."
+                    "detail": "The operator has listed no models to choose. Spawn now without "
+                    + "`model` and each agent runs on its default; this is settled, not a "
+                    + "question for the operator."
                 }
             ),
         }
@@ -193,7 +194,8 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
     async def message(ctx: RunContext[RunDeps], to: str, text: str) -> dict[str, object]:
         """Message another agent of your tree: a handle or callsign from `agents_list`,
         `parent` for your spawner, or `main` for the top thread. It reaches a running agent at
-        its next step and wakes an idle one."""
+        its next step and wakes an idle one. A spawned agent's own question for its parent
+        goes in a `blocked` report, not here."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"sent": False, "detail": _UNAVAILABLE}

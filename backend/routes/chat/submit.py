@@ -19,7 +19,7 @@ from routes import deps
 from routes.chat.schemas import ChatCreated
 from routes.chat.turn import TurnModels, compose_turn, resolve_choice, resolve_turn_models
 from routes.deps import OPERATOR_ID
-from services.agents import AgentDefinition, lower_of
+from services.agents import AgentDefinition
 from services.agents.thread import (
     ThreadAgent,
     agent_is_gone,
@@ -28,11 +28,7 @@ from services.agents.thread import (
 )
 from services.commands import Invocation, expand
 from services.conversations import ConversationBinding
-from services.settings_store import (
-    get_context_thresholds,
-    get_inactivity_timeout,
-    get_wall_clock_timeout,
-)
+from services.settings_store import get_context_thresholds, get_inactivity_timeout
 from services.workspace import place_kind
 from tools import InstructionProvider, RunDeps
 
@@ -198,12 +194,6 @@ async def submit_turn(
         context_thresholds=await get_context_thresholds(deps.settings_store(request), OPERATOR_ID),
         inactivity_timeout_s=await get_inactivity_timeout(
             deps.settings_store(request), OPERATOR_ID
-        ),
-        # Normally absent; resolved anyway so a wall clock the operator sets covers every
-        # interactive turn.
-        wall_clock_timeout_s=lower_of(
-            scope.agent.wall_clock_timeout_s,
-            await get_wall_clock_timeout(deps.settings_store(request), OPERATOR_ID),
         ),
     )
 

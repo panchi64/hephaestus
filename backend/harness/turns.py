@@ -15,7 +15,6 @@ from routes.chat import TurnModels, compose_turn
 from routes.chat.schemas import ChatCreated
 from routes.chat.thread_composer import ThreadComposer
 from runs import RunRegistry
-from runs.registry import UNSET, Unset
 from services.agents import AgentCatalog
 from services.conversations import ConversationBinding, ConversationStore
 from services.offline import OfflineModeService
@@ -68,7 +67,6 @@ class UnattendedTurns:
         disabled_tools: frozenset[str],
         instruction_providers: Sequence[InstructionProvider],
         max_requests: int | None = None,
-        wall_clock_timeout_s: float | None | Unset = UNSET,
         ephemeral: bool = False,
         run_id: str | None = None,
         ledger_prompt_message_id: str | None = None,
@@ -93,7 +91,6 @@ class UnattendedTurns:
             owner_id=owner_id,
             kind=kind,
             max_requests=max_requests,
-            wall_clock_timeout_s=wall_clock_timeout_s,
             ephemeral=ephemeral,
             ledger_prompt_message_id=ledger_prompt_message_id,
         )

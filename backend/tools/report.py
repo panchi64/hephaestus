@@ -45,6 +45,12 @@ def report_toolset() -> AbstractToolset[RunDeps]:
         anything it would be wrong to assume. For `blocked`, end with the exact question.
         For `failed`, say what broke and what you tried.
         """
+        if ctx.deps.reported:
+            return {
+                "filed": False,
+                "detail": "Your report is already filed, and a turn carries one. End your "
+                + "turn now, with no further text.",
+            }
         text = report.strip()
         if not text:
             raise ModelRetry(
@@ -56,6 +62,8 @@ def report_toolset() -> AbstractToolset[RunDeps]:
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"filed": False, "detail": "Delegation is unavailable in this deployment."}
+        # Claimed before the await, so parallel calls in one response cannot both file.
+        ctx.deps.reported = True
         try:
             parent = await launcher.file_report(
                 ctx.deps.owner_id,
@@ -64,8 +72,11 @@ def report_toolset() -> AbstractToolset[RunDeps]:
                 FiledReport(status=status, text=text),
             )
         except SubagentUnavailableError as exc:
+            ctx.deps.reported = False
             return {"filed": False, "detail": str(exc)}
-        ctx.deps.reported = True
+        except BaseException:
+            ctx.deps.reported = False
+            raise
         return {
             "filed": True,
             "to": parent,

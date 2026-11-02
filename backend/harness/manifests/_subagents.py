@@ -40,7 +40,6 @@ from services.agents import (
     AgentCatalog,
     AgentDefinition,
     AgentNameError,
-    lower_of,
     normalize_agent_name,
 )
 from services.agents.definition import WorkspacePolicy
@@ -302,12 +301,6 @@ class ConversationSubagents(SubagentLauncher):
             binding=binding,
             owner_id=owner_id,
             kind=SUBAGENT_KIND,
-            # A streaming model keeps the inactivity watchdog fed; only a wall clock ends a
-            # wedged one.
-            wall_clock_timeout_s=lower_of(
-                agent.wall_clock_timeout_s,
-                self._ctx.settings.subagent_wall_clock_timeout_s,
-            ),
             ephemeral=True,
             max_requests=agent.max_requests,
             ledger_prompt_message_id=parent.ledger_prompt_message_id,

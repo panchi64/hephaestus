@@ -143,9 +143,10 @@ class Turn(_Model):
         return [*self.segments[:start], *tail]
 
     def final_reply(self) -> str:
-        """The text after the turn's last non-text segment: what the operator reads last."""
+        """The text after the turn's last non-text segment: what the operator reads last.
+        Separate segments are separate paragraphs, split by a notice such as a steer."""
         tail = self.segments[self._reply_start() :]
-        return "".join(s.text for s in tail if isinstance(s, Text)).strip()
+        return "\n\n".join(s.text.strip() for s in tail if isinstance(s, Text)).strip()
 
     def tools(self) -> list[Tool]:
         return [s for s in self.segments if isinstance(s, Tool)]

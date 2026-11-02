@@ -179,34 +179,11 @@ async def test_the_first_token_wait_reaches_the_turn():
         assert tuned.first_token_timeout_s == 900
 
 
-async def test_wall_clock_timeout_is_absent_until_the_operator_sets_one():
-    # The default is no bound at all: a clock only ever stops a run that is legitimately
-    # slow.
+async def test_runs_have_no_wall_clock_to_set():
     async with client_app() as (client, _app):
-        got = await _settings(client)
-        assert got["wall_clock_timeout_s"] is None
-
+        assert "wall_clock_timeout_s" not in await _settings(client)
         put = await client.put("/chat/settings", json={"wall_clock_timeout_s": 3600})
-        assert put.status_code == 200
-        assert json_body(put)["wall_clock_timeout_s"] == 3600
-
-        again = await _settings(client)
-        assert again["wall_clock_timeout_s"] == 3600
-
-
-async def test_explicit_null_removes_the_wall_clock_bound():
-    # `null` is the one body value that means something rather than "unchanged", so a PUT
-    # carrying it must clear the bound — and a PUT that omits the field must not.
-    async with client_app() as (client, _app):
-        _ = await client.put("/chat/settings", json={"wall_clock_timeout_s": 3600})
-
-        untouched = await client.put("/chat/settings", json={"first_token_timeout_s": 900})
-        assert json_body(untouched)["wall_clock_timeout_s"] == 3600
-
-        cleared = await client.put("/chat/settings", json={"wall_clock_timeout_s": None})
-        assert cleared.status_code == 200
-        assert json_body(cleared)["wall_clock_timeout_s"] is None
-        assert (await _settings(client))["wall_clock_timeout_s"] is None
+        assert put.status_code == 422
 
 
 async def test_the_subagent_cap_is_absent_until_the_operator_sets_one():
@@ -241,14 +218,6 @@ async def test_the_subagent_cap_rejects_zero_and_negative():
     async with client_app() as (client, _app):
         for bad in (0, -1):
             resp = await client.put("/chat/settings", json={"subagent_max_concurrent": bad})
-            assert resp.status_code == 422
-
-
-async def test_wall_clock_timeout_rejects_zero_and_negative():
-    # Off is `null`, not 0 — a 0 bound would stop every turn the instant it started.
-    async with client_app() as (client, _app):
-        for bad in (0, -1):
-            resp = await client.put("/chat/settings", json={"wall_clock_timeout_s": bad})
             assert resp.status_code == 422
 
 

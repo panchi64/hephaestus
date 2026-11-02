@@ -25,6 +25,7 @@ from evals.drive.timeline import (
 from evals.harness.checks import Check, evaluate
 from evals.harness.evidence import Evidence, ProxiedRequest
 from evals.harness.implicit import implicit
+from evals.harness.spec import load_scenarios
 from harness.manifests._subagent_wake import NO_REPORT
 from runs.events.lifecycle import LimitNotice, StepStarted
 from runs.events.messages import MessageInjected
@@ -186,6 +187,19 @@ def test_an_answer_check_can_read_one_operator_turn() -> None:
     )
     assert not _passes({"kind": "answer_matches", "pattern": "pin"}, evidence)
     assert _passes({"kind": "answer_matches", "pattern": "pin", "turn": 1}, evidence)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "inventory.py: 5 functions, 37 lines.",
+        "| File | Functions | Lines |\n| --- | --- | --- |\n| inventory.py | 5 | 37 |",
+    ],
+)
+def test_the_steer_scenario_accepts_line_counts_as_prose_or_a_table(answer: str) -> None:
+    (scenario,) = [s for s in load_scenarios() if s.id == "flow-steer"]
+    (check,) = [c for c in scenario.checks if c.kind == "answer_matches"]
+    assert check.passes(Evidence(turns=[_turn(Text(text=answer))]))
 
 
 def test_a_notice_after_the_reply_doesnt_hide_it() -> None:

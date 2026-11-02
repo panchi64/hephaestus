@@ -110,13 +110,15 @@ def _install_model(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _quiet(app: FastAPI) -> None:
-    """Every run, and the hooks that react to it, has finished."""
+    """Every run, and the hooks that react to it, has finished, including runs those hooks
+    started (a report turn's end wakes the agent for what waited behind it)."""
     for _ in range(200):
         runs = app_state(app).runs.list()
         if all(run.is_terminal or run.is_parked for run in runs):
             for run in runs:
                 await settle_run(app, run.id)
-            return
+            if len(app_state(app).runs.list()) == len(runs):
+                return
         await asyncio.sleep(0.02)
     live = [(r.kind, r.status.value) for r in app_state(app).runs.list() if not r.is_terminal]
     raise AssertionError(f"runs never settled: {live}")
@@ -171,6 +173,9 @@ async def test_a_capped_child_ends_blocked_and_its_wake_is_capped_too(
         assert _ended(first).code == "turn_limit"
         assert first.detail == TURN_LIMIT_DETAIL
 
+        # The cap first buys one report turn; this model never reports, so the limit stands.
+        (report_turn,) = _turns_of(app, started.conversation_id)[1:]
+        await settle_run(app, report_turn.id)
         queued = app_state(app).runs.inbox(parent, OWNER).messages
         assert any("did not finish" in m.text and "request limit" in m.text for m in queued)
         release.set()
@@ -178,15 +183,18 @@ async def test_a_capped_child_ends_blocked_and_its_wake_is_capped_too(
 
         _ = await launcher_of(app).message(OWNER, parent, "worker-one", "carry on")
         await _quiet(app)
-        runs = [
-            r for r in app_state(app).runs.list() if r.conversation_id == started.conversation_id
-        ]
-        assert len(runs) == 2
-        woken = max(runs, key=lambda r: r.created_at)
-        assert woken.id != started.run_id
+        runs = _turns_of(app, started.conversation_id)
+        assert len(runs) == 4
+        woken = runs[2]
         assert woken.status is RunStatus.blocked
         assert woken.stop_cause is StopCause.turn_limit
         assert _ended(woken).code == "turn_limit"
+
+
+def _turns_of(app: FastAPI, conversation_id: str) -> list[Run]:
+    """The thread's runs, oldest first."""
+    runs = [r for r in app_state(app).runs.list() if r.conversation_id == conversation_id]
+    return sorted(runs, key=lambda r: r.created_at)
 
 
 async def _filed(app: FastAPI, root: Path, thread: str, prompt: str) -> set[str]:

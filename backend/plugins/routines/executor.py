@@ -15,7 +15,6 @@ from core.serde import as_utc
 from core.untrusted import wrap_untrusted
 from harness.turns import UnattendedTurns
 from runs import Run, RunRegistry, RunStatus
-from runs.registry import UNSET
 from services.approval_grants import ONCE_ONLY_TOOLS, ApprovalGrantStore
 from services.conversations import ConversationStore
 from services.notifications import NotificationService
@@ -185,7 +184,6 @@ class RoutineFires:
         disabled = await composer.disabled(
             view.owner_id, kind=TASK_KIND, vision=models.vision, applied=applied, depth=0
         )
-        wall_clock = applied.agent.wall_clock_timeout_s
         prompt = await self._with_last_run(view)
         waiter: asyncio.Future[Run] = asyncio.get_running_loop().create_future()
         run_id = uuid4().hex
@@ -206,7 +204,6 @@ class RoutineFires:
                 owner_id=view.owner_id,
                 kind=TASK_KIND,
                 max_requests=applied.agent.max_requests,
-                wall_clock_timeout_s=wall_clock if wall_clock is not None else UNSET,
             )
         except Exception:
             if view.task_run_id is not None:

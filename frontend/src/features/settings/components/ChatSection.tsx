@@ -13,30 +13,15 @@ import {
 import { SettingsPageHeader } from "~/app/settings-dialog/SettingsPageHeader";
 import { inertBand } from "../contextBands";
 import { saveChatSettings, useChatSettings } from "../data";
-import {
-  DEFAULT_SUBAGENT_LIMIT,
-  DEFAULT_WALL_CLOCK_S,
-  wallClockMinutes,
-} from "../model";
+import { DEFAULT_SUBAGENT_LIMIT } from "../model";
 import { NumberSetting, SettingHeader, wholeNumber } from "./NumberSetting";
 
 const Rule = (): JSX.Element => <div class="border-line border-t" />;
-
-/** Falls back to the shared seed for an unset bound, so switching the limit on and saving
- *  doesn't error on a blank field. */
-function minutesOr(seconds: number | null): number {
-  return wallClockMinutes(seconds ?? DEFAULT_WALL_CLOCK_S);
-}
 
 /* Operator preferences for how a turn runs. Each value seeds from the backend resource
    and saves back to it. */
 export function ChatSection(): JSX.Element {
   const chatSettings = useChatSettings();
-  // Off unless switched on: the step limit bounds a runaway turn, so this covers a run
-  // that keeps emitting and never looks idle. Edited in minutes, stored in seconds.
-  const [wallClockOn, setWallClockOn] = createSignal(false);
-  const [wallClockMin, setWallClockMin] = createSignal("");
-  const [savingWallClock, setSavingWallClock] = createSignal(false);
   // Off by default (null): a limit picked before the work's shape is known is mostly wrong.
   const [subagentCapOn, setSubagentCapOn] = createSignal(false);
   const [subagentCap, setSubagentCap] = createSignal("");
@@ -65,8 +50,6 @@ export function ChatSection(): JSX.Element {
   createEffect(() => {
     const s = chatSettings();
     if (!s) return;
-    setWallClockOn(s.wallClockTimeoutS !== null);
-    setWallClockMin(String(minutesOr(s.wallClockTimeoutS)));
     setSubagentCapOn(s.subagentMaxConcurrent !== null);
     setSubagentCap(String(s.subagentMaxConcurrent ?? DEFAULT_SUBAGENT_LIMIT));
     setAutoCompactEnabled(s.autoCompactEnabled);
@@ -75,29 +58,6 @@ export function ChatSection(): JSX.Element {
     setWarnPct(String(Math.round(s.contextWarnThreshold * 100)));
     setAlertPct(String(Math.round(s.contextAlertThreshold * 100)));
   });
-  const saveWallClock = async () => {
-    // Off sends `null` (remove the bound), not an omission. A blank field can't block
-    // turning it off.
-    const minutes = wallClockOn() ? wholeNumber(wallClockMin()) : null;
-    if (wallClockOn() && minutes === null) {
-      toast.error("Enter whole minutes (1 or more).");
-      return;
-    }
-    setSavingWallClock(true);
-    try {
-      const saved = await saveChatSettings({
-        wallClockTimeoutS: minutes === null ? null : minutes * 60,
-      });
-      setWallClockOn(saved.wallClockTimeoutS !== null);
-      setWallClockMin(String(minutesOr(saved.wallClockTimeoutS)));
-      toast.success("Total time limit updated");
-    } catch {
-      toast.error("Unable to update the total time limit.");
-    } finally {
-      setSavingWallClock(false);
-    }
-  };
-
   const saveSubagentCap = async () => {
     // Off sends `null` (remove the cap), not an omission.
     const cap = subagentCapOn() ? wholeNumber(subagentCap()) : null;
@@ -234,48 +194,6 @@ export function ChatSection(): JSX.Element {
               count that wait. Raise it if long threads stop before the first
               word.
             </NumberSetting>
-
-            <Rule />
-
-            <SettingHeader title="Total time limit">
-              A ceiling on how long one turn may take start to finish, however
-              busy it is. Off by default: the step limit above is what stops a
-              runaway turn, so a clock mostly cuts off turns that are simply
-              slow — a local model, a long tool call. Switch it on to catch what
-              neither other limit does: a turn that keeps producing output — a
-              tool reporting progress, a model still writing — and so never
-              looks idle, no matter how long it goes on.
-            </SettingHeader>
-            <Toggle
-              checked={wallClockOn()}
-              onChange={setWallClockOn}
-              label="Stop a turn once it has run this long"
-            />
-            <Row gap={4} align="end">
-              <Stack gap={1}>
-                <Text variant="label" tone="dim">
-                  Stop after (minutes)
-                </Text>
-                <div class="w-48">
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    value={wallClockMin()}
-                    onInput={(e) => setWallClockMin(e.currentTarget.value)}
-                    placeholder={String(minutesOr(null))}
-                    disabled={!wallClockOn()}
-                  />
-                </div>
-              </Stack>
-              <Button
-                variant="primary"
-                disabled={savingWallClock()}
-                onClick={() => void saveWallClock()}
-              >
-                {savingWallClock() ? "Saving…" : "Save"}
-              </Button>
-            </Row>
 
             <Rule />
 

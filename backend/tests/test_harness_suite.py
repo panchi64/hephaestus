@@ -263,6 +263,16 @@ def test_the_backlog_counts_recurrences_and_reopens_a_fixed_issue() -> None:
     assert "## Regressed" in render_backlog(backlog)
 
 
+def test_a_group_is_dated_by_its_first_run_not_by_when_it_is_filed(tmp_path: Path) -> None:
+    for name, started in (("A", "2026-11-01 21:25 UTC"), ("B", "2026-11-02 00:10 UTC")):
+        run = _run(_scenario()).model_copy(update={"name": name, "started_at": started})
+        run_dir = tmp_path / "g" / name
+        run_dir.mkdir(parents=True)
+        _ = (run_dir / "run.json").write_text(run.model_dump_json())
+
+    assert issues.collect(tmp_path / "g").ran_on == "2026-11-01"
+
+
 def test_a_reviewed_run_files_its_grader_issues_in_place_of_scenario_checks(
     tmp_path: Path,
 ) -> None:
