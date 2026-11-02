@@ -385,6 +385,10 @@ class Session:
         for proxy in self.proxies.values():
             proxy.attribute(bucket)
 
+    def watch(self, texts: tuple[str, ...]) -> None:
+        for proxy in self.proxies.values():
+            proxy.watch(texts)
+
     def take(self, bucket: str) -> dict[Kind, Usage]:
         out: dict[Kind, Usage] = {}
         for proxy in self.proxies.values():

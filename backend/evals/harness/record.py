@@ -12,6 +12,7 @@ from evals.drive.usage import Kind, Usage, total
 
 from .evidence import ProxiedRequest
 from .implicit import CheckResult
+from .variants import BASE, Probe
 
 RUN_FILE = "run.json"
 TRANSCRIPT_FILE = "transcript.md"
@@ -60,6 +61,9 @@ class Run(_Model):
     name: str
     started_at: str
     prompt_fingerprint: str
+    #: The trial arm (`evals/harness/variants.py`) and what its requests must show.
+    arm: str = BASE
+    probes: list[Probe] = Field(default_factory=list)
     stub: bool
     provider: str | None = None
     routing: Routing = Field(default_factory=Routing)

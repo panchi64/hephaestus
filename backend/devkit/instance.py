@@ -151,7 +151,13 @@ class DevInstance:
             # connection, and an instance that exists to be screenshotted should not
             # reach the network to decide whether to start.
             "HEPHAESTUS_OFFLINE_CHECK_ENABLED": "false",
+            # The file a harness trial writes each arm's prompt rewrites to (`agent/variant.py`).
+            "HEPHAESTUS_PROMPT_VARIANT": str(self.prompt_variant_file),
         }
+
+    @property
+    def prompt_variant_file(self) -> Path:
+        return self.root / "prompt-variant.json"
 
     def frontend_env(self) -> dict[str, str]:
         """The environment the frontend dev server runs under — one seam, the API base."""

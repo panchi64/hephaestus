@@ -157,6 +157,18 @@ which writes the group's `issues.md` and merges it into the tracked backlog,
 `evals/harness/backlog.json`, rendered as `ISSUES.md`. Mark an issue fixed with
 `issues set H-004 fixed --note "…"`; a fixed issue that recurs comes back as `regressed`.
 
+A trial runs the same scenarios with one registered prohibition removed, replaced or added
+(`evals/harness/variants/`, `docs/voice.md` §16), each arm under its own blind letter:
+
+```bash
+uv run python -m evals.harness.run --only main-multi-step --samples 3 --arms base without-h036-floor
+uv run python -m evals.harness.compare <group>
+```
+
+The harness writes each arm's rewrites to `<instance root>/prompt-variant.json`, which the
+backend reads on every request; an instance started before the variable existed needs a
+`stop` and `up` once. `compare` marks an arm invalid when its edit never reached the model.
+
 ## The VMs, and why they are off
 
 The VMs — the per-conversation machines behind the shell and `code_execute`, and the

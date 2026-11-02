@@ -354,7 +354,7 @@ The interface's own copy follows `design-system.md`, but it names the forge's ca
 1. Compose the head from `prompts/voice.py`: the forge, the agent's class, and the shared rules that apply to it. Don't restate them in prose.
 2. Write only what is specific to this agent or tool, in the §12 house style.
 3. Check it against §9. Every banned habit you'd have to tell a model to avoid is a sign it was invited by the prompt's own wording.
-4. Check every prohibition and every sentence written because of one incident. Each needs a reason no principle (§7) covers it, written beside it; without one, it goes, and the principle it belongs to gets the strengthening.
+4. Check every prohibition and every sentence written because of one incident. Each needs a reason no principle (§7) covers it; without one, it goes, and the principle it belongs to gets the strengthening. The reason is its entry in `backend/prompts/register/` (§16), and `tests/test_prompt_boundaries.py` fails on a prohibition without one.
 5. Render it (`cd backend && uv run python -m devkit.prompts <target>`, or `list` for the targets) and read the whole thing as the model will see it.
 6. If it changes how an agent sounds, add or update a calibration sample in §13.
 7. Measure it:
@@ -372,4 +372,20 @@ An eval or the operator shows a model doing the wrong thing. A sentence that for
 2. **Name the need it fails.** Which §7 question would have led the model right? Every behavior issue the harness files carries this as `principle`, and the reasoning the model skipped as `gap` (`backend/evals/harness/GRADING.md`).
 3. **Find why the principle didn't fire.** Usually its reason is missing (the model knew the rule but not what it protects), its threshold is stated as a count rather than as the need ("three or more steps" against "work the operator waits through"), or another sentence pulls the other way. Read the rendered prompt (§15) for the conflict.
 4. **Strengthen the principle**, in its own words and in its illustrations. Delete any narrow rule it now covers rather than keeping both.
-5. **Check recurrence.** A behavior issue that comes back after a fix is filed against the original entry (`recurs`), which reopens as `regressed`. A regression means the reasoning still has the gap, not that the rule needs more emphasis.
+5. **Check recurrence.** A behavior issue that comes back after a fix is filed against the original entry (`recurs`), which reopens as `regressed`. What the regression earns depends on what the fix was:
+   - After a principle-only fix, it earns a boundary: a hard line in the principle's own block, with its reason, registered as `earned` with the backlog ids as `evidence`. The principle pulled the right way and the model still crossed; a threshold it can't argue past is the next lever.
+   - After a boundary, prose is the wrong lever. The next fix is a mechanism: a tool's affordance, a judge, a check. More emphasis on the same sentence is not a fix.
+6. **Settle a contested boundary by trial, not argument.** Write a variant that removes or adds it (`backend/evals/harness/variants/`) and run the scenarios that exercise it with `--arms base <variant>`; `evals.harness.compare` reads the arms side by side.
+
+### The register
+
+Every prohibition in model-facing text has an entry in `backend/prompts/register/*.toml`: the sentence, where it lives, its kind and why the principle alone can't carry it. A prohibition stays only as one of four kinds:
+
+| Kind | Stays because |
+|---|---|
+| `fact` | It states a platform constraint the model cannot derive (a path that won't render, a tool that is withdrawn). |
+| `safety` | It guards an invariant, an irreversible effect or a security line. |
+| `preference` | It is the operator's taste, which no principle implies. |
+| `earned` | The behavior recurred after a principle-only fix; `evidence` names the backlog ids. |
+
+Anything else is a patch, and it goes. `tests/test_prompt_boundaries.py` fails when a prohibition has no entry, when an entry's sentence is gone from its source, and when an `earned` entry names no evidence. `uv run python -m devkit.prompts corpus` lists the sources it scans.

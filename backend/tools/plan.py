@@ -128,7 +128,7 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
         From the next step on, every tool that changes anything is withdrawn until the
         operator approves a plan. Read the code and the files, ask with
         `builtin_ask_user` where the request is open or a choice is theirs, then call
-        `plan_submit`. The operator sees the switch, so there is no need to announce it.
+        `plan_submit`. The operator sees the switch.
 
         Args:
             reason: One line on why this work needs a plan, shown to the operator.

@@ -1,0 +1,6 @@
+# Whether the pick-up-where-you-left-off line changes anything (H-032 recurred with it in place).
+# Scenario: flow-cancel-resume.
+
+[[op]]
+boundary = "B-080"
+action = "remove"

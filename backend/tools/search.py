@@ -115,8 +115,7 @@ def web_toolset() -> FunctionToolset[RunDeps]:
         again with the same `url` and the `offset` the notice gives to read on. A page
         that renders dynamically may shift slightly between those calls. Fetching a URL
         already read in this turn returns nothing new, so look back at it in your
-        context. When a URL cannot be read you are told why; pick another source rather
-        than trying variants of the same address.
+        context. When a URL cannot be read you are told why.
 
         Args:
             url: The full URL, including `https://`.

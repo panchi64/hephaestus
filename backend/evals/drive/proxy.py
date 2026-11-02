@@ -66,14 +66,38 @@ def carries_tools(body: bytes) -> bool:
     return bool(_read(body).tools)
 
 
+def _strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for item in cast(dict[str, object], value).values() for s in _strings(item)]
+    if isinstance(value, list):
+        return [s for item in cast(list[object], value) for s in _strings(item)]
+    return []
+
+
+def watched_in(body: bytes, texts: tuple[str, ...]) -> tuple[str, ...]:
+    """Which of ``texts`` appear anywhere in the request, compared with whitespace collapsed."""
+    if not texts:
+        return ()
+    try:
+        decoded = cast(object, json.loads(body))
+    except ValueError:
+        return ()
+    blob = " ".join(" ".join(_strings(decoded)).split())
+    return tuple(text for text in texts if " ".join(text.split()) in blob)
+
+
 @dataclass(frozen=True, slots=True)
 class Proxied:
-    """One request the proxy forwarded: which bucket, endpoint and model it went to."""
+    """One request the proxy forwarded: which bucket, endpoint and model it went to, and
+    which watched sentences it carried."""
 
     bucket: str
     endpoint: str
     model: str
     tools: bool
+    seen: tuple[str, ...] = ()
 
 
 class RecordingProxy:
@@ -95,6 +119,7 @@ class RecordingProxy:
         self._usage: dict[str, dict[Kind, Usage]] = {}
         self._tag: str = tag
         self._log: dict[str, list[Proxied]] = {}
+        self._watched: tuple[str, ...] = ()
         self.window: TokenWindow = window or TokenWindow(tokens_per_minute or sys.maxsize)
         self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=None)
         self._port: int = _free_port()
@@ -114,6 +139,10 @@ class RecordingProxy:
     def attribute(self, bucket: str) -> None:
         """Tally the usage of requests from now on under ``bucket``."""
         self._bucket = bucket
+
+    def watch(self, texts: tuple[str, ...]) -> None:
+        """Note which of ``texts`` each request from now on carries (``Proxied.seen``)."""
+        self._watched = texts
 
     def take(self, bucket: str) -> dict[Kind, Usage]:
         """``bucket``'s tally so far, removed from the proxy."""
@@ -140,7 +169,9 @@ class RecordingProxy:
         body = await request.body()
         parsed = _read(body)
         tools = bool(parsed.tools)
-        entry = Proxied(self._bucket, self._tag, parsed.model, tools)
+        entry = Proxied(
+            self._bucket, self._tag, parsed.model, tools, watched_in(body, self._watched)
+        )
         self._log.setdefault(self._bucket, []).append(entry)
         if self._armed is not None and tools:
             self._armed.parent.mkdir(parents=True, exist_ok=True)

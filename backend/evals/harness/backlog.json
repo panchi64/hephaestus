@@ -249,8 +249,8 @@
       "suspect": "tasks_update_statuses",
       "gap": "stated a claim about its own output that the output does not back",
       "principle": "scope",
-      "status": "regressed",
-      "note": "Recurred after a fix in 2026-11-02-principles as 'Reply says the steps are described, but one step never was'. The fix was: Instructions changed; confirm on the next run."
+      "status": "open",
+      "note": "Boundary present and recurred (B-072); the next lever is a mechanism, not prose."
     },
     {
       "id": "H-014",
@@ -430,8 +430,8 @@
       "suspect": "",
       "gap": "a review ends on its findings, but Talos turned a finding into a decision question and re-listed the whole report instead of what changes for the operator",
       "principle": "scope",
-      "status": "regressed",
-      "note": "Recurred after a fix in 2026-11-02-principles as 'Review relayed near item for item and closed on an unrequested code-versus-README question'. The fix was: Instructions changed; confirm on the next run."
+      "status": "fixed",
+      "note": "Earned boundary B-013: relay a report's meaning rather than item by item."
     },
     {
       "id": "H-023",
@@ -630,8 +630,8 @@
       "suspect": "",
       "gap": "resumed interrupted work from memory instead of checking what had already landed",
       "principle": "state",
-      "status": "regressed",
-      "note": "Recurred after a fix in 2026-11-02-principles as \"After a cancel, 'carry on' rewrote every file instead of checking what landed\". The fix was: Covered by the principle rewrite; confirm on the next run."
+      "status": "open",
+      "note": "Boundary present and recurred (B-080); the next lever is a mechanism, not prose."
     },
     {
       "id": "H-033",
@@ -671,8 +671,8 @@
       "suspect": "agents_spawn",
       "gap": "filled a gap in the request with unrequested work and invented values instead of naming it",
       "principle": "scope",
-      "status": "regressed",
-      "note": "Recurred after a fix in 2026-11-02-principles as 'Worker brief carries an unrequested README edit'. The fix was: Covered by the principle rewrite; confirm on the next run."
+      "status": "open",
+      "note": "Boundary present and recurred (B-068); the next lever is a mechanism, not prose."
     },
     {
       "id": "H-035",
@@ -711,8 +711,8 @@
       "suspect": "tasks_write",
       "gap": "didn't make multi-part work visible while the operator waited",
       "principle": "visibility",
-      "status": "regressed",
-      "note": "Recurred after a fix in 2026-11-02-principles as 'Four-step job done without a task list'. The fix was: Same failure as H-016. Covered by the principle rewrite; confirm on the next run."
+      "status": "fixed",
+      "note": "Earned boundary B-083: three or more steps always gets a task list. Trial: without-h036-floor."
     },
     {
       "id": "H-037",
@@ -771,8 +771,8 @@
       "suspect": "",
       "gap": "kept looking after a lookup had already answered the question",
       "principle": "cost",
-      "status": "regressed",
-      "note": "Recurred after a fix in 2026-11-02-principles as 'Extra lookup after platform_search already returned the memory'. The fix was: Same failure as H-026. Covered by the principle rewrite; confirm on the next run."
+      "status": "fixed",
+      "note": "Earned boundary B-021: a second lookup only for an answer that contradicts itself or may be stale. Trial: without-h039-answer."
     },
     {
       "id": "H-040",

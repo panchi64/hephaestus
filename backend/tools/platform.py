@@ -219,9 +219,8 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         skills, agents and plugins. Your context holds only this conversation, so this is
         how you reach the rest.
 
-        Use it before you say you don't know something, and before you ask the operator
-        anything they may have told you already. Use `web_search` for the public web
-        instead, and `corpus_retrieve` to search inside a file you already have the id of.
+        Use `web_search` for the public web instead, and `corpus_retrieve` to search
+        inside a file you already have the id of.
 
         Returns up to `limit` hits ranked across sources, each with a `ref`, its
         `source`, a title, an excerpt and a date. The excerpt is a fragment: open a hit

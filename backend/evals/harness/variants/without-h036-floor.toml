@@ -1,0 +1,6 @@
+# Whether the three-step floor is what makes multi-step work get a task list (H-036).
+# Scenarios: main-multi-step, flow-task-list.
+
+[[op]]
+boundary = "B-083"
+action = "remove"

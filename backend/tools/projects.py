@@ -77,9 +77,7 @@ def project_toolset() -> FunctionToolset[RunDeps]:
         act on.
 
         In a worktree, the operator's uncommitted changes are not visible to you, because
-        the worktree branches from the project's base ref. When their folder has
-        uncommitted changes, say so rather than assuming you are seeing their latest
-        edits.
+        the worktree branches from the project's base ref.
         """
         store = ctx.deps.caps.get_optional(ProjectStore)
         if store is None:

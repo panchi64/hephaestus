@@ -60,6 +60,7 @@ from .record import CONTEXT_DIR, RUN_FILE, TRANSCRIPT_FILE, Routing, Run
 from .routing import RefError, Router, split_ref
 from .sample import Context, Harness, score
 from .spec import HOSTED_TOKEN, KEY_FILE, LOCAL_TOKEN, RUNS_DIR, Choice, Scenario, load_scenarios
+from .variants import BASE, VARIANTS_DIR, Variant, load_variant, write_arm
 
 #: The stub endpoint a stub run adds so routing scenarios have a second model to pick.
 STUB_LOCAL = "stub-local"
@@ -78,6 +79,7 @@ class _Args(argparse.Namespace):
     hosted: str | None = None
     subagent_model: str = ""
     choosable: list[str] | None = None
+    arms: list[str] | None = None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -96,7 +98,25 @@ def _parser() -> argparse.ArgumentParser:
     _ = add("--hosted", help="the routing scenarios' hosted model (default: the model under test)")
     _ = add("--subagent-model", default="", help="bind the subagent role, ENDPOINT/MODEL")
     _ = add("--choosable", nargs="*", help="the choosable list, ENDPOINT/MODEL[=NOTE] each")
+    _ = add(
+        "--arms",
+        nargs="+",
+        help=f"trial arms: `{BASE}` or a name in evals/harness/variants/, one pass each",
+    )
     return parser
+
+
+def _arms(names: list[str] | None) -> dict[str, Variant | None] | str:
+    """Each arm's variant (``None`` for the base), or why one can't be loaded."""
+    arms: dict[str, Variant | None] = {}
+    for name in names or [BASE]:
+        try:
+            arms[name] = None if name == BASE else load_variant(name)
+        except FileNotFoundError:
+            return f"no variant {name!r} in {VARIANTS_DIR}"
+        except KeyError as exc:
+            return f"variant {name!r} names {exc}, which the register doesn't hold"
+    return arms
 
 
 def _choices(raw: list[str] | None) -> list[Choice]:
@@ -171,7 +191,7 @@ async def _pass(
             record, evidence = await driver.sample(scenario, number, context)
             record.usage = live.take(bucket)
             requests = [
-                ProxiedRequest(endpoint=r.endpoint, model=r.model, tools=r.tools)
+                ProxiedRequest(endpoint=r.endpoint, model=r.model, tools=r.tools, seen=r.seen)
                 for r in live.take_requests(bucket)
             ]
             score(scenario, record, evidence, requests)
@@ -188,6 +208,10 @@ async def _pass(
 
 async def main(argv: list[str]) -> int:
     args = _parser().parse_args(argv, namespace=_Args())
+    arms = _arms(args.arms)
+    if isinstance(arms, str):
+        print(arms)
+        return 2
     hosted = HOSTED[args.provider] if args.provider else None
     api_key = provider_key(hosted.key) if hosted else None
     if hosted and not api_key:
@@ -213,9 +237,13 @@ async def main(argv: list[str]) -> int:
     if hosted and not args.models:
         print("--provider needs --models: the temporary endpoint has no model of its own.")
         return 2
+    watched = tuple(
+        dict.fromkeys(p.text for v in arms.values() if v is not None for p in v.probes())
+    )
     models: list[str | None] = list(args.models) if args.models else [None]
-    random.shuffle(models)
-    letters = dict(zip(string.ascii_uppercase, models, strict=False))
+    passes = [(model, arm) for model in models for arm in arms]
+    random.shuffle(passes)
+    letters = dict(zip(string.ascii_uppercase, passes, strict=False))
 
     client = DevClient(instance.backend_url)
     driver = Harness(client, instance)
@@ -255,9 +283,13 @@ async def main(argv: list[str]) -> int:
             router.endpoints = {e.name: e for e in await driver.endpoints()}
             group_dir.mkdir(parents=True)
             _ = (group_dir / "prompt.md").write_text(f"`{fingerprint}`\n\n{prompt}\n")
-            _ = (group_dir / KEY_FILE).write_text(json.dumps(letters, indent=2) + "\n")
-            for letter, model in letters.items():
+            key = {letter: {"model": m, "arm": a} for letter, (m, a) in letters.items()}
+            _ = (group_dir / KEY_FILE).write_text(json.dumps(key, indent=2) + "\n")
+            live.watch(watched)
+            for letter, (model, arm) in letters.items():
                 print(f"→ run {letter}", flush=True)
+                variant = arms[arm]
+                write_arm(instance.prompt_variant_file, variant)
                 if model is not None:
                     binding = Binding(endpoint_ids=[live.endpoint.id], model=model)
                     await driver.bind("main", binding)
@@ -279,6 +311,8 @@ async def main(argv: list[str]) -> int:
                     name=letter,
                     started_at=f"{datetime.now(UTC):%Y-%m-%d %H:%M} UTC",
                     prompt_fingerprint=fingerprint,
+                    arm=arm,
+                    probes=variant.probes() if variant else [],
                     stub=live.stub,
                     provider=live.endpoint.provider,
                     routing=Routing(
@@ -304,6 +338,7 @@ async def main(argv: list[str]) -> int:
         print(exc)
         return 2
     finally:
+        write_arm(instance.prompt_variant_file, None)
         for problem in await router.restore() if router else []:
             print(f"Could not restore: {problem}")
         if added is not None:
