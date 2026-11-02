@@ -178,12 +178,9 @@ class AnthropicNativeProvider(Provider):
     @override
     def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
         # Background work runs at medium: lower costs too much quality. With thinking on,
-        # the API rejects a temperature other than 1 and a max_tokens under the budget.
-        return {
-            "thinking": _BACKGROUND_EFFORT,
-            "temperature": 1.0,
-            "max_tokens": _BACKGROUND_MAX_TOKENS,
-        }
+        # the API rejects a max_tokens under the budget; `background_settings` drops the
+        # temperature, which thinking pins to 1 and newer models reject outright.
+        return {"thinking": _BACKGROUND_EFFORT, "max_tokens": _BACKGROUND_MAX_TOKENS}
 
     @override
     def model_settings(self, descriptor: ModelDescriptor) -> AnthropicModelSettings:

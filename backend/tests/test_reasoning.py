@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic_ai.settings import ModelSettings
 
 from services import reasoning
-from services.reasoning import ModelDescriptor, disable_thinking
+from services.reasoning import ModelDescriptor, background_settings, disable_thinking
 
 
 def test_qwen_family_disables_via_chat_template_kwargs():
@@ -64,3 +64,19 @@ def test_register_first_takes_priority_over_builtins():
         assert disable_thinking(ModelDescriptor(model_id="qwen3")) == override
     finally:
         reasoning.strategies[:] = original
+
+
+def test_background_settings_drops_sampling_when_thinking_stays_on():
+    base: ModelSettings = {"max_tokens": 1024, "temperature": 0.3, "top_p": 0.9}
+    merged = background_settings(base, {"thinking": "medium", "max_tokens": 16_384})
+    assert merged == {"max_tokens": 16_384, "thinking": "medium"}
+
+
+def test_background_settings_keeps_sampling_when_thinking_is_off():
+    base: ModelSettings = {"max_tokens": 1024, "temperature": 0.3}
+    assert background_settings(base, {"thinking": False}) == {
+        "max_tokens": 1024,
+        "temperature": 0.3,
+        "thinking": False,
+    }
+    assert background_settings(base, None) == base

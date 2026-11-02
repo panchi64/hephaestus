@@ -54,6 +54,7 @@ from core.untrusted import new_nonce, untrusted_fence, untrusted_preamble
 from prompts.utility import WORK_SUMMARY_INSTRUCTIONS
 from services.chassis_tail import operator_content
 from services.conversation_view import flatten_content
+from services.reasoning import background_settings
 from tools.describe import NARRATION_ARG
 
 from .meta import make_utility_agent
@@ -194,9 +195,7 @@ async def summarize_work(
     transcript = work_transcript(history)
     if not transcript:
         return None
-    settings: ModelSettings = {**_BASE_SETTINGS}
-    if reasoning_off:
-        settings.update(reasoning_off)
+    settings = background_settings(_BASE_SETTINGS, reasoning_off)
     if max_tokens is not None:
         settings["max_tokens"] = max_tokens
     agent = make_utility_agent(model, output_type=str, instructions=WORK_SUMMARY_INSTRUCTIONS)

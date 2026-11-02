@@ -122,6 +122,18 @@ def register_strategy(strategy: ThinkingStrategy, *, first: bool = False) -> Non
         strategies.append(strategy)
 
 
+def background_settings(base: ModelSettings, reasoning_off: ModelSettings | None) -> ModelSettings:
+    """``reasoning_off`` merged over a background caller's ``base`` caps.
+
+    A ``reasoning_off`` that keeps the model thinking drops the caller's sampling
+    settings: thinking models pin temperature to the default or reject it outright."""
+    merged: ModelSettings = {**base, **(reasoning_off or {})}
+    if merged.get("thinking"):
+        _ = merged.pop("temperature", None)
+        _ = merged.pop("top_p", None)
+    return merged
+
+
 def disable_thinking(descriptor: ModelDescriptor) -> ModelSettings:
     """The settings that turn off ``descriptor``'s reasoning, or ``{}`` when no
     strategy recognizes it (left to think — the safe default that never sends a

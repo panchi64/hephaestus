@@ -28,6 +28,7 @@ from pydantic_ai.settings import ModelSettings
 
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.untrusted import wrap_untrusted
+from services.reasoning import background_settings
 
 from .cache import MessageDetail
 from .ports import BackgroundModelSource
@@ -150,7 +151,7 @@ class MailStyle:
         except Exception:
             logger.warning("mail style: resolving a model failed", exc_info=True)
             return None
-        settings: ModelSettings = _SETTINGS | (resolved.reasoning_off or ModelSettings())
+        settings = background_settings(_SETTINGS, resolved.reasoning_off)
         return Agent(resolved.model, output_type=output_type, instructions=instructions), settings
 
 

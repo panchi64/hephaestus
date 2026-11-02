@@ -28,6 +28,7 @@ from pydantic_ai.settings import ModelSettings
 
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.untrusted import wrap_untrusted
+from services.reasoning import background_settings
 
 from .cache import MessageDetail
 from .ports import BackgroundModelSource, Notifier
@@ -121,7 +122,7 @@ class MailTriage:
             return None
 
         agent = Agent(resolved.model, output_type=TriageVerdict, instructions=_INSTRUCTIONS)
-        settings: ModelSettings = _SETTINGS | (resolved.reasoning_off or ModelSettings())
+        settings = background_settings(_SETTINGS, resolved.reasoning_off)
         try:
             result = await agent.run(_prompt(detail), model_settings=settings)
         except Exception:  # never fail a sync over one message

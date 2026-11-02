@@ -111,7 +111,6 @@ def test_reasoning_off_is_provider_shaped():
     # Claude background work runs at medium effort, with the caps thinking requires.
     assert get_provider("anthropic").reasoning_off(ModelDescriptor(model_id="claude-x")) == {
         "thinking": "medium",
-        "temperature": 1.0,
         "max_tokens": 16_384,
     }
     # Only the Gemini Flash/Lite family accepts a zero budget; Pro rejects it.

@@ -36,6 +36,7 @@ from core.text import strip_think_blocks
 from core.untrusted import wrap_untrusted
 from prompts.utility import TITLE_INSTRUCTIONS
 from services.chassis_tail import part_content
+from services.reasoning import background_settings
 
 from .meta import make_utility_agent
 
@@ -179,7 +180,7 @@ async def generate_title(
     the auto-titler, a wider span for a manual re-title over every operator turn.
     ``max_tokens`` overrides the base output cap so a runtime that ignores the
     reasoning-off lever still has room to think *and* emit the title."""
-    settings: ModelSettings = {**_BASE_SETTINGS, **(reasoning_off or {})}
+    settings = background_settings(_BASE_SETTINGS, reasoning_off)
     if max_tokens is not None:
         settings["max_tokens"] = max_tokens
     agent = make_utility_agent(model, output_type=str, instructions=TITLE_INSTRUCTIONS)
