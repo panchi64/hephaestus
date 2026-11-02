@@ -117,8 +117,8 @@ class AutoEnv:
     default_hosts_only: bool
     #: The thread's home could be read; without it nothing says what the VM mounts.
     home_known: bool
-    #: The home mounts an operator's own checkout writable. Root in the guest can rewrite
-    #: its `.git`, which their next host commit runs, so the VM is no fence there.
+    #: The home mounts an operator's own checkout writable. The agent has sudo in the guest,
+    #: so it can rewrite its `.git`, which their next host commit runs: the VM is no fence there.
     writable_checkout: bool
 
 

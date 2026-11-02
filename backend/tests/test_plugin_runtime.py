@@ -4,6 +4,7 @@ machine with the code read-only and only the declared hosts reachable."""
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import override
@@ -144,6 +145,7 @@ async def test_a_call_returns_the_tool_value_and_the_log(
     assert opts is not None
     assert opts.stdin == '{"text": "hi"}'
     assert opts.timeout == 60
+    assert opts.user == f"{os.getuid()}:{os.getgid()}"
     assert machines.calls[0].deleted
 
 

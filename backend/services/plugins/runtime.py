@@ -24,6 +24,7 @@ import smol
 
 from core.serde import parse_json
 from services.revisions import Bundle, encode_bundle
+from services.vm.machines import GuestOwner
 from services.vm.platform import Platform
 from services.vm.target import LOCAL
 
@@ -75,10 +76,14 @@ class CallResult:
 
 
 class PluginRuntime:
-    def __init__(self, platform: Platform, root: Path, *, prefix: str) -> None:
+    def __init__(
+        self, platform: Platform, root: Path, *, prefix: str, owner: GuestOwner | None = None
+    ) -> None:
         self._platform: Platform = platform
         self._root: Path = root
         self._prefix: str = prefix
+        owner = owner or GuestOwner.of_this_process()
+        self._user: str = f"{owner.uid}:{owner.gid}"
         self._locks: dict[str, asyncio.Lock] = {}
 
     @property
@@ -200,8 +205,10 @@ class PluginRuntime:
             machine = await smol.AsyncMachine.create(config, LOCAL)
         except smol.SmolError as exc:
             raise PluginError(f"the VM did not start: {exc}") from exc
+        # As the folder's host owner, so the venv it builds there is the operator's.
+        options = smol.ExecOptions(timeout=timeout_s, stdin=stdin, user=self._user)
         try:
-            return await machine.exec(argv, smol.ExecOptions(timeout=timeout_s, stdin=stdin))
+            return await machine.exec(argv, options)
         except smol.SmolError as exc:
             raise PluginError(f"the VM could not run the command: {exc}") from exc
         finally:

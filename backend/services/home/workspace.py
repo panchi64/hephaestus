@@ -34,7 +34,7 @@ def machine_spec(home: RunHome, allow_hosts: tuple[str, ...] | None) -> MachineS
     """What the conversation's machine mounts and reaches: every place of the home, at
     its path, read-only where the thread may not write it.
 
-    A writable project checkout gets its `.git` bound read-only over it. Root in the guest
+    A writable project checkout gets its `.git` bound read-only over it. The agent's sudo
     can unmount that, so it guards against accidents only; Auto parks VM work in a thread
     with one (``services/permissions/decide.py``). A worktree's git directory is bound
     read-only at its host path, where the worktree's `.git` file points.

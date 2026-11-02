@@ -16,19 +16,23 @@ ca=${1:-}
 apt-get update
 apt-get install -y --no-install-recommends \
     build-essential ca-certificates curl git python3 python3-dev libnss3-tools \
-    python3-pip python3-pytest python3-venv python-is-python3 ripgrep tar unzip util-linux
+    python3-pip python3-pytest python3-venv python-is-python3 ripgrep sudo tar unzip util-linux
 if [ -n "$ca" ]; then
     install -D -m 0644 "$ca" /usr/local/share/ca-certificates/hephaestus-extra.crt
     update-ca-certificates
 fi
 
-# The browser and search users run the shared services; agent commands run as root in a
-# machine of their own.
+# The browser and search users run the shared services. Agent commands run as `agent`, an
+# account each conversation machine makes at boot with the host owner's uid
+# (`services/vm/machines.py`); sudo is its way to system work such as apt.
 for spec in browser:1101 searxng:1102; do
     id -u "${spec%%:*}" >/dev/null 2>&1 ||
         useradd --create-home --uid "${spec##*:}" --shell /bin/bash "${spec%%:*}"
 done
 install -d -m 0755 /opt/hephaestus /home/agent
+printf 'agent ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/agent
+chmod 0440 /etc/sudoers.d/agent
+visudo -cf /etc/sudoers.d/agent
 # Chromium serves CDP on loopback only, so the services machine relays it outward.
 install -m 0644 /out/portfwd.py /opt/hephaestus/portfwd.py
 # Chromium trusts its own NSS store, not the system one.
@@ -108,7 +112,7 @@ config = {
     "os": "linux",
     "config": {
         "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                "LANG=C.UTF-8", "HOME=/root"],
+                "LANG=C.UTF-8", "HOME=/home/agent"],
         "Cmd": ["/bin/sh"],
         "WorkingDir": "/home/agent",
     },

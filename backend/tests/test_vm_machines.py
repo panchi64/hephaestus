@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import smol
+from pydantic_ai.workspaces import CommandResult, WorkspaceCommand
+from pydantic_ai_harness.smol_sandbox import SmolSandboxBackend
 
 from core.container import ServiceContainer
 from runs import Run, RunStream
@@ -21,12 +24,19 @@ from services.home.workspace import machine_spec
 from services.offline import OfflineModeService
 from services.vm import ConversationMachines, GuestImage, MachineUnavailableError, Platform
 from services.vm import machines as machines_module
-from services.vm.machines import Bind, MachineSpec
+from services.vm.machines import (
+    AS_AGENT,
+    AgentBackend,
+    Bind,
+    GuestOwner,
+    MachineSpec,
+    account_setup,
+)
 from services.vm.services import public_cidrs
 from tools import RunDeps
 from tools.home_workspace import allowed_hosts
 
-from .vm_support import FakeSmol, install_fake_smol, ready_platform
+from .vm_support import FakeMachine, FakeSmol, install_fake_smol, ready_platform
 
 SPEC_A = MachineSpec(binds=(Bind("/host/a", "/home/agent/scratch", False),), allow_hosts=None)
 SPEC_B = MachineSpec(
@@ -132,14 +142,56 @@ class TestCreateAndReuse:
     async def test_a_machine_that_will_not_start_is_reported_and_not_kept(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        import smol
-
         pool, fake = await _pool(tmp_path, monkeypatch)
         fake.create_error = smol.SmolError("INTERNAL", "no memory")
 
         with pytest.raises(MachineUnavailableError, match="did not start"):
             await _touch_use(pool, "conv-1")
 
+        assert not pool.running("conv-1")
+
+    async def test_a_new_machine_first_makes_the_agent_account_as_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        fake = install_fake_smol(monkeypatch)
+        pool = ConversationMachines(
+            await ready_platform(tmp_path),
+            prefix="heph-test",
+            cpus=1,
+            memory_mb=256,
+            idle_ttl_s=60.0,
+            reap_interval_s=60.0,
+            max_machines=2,
+            owner=GuestOwner(uid=501, gid=20),
+        )
+
+        await _touch_use(pool, "conv-1")
+
+        (machine,) = fake.machines
+        assert machine.commands[0] == account_setup(GuestOwner(uid=501, gid=20))
+        assert "useradd -o -u 501 -g 20" in machine.commands[0][-1]
+        opts = machine.options[0]
+        assert opts is not None and opts.user == "0"
+
+    async def test_a_machine_whose_account_fails_is_deleted_and_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        pool, fake = await _pool(tmp_path, monkeypatch)
+        real_create = fake.create
+
+        async def failing_create(
+            config: smol.MachineConfig | None = None, _conn: smol.ConnectOptions | None = None
+        ) -> FakeMachine:
+            machine = await real_create(config, _conn)
+            machine.exit_code = 9
+            return machine
+
+        monkeypatch.setattr(smol.AsyncMachine, "create", failing_create)
+
+        with pytest.raises(MachineUnavailableError, match="agent account"):
+            await _touch_use(pool, "conv-1")
+
+        assert fake.machines[0].deleted
         assert not pool.running("conv-1")
 
     async def test_nothing_boots_while_the_platform_is_unavailable(
@@ -428,6 +480,45 @@ def _home(root: Path, mounts: Iterable[tuple[Place, bool]]) -> RunHome:
         Mount(place, root / place.path.strip("/"), writable) for place, writable in mounts
     )
     return RunHome(mounts=built, default=SCRATCH, key="t")
+
+
+class TestTheAgentRunsCommands:
+    """Every command a tool runs reaches the library as the agent account, never as root."""
+
+    @staticmethod
+    async def _sent(
+        monkeypatch: pytest.MonkeyPatch, command: WorkspaceCommand, *, shell: bool
+    ) -> tuple[WorkspaceCommand, bool]:
+        seen: list[tuple[WorkspaceCommand, bool]] = []
+
+        async def record(
+            _self: SmolSandboxBackend,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            **_options: object,
+        ) -> CommandResult:
+            seen.append((command, shell))
+            return CommandResult(exit_code=0, stdout="", stderr="")
+
+        monkeypatch.setattr(SmolSandboxBackend, "run", record)
+        backend = AgentBackend(sandbox=FakeMachine(smol.MachineConfig(name="m")), working_dir="/w")
+        _ = await backend.run(command, shell=shell)
+        (sent,) = seen
+        return sent
+
+    async def test_a_shell_line_runs_under_setpriv(self, monkeypatch: pytest.MonkeyPatch):
+        sent = await self._sent(monkeypatch, "git status", shell=True)
+        assert sent == ([*AS_AGENT, "/bin/sh", "-c", "git status"], False)
+
+    async def test_an_argv_runs_under_setpriv(self, monkeypatch: pytest.MonkeyPatch):
+        sent = await self._sent(monkeypatch, ["pwd", "-P"], shell=False)
+        assert sent == ([*AS_AGENT, "pwd", "-P"], False)
+
+    async def test_a_mismatched_call_reaches_the_library_unchanged_to_be_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        assert await self._sent(monkeypatch, "pwd", shell=False) == ("pwd", False)
 
 
 class TestMachineSpec:

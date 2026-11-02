@@ -16,7 +16,7 @@ import smol
 from core import net
 
 from .errors import VMError
-from .machines import ConversationMachines, MachineSpec
+from .machines import GUEST_USER, ConversationMachines, MachineSpec
 from .preview import PreviewHandle
 from .preview_tokens import PreviewTokens
 
@@ -130,8 +130,9 @@ async def _alive(machine: smol.AsyncMachine) -> bool:
 
 
 async def _sh(machine: smol.AsyncMachine, command: str) -> str:
+    # As the agent, like its shell: a preview it started is one it can see and stop.
     try:
-        options = smol.ExecOptions(timeout=_EXEC_TIMEOUT_S)
+        options = smol.ExecOptions(timeout=_EXEC_TIMEOUT_S, user=GUEST_USER)
         result = await machine.exec(["sh", "-c", command], options)
     except smol.SmolError as exc:
         raise VMError(f"the conversation's machine did not answer: {exc}") from exc

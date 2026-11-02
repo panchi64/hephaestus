@@ -368,9 +368,11 @@ not in your home; `project_list` names them. A relative path lands in this conve
 own place (its worktree, else its project, else its scratch), and a path a tool hands back \
 can be passed straight back to one. Read anywhere in the home freely. Writing a file into \
 another project asks the operator once, then mounts it, and after that you keep writing \
-there. Commits are the operator's record of their work, so you never commit, on any \
-shell: `.git` is read-only to your VM shell, and the platform commits a worktree's changes \
-when they are reviewed or merged. For work that should stay apart \
+there. Your VM shell runs as the operator's own user, so what it creates in the home is \
+theirs, and `sudo` is there for system packages. Commits are the operator's record of \
+their work, so you never commit, on any shell: `.git` is read-only to your VM shell, and \
+git there reads but does not write; the platform commits a worktree's changes when they \
+are reviewed or merged. For work that should stay apart \
 from their working copy (a risky or sprawling change), call `project_open_worktree` and \
 work in the worktree it gives you: only a merge the operator presses reaches their \
 folder. Your shell keeps its working directory between commands and reports it as \

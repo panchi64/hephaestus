@@ -21,6 +21,7 @@ class FakeMachine(smol.AsyncMachine):
         self.config: smol.MachineConfig = config
         self.deleted: bool = False
         self.commands: list[list[str]] = []
+        self.options: list[smol.ExecOptions | None] = []
         self.exit_code: int = 0
         self.written: dict[str, str | bytes] = {}
         self.published: list[int] = []
@@ -40,11 +41,16 @@ class FakeMachine(smol.AsyncMachine):
         self, command: list[str], opts: smol.ExecOptions | None = None
     ) -> smol.ExecResult:
         self.commands.append(command)
+        self.options.append(opts)
         return smol.ExecResult(exit_code=self.exit_code, stdout="", stderr="")
 
     @override
     async def write_file(self, path: str, data: bytes | str, mode: int | None = None) -> None:
         self.written[path] = data
+
+    @override
+    async def ports(self) -> list[smol.PublishedPort]:
+        return [smol.PublishedPort(guest=g, host=40000 + g) for g in self.published]
 
     @override
     async def publish(

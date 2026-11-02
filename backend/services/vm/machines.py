@@ -9,19 +9,27 @@ network at all.
 What a machine mounts and reaches is fixed when it boots, so a change to either (a lease,
 an egress grant, going offline) restarts it, which ends the commands it was running. A
 machine left idle is deleted; the host folders it mounted keep everything it wrote.
+
+Commands run as ``agent``, an account made at boot with the uid and gid of the host user
+who owns the mounted folders, so a file in a mount has the same owner on both sides and
+tools that check ownership (git's ``safe.directory``) accept it. ``sudo`` covers system
+work.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from typing import override
 
 import smol
+from pydantic_ai.workspaces import CommandResult, WorkspaceCommand
 from pydantic_ai_harness.smol_sandbox import SmolSandboxBackend
 
 from core.periodic import PeriodicTask
@@ -37,6 +45,7 @@ _SAFE = re.compile(r"[^a-z0-9-]")
 #: How long a restart for new access waits for the commands in flight; past it the caller
 #: is told to retry rather than held behind the key's lock.
 _RESTART_WAIT_S = 60.0
+_SETUP_TIMEOUT_S = 30.0
 
 #: `~` is the agent's home, so its paths mean the same in a command as in a file tool, and
 #: packages install into the scratch, which outlives the machine.
@@ -47,10 +56,63 @@ _GUEST_ENV = (
         "/home/agent/scratch/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     ),
     ("LANG", "C.UTF-8"),
+    ("USER", "agent"),
+    ("LOGNAME", "agent"),
     ("PYTHONUSERBASE", "/home/agent/scratch/.local"),
     ("PIP_USER", "1"),
     ("PIP_BREAK_SYSTEM_PACKAGES", "1"),
 )
+
+GUEST_USER = "agent"
+
+#: Drops from the root that smol execs as to the agent account, keeping the environment.
+#: `MachineConfig.user` sets only the init process's user, not later execs'.
+AS_AGENT = ("setpriv", f"--reuid={GUEST_USER}", f"--regid={GUEST_USER}", "--init-groups", "--")
+
+
+@dataclass(frozen=True, slots=True)
+class GuestOwner:
+    """The host uid and gid the guest account takes: the owner of the mounted folders."""
+
+    uid: int
+    gid: int
+
+    @classmethod
+    def of_this_process(cls) -> GuestOwner:
+        """The platform's own user, which owns its data dir and the projects it mounts."""
+        return cls(os.getuid(), os.getgid())
+
+
+def account_setup(owner: GuestOwner) -> list[str]:
+    """The root command that makes the agent account; `-o` allows a uid the image already
+    gives another name, and the home is chowned alone because the folders under it are
+    host mounts."""
+    script = (
+        f"groupadd -o -g {owner.gid} {GUEST_USER} && "
+        f"useradd -o -u {owner.uid} -g {owner.gid} -d /home/{GUEST_USER} -M -s /bin/bash "
+        f"{GUEST_USER} && chown {GUEST_USER}:{GUEST_USER} /home/{GUEST_USER}"
+    )
+    return ["sh", "-c", script]
+
+
+class AgentBackend(SmolSandboxBackend):
+    """A machine handle whose commands run as the agent account rather than root."""
+
+    @override
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        # A mismatched `shell` and command type is passed through for the library to refuse.
+        if isinstance(command, str) and shell:
+            command, shell = [*AS_AGENT, "/bin/sh", "-c", command], False
+        elif not isinstance(command, str | bytes) and not shell:
+            command = [*AS_AGENT, *command]
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +146,7 @@ class _Slot:
     def backend(self, working_dir: str) -> SmolSandboxBackend:
         backend = self.backends.get(working_dir)
         if backend is None:
-            backend = SmolSandboxBackend(sandbox=self.machine, working_dir=working_dir)
+            backend = AgentBackend(sandbox=self.machine, working_dir=working_dir)
             self.backends[working_dir] = backend
         return backend
 
@@ -102,8 +164,10 @@ class ConversationMachines:
         idle_ttl_s: float,
         reap_interval_s: float,
         max_machines: int,
+        owner: GuestOwner | None = None,
     ) -> None:
         self._platform: Platform = platform
+        self._owner: GuestOwner = owner or GuestOwner.of_this_process()
         self._prefix: str = prefix
         self._cpus: int = cpus
         self._memory_mb: int = memory_mb
@@ -285,6 +349,18 @@ class ConversationMachines:
             env=dict(_GUEST_ENV),
         )
         try:
-            return await smol.AsyncMachine.create(config, LOCAL)
+            machine = await smol.AsyncMachine.create(config, LOCAL)
         except smol.SmolError as exc:
             raise MachineUnavailableError(f"the VM did not start: {exc}") from exc
+        try:
+            result = await machine.exec(
+                account_setup(self._owner), smol.ExecOptions(user="0", timeout=_SETUP_TIMEOUT_S)
+            )
+            failure = result.stderr.strip() if result.exit_code != 0 else None
+        except smol.SmolError as exc:
+            failure = str(exc)
+        if failure is not None:
+            with suppress(smol.SmolError):
+                _ = await machine.delete()
+            raise MachineUnavailableError(f"the VM's agent account could not be made: {failure}")
+        return machine

@@ -167,6 +167,14 @@ image is built under this instance's own data dir, at `<data dir>/vm/images/<has
 to skip the first build, point `HEPHAESTUS_VM_IMAGE` at an `image.tar` another instance
 already built.
 
+After changing `vm/build_image.sh` or how machines run commands, check the guest contract
+in a real machine: who commands run as, who owns what they write, git in a checkout and in
+worktrees, and sudo. Every other VM test runs on fakes.
+
+```bash
+HEPHAESTUS_VM_LIVE_IMAGES=<data dir>/vm/images uv run pytest tests/test_vm_guest_live.py -n0
+```
+
 ## When something is wrong
 
 ```bash
