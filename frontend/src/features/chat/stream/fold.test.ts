@@ -7,6 +7,7 @@ import {
   type RunEvent,
   type TaskItem,
 } from "~/lib/stream";
+import type { SpanFields } from "~/lib/stream/events";
 import { toast } from "~/ui";
 import { emptyInbox, type InboxState } from "../inbox";
 import type { ChatMessage, CompactionProgress } from "../model";
@@ -19,6 +20,7 @@ function harness(
     onFoldMisplaced?: () => void;
     setUsage?: (usage: ContextWindow | null) => void;
     setTasks?: (items: TaskItem[]) => void;
+    onSpan?: (runId: string, span: SpanFields) => void;
   } = {},
 ) {
   const [messages, setMessages] = createStore<ChatMessage[]>(seed);
@@ -52,6 +54,7 @@ function harness(
     setErrored: () => {},
     setTitlePending: () => {},
     onFoldMisplaced: hooks.onFoldMisplaced,
+    onSpan: hooks.onSpan,
   });
   return {
     fold: (ev: RunEvent) => fold("a1", ev),
@@ -801,5 +804,37 @@ describe("the turn-limit notice", () => {
       "This agent reached its request cap.",
     );
     spy.mockRestore();
+  });
+});
+
+describe("span.completed", () => {
+  test("hands the span to the trace view under the streaming run, not the transcript", () => {
+    const seen: [string, string][] = [];
+    const h = harness(turn(), {
+      onSpan: (runId, span) => seen.push([runId, span.span_id]),
+    });
+    h.fold({
+      type: "span.completed",
+      seq: ++seq,
+      ts: "",
+      span_id: "s1",
+      trace_id: "t1",
+      parent_span_id: null,
+      kind: "model",
+      agent_name: "main",
+      model: "m",
+      tool_name: null,
+      started_at: "2026-11-02T12:00:00Z",
+      duration_ms: 1200,
+      ttft_ms: 300,
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_read_tokens: null,
+      cache_write_tokens: null,
+      cost_usd: 0.001,
+      error_type: null,
+    });
+    expect(seen).toEqual([["run-1", "s1"]]);
+    expect(h.messages[1]!.blocks).toEqual([]);
   });
 });

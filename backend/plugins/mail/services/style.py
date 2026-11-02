@@ -152,7 +152,10 @@ class MailStyle:
             logger.warning("mail style: resolving a model failed", exc_info=True)
             return None
         settings = background_settings(_SETTINGS, resolved.reasoning_off)
-        return Agent(resolved.model, output_type=output_type, instructions=instructions), settings
+        agent = Agent(
+            resolved.model, name="mail_style", output_type=output_type, instructions=instructions
+        )
+        return agent, settings
 
 
 def _draft_prompt(detail: MessageDetail, profile: str | None, context: list[MessageDetail]) -> str:

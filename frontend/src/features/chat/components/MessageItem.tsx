@@ -20,6 +20,7 @@ import {
   Textarea,
   cx,
 } from "~/ui";
+import { openStatsDialog } from "~/features/observability";
 import { hostLabel, longTimestamp } from "~/lib/format";
 import { CONTEXT_OVERFLOW_DETAIL } from "~/lib/stream";
 import type {
@@ -588,6 +589,12 @@ function AssistantTurn(props: {
           onOpenInView={props.onOpenInView}
           viewItems={props.viewItems}
           seenKey={props.seenKey}
+          onTrace={() =>
+            openStatsDialog("turns", {
+              runId: m().runId ?? null,
+              at: m().createdAt || null,
+            })
+          }
         />
         <Show when={m().citations?.length}>
           <SourcesRow citations={m().citations!} />

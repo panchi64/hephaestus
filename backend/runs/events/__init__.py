@@ -80,6 +80,10 @@ from .plan import (
 from .plugins import (
     PluginWindowOpened,
 )
+from .spans import (
+    SpanCompleted,
+    SpanKind,
+)
 from .tools import (
     ToolCompleted,
     ToolFailed,
@@ -138,6 +142,8 @@ __all__ = [
     "PlanUpdated",
     "QuestionAnswered",
     "QuestionAsked",
+    "SpanCompleted",
+    "SpanKind",
     "QuestionOption",
     "QuestionSpec",
     "RunEnded",

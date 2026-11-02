@@ -8,6 +8,7 @@ come up here. The database, the encrypted volume and every unit over them open a
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -36,6 +37,7 @@ from harness.builtin_plugins import (
 from harness.discovery import discover_manifests
 from harness.manifest import DormantCategory
 from harness.workspace import WorkspaceSession
+from observability import SpanSink, install_tracing
 from routes import (
     api_tokens,
     auth,
@@ -48,6 +50,7 @@ from routes import (
     runs,
     tokens,
     tools,
+    traces,
     vm,
 )
 from routes.deps import OPERATOR_ID, AppState, app_state
@@ -101,6 +104,10 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     """Build the process-scoped units and the closed workspace, opening it when a boot
     passphrase is configured."""
     state = app_state(app)
+    # Before anything can start an agent, so no run goes untraced. The trace store attaches
+    # to the sink when the workspace opens.
+    state.span_sink = SpanSink(asyncio.get_running_loop())
+    lifecycle.on_stop("tracing", install_tracing(state.span_sink))
     state.auth_manager = AuthManager()
     # Inbound scoped API tokens, read by the auth gate on every request; None until the
     # workspace opens, since the token table lives in the encrypted database.
@@ -316,6 +323,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(vm.router)
     app.include_router(tools.router)
     app.include_router(tokens.router)
+    app.include_router(traces.router)
     # A manifest whose `enabled` gate is off contributes nothing, so its routes 404; a
     # built-in plugin's routes also 404 while the operator has it switched off.
     for manifest in enabled_manifests:

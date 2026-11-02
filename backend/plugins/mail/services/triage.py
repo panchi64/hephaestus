@@ -121,7 +121,12 @@ class MailTriage:
             logger.warning("mail triage skipped: resolving a model failed", exc_info=True)
             return None
 
-        agent = Agent(resolved.model, output_type=TriageVerdict, instructions=_INSTRUCTIONS)
+        agent = Agent(
+            resolved.model,
+            name="mail_triage",
+            output_type=TriageVerdict,
+            instructions=_INSTRUCTIONS,
+        )
         settings = background_settings(_SETTINGS, resolved.reasoning_off)
         try:
             result = await agent.run(_prompt(detail), model_settings=settings)

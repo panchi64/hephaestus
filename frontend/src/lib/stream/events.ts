@@ -250,6 +250,34 @@ export interface ToolFailed extends Base, Nestable {
   platform?: boolean;
 }
 
+// --- Traces ----------------------------------------------------------------
+export type SpanKind = "run" | "model" | "tool";
+
+/** One finished agent run, model request or tool call, with its timing, tokens and
+ *  cost; never its content. Also the row shape of `GET /runs/{id}/trace`. Null token
+ *  and cost fields mean unreported or unpriced, never zero. */
+export interface SpanFields {
+  span_id: string;
+  trace_id: string;
+  parent_span_id: string | null;
+  kind: SpanKind;
+  agent_name: string;
+  model: string | null;
+  tool_name: string | null;
+  started_at: string;
+  duration_ms: number;
+  ttft_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  cost_usd: number | null;
+  error_type: string | null;
+}
+export interface SpanCompleted extends Base, SpanFields {
+  type: "span.completed";
+}
+
 // --- Browser ---------------------------------------------------------------
 /** A tool attached a browser to the conversation; not sent when a call reuses one. */
 export interface BrowserOpened extends Base {
@@ -660,6 +688,7 @@ export type RunEvent =
   | ToolProgress
   | ToolCompleted
   | ToolFailed
+  | SpanCompleted
   | BrowserOpened
   | PluginWindowOpened
   | ViewLive

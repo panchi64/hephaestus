@@ -28,22 +28,25 @@ from prompts.utility import JUDGE_INSTRUCTIONS
 
 
 @overload
-def make_utility_agent(model: Model, *, instructions: str) -> Agent[None, str]: ...
+def make_utility_agent(model: Model, *, name: str, instructions: str) -> Agent[None, str]: ...
 @overload
 def make_utility_agent[OutputT](
-    model: Model, *, output_type: OutputSpec[OutputT], instructions: str
+    model: Model, *, name: str, output_type: OutputSpec[OutputT], instructions: str
 ) -> Agent[None, OutputT]: ...
 def make_utility_agent[OutputT](
-    model: Model, *, output_type: OutputSpec[OutputT] | None = None, instructions: str
+    model: Model,
+    *,
+    name: str,
+    output_type: OutputSpec[OutputT] | None = None,
+    instructions: str,
 ) -> Agent[None, OutputT] | Agent[None, str]:
     """Build a one-shot agent on the cheap utility model for background work — a
-    judge, a namer, a summarizer. Centralizes the bare ``Agent`` construction so
-    every utility caller picks up the same shape (and any future default:
-    instrumentation tag, retries) from one place. Per-call knobs like reasoning-off
-    ``model_settings`` are passed to ``agent.run(...)``, not baked in here."""
+    judge, a namer, a summarizer. ``name`` labels its calls in the trace views.
+    Per-call knobs like reasoning-off ``model_settings`` are passed to
+    ``agent.run(...)``, not baked in here."""
     if output_type is None:
-        return Agent(model, output_type=str, instructions=instructions)
-    return Agent(model, output_type=output_type, instructions=instructions)
+        return Agent(model, name=name, output_type=str, instructions=instructions)
+    return Agent(model, name=name, output_type=output_type, instructions=instructions)
 
 
 class LoopDetected(Exception):
@@ -167,7 +170,9 @@ def make_utility_judge(model: Model, *, model_settings: ModelSettings | None = N
     from the tool call regardless of any reasoning the model emits anyway."""
 
     async def judge(request: str, answer: str) -> Verdict:
-        agent = make_utility_agent(model, output_type=Verdict, instructions=JUDGE_INSTRUCTIONS)
+        agent = make_utility_agent(
+            model, name="judge", output_type=Verdict, instructions=JUDGE_INSTRUCTIONS
+        )
         result = await agent.run(
             f"Request:\n{request}\n\nResponse:\n{answer}", model_settings=model_settings
         )

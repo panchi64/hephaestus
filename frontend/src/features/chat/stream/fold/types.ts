@@ -6,6 +6,7 @@
 
 import type { SetStoreFunction } from "solid-js/store";
 import type { ContextWindow, PluginWindowOpened, TaskItem } from "~/lib/stream";
+import type { SpanFields } from "~/lib/stream/events";
 import type {
   ChatMessage,
   ConversationStats,
@@ -108,6 +109,9 @@ export interface FoldDeps {
   /** The agent opened a plugin window. Not called on a replay, so a reload doesn't
    *  reopen a window the operator closed. */
   onPluginWindowOpened?: (window: PluginWindowOpened) => void;
+  /** A traced call of the streaming run finished. Called on a replay too: the trace
+   *  view merges by span id. Optional for a caller with no trace view. */
+  onSpan?: (runId: string, span: SpanFields) => void;
 }
 
 /** When the streaming run began and how far it has got, both straight off the wire:

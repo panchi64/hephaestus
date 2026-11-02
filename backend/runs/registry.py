@@ -25,6 +25,7 @@ from .inbox import NO_JOURNAL, ConversationInbox, InboxDispatch, InboxJournal
 from .lanes import LaneGate, LaneLimits
 from .parked import NO_PARKED_JOURNAL, ParkedJournal
 from .run import Orchestrator, Run, RunStatus, StopCause
+from .scope import current_run
 from .stream import RunStream
 
 logger = logging.getLogger(__name__)
@@ -524,6 +525,8 @@ class RunRegistry:
         *,
         resuming: bool = False,
     ) -> None:
+        # Never reset: this coroutine is the task's whole body, so the value ends with it.
+        _ = current_run.set(run)
         try:
             # Waits ``queued`` in the run's own lane, so a saturated lane never holds up
             # another, then for its model endpoint (`runs/endpoint_gate.py`).

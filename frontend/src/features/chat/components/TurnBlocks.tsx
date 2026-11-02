@@ -41,6 +41,9 @@ export function TurnBlocks(
     viewItems?: () => ViewItem[];
     /** The "seen through" pointer — see `RowHandlers.seenIndex`. */
     seenKey?: () => string | null;
+    /** Open this turn's call trace; absent where there is no trace view (a sub-agent's
+     *  transcript). */
+    onTrace?: () => void;
   } & Omit<RowHandlers, "chipLookup" | "seenIndex">,
 ): JSX.Element {
   // Memoized so a text/thinking delta (which doesn't change block *structure*)
@@ -171,6 +174,7 @@ export function TurnBlocks(
                      of it, so the trunk's light has to reach in here too. */
                   activeIds={activeIds()}
                   streaming={props.streaming}
+                  onTrace={props.onTrace}
                   onResolveHostCommands={props.onResolveHostCommands}
                   onOpenInView={props.onOpenInView}
                   chipLookup={chipLookup()}

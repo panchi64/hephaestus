@@ -48,6 +48,8 @@ export function WorkLogHeader(props: {
    *  keeps its summary and drops the chevron rather than offering an empty fold. */
   foldable: boolean;
   onToggle: () => void;
+  /** Open the turn's call trace in the stats dialog. */
+  onTrace?: () => void;
 }): JSX.Element {
   return (
     <ProcessRow
@@ -62,11 +64,30 @@ export function WorkLogHeader(props: {
          row, so a count beside it would say the same thing twice — and "1 steps"
          is the shape that gives a generated readout away. */
       trailing={
-        <Show when={props.steps > 1}>
-          <Text variant="micro" tone="dim" class="tabular-nums">
-            {`${props.steps} steps`}
-          </Text>
-        </Show>
+        <>
+          <Show when={props.steps > 1}>
+            <Text variant="micro" tone="dim" class="tabular-nums">
+              {`${props.steps} steps`}
+            </Text>
+          </Show>
+          <Show when={props.onTrace}>
+            {(open) => (
+              <button
+                type="button"
+                aria-label="Open this turn's call trace"
+                /* The row itself toggles the fold. */
+                onClick={(e) => {
+                  e.stopPropagation();
+                  open()();
+                }}
+              >
+                <Text variant="micro" tone="dim" class="hover:text-bright">
+                  Trace
+                </Text>
+              </button>
+            )}
+          </Show>
+        </>
       }
     >
       <Show when={props.summary}>

@@ -16,6 +16,8 @@
 
 import { batch, createEffect, createSignal, on, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
+import { toSpan } from "~/features/observability/data";
+import { recordLiveSpan } from "~/features/observability/live";
 import { withPrivateAccess } from "~/features/private";
 import { api } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
@@ -213,6 +215,7 @@ export function createChatStream(
     // Reached at call time: the resume ops are built below.
     onFoldMisplaced: () => void resume.reconcileStaleDecision(),
     onBrowserOpened: options.onBrowserOpened,
+    onSpan: (runId, span) => recordLiveSpan(runId, toSpan(span)),
     onPluginWindowOpened: options.onPluginWindowOpened,
   });
 

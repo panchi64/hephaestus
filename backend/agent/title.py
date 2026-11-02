@@ -183,7 +183,9 @@ async def generate_title(
     settings = background_settings(_BASE_SETTINGS, reasoning_off)
     if max_tokens is not None:
         settings["max_tokens"] = max_tokens
-    agent = make_utility_agent(model, output_type=str, instructions=TITLE_INSTRUCTIONS)
+    agent = make_utility_agent(
+        model, name="title", output_type=str, instructions=TITLE_INSTRUCTIONS
+    )
     # Fenced so a message addressed to the assistant ("what are you?") reads as text to
     # name rather than a question for the namer to answer.
     user = wrap_untrusted(prompt[:excerpt], source="operator messages")

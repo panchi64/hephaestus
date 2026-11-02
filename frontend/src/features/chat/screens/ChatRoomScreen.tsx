@@ -464,6 +464,7 @@ export function ChatRoomScreen(): JSX.Element {
     stats: stream.stats,
     usage: stream.usage,
     tasks: stream.tasks,
+    activeRunId: stream.activeRunId,
     grantsRevalidate: conversationGrantsRevision,
   });
 

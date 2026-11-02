@@ -198,7 +198,9 @@ async def summarize_work(
     settings = background_settings(_BASE_SETTINGS, reasoning_off)
     if max_tokens is not None:
         settings["max_tokens"] = max_tokens
-    agent = make_utility_agent(model, output_type=str, instructions=WORK_SUMMARY_INSTRUCTIONS)
+    agent = make_utility_agent(
+        model, name="work_summary", output_type=str, instructions=WORK_SUMMARY_INSTRUCTIONS
+    )
     try:
         run = agent.run(transcript, model_settings=settings)
         # asyncio.TimeoutError is an Exception subclass (caught below); CancelledError is
