@@ -141,6 +141,13 @@ class TestWhatAScriptMayCall:
         deps.permission = "manual"
         assert "x_jot" not in _callable(await stack.get_tools(ctx))
 
+    async def test_nothing_is_offered_once_a_report_is_filed(self):
+        stack = _wrapped({**core_categories(), "x": _probe_category()})
+        deps = RunDeps(run=_run(), owner_id="operator", permission="auto")
+        deps.reported = True
+        ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+        assert await stack.get_tools(ctx) == {}
+
     async def test_run_code_is_described_as_a_read_with_a_narration(self):
         categories = {**core_categories(), "x": _probe_category()}
         stack = _wrapped(categories)

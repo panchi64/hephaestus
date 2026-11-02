@@ -21,7 +21,7 @@ from services.projects.worktree import WorktreeBusyError
 from services.worktree_switch import WorktreeSwitch
 from tools.deps import RunDeps
 from tools.home import resolve_run_home
-from tools.workspace import run_workspace, unavailable
+from tools.workspace import resolve_run_workspace, run_workspace, unavailable
 
 _UNAVAILABLE = "Projects are unavailable in this deployment."
 
@@ -88,6 +88,14 @@ def project_toolset() -> FunctionToolset[RunDeps]:
             return {"available": True, "project": None, "worktree": False}
         view = await store.get(ctx.deps.owner_id, ctx.deps.project_id)
         slug = (await store.slugs(ctx.deps.owner_id)).get(view.id, "")
+        worktree_path = Place("worktrees", slug).path
+        if ctx.deps.worktree:
+            try:
+                workspace = await resolve_run_workspace(ctx.deps)
+            except WorktreeBusyError:
+                workspace = None
+            if workspace is not None and workspace.home_path is not None:
+                worktree_path = workspace.home_path
         return {
             "available": True,
             "worktree": ctx.deps.worktree,
@@ -95,7 +103,7 @@ def project_toolset() -> FunctionToolset[RunDeps]:
                 "id": view.id,
                 "name": view.name,
                 "path": Place("projects", slug).path,
-                **({"worktree_path": Place("worktrees", slug).path} if ctx.deps.worktree else {}),
+                **({"worktree_path": worktree_path} if ctx.deps.worktree else {}),
                 "base_ref": view.base_ref,
                 "is_git_repo": view.probe.is_git_repo,
                 "uncommitted_changes": view.probe.uncommitted_changes,

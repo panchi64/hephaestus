@@ -185,6 +185,9 @@ class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
 
     @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
+        if ctx.deps.reported:
+            # `run_code` joins outside the enabled filter, which offers nothing after a report.
+            return {}
         tools = await super().get_tools(ctx)
         run_code = tools.pop(RUN_CODE, None)
         if run_code is None:

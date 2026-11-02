@@ -243,14 +243,14 @@
         "flow-task-list"
       ],
       "first_seen": "2026-11-01-baseline (2026-11-01)",
-      "last_seen": "2026-11-01-baseline (2026-11-01)",
-      "occurrences": 1,
-      "evidence": "\"All three steps are described and marked complete on the task list.\"",
-      "suspect": "",
-      "gap": "",
-      "principle": null,
-      "status": "fixed",
-      "note": "Instructions changed; confirm on the next run."
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 2,
+      "evidence": "\"All three steps are described and marked complete.\"; beats cover Step 1 and Step 3 only, yet narration says \"Step two is described\"",
+      "suspect": "tasks_update_statuses",
+      "gap": "stated a claim about its own output that the output does not back",
+      "principle": "scope",
+      "status": "regressed",
+      "note": "Recurred after a fix in 2026-11-02-principles as 'Reply says the steps are described, but one step never was'. The fix was: Instructions changed; confirm on the next run."
     },
     {
       "id": "H-014",
@@ -417,20 +417,21 @@
       "fingerprint": "behavior|delegation|final reply ends on an unrequested readme versus code question",
       "title": "Final reply ends on an unrequested README-versus-code question",
       "kind": "behavior",
-      "severity": "polish",
+      "severity": "minor",
       "area": "delegation",
       "scenarios": [
-        "delegation-parallel-explorers"
+        "delegation-parallel-explorers",
+        "delegation-reviewer"
       ],
       "first_seen": "2026-11-01-baseline (2026-11-01)",
-      "last_seen": "2026-11-01-baseline (2026-11-01)",
-      "occurrences": 1,
-      "evidence": "\"I haven't changed anything. Which `low_stock` behavior is intended, the README's or the code's?\"",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 2,
+      "evidence": "\"Finding 2 needs your decision: should the code or the README change?\"; findings 1 to 4 restate the reviewer's report with its numbers and bullets",
       "suspect": "",
-      "gap": "",
-      "principle": null,
-      "status": "fixed",
-      "note": "Instructions changed; confirm on the next run."
+      "gap": "a review ends on its findings, but Talos turned a finding into a decision question and re-listed the whole report instead of what changes for the operator",
+      "principle": "scope",
+      "status": "regressed",
+      "note": "Recurred after a fix in 2026-11-02-principles as 'Review relayed near item for item and closed on an unrequested code-versus-README question'. The fix was: Instructions changed; confirm on the next run."
     },
     {
       "id": "H-023",
@@ -603,14 +604,14 @@
         "delegation-worktree-merge"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "occurrences": 1,
-      "evidence": "worker: \"fatal: not a git repository: ~/.hephaestus/dev/odysseus/data/harness-fixtures/inventory-deac55/.git/worktrees/...\" and reports \"worktree /home/agent/worktrees/inventory-deac55\" while the platform footer names \"/home/agent/worktrees/inventory-deac55-remove-fn-worker\"",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 2,
+      "evidence": "worker report: \"`git diff` failed in this worktree (\\\"Not a git repository\\\")\"; project_active worktree_path \"/home/agent/worktrees/inventory-cb151b\" vs pwd \"/home/agent/worktrees/inventory-cb151b-inventory-remove-fn\"",
       "suspect": "project_active",
       "gap": "",
       "principle": null,
-      "status": "fixed",
-      "note": "Worktree mounts bind the project's git dir read-only at its host path; a worker's own worktree carries the name its parent sees."
+      "status": "regressed",
+      "note": "Path half fixed: project_active now reports the sub-agent's own worktree path (tools/projects.py). The git half is unresolved: a throwaway VM resolves a host-path git-dir bind correctly, and the run kept only the worker's paraphrase ('Not a git repository'), not the raw output. Next run: capture the worker's raw git output."
     },
     {
       "id": "H-032",
@@ -623,14 +624,14 @@
         "flow-cancel-resume"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "occurrences": 1,
-      "evidence": "turn 2 starts with five files_write_file calls; no files_list_directory of summaries/ first",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 2,
+      "evidence": "turn 2 begins with five files_write_file calls; no files_list_directory of summaries/ first",
       "suspect": "",
       "gap": "resumed interrupted work from memory instead of checking what had already landed",
       "principle": "state",
-      "status": "fixed",
-      "note": "Covered by the principle rewrite; confirm on the next run."
+      "status": "regressed",
+      "note": "Recurred after a fix in 2026-11-02-principles as \"After a cancel, 'carry on' rewrote every file instead of checking what landed\". The fix was: Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-033",
@@ -660,17 +661,18 @@
       "severity": "minor",
       "area": "intercom",
       "scenarios": [
+        "delegation-worktree-merge",
         "intercom-agree-schema"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "occurrences": 1,
-      "evidence": "\"I also gave it server/config.toml, which the spec requires and you didn't assign... The values are my defaults, not the spec's.\"",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 2,
+      "evidence": "brief: \"Also add a one-line bullet for `remove(items, sku)` to the function list in README.md\"; the operator asked for the function and a test",
       "suspect": "agents_spawn",
       "gap": "filled a gap in the request with unrequested work and invented values instead of naming it",
       "principle": "scope",
-      "status": "fixed",
-      "note": "Covered by the principle rewrite; confirm on the next run."
+      "status": "regressed",
+      "note": "Recurred after a fix in 2026-11-02-principles as 'Worker brief carries an unrequested README edit'. The fix was: Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-035",
@@ -703,14 +705,14 @@
         "main-multi-step"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "occurrences": 1,
-      "evidence": "docstrings, a test run and a report in one request; no tasks_write call; check 'a task list of >=2, all closed' FAIL",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 2,
+      "evidence": "docstrings edit, test run, diagnosis and report with no tasks_write call; check 'a task list of >=2, all closed' FAIL",
       "suspect": "tasks_write",
       "gap": "didn't make multi-part work visible while the operator waited",
       "principle": "visibility",
-      "status": "fixed",
-      "note": "Same failure as H-016. Covered by the principle rewrite; confirm on the next run."
+      "status": "regressed",
+      "note": "Recurred after a fix in 2026-11-02-principles as 'Four-step job done without a task list'. The fix was: Same failure as H-016. Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-037",
@@ -763,14 +765,14 @@
         "main-recall-across-threads"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "occurrences": 1,
-      "evidence": "memory_recall returned the staging port, then project_active and files_search_files \"staging.*(port|5432|3306)\" -> No matches found",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 2,
+      "evidence": "platform_search -> memory hit \"listens on port 6544\", then project_active: \"Seeing whether a project is attached that would hold the staging config.\"",
       "suspect": "",
       "gap": "kept looking after a lookup had already answered the question",
       "principle": "cost",
-      "status": "fixed",
-      "note": "Same failure as H-026. Covered by the principle rewrite; confirm on the next run."
+      "status": "regressed",
+      "note": "Recurred after a fix in 2026-11-02-principles as 'Extra lookup after platform_search already returned the memory'. The fix was: Same failure as H-026. Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-040",
@@ -780,21 +782,123 @@
       "severity": "polish",
       "area": "subagent",
       "scenarios": [
+        "intercom-blocked-question",
         "subagent-researcher-cites"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "occurrences": 1,
-      "evidence": "subagent_report -> \"End your turn now, with no further text\", then builtin_now -> 2026-11-01T22:25:40",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 2,
+      "evidence": "subagent_report blocked -> filed, then run_code {\"code\": \"None\"} with narration \"Waiting for the parent's answer; no action taken.\"",
       "suspect": "subagent_report",
       "gap": "",
       "principle": null,
       "status": "fixed",
-      "note": "No tools are offered once a report is filed."
+      "note": "run_code is added by the code-mode wrapper outside the enabled filter, so the first fix left it offered after a report; the wrapper now offers nothing once deps.reported is set (agent/code_mode.py). Confirm on the next run."
+    },
+    {
+      "id": "H-041",
+      "fingerprint": "platform|models|a shell command leaves a pydantic ai harness folder in the operator s project",
+      "title": "A shell command leaves a .pydantic-ai-harness folder in the operator's project",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "models",
+      "scenarios": [
+        "models-none-offered"
+      ],
+      "first_seen": "2026-11-02-principles (2026-11-02)",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "before any shell call files_list_directory lists no hidden entry; after `ls -aR` the project holds \".pydantic-ai-harness: .gitignore shell\"; the same folder is timestamped at the first shell call in tools-denied-delete and delegation-background-tests",
+      "suspect": "shell_run_command",
+      "gap": "",
+      "principle": null,
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-042",
+      "fingerprint": "behavior|models|talos blames the explorer for a hidden folder its own shell call created",
+      "title": "Talos blames the explorer for a hidden folder its own shell call created",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "models",
+      "scenarios": [
+        "models-none-offered"
+      ],
+      "first_seen": "2026-11-02-principles (2026-11-02)",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "explorer files_list_directory shows no hidden entries; Talos then runs `ls -aR`, sees .pydantic-ai-harness/ with an empty shell/, and replies \"the explorer's report was incomplete\"",
+      "suspect": "",
+      "gap": "read a difference between an agent's report and a later look as the agent's error, without asking whether something since, its own actions included, had changed the state",
+      "principle": "state",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-043",
+      "fingerprint": "behavior|delegation|stop confirmation says nothing changed without checking and then repeats itself",
+      "title": "Stop confirmation says nothing changed without checking and then repeats itself",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-stop"
+      ],
+      "first_seen": "2026-11-02-principles (2026-11-02)",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "\"I haven't seen its report... It only read and ran commands, so nothing in the project was changed.\" then \"KYLL-06 was cancelled before it finished... Nothing else needs doing.\"",
+      "suspect": "",
+      "gap": "asserted a negative about the operator's files from what the agent was expected to do, not from anything seen",
+      "principle": "knowledge",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-044",
+      "fingerprint": "behavior|flow|task confirm all pass marked completed while the suite still fails",
+      "title": "Task 'confirm all pass' marked completed while the suite still fails",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "flow",
+      "scenarios": [
+        "flow-plan-mode"
+      ],
+      "first_seen": "2026-11-02-principles (2026-11-02)",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "tasks_update_statuses t3 \"Run python -m pytest tests and confirm all pass\" -> completed; reply: \"6 passed, 1 failed\"",
+      "suspect": "tasks_update_statuses",
+      "gap": "closed a task by its wording rather than by whether its outcome held, so the list the operator watches overstates",
+      "principle": "visibility",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-045",
+      "fingerprint": "behavior|subagent|researcher launched without opening the research skill",
+      "title": "Researcher launched without opening the research skill",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "subagent",
+      "scenarios": [
+        "subagent-researcher-cites"
+      ],
+      "first_seen": "2026-11-02-principles (2026-11-02)",
+      "last_seen": "2026-11-02-principles (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "skills_open only \"delegation\", then agents_spawn researcher; instructions say \"For research or any multi-part investigation, open the `research` skill first\"",
+      "suspect": "skills_open",
+      "gap": "acted from a recalled procedure instead of opening the skill the instructions assign to that kind of work",
+      "principle": "knowledge",
+      "status": "open",
+      "note": ""
     }
   ],
   "groups": [
     "2026-11-01-baseline",
-    "2026-11-01-post-fixes"
+    "2026-11-01-post-fixes",
+    "2026-11-02-principles"
   ]
 }
