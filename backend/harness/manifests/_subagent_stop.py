@@ -65,7 +65,7 @@ class SubagentStopper(SubtreeStopper):
 
         A live row with no run left (a blocked agent waiting on an answer) counts as stopped:
         settling it is what stops it."""
-        stopped = {each.id for each in rows if each.status in LIVE_STATUSES}
+        stopped: set[str] = set()
         # Marked before any cancel so the resulting reports don't wake an agent being stopped.
         for each in rows:
             self._mark(each.child_conversation_id, cause)
@@ -74,6 +74,8 @@ class SubagentStopper(SubtreeStopper):
         for each in rows:
             run = self._runs.active_run_for(each.child_conversation_id, owner_id)
             if run is None or run.is_terminal:
+                if run is None and each.status in LIVE_STATUSES:
+                    stopped.add(each.id)
                 continue
             if run.stop_cause is None:
                 run.stop_cause = cause

@@ -174,6 +174,7 @@ def compose_turn(
     run_id: str | None = None,
     max_requests: int | None = None,
     ledger_prompt_message_id: str | None = None,
+    takes_messages: bool = True,
 ) -> ChatCreated:
     """Build the chat orchestrator from pre-resolved parts and submit the Run.
 
@@ -240,6 +241,7 @@ def compose_turn(
             # Resolved by the interactive caller; the unattended path leaves it UNSET for the
             # registry default.
             inactivity_timeout_s=inactivity_timeout_s,
+            takes_messages=takes_messages,
         )
     except ConversationBusyError as exc:
         # The registry's atomic check caught a race the caller's earlier guard couldn't.

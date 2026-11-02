@@ -764,6 +764,29 @@ class TestTheReportTurnAfterALimit:
             (report,) = app_state(app).runs.inbox("parent-1", "operator").messages
             assert "): blocked (stalled)." in report.text
 
+    async def test_a_message_that_woke_it_first_reports_instead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            subagent_id, conversation_id = await _spawned(app)
+            _hold_report_turn(monkeypatch, app, opens=False)
+            runs = app_state(app).runs
+            woken = _ended(conversation_id)
+            monkeypatch.setattr(
+                runs,
+                "active_run_for",
+                lambda cid, _owner: woken if cid == conversation_id else None,
+            )
+            cut = _ended(conversation_id, RunStatus.blocked)
+            cut.stop_cause = StopCause.time_limit
+
+            await _wake(app).settled(cut, False)
+
+            assert not runs.inbox("parent-1", "operator").messages
+            row = await _records(app).get(subagent_id, "operator")
+            assert row is not None and row.status != "stopped"
+
     async def test_the_report_turn_opens_on_its_note_and_leaves_waiting_messages(
         self, monkeypatch: pytest.MonkeyPatch
     ):

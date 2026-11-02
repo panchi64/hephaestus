@@ -430,9 +430,11 @@ async def drive_turn(
         # both arrive on the same object.
         if not (isinstance(output, DeferredToolRequests) and (output.approvals or output.calls)):
             # An open task list gets one word before stopping, but not after a spawned
-            # agent's report, which told it to end without another.
+            # agent's report, which told it to end without another, nor in a turn that
+            # takes no messages, where the notice would wait to wake a turn of its own.
             if (
                 not open_tasks_raised
+                and run.takes_messages
                 and conversation_id is not None
                 and not deps.reported
                 and not run.messages.has_deliverable()

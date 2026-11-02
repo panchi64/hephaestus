@@ -77,6 +77,19 @@ async def test_inactivity_bound_sets_its_code_and_stop_cause() -> None:
     assert run.stop_cause is StopCause.time_limit
 
 
+async def test_an_inactivity_trip_keeps_a_stop_already_under_way() -> None:
+    reg = RunRegistry(inactivity_timeout_s=0.05)
+
+    async def orch(run: Run) -> None:
+        run.stop_cause = StopCause.parent
+        await asyncio.sleep(5)
+
+    run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
+    await run.wait()
+
+    assert run.stop_cause is StopCause.parent
+
+
 async def test_a_completed_run_has_no_code() -> None:
     async def orch(_run: Run) -> None:
         return None

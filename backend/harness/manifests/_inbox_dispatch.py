@@ -291,7 +291,8 @@ class InboxDispatcher:
                 return await self._open_wake(owner_id, conversation_id, note, report_only=True)
             except Exception:
                 logger.exception("inbox: could not open a report turn on %s", conversation_id)
-                return False
+                # A failure after the turn was submitted still leaves that turn to report.
+                return self._runs.active_run_for(conversation_id, owner_id) is not None
             finally:
                 self._runs.release(conversation_id, owner_id)
 
@@ -354,12 +355,8 @@ class InboxDispatcher:
             # thread's ledger as this agent, else to the one that launched the agent. A wake
             # that took several messages files under its lead message's prompt.
             ledger_prompt_message_id=(self._wake_prompt(lead.id, row) if row is not None else None),
+            takes_messages=not report_only,
         )
-        if report_only:
-            # Set before the next await, so the run's task has not taken a message yet.
-            report_turn = self._runs.get(created.run_id or "")
-            if report_turn is not None:
-                report_turn.takes_messages = False
         self._runs.inbox(conversation_id, owner_id).take(lead)
         if row is not None and records is not None:
             await records.reopen(row.id, created.run_id or "")

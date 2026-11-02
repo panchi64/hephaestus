@@ -170,6 +170,9 @@ class SubagentWake:
         elif cut_short is None and self._owes_report_turn(run, row, outcome, filed=filed):
             if await self._wake_to_report(run, row, outcome):
                 return
+            if self._runs.active_run_for(row.child_conversation_id, row.owner_id) is not None:
+                # A message woke it first; that turn reports when it ends.
+                return
             fresh = await self._records.by_child(row.child_conversation_id)
             if fresh is not None and fresh.status == "cancelled":
                 # Stopped before its report turn could open: the stop is the outcome.

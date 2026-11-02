@@ -364,6 +364,7 @@ class RunRegistry:
         conversation_id: str | None = None,
         endpoint: Endpoint | None = None,
         inactivity_timeout_s: float | None | Unset = UNSET,
+        takes_messages: bool = True,
     ) -> Run:
         # No ``await`` between this check and registering, closing the race a caller's own
         # pre-submit guard can't: two requests that saw no active run can both reach here.
@@ -378,6 +379,7 @@ class RunRegistry:
             conversation_id=conversation_id,
             endpoint=endpoint,
             stream=RunStream(),
+            takes_messages=takes_messages,
         )
         if conversation_id is not None:
             run.inbox = self.inbox(conversation_id, owner_id)
@@ -553,7 +555,9 @@ class RunRegistry:
             run.block(str(timeout))
             run.end_code = timeout.kind
             # A stalled sub-agent then reports `blocked (stalled)`, recoverable, not `failed`.
-            run.stop_cause = StopCause.time_limit
+            # A stop already under way keeps its own cause.
+            if run.stop_cause is None:
+                run.stop_cause = StopCause.time_limit
             if parked:
                 # Tripped after the park but before the task unwound: persistence was
                 # deferred to a resume that won't happen and `on_timeout` is already

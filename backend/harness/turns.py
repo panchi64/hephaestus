@@ -70,6 +70,7 @@ class UnattendedTurns:
         ephemeral: bool = False,
         run_id: str | None = None,
         ledger_prompt_message_id: str | None = None,
+        takes_messages: bool = True,
     ) -> ChatCreated:
         return compose_turn(
             run_id=run_id,
@@ -93,4 +94,5 @@ class UnattendedTurns:
             max_requests=max_requests,
             ephemeral=ephemeral,
             ledger_prompt_message_id=ledger_prompt_message_id,
+            takes_messages=takes_messages,
         )

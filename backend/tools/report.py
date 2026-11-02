@@ -64,6 +64,7 @@ def report_toolset() -> AbstractToolset[RunDeps]:
             return {"filed": False, "detail": "Delegation is unavailable in this deployment."}
         # Claimed before the await, so parallel calls in one response cannot both file.
         ctx.deps.reported = True
+        parent: str | None = None
         try:
             parent = await launcher.file_report(
                 ctx.deps.owner_id,
@@ -72,11 +73,9 @@ def report_toolset() -> AbstractToolset[RunDeps]:
                 FiledReport(status=status, text=text),
             )
         except SubagentUnavailableError as exc:
-            ctx.deps.reported = False
             return {"filed": False, "detail": str(exc)}
-        except BaseException:
-            ctx.deps.reported = False
-            raise
+        finally:
+            ctx.deps.reported = parent is not None
         return {
             "filed": True,
             "to": parent,
