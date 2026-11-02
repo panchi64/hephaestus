@@ -66,7 +66,6 @@ EDITABLE: frozenset[str] = frozenset(
         "tools",
         "permission_ceiling",
         "workspace",
-        "wall_clock_timeout_s",
         "can_delegate",
         "max_depth",
         "max_requests",
@@ -85,7 +84,6 @@ class _Columns(TypedDict):
     tools_deny_json: str | None
     permission_ceiling: str | None
     workspace: str
-    wall_clock_timeout_s: float | None
     can_delegate: bool
     max_depth: int | None
     max_requests: int | None
@@ -254,7 +252,6 @@ class AgentStore:
             "tools_deny_json": json.dumps(sorted(agent.tools.deny)) if agent.tools.deny else None,
             "permission_ceiling": agent.permission_ceiling,
             "workspace": agent.workspace,
-            "wall_clock_timeout_s": agent.wall_clock_timeout_s,
             "can_delegate": agent.can_delegate,
             "max_depth": agent.max_depth,
             "max_requests": agent.max_requests,
@@ -276,7 +273,6 @@ class AgentStore:
             ),
             permission_ceiling=row.permission_ceiling,
             workspace=workspace_policy(row.workspace) or "shared",
-            wall_clock_timeout_s=row.wall_clock_timeout_s,
             can_delegate=row.can_delegate,
             max_depth=row.max_depth,
             max_requests=row.max_requests,
@@ -336,8 +332,6 @@ def _validated(agent: AgentDefinition) -> AgentDefinition:
         )
     if agent.workspace not in WORKSPACE_POLICIES:
         raise AgentValidationError("workspace", "workspace is one of shared, isolated, own")
-    if agent.wall_clock_timeout_s is not None and agent.wall_clock_timeout_s <= 0:
-        raise AgentValidationError("wall_clock_timeout_s", "must be positive")
     if agent.max_depth is not None and agent.max_depth < 0:
         raise AgentValidationError("max_depth", "must not be negative")
     if agent.max_requests is not None and agent.max_requests <= 0:

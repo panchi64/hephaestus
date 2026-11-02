@@ -107,6 +107,9 @@ class Run:
     # reference is not the only one, and so the registry can wait on or stop it.
     afterwork: set[asyncio.Task[None]] = field(default_factory=set)
     cancel_requested: bool = False
+    # False for a sub-agent's report-only turn: what arrives meanwhile waits for a turn
+    # that can act on it.
+    takes_messages: bool = True
     metrics: RunMetrics | None = None
     # The active model's context window; None leaves the derived context fields null.
     context_window: int | None = None
@@ -146,7 +149,7 @@ class Run:
     # run; a run with no conversation gets its own.
     inbox: ConversationInbox | None = None
     # Flushes the orchestrator's partial state before the registry force-cancels the task
-    # for a wall-clock/inactivity bound. Called synchronously with the bound's message,
+    # for the inactivity bound. Called synchronously with the bound's message,
     # on the event-loop turn of the still-running task. A raising hook is swallowed.
     on_timeout: Callable[[str], None] | None = None
     # Persists the partial turn before an operator-requested cancel. Called from the
@@ -171,8 +174,8 @@ class Run:
         """Hold the inactivity clock open across one long call that streams nothing.
 
         Inside this scope the inactivity bound no longer applies, so a call that truly
-        wedges is bounded only by the run's wall clock. Wrap the one awaited call, never
-        a whole orchestration.
+        wedges is bounded only by its own timeouts and the operator's Stop. Wrap the one
+        awaited call, never a whole orchestration.
         """
         task = asyncio.create_task(self._beat())
         try:
@@ -231,7 +234,7 @@ class Run:
         return self.messages.enqueue(text, source=source, sender=sender)
 
     def drain_messages(self) -> list[QueuedMessage]:
-        return self.messages.drain()
+        return self.messages.drain() if self.takes_messages else []
 
     def _emit_open(self, body: EventBody) -> None:
         if not self.stream.closed:

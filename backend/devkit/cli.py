@@ -95,7 +95,10 @@ def status_payload(instance: DevInstance) -> StatusPayload:
             "stub": instance.stub_port,
         },
         "running": running,
-        "ready": all(running.values()),
+        # The stub isn't started when the launch used a real endpoint (`launch.ensure_stub`).
+        "ready": all(
+            up for name, up in running.items() if name != "stub" or not instance.live_endpoint
+        ),
         "seeded": instance.seeded or None,
         "auth": instance.auth,
         "vm": instance.vm,

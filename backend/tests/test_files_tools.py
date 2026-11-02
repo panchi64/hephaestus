@@ -186,6 +186,22 @@ async def test_an_approved_write_leases_the_project_to_the_thread(tmp_path: Path
     assert (root / "more.md").read_text() == "more"
 
 
+async def test_putting_back_a_write_removes_the_folders_it_created(tmp_path: Path):
+    caps, root, _leases = await _with_project(tmp_path)
+    args: dict[str, object] = {"path": "~/projects/api/docs/2026/notes.md", "content": "hi"}
+    _ = await _call("write_file", args, manager=ScratchDirs(tmp_path), caps=caps, approved=True)
+    assert (root / "docs/2026/notes.md").read_text() == "hi"
+
+    projects = caps.get(ProjectStore)
+    (project,) = await projects.list("operator")
+    report = await caps.get(ThreadChanges).revert(
+        "operator", "conv-1", {project.id: Path(project.root_path)}
+    )
+
+    assert report.reverted == ["docs/2026/notes.md"]
+    assert not (root / "docs").exists()
+
+
 async def test_a_relative_write_into_an_unmounted_project_asks_to_mount_it(tmp_path: Path):
     caps, root, _leases = await _with_project(tmp_path)
     manager = ScratchDirs(tmp_path)
@@ -227,6 +243,13 @@ async def test_write_lands_in_the_conversation_workspace(tmp_path: Path):
     manager = ScratchDirs(tmp_path)
     _ = await _call("write_file", {"path": "result.txt", "content": "hello"}, manager=manager)
     assert (manager.path("conv-1") / "result.txt").read_text() == "hello"
+
+
+async def test_a_write_creates_the_folders_it_needs(tmp_path: Path):
+    manager = ScratchDirs(tmp_path)
+    args: dict[str, object] = {"path": "summaries/2026/notes.txt", "content": "hello"}
+    _ = await _call("write_file", args, manager=manager)
+    assert (manager.path("conv-1") / "summaries/2026/notes.txt").read_text() == "hello"
 
 
 async def test_paths_outside_the_workspace_are_refused(tmp_path: Path):

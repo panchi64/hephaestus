@@ -6,10 +6,9 @@ import { toChatSettings, toChatSettingsBody } from "./chatSettingsDto";
  *
  * A PUT here sends only the keys the caller touched, and "touched" is decided by an
  * `!== undefined` test rather than by truthiness. That distinction is invisible until a
- * setting has a meaningful falsy value — and two do: a `null` wall clock or `null`
- * sub-agent cap is the value that removes the bound. Written as `if (patch.x)`, both
- * would be dropped on the floor with no error anywhere, and only for the operators who
- * picked them.
+ * setting has a meaningful falsy value, such as a `null` sub-agent cap, the value that
+ * removes the bound. Written as `if (patch.x)`, it would be dropped with no error
+ * anywhere, and only for the operators who picked it.
  */
 
 const DTO = {
@@ -20,7 +19,6 @@ const DTO = {
   context_alert_threshold: 0.9,
   first_token_timeout_s: 600,
   inactivity_timeout_s: 120,
-  wall_clock_timeout_s: null,
   subagent_max_concurrent: null,
 };
 
@@ -34,7 +32,6 @@ describe("reading the stored preferences", () => {
       contextAlertThreshold: 0.9,
       firstTokenTimeoutS: 600,
       inactivityTimeoutS: 120,
-      wallClockTimeoutS: null,
       subagentMaxConcurrent: null,
     });
   });
@@ -47,16 +44,8 @@ describe("writing a patch", () => {
     });
   });
 
-  test("removing the wall clock survives the encode", () => {
-    // The trap this whole file exists for.
-    expect(toChatSettingsBody({ wallClockTimeoutS: null })).toEqual({
-      wall_clock_timeout_s: null,
-    });
-  });
-
   test("removing the sub-agent cap survives the encode", () => {
-    // `null` is the value that lifts the cap, and it is falsy — the same trap as the wall
-    // clock, in the second field to carry it.
+    // `null` is the value that lifts the cap, and it is falsy.
     expect(toChatSettingsBody({ subagentMaxConcurrent: null })).toEqual({
       subagent_max_concurrent: null,
     });

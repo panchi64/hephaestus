@@ -117,6 +117,9 @@ def _merge(found: Iterable[Found]) -> list[Found]:
     return sorted(out.values(), key=lambda f: (SEVERITIES.index(f.severity), f.area, f.title))
 
 
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 @dataclass(frozen=True, slots=True)
 class Collected:
     found: list[Found]
@@ -124,6 +127,8 @@ class Collected:
     stub: bool
     #: Every run has a reviewed grade.
     reviewed: bool
+    #: The day the group's first run started (`YYYY-MM-DD`), or None for a group with no run.
+    ran_on: str | None = None
 
 
 def collect(group_dir: Path) -> Collected:
@@ -132,9 +137,12 @@ def collect(group_dir: Path) -> Collected:
     found: list[Found] = []
     stub = False
     reviewed = True
+    started: list[str] = []
     for run_dir in sorted(p for p in group_dir.iterdir() if (p / RUN_FILE).is_file()):
         run = load_run(run_dir)
         stub = stub or run.stub
+        if day := _DAY.match(run.started_at):
+            started.append(day.group())
         # A reviewed grader files a failed scenario check under the kind it really is (an
         # eval fault, the agent's, the product's); unreviewed, the check stands for itself.
         graded = (run_dir / REPORT_FILE).is_file()
@@ -158,7 +166,9 @@ def collect(group_dir: Path) -> Collected:
                 )
         if graded:
             found += [_from_grader(issue, areas) for issue in load_grades(run_dir).issues]
-    return Collected(_merge(found), stub=stub, reviewed=reviewed)
+    return Collected(
+        _merge(found), stub=stub, reviewed=reviewed, ran_on=min(started) if started else None
+    )
 
 
 def _from_grader(issue: Issue, areas: dict[str, str]) -> Found:
@@ -318,7 +328,8 @@ def main(argv: list[str]) -> int:
     if group in backlog.groups:
         print(f"{group} was merged already; the backlog is left as it is.")
         return 0
-    touched = merge_backlog(backlog, found, group, f"{group} ({datetime.now(UTC):%Y-%m-%d})")
+    ran_on = collected.ran_on or f"{datetime.now(UTC):%Y-%m-%d}"
+    touched = merge_backlog(backlog, found, group, f"{group} ({ran_on})")
     save_backlog(backlog)
     print(f"backlog: {len(touched)} issues merged into {BACKLOG_PATH.name}")
     return 0

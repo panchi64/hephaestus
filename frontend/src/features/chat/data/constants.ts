@@ -12,7 +12,7 @@
  */
 
 /** The prompt a "Continue." turn sends — the operator's way to resume a turn that a
- *  bound (inactivity/wall-clock timeout or cancel) stopped before it finished. A plain
+ *  bound (inactivity timeout or cancel) stopped before it finished. A plain
  *  user turn on the same conversation, so the model picks up where the prior turn left
  *  off and a small "Continue." bubble appears in the transcript. */
 export const CONTINUE_PROMPT = "Continue.";

@@ -22,6 +22,7 @@ from services.projects.repo import (
     WorktreeState,
     branch_for,
     child_branch_for,
+    commit_worktree,
     run_git,
 )
 from services.projects.worktree import WorktreeBusyError, WorktreeManager
@@ -452,3 +453,31 @@ class TestMissingDirectory:
             _ = await manager.diff(
                 tmp_path / "gone", base_ref="main", conversation_id="c1", project_id="p"
             )
+
+
+class TestCommitWorktree:
+    async def test_interpreter_caches_never_reach_a_commit(self, tmp_path: Path):
+        root = await _repo(tmp_path)
+        _ = (root / "hello.txt").write_text("changed\n")
+        (root / "__pycache__").mkdir()
+        _ = (root / "__pycache__" / "hello.cpython-312.pyc").write_bytes(b"\x00")
+        (root / "pkg").mkdir()
+        _ = (root / "pkg" / "mod.pyc").write_bytes(b"\x00")
+
+        assert await commit_worktree(root, root=root) is True
+
+        _code, files, _err = await run_git(root, "show", "--name-only", "--format=", "HEAD")
+        assert files.split() == ["hello.txt"]
+
+    async def test_a_cache_file_already_tracked_is_still_committed(self, tmp_path: Path):
+        root = await _repo(tmp_path)
+        (root / "pkg").mkdir()
+        _ = (root / "pkg" / "mod.pyc").write_bytes(b"\x00")
+        _ = await run_git(root, "add", "-f", "pkg/mod.pyc", root=root)
+        _ = await run_git(root, "commit", "-m", "tracked a cache", root=root)
+        _ = (root / "pkg" / "mod.pyc").write_bytes(b"\x01")
+
+        assert await commit_worktree(root, root=root) is True
+
+        _code, status, _err = await run_git(root, "status", "--porcelain", root=root)
+        assert status.strip() == ""

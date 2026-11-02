@@ -23,7 +23,6 @@ from routes.chat.queued import submit_queued
 from routes.chat.submit import TurnScope, thread_models, turn_scope
 from routes.chat.turn import (
     TurnModels,
-    WallClockOverride,
     compose_turn,
     resolve_choice,
     resolve_turn_models,
@@ -38,7 +37,6 @@ __all__ = [
     "ConversationBusyError",
     "TurnModels",
     "TurnScope",
-    "WallClockOverride",
     "compose_turn",
     "resolve_choice",
     "resolve_turn_models",

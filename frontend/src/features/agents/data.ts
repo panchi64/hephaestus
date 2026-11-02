@@ -25,7 +25,6 @@ export interface AgentOut {
   deny_tools: string[];
   permission_ceiling: PermissionCeiling | null;
   workspace: AgentWorkspace;
-  wall_clock_timeout_s: number | null;
   can_delegate: boolean;
   max_depth: number | null;
   delegable: boolean;
@@ -50,7 +49,6 @@ export function toAgent(dto: AgentOut): Agent {
     denyTools: dto.deny_tools,
     permissionCeiling: dto.permission_ceiling,
     workspace: dto.workspace,
-    wallClockTimeoutS: dto.wall_clock_timeout_s,
     canDelegate: dto.can_delegate,
     maxDepth: dto.max_depth,
     delegable: dto.delegable,

@@ -122,9 +122,9 @@ class ChatSettings(BaseModel):
     the window fills. Every field is optional on a PUT (omitted ⇒ unchanged) and populated
     on a GET; bounds reject nonsensical values. snake_case out, like the rest of ``/chat``.
 
-    On a PUT, ``null`` is a value (not an omission) for ``wall_clock_timeout_s`` and
-    ``subagent_max_concurrent``, so the handler reads ``model_fields_set`` for them. On a
-    GET, ``null`` is also meaningful for an ``inactivity_timeout_s`` a deploy disabled."""
+    On a PUT, ``null`` is a value (not an omission) for ``subagent_max_concurrent``, so the
+    handler reads ``model_fields_set`` for it. On a GET, ``null`` is also meaningful for an
+    ``inactivity_timeout_s`` a deploy disabled."""
 
     # Forbid extras so a typo'd key is a 422, not a 200 that changed nothing.
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
@@ -153,9 +153,6 @@ class ChatSettings(BaseModel):
     # Seconds a run may emit nothing before it is stopped. ``gt=0`` (0 would stop every
     # turn); the config default applies when unset, and a deploy-level ``None`` disables it.
     inactivity_timeout_s: float | None = Field(default=None, gt=0)
-    # Total seconds a run may take, off unless set. Catches a run that keeps emitting and
-    # so refreshes the inactivity watchdog forever. ``null`` removes the bound.
-    wall_clock_timeout_s: float | None = Field(default=None, gt=0)
     # Sub-agents running at once; ``null`` (the default) is no cap. ``ge=1``: 0 would
     # disable the feature through a number, which the tool catalog already does honestly.
     subagent_max_concurrent: int | None = Field(default=None, ge=1)

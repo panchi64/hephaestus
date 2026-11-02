@@ -28,7 +28,6 @@ export interface Agent {
   denyTools: string[];
   permissionCeiling: PermissionCeiling | null;
   workspace: AgentWorkspace;
-  wallClockTimeoutS: number | null;
   canDelegate: boolean;
   maxDepth: number | null;
   delegable: boolean;
@@ -55,7 +54,6 @@ export interface AgentWrite {
   deny_tools?: string[];
   permission_ceiling?: PermissionCeiling | null;
   workspace?: AgentWorkspace;
-  wall_clock_timeout_s?: number | null;
   can_delegate?: boolean;
   max_depth?: number | null;
 }

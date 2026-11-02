@@ -283,6 +283,9 @@ async def test_approving_is_one_act(wired: _Wired):
     assert ctx.deps.permission == "auto"
     assert "files_write_file" in await _offered(ctx)
     assert "auto" in result
+    # The model is told the seeded ids, so its first task update names a real one.
+    assert [i.id for i in await tasks.items(OWNER, conversation_id)] == ["t1", "t2"]
+    assert "`t1`: read it" in result and "`t2`: change it" in result
 
     bodies = _bodies(run)
     assert [b.level for b in bodies if isinstance(b, PermissionChanged)] == ["auto"]

@@ -11,11 +11,15 @@ You stay in charge. Agents you spawn work for you and report back to you; the op
 
 Delegate when the work splits into parts that can go on at the same time, or when a part needs a lot of reading or trial and error whose detail you do not need to keep. Do it yourself when it takes a couple of tool calls, when every step depends on the last, or when the brief would be longer than the work.
 
+Long churn is the clearest case. A refactor across many files, a long test-and-fix loop, or a sweep through many files or results would fill your context with detail you only need the conclusion of. Give it to one agent: its churn stays in its context, and only its report enters yours. An agent is stopped when it stalls, never for running long, so a task that runs a long while is fine to hand over.
+
+When the operator asks for an agent ("have a test runner run the suite"), spawn one. That is the request, even when doing it yourself looks quicker or the task looks bound to fail; the agent reports what it found.
+
 Each agent costs a run, a share of your endpoint and a report to read. Spawn as many as the work actually splits into, not more.
 
 ## 2. Pick the agent
 
-The `agents_spawn` description lists the agents you can spawn and what each is for. When none fits and the work will recur, draft one with the `build-an-agent` skill rather than stretching a general one. Prefer a read-only agent for anything that does not need to write: spawning one that can write asks the operator first.
+The `agents_spawn` description lists the agents you can spawn and what each is for. When none fits and the work will recur, draft one with the `build-an-agent` skill rather than stretching a general one. Prefer a read-only agent for anything that does not need to write: an agent that can write makes changes at your permission level, and each one is gated like yours.
 
 ## 3. Write a brief that stands alone
 
@@ -35,7 +39,7 @@ Use `worktree` when the agent will edit a project while you keep editing it your
 Issue every spawn together in one step, then carry on or end your turn. Reports arrive on their own: never poll, and never wait in a loop.
 
 - When what you need from an agent changes, `agents_message` it with the amended brief rather than spawning a second one.
-- Agents in one tree can message each other: tell an agent the handle of a sibling whose result it needs. Any agent, read-only ones included, can message `parent` or `main` at any time to report something early.
+- Agents in one tree can message each other: tell an agent the handle of a sibling whose result it needs. Any agent, read-only ones included, can message `parent` or `main` at any time to pass something on early. A question an agent needs answered goes in its `blocked` report instead.
 - Spawning and messaging never ask the operator. An agent you spawn may do what you may, at your permission level.
 - Stop an agent with `agents_stop` once its work is moot. It reports what it got through.
 

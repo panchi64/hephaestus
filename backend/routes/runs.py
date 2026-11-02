@@ -40,7 +40,7 @@ from services.answers import (
 )
 from services.approval_grants import covered_by_grant, grant_scopes, grantable
 from services.plan_mode import PLAN_SUBMIT_TOOL
-from services.settings_store import get_inactivity_timeout, get_wall_clock_timeout
+from services.settings_store import get_inactivity_timeout
 from services.subagents import SubtreeStopper
 from tools.home_workspace import ENV_CHANGED, env_still_clears
 
@@ -506,7 +506,6 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             run_id,
             orchestrator,
             inactivity_timeout_s=await get_inactivity_timeout(settings_store, deps.OPERATOR_ID),
-            wall_clock_timeout_s=await get_wall_clock_timeout(settings_store, deps.OPERATOR_ID),
         )
         is None
     ):

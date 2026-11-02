@@ -76,10 +76,7 @@ class Settings(BaseSettings):
     # narrowness guarantees the operator a floor of slots, so a burst queues instead.
     # `chat.subagent_max_concurrent` is separate: it caps how many may exist.
     run_linked_concurrency: int = 3
-    # Off by default: it mostly fires on legitimately slow runs (a local model, a long
-    # sandboxed call). Opt-in for the gap the inactivity watchdog leaves, since a run that
-    # keeps emitting refreshes that clock on every frame.
-    run_wall_clock_timeout_s: float | None = None
+    # Runs are bounded by stalling, never by elapsed time: a long, productive run is allowed.
     run_inactivity_timeout_s: float | None = 120.0
     # How long a model request may stream nothing before its first part, with the
     # inactivity clock held open meanwhile. Reading a long prompt is silent: about 2s per
@@ -93,7 +90,9 @@ class Settings(BaseSettings):
 
     # Models come only from the DB-backed registry (services/registry.py), not the env.
 
-    # A turn has no request or tool-call budget; the loop guard and the timeouts bound it.
+    # A turn has a request budget only when its agent sets `max-requests`; otherwise the loop
+    # guard and the timeouts bound it.
+
     # Re-sends of a request a transient model error cut short (dropped connection, 5xx, 429,
     # mid-call stream end).
     auto_continue_transient_max: int = 2
@@ -110,11 +109,6 @@ class Settings(BaseSettings):
     # A tool result longer than this many characters is saved to the thread's scratch and
     # the model gets a head-and-tail preview with the path (`tools/spill.py`).
     tool_output_spill_chars: int = Field(default=40_000, ge=1000)
-
-    # A sub-agent turn's wall clock, the one on by default: nobody watches it, and the
-    # inactivity watchdog can't end a model that keeps streaming. Eighteen minutes fits a
-    # thorough read of a dozen sources, not a stuck one.
-    subagent_wall_clock_timeout_s: float | None = 1080.0
 
     # How deep a delegation tree may grow: a thread's own agents are depth 1. An agent's
     # definition may lower it for the agents below it, never raise it.
@@ -145,9 +139,9 @@ class Settings(BaseSettings):
     sandbox_max_sessions: int = 8
     # How long the backend waits for a previewed dev server to listen before reporting failure.
     sandbox_preview_startup_timeout_s: float = 20.0
-    # Skipped when a workspace is reported (per-turn file block, history snapshot) and when
-    # a delegated fork is compared and merged back: a virtualenv is files the agent didn't
-    # write, and three-way merging `.git` internals corrupts. Nothing is ever deleted.
+    # Skipped when a workspace is reported (per-turn file block, history snapshot): a
+    # virtualenv is files the agent didn't write. Nothing is ever deleted. Commits have
+    # their own, narrower list (`services/projects/repo.py`).
     # Matched against every part of a path, so `build` covers `packages/x/build/` too.
     sandbox_walk_excludes: tuple[str, ...] = (
         ".venv",

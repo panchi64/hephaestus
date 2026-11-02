@@ -5,7 +5,7 @@ description: Investigate a question across many sources with parallel researcher
 
 # Research
 
-You coordinate. Researchers read the web in parallel and report to you, and you write the report from their reports. Read something yourself only when a researcher isn't worth the round trip: a single lookup, or a gap you notice while writing.
+You coordinate. Researchers read the web in parallel and report to you, and you write the report from their reports. Read something yourself only when a researcher isn't worth the round trip: a gap you notice while writing, or a quick check of your own along the way. A question the operator asked goes to a researcher, even a single factual one.
 
 ## 1. Ask only what changes the search
 
@@ -24,7 +24,7 @@ Split the question into topics that don't overlap and together cover all of it. 
 
 A delegation tree holds at most eight working agents unless the operator changed the limit, and a launch past it is refused. For a larger set, group the items into clusters rather than giving each its own researcher. Only a few researchers run at once and the rest queue, so going wider mostly adds wall-clock time.
 
-Enter plan mode and submit the topics as the plan, so the operator rules on what will be read before any reading starts. If you are extending earlier research (step 5), plan only what this request adds or needs re-checked.
+For two or more topics, enter plan mode and submit the topics as the plan, so the operator rules on what will be read before any reading starts. If you are extending earlier research (step 5), plan only what this request adds or needs re-checked. A single factual question needs no plan: launch its one researcher straight away.
 
 ## 3. Fan out
 

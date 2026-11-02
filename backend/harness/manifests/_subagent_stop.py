@@ -61,22 +61,27 @@ class SubagentStopper(SubtreeStopper):
     async def stop_rows(
         self, owner_id: str, rows: list[SubagentRecord], cause: StopCause
     ) -> list[str]:
-        """Cancel each row and the run on its thread, returning the handles stopped."""
+        """Cancel each row and the run on its thread, returning the handles stopped.
+
+        A live row with no run left (a blocked agent waiting on an answer) counts as stopped:
+        settling it is what stops it."""
+        stopped: set[str] = set()
         # Marked before any cancel so the resulting reports don't wake an agent being stopped.
         for each in rows:
             self._mark(each.child_conversation_id, cause)
             await self._records.settle(each.id, status="cancelled")
             self._wake.note_stop(each.child_conversation_id, cause)
-        stopped: list[str] = []
         for each in rows:
             run = self._runs.active_run_for(each.child_conversation_id, owner_id)
             if run is None or run.is_terminal:
+                if run is None and each.status in LIVE_STATUSES:
+                    stopped.add(each.id)
                 continue
             if run.stop_cause is None:
                 run.stop_cause = cause
             if await self._runs.cancel(run.id):
-                stopped.append(each.handle or each.spec_name)
-        return stopped
+                stopped.add(each.id)
+        return [each.handle or each.spec_name for each in rows if each.id in stopped]
 
     def stopped_since(self, conversation_id: str, since: float) -> StopCause | None:
         """Who stopped this thread after ``since``, which a launch in flight would have missed."""

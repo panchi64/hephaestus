@@ -59,6 +59,11 @@ render_tasks = render_plan
 _OPEN = frozenset({TaskStatus.pending, TaskStatus.in_progress})
 
 
+def seeded_task_id(index: int) -> str:
+    """The id of an approved plan's ``index``-th step (1-based) in the seeded list."""
+    return f"t{index}"
+
+
 def _dump(items: list[TaskItem]) -> str:
     return json.dumps([item.model_dump(mode="json") for item in items])
 
@@ -239,7 +244,7 @@ class ConversationTasks:
         it is simply the thread's task list.
         """
         items = [
-            TaskItem(id=f"t{index}", content=step, status=TaskStatus.pending)
+            TaskItem(id=seeded_task_id(index), content=step, status=TaskStatus.pending)
             for index, step in enumerate(steps, start=1)
         ]
         async with self.lock_for(conversation_id):

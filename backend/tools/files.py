@@ -18,8 +18,10 @@ files (``tools/briefing.py``).
 
 from __future__ import annotations
 
+import posixpath
 import re
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import cast, override
 
@@ -119,6 +121,12 @@ class _HomeFiles(WrapperToolset[RunDeps]):
         log = change_log(ctx.deps) if name in _FILE_WRITES and located is not None else None
         if log is not None and located is not None:
             await log.before(located[0], [located[1]])
+        # After the ledger's snapshot, which records the folders this creates.
+        parent = posixpath.dirname(path) if name == "write_file" and isinstance(path, str) else ""
+        if parent and not await home.backend.exists(parent):
+            # A failure here is left for the write itself to report.
+            with suppress(OSError, ValueError):
+                await home.backend.make_dir(parent)
         # Only the host half: given a workspace that runs commands, the harness searches
         # with `rg` through it, which would boot the VM for a file search.
         inward = replace(attributable(ctx, f"files_{name}"), workspace=Workspace(home.backend))

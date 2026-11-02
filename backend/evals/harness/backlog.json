@@ -13,8 +13,8 @@
       "occurrences": 1,
       "evidence": "With HEPH_DEV_CHAT_* set the launcher never starts the stub (devkit/launch.py ensure_stub), but status_payload's `ready` is all(running.values()), which includes the stub port, so status --json says ready: false on a working instance.",
       "suspect": "devkit/cli.py status_payload",
-      "status": "open",
-      "note": ""
+      "status": "fixed",
+      "note": "Fixed in code, with a test."
     },
     {
       "id": "H-002",
@@ -29,8 +29,8 @@
       "occurrences": 1,
       "evidence": "services/agents/builtin.py worker description: \"you cannot correct a worker while it runs\"; tools/delegation.py agents_message: \"It reaches a running agent at its next step\". Talos is told both, and the intercom scenarios depend on the second.",
       "suspect": "services/agents/builtin.py",
-      "status": "open",
-      "note": ""
+      "status": "fixed",
+      "note": "Worker description corrected."
     },
     {
       "id": "H-003",
@@ -45,8 +45,8 @@
       "occurrences": 1,
       "evidence": "skills/delegation/SKILL.md:18 \"spawning one that can write asks the operator first\" against :39 \"Spawning and messaging never ask the operator\".",
       "suspect": "skills/delegation/SKILL.md",
-      "status": "open",
-      "note": ""
+      "status": "fixed",
+      "note": "Delegation skill corrected."
     },
     {
       "id": "H-004",
@@ -62,8 +62,442 @@
       "evidence": "vm/build_image.sh installs python3-pip and python3-venv but not pytest; a sandboxed `pytest` fails with command not found until the agent pip-installs it.",
       "suspect": "vm/build_image.sh",
       "status": "open",
-      "note": ""
+      "note": "Added to vm/build_image.sh; fixed once the image is rebuilt."
+    },
+    {
+      "id": "H-005",
+      "fingerprint": "behavior|delegation|explicit request for a test runner ignored talos ran the suite itself",
+      "title": "Explicit request for a test runner ignored; Talos ran the suite itself",
+      "kind": "behavior",
+      "severity": "major",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-background-tests"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "operator: \"Have a test runner run the test suite\"; calls were `files_edit_file`, then `shell_start_command` \"python -m pytest -v\"; no `agents_spawn`",
+      "suspect": "agents_spawn",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-006",
+      "fingerprint": "behavior|solving|fix the tests request also flips low stock from to",
+      "title": "Fix-the-tests request also flips low_stock from `<` to `<=`",
+      "kind": "behavior",
+      "severity": "major",
+      "area": "solving",
+      "scenarios": [
+        "solving-root-cause"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"It used `<`, but the README says 'at or below the threshold'. I changed it to `<=` and added a test... This changes behavior for any caller relying on the old strict comparison.\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-007",
+      "fingerprint": "platform|delegation|worker in a worktree cannot commit its git pointer is a host path and the git dir is read only in the vm",
+      "title": "Worker in a worktree cannot commit: its .git pointer is a host path and the git dir is read-only in the VM",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-worktree-merge"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"fatal: not a git repository: ~/.hephaestus/dev/odysseus/data/harness-fixtures/...\" and \"Unable to create '.../index.lock': Read-only file system\"",
+      "suspect": "agents_spawn",
+      "status": "fixed",
+      "note": "Fixed in code, with a test."
+    },
+    {
+      "id": "H-008",
+      "fingerprint": "platform|delegation|agents merge copies pycache bytecode into the project",
+      "title": "agents_merge copies __pycache__ bytecode into the project",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-worktree-merge"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "merge files: [\"README.md\", \"__pycache__/inventory.cpython-312.pyc\", \"inventory.py\", \"tests/__pycache__/...pyc\", \"tests/test_inventory.py\"]",
+      "suspect": "agents_merge",
+      "status": "fixed",
+      "note": "Fixed in code, with a test."
+    },
+    {
+      "id": "H-009",
+      "fingerprint": "ux|delegation|agents merge refuses a worker that has already reported blocked naming a report as the remedy",
+      "title": "agents_merge refuses a worker that has already reported blocked, naming a report as the remedy",
+      "kind": "ux",
+      "severity": "minor",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-worktree-merge"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"`inventory-remove-fn` is still working in its worktree / help: wait for its report, or stop it with agents_stop first\" after the report had arrived; `agents_stop` returned {\"stopped\": []}",
+      "suspect": "agents_merge",
+      "status": "fixed",
+      "note": "Fixed in code, with a test."
+    },
+    {
+      "id": "H-010",
+      "fingerprint": "behavior|flow|edits parse line after approval though no plan step covered it",
+      "title": "Edits parse_line after approval though no plan step covered it",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "flow",
+      "scenarios": [
+        "flow-plan-mode"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "plan steps: add remove, two tests, README, run suite; then `files_edit_file` int(float(price) * 100) -> round(float(price) * 100)",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-011",
+      "fingerprint": "eval|flow|expect item wants a what to change question after a refusal that says to leave it as it is",
+      "title": "Expect item wants a what-to-change question after a refusal that says to leave it as it is",
+      "kind": "eval",
+      "severity": "minor",
+      "area": "flow",
+      "scenarios": [
+        "flow-plan-rejected"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "refusal: \"Declined. Leave it as it is.\"; expect 2: \"Asks what to change about the plan rather than doing it anyway.\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Scenario corrected."
+    },
+    {
+      "id": "H-012",
+      "fingerprint": "eval|flow|line count check misreads a correct table answer",
+      "title": "Line-count check misreads a correct table answer",
+      "kind": "eval",
+      "severity": "minor",
+      "area": "flow",
+      "scenarios": [
+        "flow-steer"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "table `| inventory.py | 5 | 37 |` with a Lines column fails check \"answer matches /\\b\\d+\\s+lines?\\b/\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Scenario corrected."
+    },
+    {
+      "id": "H-013",
+      "fingerprint": "behavior|flow|reply says the steps are described but describes none",
+      "title": "Reply says the steps are described but describes none",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "flow",
+      "scenarios": [
+        "flow-task-list"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"All three steps are described and marked complete on the task list.\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-014",
+      "fingerprint": "eval|intercom|scenario wants a blocked report but the operator s wording steers talos to message the worker",
+      "title": "Scenario wants a blocked report, but the operator's wording steers Talos to message the worker",
+      "kind": "eval",
+      "severity": "minor",
+      "area": "intercom",
+      "scenarios": [
+        "intercom-blocked-question"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "operator: \"tell it to ask you for it\"; brief: \"Ask your parent ... with the agents_message tool\"; check \"`subagent_report*` calls with blocked\" failed",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Scenario corrected."
+    },
+    {
+      "id": "H-015",
+      "fingerprint": "behavior|main|asks an unrequested readme versus code decision in prose",
+      "title": "Asks an unrequested README-versus-code decision in prose",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "main",
+      "scenarios": [
+        "main-follow-up"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"Do you want the code changed to `<=` to match the README, or the README changed to match the code?\"",
+      "suspect": "builtin_ask_user",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-016",
+      "fingerprint": "behavior|main|no task list for a four step job",
+      "title": "No task list for a four-step job",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "main",
+      "scenarios": [
+        "main-multi-step"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "docstrings, test run, diagnosis and report with no `tasks_write` call; check \"a task list of >=2, all closed\" failed",
+      "suspect": "tasks_write",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-017",
+      "fingerprint": "behavior|models|asks the operator how to proceed after agents models says to spawn without a model",
+      "title": "Asks the operator how to proceed after agents_models says to spawn without a model",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "models",
+      "scenarios": [
+        "models-none-offered"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "`builtin_ask_user` -> \"A: (none of the options) Use your best judgement and carry on.\"",
+      "suspect": "builtin_ask_user",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-018",
+      "fingerprint": "behavior|subagent|single question research skips the plan step the research skill requires",
+      "title": "Single-question research skips the plan step the research skill requires",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "subagent",
+      "scenarios": [
+        "subagent-researcher-cites"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "`skills_open` research, then `agents_spawn` researcher directly; no `plan_enter` or `plan_submit`",
+      "suspect": "skills_open",
+      "status": "fixed",
+      "note": "Research skill now exempts a single factual question from plan mode."
+    },
+    {
+      "id": "H-019",
+      "fingerprint": "behavior|subagent|worker not spawned after talos finds the file missing",
+      "title": "Worker not spawned after Talos finds the file missing",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "subagent",
+      "scenarios": [
+        "subagent-impossible-brief"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"`.../secrets/prod.env` doesn't exist, so I didn't spawn a worker.\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-020",
+      "fingerprint": "behavior|tools|cites a python org page it never opened",
+      "title": "Cites a python.org page it never opened",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "tools",
+      "scenarios": [
+        "tools-web-research"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"The [source releases page](https://www.python.org/downloads/source/) also names 3.15.2\"; the only `web_fetch` was https://www.python.org/downloads/",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-021",
+      "fingerprint": "behavior|delegation|closes a read only review with an offer to fix",
+      "title": "Closes a read-only review with an offer to fix",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-reviewer"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"Do you want me to fix these, starting with the price parsing?\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-022",
+      "fingerprint": "behavior|delegation|final reply ends on an unrequested readme versus code question",
+      "title": "Final reply ends on an unrequested README-versus-code question",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-parallel-explorers"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"I haven't changed anything. Which `low_stock` behavior is intended, the README's or the code's?\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-023",
+      "fingerprint": "behavior|delegation|stop confirmation runs two sentences together and repeats itself",
+      "title": "Stop confirmation runs two sentences together and repeats itself",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-stop"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"nothing in the project was changed.The test runner's final report confirms the stop... Nothing further is needed.\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "The eval joined text segments split by a steer with no separator; fixed in the timeline."
+    },
+    {
+      "id": "H-024",
+      "fingerprint": "ux|flow|approved plan s task ids are not given to the model first status update fails",
+      "title": "Approved plan's task ids are not given to the model; first status update fails",
+      "kind": "ux",
+      "severity": "polish",
+      "area": "flow",
+      "scenarios": [
+        "flow-plan-mode"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "`tasks_update_statuses` {\"task_id\": \"1\"} -> \"Step with id '1' not found\"; `tasks_read` shows [t1]..[t4]",
+      "suspect": "plan_submit",
+      "status": "fixed",
+      "note": "Fixed in code, with a test."
+    },
+    {
+      "id": "H-025",
+      "fingerprint": "behavior|flow|parallel file writes into a directory that does not exist",
+      "title": "Parallel file writes into a directory that does not exist",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "flow",
+      "scenarios": [
+        "flow-cancel-resume"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"Parent directory 'projects/inventory-7b206d/summaries' does not exist. Create the parent directory first.\" (3 of 4 writes)",
+      "suspect": "files_write_file",
+      "status": "fixed",
+      "note": "Fixed in code, with a test."
+    },
+    {
+      "id": "H-026",
+      "fingerprint": "behavior|main|extra lookups after memory recall already answered",
+      "title": "Extra lookups after memory_recall already answered",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "main",
+      "scenarios": [
+        "main-recall-across-threads"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "`memory_recall` returned port 6544, then `project_active` and `platform_search` ran before the reply",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-027",
+      "fingerprint": "platform|models|subagent report accepted twice in one turn",
+      "title": "subagent_report accepted twice in one turn",
+      "kind": "platform",
+      "severity": "polish",
+      "area": "models",
+      "scenarios": [
+        "models-none-offered"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "two identical `subagent_report` calls, both {\"filed\": true, \"to\": \"main\"}",
+      "suspect": "subagent_report",
+      "status": "fixed",
+      "note": "Fixed in code, with a test."
+    },
+    {
+      "id": "H-028",
+      "fingerprint": "behavior|subagent|final reply ends on an unrequested readme versus code question",
+      "title": "Final reply ends on an unrequested README-versus-code question",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "subagent",
+      "scenarios": [
+        "subagent-explorer-read-only"
+      ],
+      "first_seen": "2026-11-01-baseline (2026-11-01)",
+      "last_seen": "2026-11-01-baseline (2026-11-01)",
+      "occurrences": 1,
+      "evidence": "\"I left it alone. Which should change, the code or the README?\"",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Instructions changed; confirm on the next run."
     }
   ],
-  "groups": []
+  "groups": [
+    "2026-11-01-baseline"
+  ]
 }

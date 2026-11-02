@@ -22,6 +22,7 @@ import asyncio
 import logging
 from collections import OrderedDict
 from contextlib import suppress
+from dataclasses import replace
 
 from fastapi import FastAPI, HTTPException
 
@@ -34,8 +35,7 @@ from routes.chat import ConversationBusyError, submit_queued
 from routes.chat.thread_composer import ThreadComposer
 from routes.deps import app_state
 from runs import QueuedMessage, Run, RunRegistry
-from runs.registry import UNSET
-from services.agents import lower_of
+from services.agents.definition import ToolAccess
 from services.conversations import ConversationStore
 from services.notifications import NotificationService
 from services.subagent_store import SubagentStore
@@ -50,6 +50,12 @@ WAKE_KIND = "wake"
 #: wakes stop. A safety rail rather than a setting: every wake is a full turn against a
 #: large context, and agents waking each other need no human.
 WAKE_CHAIN_LIMIT = 25
+
+#: Model requests in the turn a stalled or capped agent gets to file its report: the
+#: report call, then the reply that ends the turn.
+GRACE_REQUESTS = 2
+
+_REPORT_ONLY = ToolAccess(allow=frozenset())
 
 #: How many thread→root mappings are remembered.
 _ROOTS_CACHED = 512
@@ -263,18 +269,50 @@ class InboxDispatcher:
         inbox, so the delivery stays queued."""
         self._runs.claim(conversation_id, owner_id)
         try:
-            await self._open_wake(owner_id, conversation_id, lead)
+            _ = await self._open_wake(owner_id, conversation_id, lead)
         finally:
             self._runs.release(conversation_id, owner_id)
 
-    async def _open_wake(self, owner_id: str, conversation_id: str, lead: QueuedMessage) -> None:
+    async def open_report_turn(
+        self, owner_id: str, conversation_id: str, note: QueuedMessage
+    ) -> bool:
+        """Open the one short turn a limit-stopped agent gets to file its report, on ``note``
+        rather than the inbox's lead: capped at :data:`GRACE_REQUESTS` requests, outside the
+        tree's budget, and taking no message. False when it could not open, or the agent
+        was stopped."""
+        async with self._lock_for(conversation_id):
+            if self._runs.closing or self._runs.active_run_for(conversation_id, owner_id):
+                return False
+            try:
+                self._runs.claim(conversation_id, owner_id)
+            except ConversationBusyError:
+                return False
+            try:
+                return await self._open_wake(owner_id, conversation_id, note, report_only=True)
+            except Exception:
+                logger.exception("inbox: could not open a report turn on %s", conversation_id)
+                # A failure after the turn was submitted still leaves that turn to report.
+                return self._runs.active_run_for(conversation_id, owner_id) is not None
+            finally:
+                self._runs.release(conversation_id, owner_id)
+
+    async def _open_wake(
+        self,
+        owner_id: str,
+        conversation_id: str,
+        lead: QueuedMessage,
+        *,
+        report_only: bool = False,
+    ) -> bool:
         root = await self.root_of(conversation_id)
         spent = self._chain.get(root, 0)
-        if spent >= WAKE_CHAIN_LIMIT:
+        if spent >= WAKE_CHAIN_LIMIT and not report_only:
             await self._stall(root, owner_id, conversation_id)
-            return
+            return False
         records = self._ctx.services.get_optional(SubagentStore)
         row = await records.by_child(conversation_id) if records is not None else None
+        if report_only and (row is None or row.status == "cancelled"):
+            return False
         try:
             thread = await self._composer.resolve(owner_id, conversation_id)
             applied, models = thread.applied, thread.models
@@ -283,9 +321,11 @@ class InboxDispatcher:
             # dispatch would leave every delivery behind this one stuck in silence, so the
             # thread waits for the operator, whose turn takes the deliveries with it.
             logger.warning("inbox: cannot open a turn on %s", conversation_id, exc_info=True)
+            if report_only:
+                return False
             reason = str(exc.detail) if isinstance(exc, HTTPException) else type(exc).__name__
             await self._stall(root, owner_id, conversation_id, reason=reason)
-            return
+            return False
         # Nobody is in front of a wake turn, so it is not offered the tools that stop and
         # wait for someone.
         disabled = await self._composer.disabled(
@@ -295,15 +335,6 @@ class InboxDispatcher:
             applied=applied,
             depth=row.depth if row is not None else 0,
         )
-        # A spawned agent's turn gets the wall clock its first one had: nobody is watching.
-        wall_clock = (
-            lower_of(
-                applied.agent.wall_clock_timeout_s,
-                self._ctx.settings.subagent_wall_clock_timeout_s,
-            )
-            if row is not None
-            else UNSET
-        )
         created = await self._turns.submit(
             # The envelope a delivery injected into a running turn arrives in, so the model
             # cannot tell which road it took, nor read it as the operator.
@@ -312,24 +343,30 @@ class InboxDispatcher:
             models=models,
             instruction_providers=thread.instruction_providers,
             disabled_tools=disabled,
-            binding=applied.binding,
+            # A report turn offers no tool but `subagent_report`, which no setting withholds.
+            binding=replace(applied.binding, tools=_REPORT_ONLY)
+            if report_only
+            else applied.binding,
             owner_id=owner_id,
             kind=WAKE_KIND,
             ephemeral=row is not None,
-            max_requests=applied.agent.max_requests,
+            max_requests=GRACE_REQUESTS if report_only else applied.agent.max_requests,
             # Edits belong to the turn that sent the message when it files in the same
             # thread's ledger as this agent, else to the one that launched the agent. A wake
             # that took several messages files under its lead message's prompt.
             ledger_prompt_message_id=(self._wake_prompt(lead.id, row) if row is not None else None),
-            wall_clock_timeout_s=wall_clock,
+            takes_messages=not report_only,
         )
         self._runs.inbox(conversation_id, owner_id).take(lead)
         if row is not None and records is not None:
             await records.reopen(row.id, created.run_id or "")
+        if report_only:
+            return True
         self._chain[root] = spent + 1
         self._chain.move_to_end(root)
         while len(self._chain) > 64:
             _ = self._chain.popitem(last=False)
+        return True
 
     async def _stall(
         self, root: str, owner_id: str, conversation_id: str, *, reason: str | None = None

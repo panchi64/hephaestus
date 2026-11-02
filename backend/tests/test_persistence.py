@@ -284,50 +284,6 @@ async def test_blocked_turn_persists_with_its_reason(
     await cold.stop()
 
 
-async def test_wall_clock_timeout_persists_the_partial_turn(tmp_path: Path):
-    # The registry force-cancels the orchestrator's task on a wall-clock timeout,
-    # interrupting it before its own normal finalize path can run — the engine's
-    # `on_timeout` hook is what persists the partial turn instead, so a reload
-    # doesn't silently drop it (see `RunRegistry._flush_timeout`).
-    import asyncio
-
-    toolset: FunctionToolset[RunDeps] = FunctionToolset()
-    hang = asyncio.Event()
-
-    @toolset.tool_plain(metadata={"sensitivity": "read"})
-    async def slow(x: int) -> int:
-        _ = await asyncio.wait_for(hang.wait(), timeout=2.0)
-        return x
-
-    store, db_engine = await _fresh_store(tmp_path)
-    await store.start()
-    conv = await store.create_conversation("operator", title="t")
-
-    reg = RunRegistry(wall_clock_timeout_s=0.05, inactivity_timeout_s=None)
-    orch = build_chat_orchestrator(
-        "call the tool",
-        model=TestModel(call_tools=["x_slow"]),
-        categories={"x": toolset},
-        store=store,
-        conversation_id=conv,
-    )
-    run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
-
-    assert run.status is RunStatus.blocked
-    views = await store.messages_view(conv)
-    assert views[0].role == "user"
-    assert views[-1].blocked_reason == "this run hit the 1-second overall limit"
-
-    # Reload parity: a cold store rehydrates the same marker from the DB.
-    await store.stop()
-    cold = ConversationStore(db_engine, await _unlocked_vault(tmp_path))
-    await cold.start()
-    cold_views = await cold.messages_view(conv)
-    assert cold_views[-1].blocked_reason == "this run hit the 1-second overall limit"
-    await cold.stop()
-
-
 async def test_inactivity_timeout_in_setup_window_persists_the_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -368,7 +324,7 @@ async def test_inactivity_timeout_in_setup_window_persists_the_prompt(
     await store.start()
     conv = await store.create_conversation("operator", title="t")
 
-    reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.05)
+    reg = RunRegistry(inactivity_timeout_s=0.05)
     orch = build_chat_orchestrator(
         "hello there",
         model=_SilentModel(),
@@ -422,7 +378,7 @@ async def test_inactivity_timeout_during_the_orchestrator_prelude_persists_the_p
 
     monkeypatch.setattr(store, "model_history", _hangs)
 
-    reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.05)
+    reg = RunRegistry(inactivity_timeout_s=0.05)
     orch = build_chat_orchestrator(
         "hello there",
         model=TestModel(),
@@ -443,7 +399,7 @@ async def test_inactivity_timeout_during_the_orchestrator_prelude_persists_the_p
 
 async def test_cancel_persists_the_partial_turn(tmp_path: Path):
     # A manual Stop (`RunRegistry.cancel`) force-cancels the orchestrator's task just
-    # like a wall-clock timeout does — the engine's `on_cancel` hook (the cancel
+    # like an inactivity timeout does — the engine's `on_cancel` hook (the cancel
     # counterpart of `on_timeout`) is what persists the partial turn instead, so a
     # reload doesn't silently drop it (and the run's own terminal status/outcome, set
     # by the registry's own cancellation handling, stay `cancelled` — the hook must not

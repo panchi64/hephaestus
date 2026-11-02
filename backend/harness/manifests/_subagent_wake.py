@@ -7,15 +7,17 @@ the inbox dispatcher (``_inbox_dispatch.py``), which keeps the tree's unattended
 
 Every report says how the work ended. A spawned agent files one with ``subagent_report``
 (``tools/report.py``), held here by run until it ends. An unattended turn ending without
-one is reported failed, so the parent always hears done, blocked or failed.
+one is reported failed, so the parent always hears done, blocked or failed. One that a
+limit cut off first gets a single short turn to file it.
 """
 
 from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from uuid import uuid4
 
 from core.exceptions import NotFoundError
 from core.fork import MergeReport
@@ -23,8 +25,8 @@ from core.text import elide_middle
 from harness.manifest import HarnessContext
 from harness.manifests._inbox_dispatch import WAKE_CHAIN_LIMIT, WAKE_KIND, InboxDispatcher
 from models.subagent import SubagentRecord
-from runs import Run, RunRegistry, RunStatus
-from runs.events import MessageSource
+from runs import QueuedMessage, Run, RunRegistry, RunStatus
+from runs.events import MessageSource, now_utc
 from runs.lanes import is_attended, is_chat_turn
 from runs.run import StopCause
 from services.conversations import ConversationStore
@@ -72,6 +74,16 @@ _FILED_CACHED = 256
 #: What an unattended turn that ended without filing a report is settled with.
 NO_REPORT = "it ended without reporting"
 
+#: What an agent a limit cut off before it reported is woken with, once.
+GRACE_NOTE = (
+    "Your turn was stopped ({reason}) before you filed your report. Don't continue the work. "
+    + "Call `subagent_report` now: what you finished, what is left, and anything your parent "
+    + "must know to pick it up."
+)
+
+#: The stops after which an unreported agent is woken once to report.
+_GRACED_CAUSES = frozenset({StopCause.time_limit, StopCause.turn_limit})
+
 
 @dataclass(frozen=True)
 class _Outcome:
@@ -96,6 +108,8 @@ class SubagentWake:
         # which a restart ends anyway.
         self._filed: OrderedDict[str, FiledReport] = OrderedDict()
         self._stops: OrderedDict[str, StopCause] = OrderedDict()
+        # The outcome a limit left, by agent thread, while that agent takes its report turn.
+        self._graced: dict[str, _Outcome] = {}
 
     def note_stop(self, conversation_id: str, cause: StopCause) -> None:
         """Remember who stopped the agent in this thread, for a refusal to name."""
@@ -148,7 +162,22 @@ class SubagentWake:
         row = await self._records.by_child(run.conversation_id)
         if row is None or row.owner_id != run.owner_id:
             return  # an ordinary thread, not one of ours
+        cut_short = self._graced.pop(row.child_conversation_id, None)
+        filed = run.id in self._filed
         outcome = await self._outcome(run, row.child_conversation_id)
+        if cut_short is not None and run.status is not RunStatus.cancelled:
+            outcome = _after_report_turn(outcome, cut_short, filed=filed)
+        elif cut_short is None and self._owes_report_turn(run, row, outcome, filed=filed):
+            if await self._wake_to_report(run, row, outcome):
+                return
+            if self._runs.active_run_for(row.child_conversation_id, row.owner_id) is not None:
+                # A message woke it first; that turn reports when it ends.
+                return
+            fresh = await self._records.by_child(row.child_conversation_id)
+            if fresh is not None and fresh.status == "cancelled":
+                # Stopped before its report turn could open: the stop is the outcome.
+                cause = self.stop_cause(row.child_conversation_id)
+                outcome = _Outcome("cancelled", outcome.summary, outcome.error, cause=cause)
         summary = outcome.summary
         if outcome.status == "cancelled" and outcome.cause is not None:
             self.note_stop(row.child_conversation_id, outcome.cause)
@@ -188,6 +217,37 @@ class SubagentWake:
             ),
             sender=handle,
         )
+
+    @staticmethod
+    def _owes_report_turn(run: Run, row: SubagentRecord, outcome: _Outcome, *, filed: bool) -> bool:
+        """Whether a limit cut this unattended agent off before it filed a report."""
+        return (
+            not filed
+            and outcome.status == "blocked"
+            and outcome.cause in _GRACED_CAUSES
+            and not is_attended(run.kind)
+            and row.status != "cancelled"
+            and bool(row.parent_conversation_id)
+        )
+
+    async def _wake_to_report(self, run: Run, row: SubagentRecord, outcome: _Outcome) -> bool:
+        """Give the agent one short turn to file its report; its end reports to the parent.
+        False when the turn could not open, leaving the report to the caller."""
+        conversation_id = row.child_conversation_id
+        reason = run.detail or (outcome.cause.value if outcome.cause else "a limit")
+        # Not queued: a wake that took the inbox first would open on it as an ordinary turn.
+        note = QueuedMessage(
+            id=uuid4().hex,
+            text=GRACE_NOTE.format(reason=reason),
+            queued_at=now_utc(),
+            source="system",
+            notice="report-due",
+        )
+        self._graced[conversation_id] = outcome
+        if await self._dispatcher.open_report_turn(row.owner_id, conversation_id, note):
+            return True
+        _ = self._graced.pop(conversation_id, None)
+        return False
 
     async def _outcome(self, run: Run, conversation_id: str) -> _Outcome:
         """How the sub-agent's turn ended, and what it has to say.
@@ -293,6 +353,16 @@ def status_of(run: Run) -> str:
     return "blocked" if run.status is RunStatus.blocked and run.stop_cause else "failed"
 
 
+def _after_report_turn(outcome: _Outcome, cut_short: _Outcome, *, filed: bool) -> _Outcome:
+    """What the parent hears after a report turn: what the limit left when it filed
+    nothing, and its report otherwise, a ``blocked`` one keeping the limit that caused it."""
+    if not filed:
+        return cut_short
+    if outcome.status == "blocked" and outcome.cause is None:
+        return replace(outcome, cause=cut_short.cause)
+    return outcome
+
+
 def _stored_status(outcome: _Outcome) -> str:
     """A limit ending is reported as blocked but stored as stopped: terminal, so it holds
     no slot and the panel does not offer an approval for it."""
@@ -312,7 +382,7 @@ def stopped_phrase(cause: StopCause | None) -> str:
             return "stopped"
 
 
-_LIMIT_LABELS = {StopCause.time_limit: "time limit", StopCause.turn_limit: "turn limit"}
+_LIMIT_LABELS = {StopCause.time_limit: "stalled", StopCause.turn_limit: "turn limit"}
 
 
 def _status_label(status: str, cause: StopCause | None) -> str:
@@ -358,9 +428,13 @@ def _recovery(status: str, handle: str, cause: StopCause | None = None) -> list[
     if status == "cancelled" and cause is StopCause.operator:
         return [OPERATOR_STOPPED]
     if status == "blocked" and cause in _LIMIT_LABELS:
-        ran_out = "turns" if cause is StopCause.turn_limit else "time"
+        why = (
+            "it ran out of turns"
+            if cause is StopCause.turn_limit
+            else "it went quiet too long and was stopped"
+        )
         return [
-            f"its work is partial: it ran out of {ran_out} before finishing",
+            f"its work is partial: {why} before finishing",
             f"continue it with `agents_message` to `{handle}`; it picks up where it stopped",
             f"or `agents_stop` `{handle}` and take the work back",
         ]

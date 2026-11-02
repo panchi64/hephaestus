@@ -184,8 +184,8 @@ BUILTIN: tuple[AgentDefinition, ...] = (
         name=WORKER,
         description=(
             "changes things: it edits, runs and verifies, and reports what it did — say "
-            "exactly what to change and how to check it, because you cannot correct a "
-            "worker while it runs"
+            "exactly what to change and how to check it up front; `agents_message` "
+            "corrects it while it runs"
         ),
         agent_class="tripodes",
         instructions=_WORKER_BRIEF,

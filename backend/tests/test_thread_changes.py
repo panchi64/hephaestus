@@ -60,6 +60,24 @@ async def test_a_thread_can_put_back_what_it_changed(tmp_path: Path):
     assert all(view.reverted for view in await store.list(OWNER, "c1"))
 
 
+async def test_putting_back_a_new_file_removes_the_folders_it_needed(tmp_path: Path):
+    root = tmp_path / "project"
+    (root / "docs").mkdir(parents=True)
+    store = await _store(tmp_path)
+
+    await _write(store, root, "docs/2026/11/notes.md", "made\n")
+    await _write(store, root, "src/lib/new.py", "made\n")
+    _ = (root / "src" / "keep.txt").write_text("the operator's\n")
+
+    _ = await store.revert(OWNER, "c1", {"p1": root})
+
+    # Created and left empty: gone. There before, or holding something else: kept.
+    assert not (root / "docs" / "2026").exists()
+    assert (root / "docs").is_dir()
+    assert not (root / "src" / "lib").exists()
+    assert (root / "src" / "keep.txt").is_file()
+
+
 async def test_a_file_changed_since_is_left_alone(tmp_path: Path):
     root = tmp_path / "project"
     root.mkdir()

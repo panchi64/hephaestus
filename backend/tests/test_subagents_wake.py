@@ -27,7 +27,8 @@ from pydantic_ai.models.test import TestModel
 
 from agent import turn as turn_module
 from agent.injected import injected_text
-from harness.manifests._inbox_dispatch import InboxDispatcher
+from core.container import ServiceContainer
+from harness.manifests._inbox_dispatch import GRACE_REQUESTS, InboxDispatcher
 from harness.manifests._subagent_wake import SubagentWake, report_text
 from routes.chat import compose_turn
 from routes.deps import app_state
@@ -509,6 +510,56 @@ class TestTheReportContract:
 
         assert await require_report(ctx, "answer") == "answer"
 
+    async def test_a_second_report_in_one_turn_is_refused(self):
+        ctx = _validator_ctx("wake", reports=True)
+        ctx.deps.reported = True
+        (stack,) = build_agent_toolsets({"subagent": report_toolset()})
+        tools = await stack.get_tools(ctx)
+
+        result = await stack.call_tool(
+            "subagent_report",
+            {"status": "done", "report": "again"},
+            ctx,
+            tools["subagent_report"],
+        )
+
+        assert isinstance(result, dict)
+        assert result["filed"] is False
+        assert "already filed" in str(result["detail"])
+
+    async def test_parallel_reports_in_one_response_file_once(self):
+        filed: list[FiledReport] = []
+
+        class SlowLauncher:
+            async def file_report(
+                self, _owner_id: str, _conversation_id: str, _run_id: str, report: FiledReport
+            ) -> str:
+                await asyncio.sleep(0)
+                filed.append(report)
+                return "main"
+
+        ctx = _validator_ctx("wake", reports=True)
+        caps = ServiceContainer()
+        caps.add(SlowLauncher(), as_type=SubagentLauncher)
+        ctx.deps.caps = caps
+        (stack,) = build_agent_toolsets({"subagent": report_toolset()})
+        tools = await stack.get_tools(ctx)
+
+        results = await asyncio.gather(
+            *(
+                stack.call_tool(
+                    "subagent_report",
+                    {"status": "done", "report": text},
+                    ctx,
+                    tools["subagent_report"],
+                )
+                for text in ("first", "second")
+            )
+        )
+
+        assert len(filed) == 1
+        assert [cast(dict[str, object], r)["filed"] for r in results].count(True) == 1
+
 
 class TestWhoIsOfferedTheReportTool:
     @pytest.mark.parametrize(("reports", "offered"), [(True, True), (False, False)])
@@ -540,7 +591,7 @@ class TestWhoStoppedIt:
         [
             ("cancelled", StopCause.operator, "cancelled (stopped by the operator)"),
             ("cancelled", StopCause.parent, "cancelled (stopped by its parent)"),
-            ("blocked", StopCause.time_limit, "blocked (time limit)"),
+            ("blocked", StopCause.time_limit, "blocked (stalled)"),
             ("blocked", StopCause.turn_limit, "blocked (turn limit)"),
         ],
     )
@@ -563,12 +614,12 @@ class TestWhoStoppedIt:
 
         assert "operator asks" not in text
 
-    def test_a_time_limit_says_the_work_is_partial_not_that_it_awaits_an_answer(self):
+    def test_a_stall_says_the_work_is_partial_not_that_it_awaits_an_answer(self):
         text = report_text(
             "blocked", "migrate", "worker", "half", None, None, cause=StopCause.time_limit
         )
 
-        assert "its work is partial: it ran out of time" in text
+        assert "its work is partial: it went quiet too long" in text
         assert "answer it with" not in text
 
     def test_a_turn_limit_says_the_work_is_partial_and_can_be_continued(self):
@@ -584,7 +635,7 @@ class TestWhoStoppedIt:
         [
             (RunStatus.cancelled, StopCause.operator, "cancelled (stopped by the operator)"),
             (RunStatus.cancelled, StopCause.parent, "cancelled (stopped by its parent)"),
-            (RunStatus.blocked, StopCause.time_limit, "blocked (time limit)"),
+            (RunStatus.blocked, StopCause.time_limit, "blocked (stalled)"),
             (RunStatus.blocked, StopCause.turn_limit, "blocked (turn limit)"),
         ],
     )
@@ -599,8 +650,12 @@ class TestWhoStoppedIt:
             run.stop_cause = cause
 
             await _wake(app).settled(run, False)
+            # A limit stop first wakes the agent to report; that turn files nothing here.
+            await _drain(app)
+            await _settled(app)
 
-            assert f"): {heading}." in _prompt(composed[0])
+            to_parent = [c for c in composed if c["conversation_id"] == "parent-1"]
+            assert f"): {heading}." in _prompt(to_parent[0])
             row = await _records(app).get(subagent_id, "operator")
             assert row is not None
             # A limit ending is stored as terminal `stopped`, so it holds no cap slot.
@@ -608,6 +663,169 @@ class TestWhoStoppedIt:
             assert row.status == expected
             assert subagent_id not in {r.id for r in await _records(app).live("operator")}
             await _drain(app)
+
+
+class TestTheReportTurnAfterALimit:
+    async def test_a_limit_stop_wakes_the_agent_once_to_report(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            composed = _woken(monkeypatch)
+            run = _ended(conversation_id, RunStatus.blocked)
+            run.stop_cause = StopCause.time_limit
+
+            await _wake(app).settled(run, False)
+            await _drain(app)
+            await _settled(app)
+
+            to_agent = [c for c in composed if c["conversation_id"] == conversation_id]
+            assert len(to_agent) == 1
+            assert "Call `subagent_report` now" in _prompt(to_agent[0])
+            assert to_agent[0]["max_requests"] == GRACE_REQUESTS
+            assert [c for c in composed if c["conversation_id"] == "parent-1"]
+
+    async def test_the_report_turns_filed_report_reaches_the_parent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            wake = _wake(app)
+            _hold_report_turn(monkeypatch, app, opens=True)
+            cut = _ended(conversation_id, RunStatus.blocked)
+            cut.stop_cause = StopCause.turn_limit
+            await wake.settled(cut, False)
+            assert not app_state(app).runs.inbox("parent-1", "operator").messages
+
+            grace = _ended(conversation_id)
+            grace.id = "report-turn"
+            wake.file(grace.id, FiledReport(status="blocked", text="half the tables moved"))
+            await wake.settled(grace, False)
+
+            (report,) = app_state(app).runs.inbox("parent-1", "operator").messages
+            assert "half the tables moved" in report.text
+            assert "): blocked (turn limit)." in report.text
+
+    async def test_a_report_turn_that_files_nothing_reports_the_limit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            wake = _wake(app)
+            _hold_report_turn(monkeypatch, app, opens=True)
+            cut = _ended(conversation_id, RunStatus.blocked)
+            cut.stop_cause = StopCause.time_limit
+            await wake.settled(cut, False)
+            grace = _ended(conversation_id)
+            grace.id = "report-turn"
+            await wake.settled(grace, False)
+
+            (report,) = app_state(app).runs.inbox("parent-1", "operator").messages
+            assert "): blocked (stalled)." in report.text
+
+    async def test_a_stop_during_the_report_turn_stays_a_stop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            subagent_id, conversation_id = await _spawned(app)
+            wake = _wake(app)
+            _hold_report_turn(monkeypatch, app, opens=True)
+            cut = _ended(conversation_id, RunStatus.blocked)
+            cut.stop_cause = StopCause.time_limit
+            await wake.settled(cut, False)
+
+            await _records(app).settle(subagent_id, status="cancelled")
+            grace = _ended(conversation_id, RunStatus.cancelled)
+            grace.id = "report-turn"
+            grace.stop_cause = StopCause.operator
+            await wake.settled(grace, False)
+
+            (report,) = app_state(app).runs.inbox("parent-1", "operator").messages
+            assert "): cancelled (stopped by the operator)." in report.text
+            row = await _records(app).get(subagent_id, "operator")
+            assert row is not None and row.status == "cancelled"
+
+    async def test_a_report_turn_that_cannot_open_reports_the_limit_at_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            _hold_report_turn(monkeypatch, app, opens=False)
+            cut = _ended(conversation_id, RunStatus.blocked)
+            cut.stop_cause = StopCause.time_limit
+
+            await _wake(app).settled(cut, False)
+
+            (report,) = app_state(app).runs.inbox("parent-1", "operator").messages
+            assert "): blocked (stalled)." in report.text
+
+    async def test_a_message_that_woke_it_first_reports_instead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            subagent_id, conversation_id = await _spawned(app)
+            _hold_report_turn(monkeypatch, app, opens=False)
+            runs = app_state(app).runs
+            woken = _ended(conversation_id)
+            monkeypatch.setattr(
+                runs,
+                "active_run_for",
+                lambda cid, _owner: woken if cid == conversation_id else None,
+            )
+            cut = _ended(conversation_id, RunStatus.blocked)
+            cut.stop_cause = StopCause.time_limit
+
+            await _wake(app).settled(cut, False)
+
+            assert not runs.inbox("parent-1", "operator").messages
+            row = await _records(app).get(subagent_id, "operator")
+            assert row is not None and row.status != "stopped"
+
+    async def test_the_report_turn_opens_on_its_note_and_leaves_waiting_messages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            composed = _woken(monkeypatch)
+            inbox = app_state(app).runs.inbox(conversation_id, "operator")
+            waiting = inbox.enqueue("how is it going?", source="agent", sender="parent-1")
+            cut = _ended(conversation_id, RunStatus.blocked)
+            cut.stop_cause = StopCause.time_limit
+
+            await _wake(app).settled(cut, False)
+
+            to_agent = [c for c in composed if c["conversation_id"] == conversation_id]
+            assert "Call `subagent_report` now" in _prompt(to_agent[0])
+            assert to_agent[0]["max_requests"] == GRACE_REQUESTS
+            assert "how is it going?" not in _prompt(to_agent[0])
+            await _drain(app)
+            await _settled(app)
+            # It waits for the report turn to end, then opens an ordinary turn of its own.
+            to_agent = [c for c in composed if c["conversation_id"] == conversation_id]
+            assert inbox.get(waiting.id) is None
+            assert "how is it going?" in _prompt(to_agent[1])
+            assert to_agent[1]["max_requests"] != GRACE_REQUESTS
+
+
+def _hold_report_turn(monkeypatch: pytest.MonkeyPatch, app: FastAPI, *, opens: bool) -> None:
+    """Stand in for opening the report turn, so a test ends that turn itself, and leave
+    deliveries in their inboxes to be read."""
+
+    async def report_turn(_owner_id: str, _conversation_id: str, _note: object) -> bool:
+        return opens
+
+    async def hold(_owner_id: str, _conversation_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(_dispatcher(app), "open_report_turn", report_turn)
+    monkeypatch.setattr(_dispatcher(app), "dispatch", hold)
 
 
 def _tool(app: FastAPI, name: str) -> Callable[..., Awaitable[dict[str, object]]]:

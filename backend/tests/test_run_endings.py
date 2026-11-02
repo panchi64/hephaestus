@@ -63,8 +63,8 @@ def _ended(run: Run) -> RunEnded:
     return body
 
 
-async def test_wall_clock_bound_sets_its_code_and_stop_cause() -> None:
-    reg = RunRegistry(wall_clock_timeout_s=0.05, inactivity_timeout_s=None)
+async def test_inactivity_bound_sets_its_code_and_stop_cause() -> None:
+    reg = RunRegistry(inactivity_timeout_s=0.05)
 
     async def orch(_run: Run) -> None:
         await asyncio.sleep(5)
@@ -73,21 +73,21 @@ async def test_wall_clock_bound_sets_its_code_and_stop_cause() -> None:
     await run.wait()
 
     assert run.status is RunStatus.blocked
-    assert _ended(run).code == "wall_clock"
+    assert _ended(run).code == "inactivity"
     assert run.stop_cause is StopCause.time_limit
 
 
-async def test_inactivity_bound_sets_its_code() -> None:
-    reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.05)
+async def test_an_inactivity_trip_keeps_a_stop_already_under_way() -> None:
+    reg = RunRegistry(inactivity_timeout_s=0.05)
 
-    async def orch(_run: Run) -> None:
+    async def orch(run: Run) -> None:
+        run.stop_cause = StopCause.parent
         await asyncio.sleep(5)
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
 
-    assert _ended(run).code == "inactivity"
-    assert run.stop_cause is None
+    assert run.stop_cause is StopCause.parent
 
 
 async def test_a_completed_run_has_no_code() -> None:
@@ -173,7 +173,7 @@ async def test_a_retry_wait_longer_than_the_inactivity_bound_does_not_stop_the_r
     orchestrator = build_chat_orchestrator(
         "go", model=FunctionModel(stream_function=stream_fn), categories={}
     )
-    reg = RunRegistry(wall_clock_timeout_s=None, inactivity_timeout_s=0.15)
+    reg = RunRegistry(inactivity_timeout_s=0.15)
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orchestrator)
     await run.wait()
 

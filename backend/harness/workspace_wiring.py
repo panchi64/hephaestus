@@ -110,7 +110,6 @@ async def wire_workspace(
             background=settings.run_background_concurrency,
             linked=settings.run_linked_concurrency,
         ),
-        wall_clock_timeout_s=settings.run_wall_clock_timeout_s,
         inactivity_timeout_s=settings.run_inactivity_timeout_s,
         on_terminal=run_terminal,
     )

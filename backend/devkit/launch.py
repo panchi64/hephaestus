@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from http.client import HTTPResponse
 from types import FrameType
 from typing import cast
@@ -65,7 +66,7 @@ def _await_health(instance: DevInstance, *, timeout_s: float) -> bool:
 
 def ensure_stub(instance: DevInstance, supervisor: Supervisor) -> str:
     """Start the scripted model unless one is already up, or a real endpoint is set."""
-    if live.configured():
+    if instance.live_endpoint:
         return "using the endpoint in HEPH_DEV_CHAT_* instead"
     if listening(instance.stub_port):
         return "already running"
@@ -202,6 +203,9 @@ def bring_up(
     """Converge on a running instance, and report what each service did."""
     for directory in (instance.data_dir, instance.worktrees_dir, instance.logs_dir):
         directory.mkdir(parents=True, exist_ok=True)
+    if instance.live_endpoint != live.configured():
+        instance = replace(instance, live_endpoint=live.configured())
+        instance.save()
     outcomes = {
         "stub": ensure_stub(instance, supervisor),
         "backend": ensure_backend(instance, supervisor),

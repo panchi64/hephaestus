@@ -147,12 +147,7 @@ export interface RunMetrics extends Base {
 }
 /** Which bound stopped a blocked run. */
 export type RunEndCode =
-  | "wall_clock"
-  | "inactivity"
-  | "first_token"
-  | "loop"
-  | "context_overflow"
-  | "turn_limit";
+  "inactivity" | "first_token" | "loop" | "context_overflow" | "turn_limit";
 export interface RunEnded extends Base {
   type: "run.ended";
   outcome: "done" | "blocked" | "cancelled";
