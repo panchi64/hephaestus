@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 from pydantic import JsonValue
 
+from core.config import get_settings
 from routes.deps import app_state
-from routes.overview import search_detail
+from services.capabilities import search_detail
 from services.searxng import SearxngState
 
 from ._helpers import client_app
@@ -194,3 +195,57 @@ async def test_overview_reports_unconfigured_notification_channels_as_off():
     assert caps["push"]["status"] == "off"
     assert caps["push"]["detail"] == "no endpoint — in-app only"
     assert caps["push"]["critical"] is False
+
+
+def _cap(
+    key: str,
+    label: str,
+    status: str,
+    detail: str,
+    *,
+    critical: bool = False,
+    href: str | None = None,
+) -> dict[str, JsonValue]:
+    return {
+        "key": key,
+        "label": label,
+        "status": status,
+        "detail": detail,
+        "critical": critical,
+        "remediation_href": href,
+        "remediation_label": None if href is None else "CONFIGURE",
+    }
+
+
+async def test_overview_body_is_pinned():
+    """The whole response for a one-endpoint workspace, field for field and in order — the
+    capability rows are shared with the Health page, so a change to them must be deliberate."""
+    async with client_app() as (client, app):
+        _ = await app_state(app).models.create_endpoint(
+            "operator", name="Local", base_url="http://localhost:1234/v1", native_tools=True
+        )
+        body = json_body(await client.get("/overview"))
+
+    assert body == {
+        "version": get_settings().version,
+        "endpoint_count": 1,
+        "conversation_count": 0,
+        "memory_count": 0,
+        "active_run_count": 0,
+        "capabilities": [
+            _cap("chat_model", "CHAT MODEL", "nominal", "1 endpoint", critical=True),
+            _cap(
+                "embeddings",
+                "EMBEDDINGS",
+                "warn",
+                "keyword-only recall",
+                href="/models/embedding",
+            ),
+            _cap("sandbox", "CODE SANDBOX", "warn", "disabled"),
+            _cap("web_search", "WEB SEARCH", "warn", "VM not ready — disabled"),
+            _cap("web_fetch", "WEB FETCH", "warn", "VM not ready — unavailable"),
+            _cap("push", "PUSH ALERTS", "off", "no endpoint — in-app only", href="/settings"),
+            _cap("messaging", "MESSAGING CHANNELS", "off", "no linked chats", href="/settings"),
+            _cap("email", "EMAIL ALERTS", "off", "no mail account — in-app only", href="/settings"),
+        ],
+    }

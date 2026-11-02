@@ -120,7 +120,7 @@ CORE_CLAIMS: tuple[ScopeClaim, ...] = (
     # an endpoint of the token holder's choosing. Those stay unreachable with a token,
     # like `/vault` and `/tokens`.
     ScopeClaim("models", ("/models",), methods=READ_METHODS),
-    ScopeClaim("status", ("/overview",)),
+    ScopeClaim("status", ("/overview", "/health/services", "/runtime")),
 )
 
 _DEFS_BY_ID = {d.id: d for d in SCOPE_DEFS}

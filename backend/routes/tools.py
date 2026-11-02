@@ -34,9 +34,9 @@ from tools.catalog import ToolInfo, approval_scopes, tool_catalog
 router = APIRouter(prefix="/tools", tags=["tools"])
 
 
-def _catalog(request: Request) -> list[ToolInfo]:
-    """The assembled catalog, dormancy included — one derivation for the listing and the
-    toggle, so a row cannot describe a tool the other half does not recognise."""
+def assembled_catalog(request: Request) -> list[ToolInfo]:
+    """The assembled catalog, dormancy included — one derivation for the listing, the
+    toggle and the runtime counts, so a row cannot describe a tool the others don't."""
     return tool_catalog(deps.tool_categories(request), deps.dormant_category_names(request))
 
 
@@ -71,7 +71,7 @@ def _out(info: ToolInfo, disabled: frozenset[str]) -> ToolOut:
 @router.get("", response_model=list[ToolOut])
 async def list_tools(request: Request) -> list[ToolOut]:
     disabled = await get_disabled_tools(deps.settings_store(request), deps.OPERATOR_ID)
-    return [_out(info, disabled) for info in _catalog(request)]
+    return [_out(info, disabled) for info in assembled_catalog(request)]
 
 
 class ApprovalScopeOut(BaseModel):
@@ -100,8 +100,7 @@ async def list_approval_scopes(request: Request) -> list[ApprovalScopeOut]:
 
 @router.put("/{name}", response_model=ToolOut)
 async def update_tool(name: str, body: ToolUpdate, request: Request) -> ToolOut:
-    catalog = _catalog(request)
-    info = next((t for t in catalog if t.name == name), None)
+    info = next((t for t in assembled_catalog(request) if t.name == name), None)
     if info is None:
         raise HTTPException(status_code=404, detail=f"tool {name!r} not found")
     disabled = await set_tool_enabled(

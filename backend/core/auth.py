@@ -62,15 +62,17 @@ _AUTH_ATTEMPT_BURST = 10
 # has no way to authenticate yet. It is destructive, so it does not rely on that alone
 # — the route refuses unless the workspace database is provably gone, a state a live
 # workspace cannot be in. See `routes/auth.py`.
+#
+# `/health` is an exact path, not a prefix: `/health/services` reads operator data.
 _PUBLIC_PATHS = frozenset(
-    {"/auth/status", "/auth/login", "/setup", "/setup/reset", "/openapi.json"}
+    {"/auth/status", "/auth/login", "/setup", "/setup/reset", "/openapi.json", "/health"}
 )
-# Prefixes whose sub-paths are also public (liveness probes, the docs UIs) — the
-# core set. A feature whose unguessable path token *is* the credential (the preview
-# proxy's `/previews`, the task webhook's `/tasks/hooks`) declares its own prefix on
-# its manifest (`public_prefixes`); the assembly passes the combined tuple in, so
-# claiming an auth exemption stays a deliberate, reviewable act on the feature.
-_PUBLIC_PREFIXES = ("/health", "/docs", "/redoc")
+# Prefixes whose sub-paths are also public (the docs UIs) — the core set. A feature
+# whose unguessable path token *is* the credential (the preview proxy's `/previews`,
+# the task webhook's `/tasks/hooks`) declares its own prefix on its manifest
+# (`public_prefixes`); the assembly passes the combined tuple in, so claiming an auth
+# exemption stays a deliberate, reviewable act on the feature.
+_PUBLIC_PREFIXES = ("/docs", "/redoc")
 
 
 @dataclass(frozen=True)

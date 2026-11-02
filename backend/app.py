@@ -46,6 +46,7 @@ from routes import (
     onboarding,
     overview,
     runs,
+    runtime,
     tokens,
     tools,
     vm,
@@ -311,6 +312,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(conversations.router)
     app.include_router(overview.router)
+    app.include_router(runtime.router)
     app.include_router(models.router)
     app.include_router(api_tokens.router)
     app.include_router(vm.router)
