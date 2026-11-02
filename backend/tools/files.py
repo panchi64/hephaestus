@@ -110,6 +110,11 @@ class _HomeFiles(WrapperToolset[RunDeps]):
             return unavailable(ctx.deps)
         tool_args = await _in_home_terms(ctx.deps, name, tool_args, home)
         path = tool_args.get("path")
+        if name == "create_directory" and isinstance(path, str) and await _is_dir(home, path):
+            # The harness answers "Created directory" here too, which models repeat as fact.
+            return f"{path} already exists; nothing was created."
+        if name == "search_files" and isinstance(path, str):
+            tool_args = _glob_from(path, tool_args)
         if name in WRITE_TOOLS and isinstance(path, str):
             refusal, leased = await _clear_write(ctx, home, path)
             if refusal is not None:
@@ -225,6 +230,27 @@ async def _in_home_terms(
     ):
         return {**tool_args, "path": at_home}
     return {**tool_args, "path": own}
+
+
+async def _is_dir(home: RunHome, path: str) -> bool:
+    try:
+        return (await home.backend.stat(path)).is_dir
+    except OSError, ValueError:
+        return False
+
+
+def _glob_from(path: str, tool_args: dict[str, object]) -> dict[str, object]:
+    """``include_glob`` read from ``path``: the harness `fnmatch`es it against the path from
+    the home root, where `*/name` matches a name at any depth, since `*` spans `/`."""
+    glob = tool_args.get("include_glob")
+    if not isinstance(glob, str) or not glob:
+        return tool_args
+    if "/" not in glob:
+        return {**tool_args, "include_glob": f"*/{glob}"}
+    base = posixpath.relpath(path, HOME)
+    if base == "." or glob.startswith((f"{base}/", "*")):
+        return tool_args
+    return {**tool_args, "include_glob": f"{base}/{glob.removeprefix('./')}"}
 
 
 def _exists(home: RunHome, path: str) -> bool:

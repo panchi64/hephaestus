@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -46,6 +48,8 @@ class Policy:
     answer: str | None = None
     #: Tool prefixes refused even when ``approve`` would allow them.
     deny: tuple[str, ...] = ()
+    #: Regexes searched in a call's JSON-encoded arguments, refused like ``deny``.
+    deny_args: tuple[str, ...] = ()
     #: The note every refusal carries instead of the defaults, which invite another route.
     refusal: str | None = None
 
@@ -246,11 +250,18 @@ def refusal(call: ApprovalRequired, *, approve: bool, allow: tuple[str, ...] = (
 
 def policy_refusal(call: ApprovalRequired, policy: Policy) -> str | None:
     """:func:`refusal` under a whole :class:`Policy`: its denied prefixes and its note."""
-    if policy.deny and call.name.startswith(policy.deny):
+    if (policy.deny and call.name.startswith(policy.deny)) or _args_denied(call, policy):
         message: str | None = _POLICY_REFUSAL
     else:
         message = refusal(call, approve=policy.approve, allow=policy.allow)
     return policy.refusal if message is not None and policy.refusal else message
+
+
+def _args_denied(call: ApprovalRequired, policy: Policy) -> bool:
+    if not policy.deny_args:
+        return False
+    args = json.dumps(call.args)
+    return any(re.search(pattern, args) for pattern in policy.deny_args)
 
 
 def _decide(call: ApprovalRequired, policy: Policy) -> _Decision:

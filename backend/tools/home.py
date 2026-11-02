@@ -7,6 +7,7 @@ opened one, and the open worktrees of the sub-agents it spawned.
 
 from __future__ import annotations
 
+import posixpath
 from pathlib import Path
 
 from services.home.changes import ChangeLog, ThreadChanges
@@ -39,11 +40,15 @@ async def resolve_run_home(deps: RunDeps) -> RunHome | None:
     )
     slug = None
     worktree_root: Path | None = None
+    worktree_name: str | None = None
     if deps.project_id and projects is not None:
         slug = (await projects.slugs(deps.owner_id)).get(deps.project_id)
         if deps.worktree:
             workspace = await resolve_run_workspace(deps)
-            worktree_root = workspace.root if workspace is not None else None
+            if workspace is not None:
+                worktree_root = workspace.root
+                if workspace.home_path:
+                    worktree_name = posixpath.basename(workspace.home_path)
     mounts = await thread_mounts(
         owner_id=deps.owner_id,
         scratch=scratch,
@@ -55,9 +60,10 @@ async def resolve_run_home(deps: RunDeps) -> RunHome | None:
         # spawned agent whose parent works on one.
         filed_writable=not deps.worktree and not deps.checkout_read_only,
         worktree_root=worktree_root,
+        worktree_name=worktree_name,
         child_worktrees=await _child_worktrees(deps),
     )
-    default = default_place(mounts, slug)
+    default = default_place(mounts, slug, worktree_name)
     if default is None:
         return None
     deps.home = RunHome(mounts=tuple(mounts), default=default, key=deps.workspace_key)

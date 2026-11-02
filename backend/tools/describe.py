@@ -135,6 +135,15 @@ _TASK_ARG_TEXT: Mapping[str, str] = {
     "items": "The complete ordered list, unchanged and finished tasks included.",
     "updates": "The status changes, applied in order.",
 }
+#: Arguments whose library text describes a path the wrapper rewrites (``tools/files.py``).
+_ARG_TEXT: Mapping[str, Mapping[str, str]] = {
+    "files_search_files": {
+        "include_glob": (
+            "Only search files matching this glob, read from `path`: `inventory.py` or "
+            + "`*.py` matches that name at any depth, `src/*.py` anything under `src`."
+        ),
+    },
+}
 
 
 def strip_docstring_xml(description: str | None) -> str | None:
@@ -237,6 +246,11 @@ def strip_schema_leaks(name: str, schema: Mapping[str, JsonValue]) -> dict[str, 
     out = copy.deepcopy(dict(schema))
     if name in SUBTASKS_LEAKED:
         _strip_subtasks(out)
+    arguments = out.get("properties")
+    if isinstance(arguments, dict):
+        for argument, text in _ARG_TEXT.get(name, {}).items():
+            if isinstance(argument_schema := arguments.get(argument), dict):
+                argument_schema["description"] = text
     return out
 
 

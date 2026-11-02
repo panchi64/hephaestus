@@ -38,6 +38,9 @@ class Mount:
     writable: bool
     #: The registered project a project or worktree place is of; None for scratch.
     project_id: str | None = None
+    #: A worktree's git directory, found from its project's root: the absolute path its
+    #: `.git` file names, which the machine binds read-only so git works in the guest.
+    git_dir: Path | None = None
 
 
 class HomeBackend:

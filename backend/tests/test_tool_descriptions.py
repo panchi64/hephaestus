@@ -114,6 +114,13 @@ async def test_no_schema_leaks_the_harnesss_subtasks_mode():
             assert leak not in schema, f"{name} still describes {leak!r}"
 
 
+async def test_the_search_glob_is_described_from_the_searched_folder():
+    search = _schema((await _offered())["files_search_files"])
+    text = s(_at(search, "properties", "include_glob", "description"))
+    assert "read from `path`" in text
+    assert "from the root" not in text
+
+
 async def test_the_plan_schema_offers_only_what_the_store_accepts():
     write_plan = _schema((await _offered())["tasks_write"])
     item = obj(_at(write_plan, "$defs", "PlanItem", "properties"))

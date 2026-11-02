@@ -495,9 +495,226 @@
       "suspect": "",
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
+    },
+    {
+      "id": "H-029",
+      "fingerprint": "behavior|delegation|reviewer s findings relayed near whole unverified and closed on a prose question about a doc code mismatch",
+      "title": "Reviewer's findings relayed near-whole, unverified, and closed on a prose question about a doc/code mismatch",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-reviewer"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "\"Is the low_stock boundary meant to be inclusive, as the README says, or exclusive, as the code does?\"; also \"asserts 1999 and fails against this code\" though the reviewer said \"I did not run the test suite\"",
+      "suspect": "",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-030",
+      "fingerprint": "platform|delegation|files search files finds nothing when include glob names the file",
+      "title": "files_search_files finds nothing when include_glob names the file",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-not-needed"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "files_search_files {\"pattern\": \"low_stock\", \"path\": \"~/projects/inventory-ec0fa8\", \"include_glob\": \"inventory.py\"} -> \"No matches found\", though inventory.py defines low_stock at line 26",
+      "suspect": "files_search_files",
+      "status": "fixed",
+      "note": "include_glob is read from the searched folder; a bare name matches at any depth."
+    },
+    {
+      "id": "H-031",
+      "fingerprint": "platform|delegation|git does not work inside a child worktree in the vm and the worker is told a different worktree path than the platform reports",
+      "title": "git does not work inside a child worktree in the VM, and the worker is told a different worktree path than the platform reports",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "delegation",
+      "scenarios": [
+        "delegation-worktree-merge"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "worker: \"fatal: not a git repository: ~/.hephaestus/dev/odysseus/data/harness-fixtures/inventory-deac55/.git/worktrees/...\" and reports \"worktree /home/agent/worktrees/inventory-deac55\" while the platform footer names \"/home/agent/worktrees/inventory-deac55-remove-fn-worker\"",
+      "suspect": "project_active",
+      "status": "fixed",
+      "note": "Worktree mounts bind the project's git dir read-only at its host path; a worker's own worktree carries the name its parent sees."
+    },
+    {
+      "id": "H-032",
+      "fingerprint": "behavior|flow|after a cancel carry on rewrote every file instead of checking what landed",
+      "title": "After a cancel, 'carry on' rewrote every file instead of checking what landed",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "flow",
+      "scenarios": [
+        "flow-cancel-resume"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "turn 2 starts with five files_write_file calls; no files_list_directory of summaries/ first",
+      "suspect": "",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-033",
+      "fingerprint": "platform|intercom|a blocked worker kept going after filing its report and filed a second one on a reply that never reached it",
+      "title": "A blocked worker kept going after filing its report and filed a second one on a reply that never reached it",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "intercom",
+      "scenarios": [
+        "intercom-blocked-question"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "\"Still blocked: the reply I received was only \\\".\\\", with no host or port.\" -> {\"filed\": false, \"detail\": \"Your report is already filed...\"}",
+      "suspect": "subagent_report",
+      "status": "fixed",
+      "note": "No tools are offered once a report is filed, so the worker ends its turn."
+    },
+    {
+      "id": "H-034",
+      "fingerprint": "behavior|intercom|an unrequested file with invented values added to a worker s scope",
+      "title": "An unrequested file with invented values added to a worker's scope",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "intercom",
+      "scenarios": [
+        "intercom-agree-schema"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "\"I also gave it server/config.toml, which the spec requires and you didn't assign... The values are my defaults, not the spec's.\"",
+      "suspect": "agents_spawn",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-035",
+      "fingerprint": "platform|intercom|files create directory reports creating a directory that already existed and the worker repeats the false claim",
+      "title": "files_create_directory reports creating a directory that already existed, and the worker repeats the false claim",
+      "kind": "platform",
+      "severity": "minor",
+      "area": "intercom",
+      "scenarios": [
+        "intercom-blocked-question"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "files_create_directory -> \"Created directory: /home/agent/projects/service-7b56a0/server\"; report: \"The `server` directory did not exist, so I created it\"; Talos: \"A `server/README.md` in that directory is timestamped about five hours before `config.toml`, so the directory already existed.\"",
+      "suspect": "files_create_directory",
+      "status": "fixed",
+      "note": "files_create_directory says an existing folder already exists."
+    },
+    {
+      "id": "H-036",
+      "fingerprint": "behavior|main|three part job done without a task list",
+      "title": "Three-part job done without a task list",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "main",
+      "scenarios": [
+        "main-multi-step"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "docstrings, a test run and a report in one request; no tasks_write call; check 'a task list of >=2, all closed' FAIL",
+      "suspect": "tasks_write",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-037",
+      "fingerprint": "behavior|subagent|explicit request for a worker ignored because the target file was missing",
+      "title": "Explicit request for a worker ignored because the target file was missing",
+      "kind": "behavior",
+      "severity": "minor",
+      "area": "subagent",
+      "scenarios": [
+        "subagent-impossible-brief"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "\"The file doesn't exist, so I haven't started a worker.\" The prompt says to spawn when asked, even when the agent expects the task to fail",
+      "suspect": "agents_spawn",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-038",
+      "fingerprint": "eval|tools|refusal is applied to the first approval card so the delete is never put to the operator",
+      "title": "Refusal is applied to the first approval card, so the delete is never put to the operator",
+      "kind": "eval",
+      "severity": "minor",
+      "area": "tools",
+      "scenarios": [
+        "tools-denied-delete"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "shell_run_command (read-only ls/cat/git status) refused by the eval: \"Declined. Leave it as it is.\"; no delete approval was ever asked",
+      "suspect": "",
+      "status": "fixed",
+      "note": "Scenario refuses only the delete (deny_args); read-only calls are approved."
+    },
+    {
+      "id": "H-039",
+      "fingerprint": "behavior|main|extra lookups after memory recall had already answered",
+      "title": "Extra lookups after memory_recall had already answered",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "main",
+      "scenarios": [
+        "main-recall-across-threads"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "memory_recall returned the staging port, then project_active and files_search_files \"staging.*(port|5432|3306)\" -> No matches found",
+      "suspect": "",
+      "status": "open",
+      "note": ""
+    },
+    {
+      "id": "H-040",
+      "fingerprint": "behavior|subagent|sub agent calls builtin now after filing its report",
+      "title": "Sub-agent calls builtin_now after filing its report",
+      "kind": "behavior",
+      "severity": "polish",
+      "area": "subagent",
+      "scenarios": [
+        "subagent-researcher-cites"
+      ],
+      "first_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "last_seen": "2026-11-01-post-fixes (2026-11-02)",
+      "occurrences": 1,
+      "evidence": "subagent_report -> \"End your turn now, with no further text\", then builtin_now -> 2026-11-01T22:25:40",
+      "suspect": "subagent_report",
+      "status": "fixed",
+      "note": "No tools are offered once a report is filed."
     }
   ],
   "groups": [
-    "2026-11-01-baseline"
+    "2026-11-01-baseline",
+    "2026-11-01-post-fixes"
   ]
 }

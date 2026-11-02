@@ -49,7 +49,12 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         state={"subagent_records": records, "subagent_wake": wake},
         # Under the abstract types so `tools/subagents.py` resolves it without importing this
         # wiring layer, which sits above `tools/`.
-        capabilities=((launcher, SubagentLauncher), (stopper, SubtreeStopper)),
+        # The store lets `tools/workspace.py` name a sub-agent's worktree as its parent does.
+        capabilities=(
+            (launcher, SubagentLauncher),
+            (stopper, SubtreeStopper),
+            (records, SubagentStore),
+        ),
         # Carries a finished report back to the launching thread.
         run_terminal=(wake.settled,),
     )
