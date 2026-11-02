@@ -16,12 +16,17 @@ the next call, and the failure path costs nothing to retry.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from pydantic_ai import RunContext
 
+from services.home.paths import Place
 from services.home.scratch import ScratchDirs
+from services.home.table import child_worktree_name
 from services.projects.store import ProjectStore
 from services.projects.worktree import WorktreeManager
-from services.workspace import RunWorkspace, resolve_workspace
+from services.subagent_store import SubagentStore
+from services.workspace import DELEGATION_SEP, RunWorkspace, resolve_workspace
 
 from .deps import RunDeps
 
@@ -74,8 +79,26 @@ async def resolve_run_workspace(deps: RunDeps) -> RunWorkspace | None:
         projects=deps.caps.get_optional(ProjectStore),
         worktrees=deps.caps.get_optional(WorktreeManager),
     )
+    if workspace is not None and (name := await _delegate_worktree_name(deps)) is not None:
+        workspace = replace(workspace, home_path=Place("worktrees", name).path)
     deps.workspace = workspace
     return workspace
+
+
+async def _delegate_worktree_name(deps: RunDeps) -> str | None:
+    """A sub-agent's own worktree under the name its parent's home gives it, so the path it
+    reports is one its parent can open."""
+    if not (deps.worktree and deps.project_id and DELEGATION_SEP in deps.workspace_key):
+        return None
+    projects = deps.caps.get_optional(ProjectStore)
+    records = deps.caps.get_optional(SubagentStore)
+    if projects is None or records is None or not deps.conversation_id:
+        return None
+    record = await records.by_child(deps.conversation_id)
+    slug = (await projects.slugs(deps.owner_id)).get(deps.project_id)
+    if record is None or not slug:
+        return None
+    return child_worktree_name(slug, record.handle or record.spec_name)
 
 
 def unavailable(deps: RunDeps) -> str:

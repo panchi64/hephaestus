@@ -26,6 +26,7 @@ from evals.drive.review import (
 )
 from evals.drive.spec import Strict as _Strict
 
+from .backlog import read_backlog
 from .check import problems
 from .grading import (
     GRADES_FILE,
@@ -219,7 +220,8 @@ def review_run(run_dir: Path, scenarios: list[Scenario]) -> list[str]:
         final = apply_review(first, review)
     except (ValueError, ValidationError) as exc:
         return [str(exc)]
-    found = problems(final, load_run(run_dir), scenarios)
+    backlog_ids = frozenset(e.id for e in read_backlog().entries)
+    found = problems(final, load_run(run_dir), scenarios, backlog_ids)
     if found:
         return found
     _ = (run_dir / GRADES_FILE).write_text(final.model_dump_json(indent=2) + "\n")

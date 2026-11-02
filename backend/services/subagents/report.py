@@ -78,7 +78,8 @@ _LEGACY_REPORT_PREAMBLE = (
 _DIRECTION_PREAMBLE = (
     "The agent that launched you has sent you this. It is not from the operator, and it "
     "changes the task you were given — take it as amending your brief, and prefer it where "
-    "the two disagree. Do not reply to it; carry on with the work and report as usual."
+    "the two disagree. Nothing reads a reply here: carry on with the work and report as "
+    "usual."
 )
 
 
@@ -270,8 +271,8 @@ FINDINGS_INSTRUCTION = (
     '"sources": [{"url", "ref", "title"}]} — one per thing you established, with every '
     "source you established it from, not just the best one.\n"
     '- "conflicts": {"question", "positions": [{"claim", "sources"}], "assessment"} — '
-    "one per question your sources answered differently. Do not resolve a disagreement "
-    "by leaving it out; say in `assessment` which you find more credible and why.\n"
+    "one per question your sources answered differently. A disagreement left out reads as "
+    "agreement, so say in `assessment` which you find more credible and why.\n"
     '- "coverage": {"topic", "depth" (none|thin|adequate|deep), "source_count", "gaps"} '
     "— one per topic you were asked about, including the ones you got nowhere on. A "
     '"none" row is more useful than a missing one.\n'

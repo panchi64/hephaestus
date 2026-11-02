@@ -10,13 +10,15 @@ import httpx
 import pytest
 
 from devkit.instance import DevInstance
-from evals.drive.client import DevClient, Policy, Queued, Started
+from evals.drive.client import DevClient, Policy, Queued, Started, policy_refusal
 from evals.drive.instance import Instance
 from evals.harness.sample import Actor, Watcher
 from evals.harness.spec import Action
+from runs.events.approvals import ApprovalRequired
 from runs.events.lifecycle import AnswerDelta, RunEnded
 from runs.events.tools import ToolStarted
 from runs.events.union import EventBody
+from tests._json import obj
 
 
 def _sse(*bodies: EventBody) -> str:
@@ -38,7 +40,7 @@ def _run(run_id: str, conversation_id: str, kind: str = "linked") -> dict[str, o
 
 async def test_a_send_into_a_busy_thread_comes_back_queued() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
+        body = obj(json.loads(request.content))
         if body.get("conversation_id"):
             return httpx.Response(
                 202, json={"conversation_id": "c1", "queued_message_id": "m1", "run_id": "r1"}
@@ -88,7 +90,7 @@ async def test_actions_fire_once_on_their_trigger(tmp_path: Path) -> None:
 async def test_an_action_on_a_turn_that_already_ended_is_logged_not_raised(
     tmp_path: Path,
 ) -> None:
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json={"detail": "run already done"})
 
     client = DevClient("http://dev", transport=httpx.MockTransport(handle))
@@ -186,3 +188,16 @@ async def test_the_watcher_records_each_sub_agents_own_runs(tmp_path: Path) -> N
 
     assert list(turns) == ["child"]
     assert [(t.run_id, t.final_reply()) for t in turns["child"]] == [("k1", "Reported.")]
+
+
+@pytest.mark.parametrize(
+    ("command", "refused"), [("ls -la scratch && git status", False), ("rm -rf scratch", True)]
+)
+def test_denied_arguments_refuse_only_the_matching_call(command: str, refused: bool):
+    policy = Policy(deny_args=(r"\brm\b",), refusal="Declined. Leave it as it is.")
+    call = ApprovalRequired(
+        tool_call_id="t1", name="shell_run_command", args={"command": command}, summary=""
+    )
+
+    expected = "Declined. Leave it as it is." if refused else None
+    assert policy_refusal(call, policy) == expected

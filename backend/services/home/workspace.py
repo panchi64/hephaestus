@@ -9,6 +9,7 @@ other just wrote.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from pathlib import Path
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -35,13 +36,18 @@ def machine_spec(home: RunHome, allow_hosts: tuple[str, ...] | None) -> MachineS
 
     A writable project checkout gets its `.git` bound read-only over it. Root in the guest
     can unmount that, so it guards against accidents only; Auto parks VM work in a thread
-    with one (``services/permissions/decide.py``).
+    with one (``services/permissions/decide.py``). A worktree's git directory is bound
+    read-only at its host path, where the worktree's `.git` file points.
     """
     binds: list[Bind] = []
+    git_dirs: set[Path] = set()
     for m in home.mounts:
         binds.append(Bind(str(m.root), m.place.path, read_only=not m.writable))
         if m.writable and m.place.kind == "projects" and (m.root / ".git").is_dir():
             binds.append(Bind(str(m.root / ".git"), f"{m.place.path}/.git", read_only=True))
+        if m.git_dir is not None and m.git_dir not in git_dirs:
+            git_dirs.add(m.git_dir)
+            binds.append(Bind(str(m.git_dir), str(m.git_dir), read_only=True))
     scratch = home.mount(SCRATCH)
     if scratch is not None:
         binds.append(Bind(str(scratch.root), SCRATCH_ALIAS, read_only=False))

@@ -441,6 +441,21 @@ class TestMachineSpec:
         assert "/home/agent/worktrees/app" in targets
         assert spec.allow_hosts is None
 
+    def test_a_worktrees_git_dir_is_bound_read_only_at_its_host_path(self, tmp_path: Path):
+        git_dir = tmp_path / "repo" / ".git"
+        worktrees = [
+            Mount(Place("worktrees", name), tmp_path / name, True, git_dir=git_dir)
+            for name in ("app", "app-fixer")
+        ]
+        home = RunHome(mounts=tuple(worktrees), default=SCRATCH, key="t")
+
+        spec = machine_spec(home, None)
+
+        binds = [b for b in spec.binds if b.target == str(git_dir)]
+        assert len(binds) == 1
+        assert binds[0].source == str(git_dir)
+        assert binds[0].read_only
+
     def test_scratch_is_also_bound_at_the_work_alias(self, tmp_path: Path):
         home = _home(tmp_path, [(SCRATCH, True)])
 

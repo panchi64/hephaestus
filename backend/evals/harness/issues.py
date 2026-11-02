@@ -8,8 +8,10 @@ The first form writes ``runs/<group>/issues.md`` and merges the group into
 ``backlog.json``, re-rendering ``ISSUES.md``. A group recorded on the dev stub, or not yet
 reviewed in full, writes its ``issues.md`` only: until a reviewer has classified them, a
 failed scenario check may be the suite's fault rather than the product's. An issue already
-in the backlog counts another occurrence, and one marked ``fixed`` that recurs is reopened
-as ``regressed``.
+in the backlog, matched by the grader's ``recurs`` or else by its title, counts another
+occurrence, and one marked ``fixed`` that recurs is reopened as ``regressed``.
+
+``set`` also takes ``--gap TEXT`` and ``--principle NAME`` for a behavior issue's class.
 """
 
 from __future__ import annotations
@@ -20,32 +22,27 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from evals.drive.timeline import redact_home
 
-from .grading import SEVERITIES, Issue, IssueKind, Severity, load_grades
+from .backlog import BACKLOG_PATH, STATUSES, Backlog, Entry, Status, Strict, read_backlog
+from .grading import PRINCIPLES, SEVERITIES, Issue, IssueKind, Principle, Severity, load_grades
 from .record import RUN_FILE, load_run
 from .review import REPORT_FILE
 from .spec import load_scenarios, run_path
 
-BACKLOG_PATH = Path(__file__).with_name("backlog.json")
 ISSUES_PATH = Path(__file__).with_name("ISSUES.md")
 GROUP_FILE = "issues.md"
 _EVIDENCE_CHARS = 300
 
-type Status = Literal["open", "fixed", "wontfix", "regressed"]
-STATUSES: tuple[Status, ...] = ("open", "regressed", "fixed", "wontfix")
 _STATUS_NAMES: dict[str, Status] = {status: status for status in STATUSES}
+_PRINCIPLE_NAMES: dict[str, Principle] = {principle: principle for principle in PRINCIPLES}
 
 
-class _Strict(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
-
-
-class Found(_Strict):
+class Found(Strict):
     """One issue as a run group showed it, before it meets the backlog."""
 
     title: str
@@ -56,38 +53,16 @@ class Found(_Strict):
     samples: int = 1
     evidence: str
     suspect: str = ""
+    gap: str = ""
+    principle: Principle | None = None
+    #: The backlog entry the grader named as the same failure.
+    recurs: str | None = None
     #: ``check`` when a failed check filed it, ``grader`` when the reviewed grades did.
     source: Literal["check", "grader"]
 
     @property
     def fingerprint(self) -> str:
         return f"{self.kind}|{self.area}|{normalize(self.title)}"
-
-
-class Entry(_Strict):
-    id: str
-    fingerprint: str
-    title: str
-    kind: IssueKind
-    severity: Severity
-    area: str
-    scenarios: list[str]
-    first_seen: str
-    last_seen: str
-    occurrences: int = 1
-    evidence: str
-    suspect: str = ""
-    status: Status = "open"
-    note: str = ""
-
-
-class Backlog(_Strict):
-    entries: list[Entry] = Field(default_factory=list)
-    #: The run groups already merged, so merging one again changes nothing.
-    groups: list[str] = Field(default_factory=list)
-
-
-_BACKLOG: TypeAdapter[Backlog] = TypeAdapter(Backlog)
 
 
 def normalize(title: str) -> str:
@@ -114,6 +89,9 @@ def _merge(found: Iterable[Found]) -> list[Found]:
         seen.severity = _more_severe(seen.severity, item.severity)
         seen.scenarios = sorted({*seen.scenarios, *item.scenarios})
         seen.suspect = seen.suspect or item.suspect
+        seen.gap = seen.gap or item.gap
+        seen.principle = seen.principle or item.principle
+        seen.recurs = seen.recurs or item.recurs
     return sorted(out.values(), key=lambda f: (SEVERITIES.index(f.severity), f.area, f.title))
 
 
@@ -180,6 +158,9 @@ def _from_grader(issue: Issue, areas: dict[str, str]) -> Found:
         scenarios=[issue.scenario],
         evidence=_trim(issue.evidence),
         suspect=issue.suspect,
+        gap=issue.gap,
+        principle=issue.principle,
+        recurs=issue.recurs,
         source="grader",
     )
 
@@ -191,9 +172,12 @@ def merge_backlog(backlog: Backlog, found: list[Found], group: str, seen: str) -
         return []
     backlog.groups.append(group)
     by_print = {e.fingerprint: e for e in backlog.entries}
+    by_id = {e.id: e for e in backlog.entries}
     touched: list[str] = []
     for item in found:
-        entry = by_print.get(item.fingerprint)
+        # The grader's `recurs` wins over the title: a recurrence is rarely worded the same.
+        named = by_id.get(item.recurs) if item.recurs else None
+        entry = named or by_print.get(item.fingerprint)
         if entry is None:
             number = 1 + max((int(e.id.removeprefix("H-")) for e in backlog.entries), default=0)
             entry = Entry(
@@ -209,9 +193,12 @@ def merge_backlog(backlog: Backlog, found: list[Found], group: str, seen: str) -
                 occurrences=item.samples,
                 evidence=item.evidence,
                 suspect=item.suspect,
+                gap=item.gap,
+                principle=item.principle,
             )
             backlog.entries.append(entry)
             by_print[entry.fingerprint] = entry
+            by_id[entry.id] = entry
         else:
             entry.occurrences += item.samples
             entry.last_seen = seen
@@ -219,8 +206,12 @@ def merge_backlog(backlog: Backlog, found: list[Found], group: str, seen: str) -
             entry.scenarios = sorted({*entry.scenarios, *item.scenarios})
             entry.evidence = item.evidence
             entry.suspect = entry.suspect or item.suspect
+            entry.gap = entry.gap or item.gap
+            entry.principle = entry.principle or item.principle
             if entry.status == "fixed":
                 entry.status = "regressed"
+                fix = f" The fix was: {entry.note}" if entry.note else ""
+                entry.note = f"Recurred after a fix in {group} as {item.title!r}.{fix}"
         touched.append(entry.id)
     return touched
 
@@ -240,8 +231,18 @@ def render_group(group: str, found: list[Found], stub: bool) -> str:
         _row(f.severity, f.kind, f.area, f.title, ", ".join(f.scenarios), f.source) for f in found
     ]
     out += ["", "## Evidence", ""]
-    out += [f"- **{f.title}**: {f.evidence}" for f in found]
+    out += [
+        f"- **{f.title}**: {f.evidence}{_reasoning(f.principle, f.gap, f.recurs)}" for f in found
+    ]
     return "\n".join([*out, ""])
+
+
+def _reasoning(principle: Principle | None, gap: str, recurs: str | None = None) -> str:
+    """The class a behavior issue belongs to, as an evidence line's tail."""
+    parts = [f"*Principle: {principle}.*"] if principle else []
+    parts += [f"*Gap: {gap}*"] if gap else []
+    parts += [f"*Recurs: {recurs}.*"] if recurs else []
+    return "".join(f" {part}" for part in parts)
 
 
 def render_backlog(backlog: Backlog) -> str:
@@ -265,7 +266,8 @@ def render_backlog(backlog: Backlog) -> str:
             out.append(_row(e.id, e.severity, e.kind, e.area, e.title, seen, e.suspect))
         out.append("")
         out += [
-            f"- **{e.id}**: {e.evidence}" + (f" *Note: {e.note}*" if e.note else "")
+            f"- **{e.id}**: {e.evidence}{_reasoning(e.principle, e.gap)}"
+            + (f" *Note: {e.note}*" if e.note else "")
             for e in entries
         ]
         out.append("")
@@ -273,7 +275,7 @@ def render_backlog(backlog: Backlog) -> str:
 
 
 def load_backlog() -> Backlog:
-    return _BACKLOG.validate_json(BACKLOG_PATH.read_text()) if BACKLOG_PATH.is_file() else Backlog()
+    return read_backlog(BACKLOG_PATH)
 
 
 def save_backlog(backlog: Backlog) -> None:
@@ -283,19 +285,29 @@ def save_backlog(backlog: Backlog) -> None:
 
 def _set(argv: list[str]) -> int:
     status = _STATUS_NAMES.get(argv[1]) if len(argv) > 1 else None
-    if status is None:
-        print(f"usage: issues set H-### {{{','.join(STATUSES)}}} [--note TEXT]")
+    flags = dict(zip(argv[2::2], argv[3::2], strict=False))
+    principle = _PRINCIPLE_NAMES.get(flags.get("--principle", ""))
+    if (
+        status is None
+        or len(argv) % 2
+        or set(flags) - {"--note", "--gap", "--principle"}
+        or ("--principle" in flags and principle is None)
+    ):
+        print(
+            f"usage: issues set H-### {{{','.join(STATUSES)}}} [--note TEXT] [--gap TEXT] "
+            + f"[--principle {{{','.join(PRINCIPLES)}}}]"
+        )
         return 2
     issue_id = argv[0]
-    note = argv[3] if len(argv) > 3 and argv[2] == "--note" else None
     backlog = load_backlog()
     entry = next((e for e in backlog.entries if e.id == issue_id), None)
     if entry is None:
         print(f"No {issue_id} in the backlog.")
         return 2
     entry.status = status
-    if note is not None:
-        entry.note = note
+    entry.note = flags.get("--note", entry.note)
+    entry.gap = flags.get("--gap", entry.gap)
+    entry.principle = principle or entry.principle
     save_backlog(backlog)
     print(f"{issue_id} → {status}")
     return 0

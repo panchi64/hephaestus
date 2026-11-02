@@ -6,16 +6,21 @@ uv run python -m evals.harness.check <group>/<letter> [...]
 from __future__ import annotations
 
 import sys
+from collections.abc import Collection
 
 from pydantic import ValidationError
 
+from .backlog import read_backlog
 from .grading import Grades, load_grades
 from .record import Run, load_run
 from .spec import Scenario, load_scenarios, run_path
 
 
-def problems(grades: Grades, run: Run, scenarios: list[Scenario]) -> list[str]:
-    """Every way the grades disagree with what the run recorded and the scenarios ask."""
+def problems(
+    grades: Grades, run: Run, scenarios: list[Scenario], backlog_ids: Collection[str] = ()
+) -> list[str]:
+    """Every way the grades disagree with what the run recorded, the scenarios ask and the
+    backlog holds."""
     out: list[str] = []
     if grades.prompt_fingerprint != run.prompt_fingerprint:
         out.append("prompt_fingerprint does not match the run's")
@@ -40,6 +45,10 @@ def problems(grades: Grades, run: Run, scenarios: list[Scenario]) -> list[str]:
     for issue in grades.issues:
         if (issue.scenario, issue.sample) not in recorded:
             out.append(f"issue {issue.title!r}: {issue.scenario} #{issue.sample} wasn't recorded")
+        if issue.kind == "behavior" and not (issue.gap.strip() and issue.principle):
+            out.append(f"issue {issue.title!r}: a behavior issue needs `gap` and `principle`")
+        if issue.recurs is not None and issue.recurs not in backlog_ids:
+            out.append(f"issue {issue.title!r}: recurs names {issue.recurs}, not in the backlog")
     out += [f"{sid} #{n}: recorded but not graded" for sid, n in sorted(recorded - graded)]
     out += [f"{sid} #{n}: graded but not recorded" for sid, n in sorted(graded - recorded)]
     return out
@@ -50,6 +59,7 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     scenarios = load_scenarios()
+    backlog_ids = frozenset(e.id for e in read_backlog().entries)
     failed = False
     for raw in argv:
         run_dir = run_path(raw)
@@ -59,7 +69,7 @@ def main(argv: list[str]) -> int:
             print(f"{run_dir}: {exc}")
             failed = True
             continue
-        found = problems(grades, load_run(run_dir), scenarios)
+        found = problems(grades, load_run(run_dir), scenarios, backlog_ids)
         failed = failed or bool(found)
         print(f"{run_dir}: {'ok' if not found else f'{len(found)} problems'}")
         for problem in found:

@@ -60,7 +60,7 @@ def linked_git_dir(root: Path, tree: Path) -> Path | None:
     Found from the root's side: a worktree's own `.git` file is writable by whatever runs in
     the worktree, and a redirected one would hand git a config its author wrote.
     """
-    common = _common_dir(root)
+    common = common_dir(root)
     admin = common / "worktrees" if common is not None else None
     if admin is None or not admin.is_dir():
         return None
@@ -76,7 +76,7 @@ def linked_git_dir(root: Path, tree: Path) -> Path | None:
     return None
 
 
-def _common_dir(root: Path) -> Path | None:
+def common_dir(root: Path) -> Path | None:
     """The git directory ``root``'s worktrees register under: its own `.git`, or, when the
     operator's project is itself a linked worktree or a submodule, the one it links to."""
     dot = root / ".git"

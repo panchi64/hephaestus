@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from services.projects.repo import common_dir
 from services.projects.store import ProjectStore
 
 from .backend import HomeBackend, Mount
@@ -63,12 +64,13 @@ async def thread_mounts(
     filed_project_id: str | None = None,
     filed_writable: bool = False,
     worktree_root: Path | None = None,
+    worktree_name: str | None = None,
     child_worktrees: Sequence[tuple[str, str, Path]] = (),
 ) -> list[Mount]:
     """The thread's scratch, writable, then its filed project and any project its
     ``lease_holder`` holds a lease on, the thread's worktree of its filed project at
-    ``~/worktrees/<slug>``, and each worktree of a sub-agent it spawned, given as (project
-    id, handle, folder), at ``~/worktrees/<slug>-<handle>``.
+    ``~/worktrees/<worktree_name>`` (by default its slug), and each worktree of a sub-agent
+    it spawned, given as (project id, handle, folder), at ``~/worktrees/<slug>-<handle>``.
 
     Other registered projects are not mounted, so a thread can't read another project's
     files. A leased project is writable, and the filed project when ``filed_writable`` says
@@ -96,14 +98,19 @@ async def thread_mounts(
             continue
         writable = (filed and filed_writable) or leased
         mounts.append(Mount(place, root, writable, project_id=project_id))
+        # From the root's side: the worktree's own `.git` file is the agent's to rewrite.
+        git_dir = common_dir(root)
         if filed and worktree_root is not None:
+            own = Place("worktrees", worktree_name or slug)
             mounts.append(
-                Mount(Place("worktrees", slug), worktree_root, writable=True, project_id=project_id)
+                Mount(own, worktree_root, writable=True, project_id=project_id, git_dir=git_dir)
             )
         for child_project, handle, folder in child_worktrees:
             if child_project == project_id:
                 place = Place("worktrees", child_worktree_name(slug, handle))
-                mounts.append(Mount(place, folder, writable=True, project_id=project_id))
+                mounts.append(
+                    Mount(place, folder, writable=True, project_id=project_id, git_dir=git_dir)
+                )
     return mounts
 
 
@@ -112,12 +119,15 @@ def child_worktree_name(slug: str, handle: str) -> str:
     return f"{slug}-{handle}"[:80]
 
 
-def default_place(mounts: Sequence[Mount], filed_slug: str | None) -> Place | None:
+def default_place(
+    mounts: Sequence[Mount], filed_slug: str | None, worktree_name: str | None = None
+) -> Place | None:
     """Where a path naming no group lands: the thread's worktree, else the project it is
     filed under, else its scratch."""
     places = {m.place for m in mounts}
     if filed_slug:
-        for place in (Place("worktrees", filed_slug), Place("projects", filed_slug)):
+        own = Place("worktrees", worktree_name or filed_slug)
+        for place in (own, Place("projects", filed_slug)):
             if place in places:
                 return place
     return SCRATCH if SCRATCH in places else None

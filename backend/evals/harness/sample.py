@@ -59,6 +59,7 @@ def policy_of(scenario: Scenario) -> Policy:
         allow=tuple(scenario.allow),
         answer=scenario.answer,
         deny=tuple(scenario.deny),
+        deny_args=tuple(scenario.deny_args),
         refusal=_REFUSAL,
     )
 

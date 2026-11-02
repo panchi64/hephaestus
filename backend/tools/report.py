@@ -34,7 +34,7 @@ def report_toolset() -> AbstractToolset[RunDeps]:
         report: str,
     ) -> dict[str, object]:
         """Hand your report to the agent that spawned you. This is your last action: call
-        it once, when the work is over, then end your turn without writing anything else.
+        it once, when the work is over; once it is filed, your turn is over.
 
         `status` is `done` when the task is finished, `blocked` when you need an answer or
         a decision before you can go on (your parent's reply wakes you where you stopped),
@@ -48,8 +48,7 @@ def report_toolset() -> AbstractToolset[RunDeps]:
         if ctx.deps.reported:
             return {
                 "filed": False,
-                "detail": "Your report is already filed, and a turn carries one. End your "
-                + "turn now, with no further text.",
+                "detail": "Your report is already filed, and a turn carries one.",
             }
         text = report.strip()
         if not text:
@@ -79,8 +78,7 @@ def report_toolset() -> AbstractToolset[RunDeps]:
         return {
             "filed": True,
             "to": parent,
-            "detail": "It reaches them when this turn ends. End your turn now, with no "
-            + "further text: nobody reads this thread.",
+            "detail": "It reaches them when this turn ends; nobody reads this thread.",
         }
 
     return toolset

@@ -82,8 +82,8 @@ async def run_on_host_tool(
     directory of its own, so name other host paths in full. Its changes cannot be
     reverted. The fence keeps it from the operator's credentials and this application's
     data directory, and gives it no network beyond the domains the installation allows. A
-    permission error on one of those paths is the fence doing its job: report it rather
-    than working around it.
+    permission error on one of those paths is the fence doing its job, a refusal that
+    stands like any other.
 
     Returns `ok`, `exit_code`, `stdout`, `stderr` and `timed_out`, and `fenced`; when it
     is false, `unfenced_reason` says why. A `fence_note` explains a refusal.

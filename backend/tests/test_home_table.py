@@ -8,7 +8,7 @@ from core.db import init_db, make_engine
 from core.vault import Vault
 from services.home.leases import WriteLeases
 from services.home.paths import SCRATCH, Place
-from services.home.table import default_place, thread_mounts
+from services.home.table import child_worktree_name, default_place, thread_mounts
 from services.projects.store import ProjectStore, ProjectView
 from services.settings_store import SettingsStore
 
@@ -100,6 +100,29 @@ async def test_a_worktree_is_its_own_place_and_leaves_the_folder_alone(tmp_path:
     assert default_place(mounts, "api") == Place("worktrees", "api")
     assert default_place(mounts[:2], "api") == Place("projects", "api")
     assert default_place(mounts, None) == SCRATCH
+
+
+async def test_a_delegates_worktree_carries_its_given_name_and_the_projects_git_dir(
+    tmp_path: Path,
+) -> None:
+    projects, leases = await _stores(tmp_path)
+    (tmp_path / "api" / ".git").mkdir(parents=True)
+    (tmp_path / "wt").mkdir()
+    api = await projects.create(OWNER, "api", str(tmp_path / "api"))
+    mounts = await thread_mounts(
+        owner_id=OWNER,
+        lease_holder="c1",
+        scratch=tmp_path / "scratch",
+        projects=projects,
+        leases=leases,
+        filed_project_id=api.id,
+        worktree_root=tmp_path / "wt",
+        worktree_name=child_worktree_name("api", "fixer"),
+    )
+    own = mounts[-1]
+    assert own.place == Place("worktrees", "api-fixer")
+    assert own.git_dir == (tmp_path / "api" / ".git").resolve()
+    assert default_place(mounts, "api", "api-fixer") == Place("worktrees", "api-fixer")
 
 
 async def test_an_archived_project_is_not_in_the_home(tmp_path: Path) -> None:

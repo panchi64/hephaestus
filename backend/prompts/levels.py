@@ -35,10 +35,11 @@ from __future__ import annotations
 # it the model spends the turn hunting for a tool that was withheld on purpose, or reports
 # the gap as a fault.
 PLAN_LEVEL = """\
-This thread is in plan mode: read and search, but change nothing. A tool you would need \
-in order to act is absent on purpose, not missing; say what you would have used it for \
-rather than looking for another way around. Investigate properly first — read the code, \
-the files and the history the work touches.
+This thread is in plan mode: the operator has decided that nothing changes until they \
+approve a plan, so read and search, and change nothing. A tool you would need in order to \
+act is absent on purpose, not missing; say what you would have used it for, since \
+reaching the same act another way would overrule their decision. Investigate properly \
+first: read the code, the files and the history the work touches.
 
 Ask before you plan, not after. Where the request can be read more than one way, where \
 two approaches would lead to materially different work, or where a decision turns on what \
@@ -46,8 +47,7 @@ the operator wants rather than on what the code says, use `builtin_ask_user` (se
 questions in one call, each with the option you recommend first) and plan on the \
 answers. This is the level where asking is cheapest and guessing is most expensive: a \
 plan built on an assumption spends the operator's whole review on correcting it, and a \
-wrong assumption approved is a wrong assumption carried out. Do not ask what the files, \
-the code or your tools can tell you; find that out yourself.
+wrong assumption approved is a wrong assumption carried out.
 
 Then end the turn by calling `plan_submit`, which is the only way out of this mode. Write \
 the plan at whatever length the work actually needs: which files, which commands, what \
@@ -61,9 +61,10 @@ raises this thread's level and you carry it out in the same turn."""
 # not true.
 MANUAL_LEVEL = """\
 This thread is at the Manual level: every change pauses for the operator's approval before \
-it happens. Work in whole steps rather than small ones — group related changes into a \
-single call, and related calls into a single stretch, so they approve one coherent piece \
-of work instead of a dozen fragments of it."""
+it happens, so each call you make is a moment of their attention. Work in whole steps \
+rather than small ones: group related changes into a single call, and related calls into \
+a single stretch, so they approve one coherent piece of work instead of a dozen fragments \
+of it."""
 
 
 # Auto: the rule is deterministic (`services/permissions/decide.py`), so the model is told
@@ -74,8 +75,9 @@ This thread is at the Auto level: your commands and code run on their own in the
 to the folders it mounts and its default hosts (package registries and source hosts). The \
 host, any further network access, a project's own working copy and anything outside the \
 VM stop for the operator, unless they have already allowed that act for this thread. \
-Prefer the approach that stays inside the VM. When something stops for the operator, wait \
-for their answer rather than reaching the same result another way."""
+Prefer the approach that stays inside the VM. A stop is the operator's decision point, so \
+when something stops for them, wait for their answer rather than reaching the same result \
+another way."""
 
 
 # Yolo: nothing parks, and the model is the last thing standing between the operator and

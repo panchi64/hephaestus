@@ -41,6 +41,7 @@ from services.subagents import FiledReport, ReportStatus, SubagentLauncher
 from tests._helpers import client_app, patch_model_resolution, settle
 from tests._json import json_body, s
 from tools import RunDeps, build_agent_toolsets
+from tools.builtin import builtin_toolset
 from tools.delegation import add_delegation_tools
 from tools.report import report_toolset, require_report
 
@@ -512,18 +513,20 @@ class TestTheReportContract:
 
     async def test_a_second_report_in_one_turn_is_refused(self):
         ctx = _validator_ctx("wake", reports=True)
-        ctx.deps.reported = True
         (stack,) = build_agent_toolsets({"subagent": report_toolset()})
         tools = await stack.get_tools(ctx)
+        ctx.deps.reported = True
 
-        result = await stack.call_tool(
-            "subagent_report",
-            {"status": "done", "report": "again"},
-            ctx,
-            tools["subagent_report"],
+        result = cast(
+            dict[str, object],
+            await stack.call_tool(
+                "subagent_report",
+                {"status": "done", "report": "again"},
+                ctx,
+                tools["subagent_report"],
+            ),
         )
 
-        assert isinstance(result, dict)
         assert result["filed"] is False
         assert "already filed" in str(result["detail"])
 
@@ -545,7 +548,7 @@ class TestTheReportContract:
         (stack,) = build_agent_toolsets({"subagent": report_toolset()})
         tools = await stack.get_tools(ctx)
 
-        results = await asyncio.gather(
+        results: list[object] = await asyncio.gather(
             *(
                 stack.call_tool(
                     "subagent_report",
@@ -572,6 +575,14 @@ class TestWhoIsOfferedTheReportTool:
         ctx.deps.tool_access = ToolAccess(deny=frozenset({"subagent"}))
 
         assert await _offered(ctx)
+
+    async def test_nothing_is_offered_once_the_report_is_filed(self):
+        ctx = _validator_ctx("wake", reports=True)
+        ctx.deps.reported = True
+        categories = {"subagent": report_toolset(), "builtin": builtin_toolset()}
+        (stack,) = build_agent_toolsets(categories)
+
+        assert await stack.get_tools(ctx) == {}
 
 
 async def _offered(ctx: RunContext[RunDeps]) -> bool:
@@ -773,11 +784,10 @@ class TestTheReportTurnAfterALimit:
             _hold_report_turn(monkeypatch, app, opens=False)
             runs = app_state(app).runs
             woken = _ended(conversation_id)
-            monkeypatch.setattr(
-                runs,
-                "active_run_for",
-                lambda cid, _owner: woken if cid == conversation_id else None,
-            )
+            def active_run_for(cid: str, _owner: str) -> Run | None:
+                return woken if cid == conversation_id else None
+
+            monkeypatch.setattr(runs, "active_run_for", active_run_for)
             cut = _ended(conversation_id, RunStatus.blocked)
             cut.stop_cause = StopCause.time_limit
 

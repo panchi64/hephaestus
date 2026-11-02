@@ -70,6 +70,9 @@ def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
     """
     name = tool_def.name
     deps = ctx.deps
+    if deps.reported:
+        # A filed report is a spawned agent's last action; with nothing offered, it ends.
+        return False
     if name == REPORT_TOOL:
         # No setting or level may take away how a spawned agent finishes.
         return deps.reports_to_parent

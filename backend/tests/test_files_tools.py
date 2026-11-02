@@ -252,6 +252,33 @@ async def test_a_write_creates_the_folders_it_needs(tmp_path: Path):
     assert (manager.path("conv-1") / "summaries/2026/notes.txt").read_text() == "hello"
 
 
+async def test_creating_a_folder_that_exists_says_nothing_was_created(tmp_path: Path):
+    manager = ScratchDirs(tmp_path)
+    (manager.path("conv-1") / "server").mkdir(parents=True)
+
+    fresh = await _call("create_directory", {"path": "client"}, manager=manager)
+    existing = await _call("create_directory", {"path": "server"}, manager=manager)
+
+    assert "Created directory" in str(fresh)
+    assert (manager.path("conv-1") / "client").is_dir()
+    assert "already exists; nothing was created" in str(existing)
+
+
+@pytest.mark.parametrize("glob", ["inventory.py", "*.py", "src/*.py"])
+async def test_a_search_glob_is_read_from_the_searched_folder(tmp_path: Path, glob: str):
+    manager = ScratchDirs(tmp_path)
+    src = manager.path("conv-1") / "src"
+    src.mkdir(parents=True)
+    _ = (src / "inventory.py").write_text("def low_stock(items):\n    pass\n")
+
+    result = await _call(
+        "search_files", {"pattern": "low_stock", "include_glob": glob}, manager=manager
+    )
+
+    assert "inventory.py" in str(result)
+    assert "No matches" not in str(result)
+
+
 async def test_paths_outside_the_workspace_are_refused(tmp_path: Path):
     manager = ScratchDirs(tmp_path)
     secret = tmp_path / "secret.txt"

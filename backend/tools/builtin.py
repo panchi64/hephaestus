@@ -98,13 +98,13 @@ def builtin_toolset() -> FunctionToolset[RunDeps]:
         Use it when the answer changes what you do next and only the operator can give
         it: a preference, a tradeoff, a reading of an ambiguous request, a choice between
         approaches that are each valid. Asking costs far less than guessing wrong and
-        redoing the work. Never ask what the code, the files or your tools can tell you;
-        find that out yourself first, so the question you ask is the one that is left.
+        redoing the work, and a question the files or your tools could have answered
+        spends the operator's turn on something you could have found.
 
         Put every open decision into one call, up to four questions answered together,
-        rather than asking one per turn. Ask through this tool rather than in your reply,
-        because a question written in prose ends your turn with nothing for the operator
-        to click. Don't repeat in text what the card already asks.
+        rather than asking one per turn. A question written in prose ends your turn with
+        nothing for the operator to click, and the card already shows the question, so
+        your reply doesn't repeat it.
 
         Give each question two to four concrete options, the one you recommend first,
         with a one-line `description` where the consequence is not obvious from the

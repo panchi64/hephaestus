@@ -169,6 +169,9 @@ class Scenario(_Strict):
     allow: list[str] = Field(default_factory=list)
     #: Tool prefixes refused even under ``approve = "all"``: ``plan_submit`` rejects a plan.
     deny: list[str] = Field(default_factory=list)
+    #: Regexes over a parked call's arguments, refused even under ``approve = "all"``: an
+    #: `rm` through the shell, while the read-only shell calls before it are approved.
+    deny_args: list[str] = Field(default_factory=list)
     #: What each question the agent asks is answered with; absent for "use your judgement".
     answer: str | None = None
     requires: list[Requirement] = Field(default_factory=list)

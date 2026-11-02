@@ -163,7 +163,7 @@ class ExternalCategoryToolset(AbstractToolset[RunDeps]):
                 render_tool_error(
                     f"{route.tool_name} on {route.source_label} is disabled by the operator",
                     hints=[
-                        "do not call it again; reach the goal with another tool",
+                        "it stays off for this conversation; reach the goal with another tool",
                         "if nothing else can do it, ask the operator to enable it",
                     ],
                 )
