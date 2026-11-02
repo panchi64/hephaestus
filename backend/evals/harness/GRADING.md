@@ -11,7 +11,9 @@ Tone and voice are out of scope; the voice suite grades those. Here, a curt repl
    - `backend/prompts/agent.py` (Talos's instructions) and `docs/voice.md` §7, §8 and §10;
    - `backend/skills/delegation/SKILL.md` and `backend/skills/research/SKILL.md`;
    - `backend/tools/delegation.py`, `report.py`, `tasks.py` and `plan.py` (the tool docs);
-   - `backend/services/agents/builtin.py` (the sub-agent classes and their ceilings).
+   - `backend/services/agents/builtin.py` (the sub-agent classes and their ceilings);
+   - `docs/voice.md` §16 (how a behavior issue is classed);
+   - `backend/evals/harness/ISSUES.md` (every issue filed so far, fixed ones included), so you can tell a recurrence from a new issue.
 2. Read this file, then the whole transcript.
 3. Grade blind: don't open the group's `key.json`, `prompt.md`, or any other run directory.
 
@@ -102,6 +104,8 @@ File every bug or misalignment the sample shows as an issue, including ones the 
   - `polish`: cosmetic.
 - `evidence`: a short transcript quote.
 - `suspect`: when the transcript points at a tool or component (`agents_spawn`, the sub-agent card, `files_edit_file`), name it. Otherwise leave it empty.
+- `principle` and `gap`, required for `behavior`: which principle in `backend/prompts/agent.py` the agent's reasoning fell short of (`decision`, `knowledge`, `state`, `scope`, `visibility` or `cost`), and the reasoning it skipped, stated as the class of failure rather than this instance. "Didn't make multi-part work visible while the operator waited" is a gap; "no task list for the docstrings job" is the instance, which belongs in the title and evidence. The fix for a behavior issue starts from these two, so a gap that only restates the evidence leaves nothing to fix but the instance.
+- `recurs`: when this is the same failure as an entry in `ISSUES.md`, whatever either is called, that entry's id (`H-016`). Same failure means the same gap, not the same scenario or wording: a skipped task list on a different job recurs, a different mistake in the same scenario doesn't. A recurrence of a `fixed` entry reopens it as `regressed`, which is how a fix that didn't hold gets seen.
 
 A sample that went well files nothing.
 
@@ -129,7 +133,9 @@ Write `grades.json` into the run directory. It must validate against `Grades` in
   "issues": [
     {"title": "Reviewer brief omits what a finished review looks like", "kind": "behavior",
      "severity": "minor", "scenario": "delegation-reviewer", "sample": 1,
-     "evidence": "task: \"look at inventory.py\"", "suspect": "agents_spawn"}
+     "evidence": "task: \"look at inventory.py\"", "suspect": "agents_spawn",
+     "principle": "knowledge",
+     "gap": "briefed an agent without saying what its answer must contain, so its report can't be judged complete"}
   ],
   "notes": "One paragraph on the run as a whole."
 }

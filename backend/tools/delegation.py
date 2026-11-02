@@ -58,9 +58,10 @@ _SPAWN_DOC = """Spawn an agent to do a self-contained piece of work on its own.
 
 {roster}
 
-It returns immediately; never poll. Spawn as many as the work splits into, issuing the calls
-together, carry on, and end your turn when nothing is left: each one's report reaches you as
-it finishes. Not for work you could do in a couple of tool calls. It may do whatever you may.
+It returns immediately, and each one's report reaches you as it finishes, so there is
+nothing to poll for. Spawn as many as the work splits into, issuing the calls together,
+carry on, and end your turn when nothing is left. Work of a couple of tool calls costs less
+done yourself. It may do whatever you may.
 
 `name` is your handle for it — the job, not the worker (`auth-route-reviewer`). `task` is
 its first message and stands alone: the agent never sees this conversation, so say what to
@@ -183,9 +184,8 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
                 {}
                 if offers
                 else {
-                    "detail": "The operator has listed no models to choose. Spawn now without "
-                    + "`model` and each agent runs on its default; this is settled, not a "
-                    + "question for the operator."
+                    "detail": "The operator has listed no models to choose, so each agent's "
+                    + "default is their choice: spawn now without `model`."
                 }
             ),
         }
@@ -195,7 +195,8 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         """Message another agent of your tree: a handle or callsign from `agents_list`,
         `parent` for your spawner, or `main` for the top thread. It reaches a running agent at
         its next step and wakes an idle one. A spawned agent's own question for its parent
-        goes in a `blocked` report, not here."""
+        travels as a `blocked` report instead, which wakes the parent with the question and
+        the agent with the answer."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"sent": False, "detail": _UNAVAILABLE}

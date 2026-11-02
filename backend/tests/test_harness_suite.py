@@ -11,11 +11,12 @@ from pydantic import ValidationError
 
 from evals.drive.timeline import Text, Turn
 from evals.harness import issues
+from evals.harness.backlog import Backlog
 from evals.harness.check import problems
 from evals.harness.document import render
 from evals.harness.grading import DIMENSIONS, Grades, Issue
 from evals.harness.implicit import CheckResult
-from evals.harness.issues import Backlog, Found, merge_backlog, render_backlog
+from evals.harness.issues import Found, merge_backlog, render_backlog
 from evals.harness.record import Run, Sample
 from evals.harness.review import Review, apply_review
 from evals.harness.spec import (
@@ -132,6 +133,8 @@ def _grades(**fields: object) -> Grades:
                 "scenario": "s",
                 "sample": 1,
                 "evidence": "files_read_file ×2",
+                "gap": "re-read what was already in context",
+                "principle": "cost",
             }
         ],
     }
@@ -160,6 +163,24 @@ def test_the_check_names_missing_dimensions_and_stray_issues() -> None:
     found = problems(grades, _run(scenario), [scenario])
     assert any("dimensions" in p for p in found)
     assert any("wasn't recorded" in p for p in found)
+
+
+def test_a_behavior_issue_names_its_class_and_any_recurrence_exists() -> None:
+    scenario = _scenario()
+    issue: dict[str, object] = {
+        "title": "t",
+        "kind": "behavior",
+        "severity": "minor",
+        "scenario": "s",
+        "sample": 1,
+        "evidence": "e",
+        "recurs": "H-009",
+    }
+
+    found = problems(_grades(issues=[issue]), _run(scenario), [scenario], frozenset({"H-001"}))
+
+    assert any("needs `gap` and `principle`" in p for p in found)
+    assert any("recurs names H-009" in p for p in found)
 
 
 def test_a_score_below_three_needs_evidence() -> None:
@@ -263,6 +284,29 @@ def test_the_backlog_counts_recurrences_and_reopens_a_fixed_issue() -> None:
     assert "## Regressed" in render_backlog(backlog)
 
 
+def test_a_named_recurrence_reopens_its_entry_whatever_its_title() -> None:
+    backlog = Backlog()
+    _ = merge_backlog(backlog, [_found("No task list for a four-step job")], "g1", "g1")
+    backlog.entries[0].status = "fixed"
+    backlog.entries[0].note = "Instructions changed."
+    reworded = _found(
+        "Three-part job done without a task list",
+        kind="behavior",
+        recurs="H-001",
+        principle="visibility",
+        gap="didn't make multi-part work visible while the operator waited",
+    )
+
+    assert merge_backlog(backlog, [reworded], "g2", "g2") == ["H-001"]
+    (entry,) = backlog.entries
+    assert (entry.status, entry.occurrences, entry.principle) == ("regressed", 2, "visibility")
+    assert entry.note == (
+        "Recurred after a fix in g2 as 'Three-part job done without a task list'. "
+        + "The fix was: Instructions changed."
+    )
+    assert "*Principle: visibility.*" in render_backlog(backlog)
+
+
 def test_a_group_is_dated_by_its_first_run_not_by_when_it_is_filed(tmp_path: Path) -> None:
     for name, started in (("A", "2026-11-01 21:25 UTC"), ("B", "2026-11-02 00:10 UTC")):
         run = _run(_scenario()).model_copy(update={"name": name, "started_at": started})
@@ -314,6 +358,16 @@ def test_the_set_command_edits_status(tmp_path: Path, monkeypatch: pytest.Monkey
     assert (saved.status, saved.note) == ("fixed", "done in abc")
     assert "done in abc" in (tmp_path / "ISSUES.md").read_text()
     assert issues.main(["set", "H-001", "bogus"]) == 2
+    assert issues.main(["set", "H-001", "fixed", "--principle", "vibes"]) == 2
+    classed = ["--gap", "skipped a check", "--principle", "state"]
+    assert issues.main(["set", "H-001", "open", *classed]) == 0
+    saved = issues.load_backlog().entries[0]
+    assert (saved.status, saved.note, saved.gap, saved.principle) == (
+        "open",
+        "done in abc",
+        "skipped a check",
+        "state",
+    )
 
 
 def test_the_transcript_shows_checks_and_sub_agents() -> None:

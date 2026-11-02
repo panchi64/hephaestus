@@ -13,7 +13,7 @@ Plan the section headers first, then write the whole report and save it.
 
 ## {Signpost header stating a specific insight}
 
-{Dense narrative paragraphs with **bold key facts**, citing inline with ([Source](URL)). No bullet points or numbered lists.}
+{Dense narrative paragraphs with **bold key facts**, citing inline with ([Source](URL)).}
 
 ## {Second signpost header}
 
@@ -21,7 +21,7 @@ Plan the section headers first, then write the whole report and save it.
 
 ## Conclusion
 
-{1–2 paragraphs of new takeaways and implications. Don't repeat earlier content.}
+{1–2 paragraphs of new takeaways and implications.}
 ```
 
 ## Title
@@ -46,11 +46,11 @@ Sub-headers inside a section are fine when they help readability, and they follo
 
 ## Body paragraphs
 
-Write dense narrative prose that balances scholarly rigor with readability. Use no bullets or numbered lists. **Bold** the most critical facts and figures so the report can be scanned. Each section advances the argument rather than cataloguing information. Use a table or other markdown structure only where it clearly helps, such as a comparison across several options.
+Write dense narrative prose that balances scholarly rigor with readability. A list breaks the argument into fragments and drops the connections between findings, which are most of what a report adds, so the body stays in paragraphs. **Bold** the most critical facts and figures so the report can be scanned. Each section advances the argument rather than cataloguing information. Use a table or other markdown structure only where it clearly helps, such as a comparison across several options.
 
 ## Conclusion
 
-One or two paragraphs at most. Give the key takeaways and new insights only: how the understanding has changed, or what it implies from here. Don't summarize.
+One or two paragraphs at most. The reader has just read the body, so a summary tells them nothing: give the key takeaways and new insights, how the understanding has changed, or what it implies from here.
 
 ## Length
 
@@ -62,7 +62,7 @@ Give the report a narrative arc. After the BLUF, the opening establishes the sta
 
 - Maximize information density while keeping the prose clear.
 - Use direct, concrete language in the active voice, and cut unnecessary words.
-- Don't hedge with "may" or "possibly" where the evidence supports a plain statement.
+- Say plainly what the evidence supports, and keep "may" and "possibly" for what it doesn't.
 - Vary sentence rhythm, put the key point first, and keep transitions clean.
 - Write with approachable intelligence: informative without being stiff, showing expertise through facts and analysis.
 

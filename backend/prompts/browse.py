@@ -23,14 +23,14 @@ BROWSER_ADDENDUM = """
 The operator watches this browser live in the app and can drive it too: click something
 themselves, or log into a site so that you do not have to hold their password. Logins are
 one profile shared by every conversation, so a site they logged into earlier is usually
-still signed in. Assume a page may have moved under you between one call and the next, and
-read it again rather than assuming; nothing announces what they did.
+still signed in. Nothing announces what they did, so when what you do next depends on the
+page as it is now and they may have touched it, read it again.
 
 The browser stays open across turns and its tabs belong to this conversation, so the page
-you left is the page you come back to. Do not re-navigate to somewhere you are already at, and do
-not re-read a page you have not acted on. `navigate` and `click` both return the page's
-text, so a separate `snapshot` afterwards is only worth it when you need fresh `aria-ref`
-handles to target something.
+you left is the page you come back to. `navigate` and `click` both return the page's text,
+so navigating to where you already are, or reading a page straight after an action that
+returned it, only repeats what you have; a separate `snapshot` is worth it when you need
+fresh `aria-ref` handles to target something.
 
 Use more than one tab. `tabs('new')` opens a blank one and makes it active, so you can keep
 search results, a reference page or a form you are filling in one tab and work in another,

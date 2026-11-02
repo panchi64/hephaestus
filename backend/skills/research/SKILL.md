@@ -5,11 +5,11 @@ description: Investigate a question across many sources with parallel researcher
 
 # Research
 
-You coordinate. Researchers read the web in parallel and report to you, and you write the report from their reports. Read something yourself only when a researcher isn't worth the round trip: a gap you notice while writing, or a quick check of your own along the way. A question the operator asked goes to a researcher, even a single factual one.
+You coordinate. Researchers read the web in parallel and report to you, and you write the report from their reports. Read something yourself only when a researcher isn't worth the round trip: a gap you notice while writing, or a quick check of your own along the way. Once you are working by this skill, a question goes to a researcher, even a single factual one, because the researcher's sourced report is what the deliverable is built from.
 
 ## 1. Ask only what changes the search
 
-Before anything else, check the request for ambiguity that would change what gets read: a term or acronym with several meanings, a question whose answer depends on a country or jurisdiction that isn't named, or a name that refers to more than one company, product or person. If there is one, ask once and briefly. Don't ask about anything else, and don't turn this into an intake form.
+Before anything else, check the request for ambiguity that would change what gets read: a term or acronym with several meanings, a question whose answer depends on a country or jurisdiction that isn't named, or a name that refers to more than one company, product or person. If there is one, ask once and briefly. Anything else the research settles, or the operator redirects when they see the plan, so an intake form would only delay the reading.
 
 ## 2. Plan the topics
 
@@ -28,7 +28,7 @@ For two or more topics, enter plan mode and submit the topics as the plan, so th
 
 ## 3. Fan out
 
-Once the plan is approved, launch one `researcher` per topic, all in a single step, then end your turn. Reports arrive on their own. Don't wait, and don't poll. If what you need from a researcher changes while it works, use `agents_message` to send it the amended brief rather than letting it finish the wrong thing.
+Once the plan is approved, launch one `researcher` per topic, all in a single step, then end your turn. Reports wake you as they land, so there is nothing to wait for. If what you need from a researcher changes while it works, use `agents_message` to send it the amended brief rather than letting it finish the wrong thing.
 
 The researcher never sees this conversation, so its brief has to carry everything. Name it for its topic and use this shape:
 
@@ -73,23 +73,23 @@ Constraints:
 
 ## 4. Take stock
 
-A researcher's report waking you means you are past asking and planning: don't repeat steps 1 and 2. Call `agents_list` first. If any researcher is still working, end your turn without writing anything, since its report will wake you when it lands.
+A researcher's report waking you means you are past asking and planning, so pick up here. Call `agents_list` first. If any researcher is still working, end your turn with nothing written, since its report will wake you when it lands.
 
 Once every researcher has reported, check for gaps that would leave the answer incomplete. You may run **one** more round of researchers to close them, and only for gaps that serious, because every round delays the report. Submit that round's topics through plan mode like the first, so the operator approves the extra reading too. After that round, go to step 5 whatever comes back.
 
 ## 5. Title it and write it
 
-Name the report file: a short, specific title in the operator's language and in sentence case. It is 3–6 words and under 50 characters, made of letters, numbers and single spaces only. Keep accented and non-Latin letters as written. Use no hyphens, apostrophes or other punctuation. For example: "EU AI Act startup obligations".
+Name the report file: a short, specific title in the operator's language and in sentence case. It becomes the file name, so it is 3–6 words and under 50 characters, made of letters, numbers and single spaces only (accented and non-Latin letters count as letters; hyphens, apostrophes and other punctuation are out). For example: "EU AI Act startup obligations".
 
 List `~/scratch/reports/` first, and recall any report you have already delivered in this conversation. Then:
 
 - For a new topic, choose a fresh title.
 - For an extension or update of an earlier report, choose a title that names the topic and what this request adds ("EU AI Act startup penalties"). If nothing distinguishes it, use the earlier title with the next number ("EU AI Act startup obligations 2"). Read the earlier report as background and reuse what still holds. Where it disagrees with the new reports, the new reports win. The new report stands on its own and never refers the reader back.
-- For an independent redo, choose a title as for an extension, but don't read the earlier report.
+- For an independent redo, choose a title as for an extension, and leave the earlier report unread so the redo stays independent.
 
-The title must differ from every existing report. Never overwrite or edit an earlier one.
+The title must differ from every existing report. The operator may already have read or shared an earlier one, so it stays as written.
 
-Write the report to `~/scratch/reports/{title}.md` in the format `references/report-format.md` sets out. Read that file before you start writing. Writing a file doesn't create its folder, so if `reports/` doesn't exist yet, create it with `files_create_directory`.
+Write the report to `~/scratch/reports/{title}.md` in the format `references/report-format.md` sets out. Read that file before you start writing.
 
 ## 6. Deliver it
 

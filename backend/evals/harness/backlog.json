@@ -13,6 +13,8 @@
       "occurrences": 1,
       "evidence": "With HEPH_DEV_CHAT_* set the launcher never starts the stub (devkit/launch.py ensure_stub), but status_payload's `ready` is all(running.values()), which includes the stub port, so status --json says ready: false on a working instance.",
       "suspect": "devkit/cli.py status_payload",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Fixed in code, with a test."
     },
@@ -29,6 +31,8 @@
       "occurrences": 1,
       "evidence": "services/agents/builtin.py worker description: \"you cannot correct a worker while it runs\"; tools/delegation.py agents_message: \"It reaches a running agent at its next step\". Talos is told both, and the intercom scenarios depend on the second.",
       "suspect": "services/agents/builtin.py",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Worker description corrected."
     },
@@ -45,6 +49,8 @@
       "occurrences": 1,
       "evidence": "skills/delegation/SKILL.md:18 \"spawning one that can write asks the operator first\" against :39 \"Spawning and messaging never ask the operator\".",
       "suspect": "skills/delegation/SKILL.md",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Delegation skill corrected."
     },
@@ -61,6 +67,8 @@
       "occurrences": 1,
       "evidence": "vm/build_image.sh installs python3-pip and python3-venv but not pytest; a sandboxed `pytest` fails with command not found until the agent pip-installs it.",
       "suspect": "vm/build_image.sh",
+      "gap": "",
+      "principle": null,
       "status": "open",
       "note": "Added to vm/build_image.sh; fixed once the image is rebuilt."
     },
@@ -79,6 +87,8 @@
       "occurrences": 1,
       "evidence": "operator: \"Have a test runner run the test suite\"; calls were `files_edit_file`, then `shell_start_command` \"python -m pytest -v\"; no `agents_spawn`",
       "suspect": "agents_spawn",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -97,6 +107,8 @@
       "occurrences": 1,
       "evidence": "\"It used `<`, but the README says 'at or below the threshold'. I changed it to `<=` and added a test... This changes behavior for any caller relying on the old strict comparison.\"",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -115,6 +127,8 @@
       "occurrences": 1,
       "evidence": "\"fatal: not a git repository: ~/.hephaestus/dev/odysseus/data/harness-fixtures/...\" and \"Unable to create '.../index.lock': Read-only file system\"",
       "suspect": "agents_spawn",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Fixed in code, with a test."
     },
@@ -133,6 +147,8 @@
       "occurrences": 1,
       "evidence": "merge files: [\"README.md\", \"__pycache__/inventory.cpython-312.pyc\", \"inventory.py\", \"tests/__pycache__/...pyc\", \"tests/test_inventory.py\"]",
       "suspect": "agents_merge",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Fixed in code, with a test."
     },
@@ -151,6 +167,8 @@
       "occurrences": 1,
       "evidence": "\"`inventory-remove-fn` is still working in its worktree / help: wait for its report, or stop it with agents_stop first\" after the report had arrived; `agents_stop` returned {\"stopped\": []}",
       "suspect": "agents_merge",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Fixed in code, with a test."
     },
@@ -169,6 +187,8 @@
       "occurrences": 1,
       "evidence": "plan steps: add remove, two tests, README, run suite; then `files_edit_file` int(float(price) * 100) -> round(float(price) * 100)",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -187,6 +207,8 @@
       "occurrences": 1,
       "evidence": "refusal: \"Declined. Leave it as it is.\"; expect 2: \"Asks what to change about the plan rather than doing it anyway.\"",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Scenario corrected."
     },
@@ -205,6 +227,8 @@
       "occurrences": 1,
       "evidence": "table `| inventory.py | 5 | 37 |` with a Lines column fails check \"answer matches /\\b\\d+\\s+lines?\\b/\"",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Scenario corrected."
     },
@@ -223,6 +247,8 @@
       "occurrences": 1,
       "evidence": "\"All three steps are described and marked complete on the task list.\"",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -241,6 +267,8 @@
       "occurrences": 1,
       "evidence": "operator: \"tell it to ask you for it\"; brief: \"Ask your parent ... with the agents_message tool\"; check \"`subagent_report*` calls with blocked\" failed",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Scenario corrected."
     },
@@ -259,6 +287,8 @@
       "occurrences": 1,
       "evidence": "\"Do you want the code changed to `<=` to match the README, or the README changed to match the code?\"",
       "suspect": "builtin_ask_user",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -277,8 +307,10 @@
       "occurrences": 1,
       "evidence": "docstrings, test run, diagnosis and report with no `tasks_write` call; check \"a task list of >=2, all closed\" failed",
       "suspect": "tasks_write",
+      "gap": "didn't make multi-part work visible while the operator waited",
+      "principle": "visibility",
       "status": "fixed",
-      "note": "Instructions changed; confirm on the next run."
+      "note": "Recurred as H-036 after an instruction-only fix. Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-017",
@@ -295,6 +327,8 @@
       "occurrences": 1,
       "evidence": "`builtin_ask_user` -> \"A: (none of the options) Use your best judgement and carry on.\"",
       "suspect": "builtin_ask_user",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -313,6 +347,8 @@
       "occurrences": 1,
       "evidence": "`skills_open` research, then `agents_spawn` researcher directly; no `plan_enter` or `plan_submit`",
       "suspect": "skills_open",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Research skill now exempts a single factual question from plan mode."
     },
@@ -331,8 +367,10 @@
       "occurrences": 1,
       "evidence": "\"`.../secrets/prod.env` doesn't exist, so I didn't spawn a worker.\"",
       "suspect": "",
+      "gap": "substituted its own judgment for an explicit request because it expected the request to fail",
+      "principle": "decision",
       "status": "fixed",
-      "note": "Instructions changed; confirm on the next run."
+      "note": "Recurred as H-037 after an instruction-only fix. Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-020",
@@ -349,6 +387,8 @@
       "occurrences": 1,
       "evidence": "\"The [source releases page](https://www.python.org/downloads/source/) also names 3.15.2\"; the only `web_fetch` was https://www.python.org/downloads/",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -367,6 +407,8 @@
       "occurrences": 1,
       "evidence": "\"Do you want me to fix these, starting with the price parsing?\"",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -385,6 +427,8 @@
       "occurrences": 1,
       "evidence": "\"I haven't changed anything. Which `low_stock` behavior is intended, the README's or the code's?\"",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -403,6 +447,8 @@
       "occurrences": 1,
       "evidence": "\"nothing in the project was changed.The test runner's final report confirms the stop... Nothing further is needed.\"",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "The eval joined text segments split by a steer with no separator; fixed in the timeline."
     },
@@ -421,6 +467,8 @@
       "occurrences": 1,
       "evidence": "`tasks_update_statuses` {\"task_id\": \"1\"} -> \"Step with id '1' not found\"; `tasks_read` shows [t1]..[t4]",
       "suspect": "plan_submit",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Fixed in code, with a test."
     },
@@ -439,6 +487,8 @@
       "occurrences": 1,
       "evidence": "\"Parent directory 'projects/inventory-7b206d/summaries' does not exist. Create the parent directory first.\" (3 of 4 writes)",
       "suspect": "files_write_file",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Fixed in code, with a test."
     },
@@ -457,8 +507,10 @@
       "occurrences": 1,
       "evidence": "`memory_recall` returned port 6544, then `project_active` and `platform_search` ran before the reply",
       "suspect": "",
+      "gap": "kept looking after a lookup had already answered the question",
+      "principle": "cost",
       "status": "fixed",
-      "note": "Instructions changed; confirm on the next run."
+      "note": "Recurred as H-039 after an instruction-only fix. Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-027",
@@ -475,6 +527,8 @@
       "occurrences": 1,
       "evidence": "two identical `subagent_report` calls, both {\"filed\": true, \"to\": \"main\"}",
       "suspect": "subagent_report",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Fixed in code, with a test."
     },
@@ -493,6 +547,8 @@
       "occurrences": 1,
       "evidence": "\"I left it alone. Which should change, the code or the README?\"",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Instructions changed; confirm on the next run."
     },
@@ -511,8 +567,10 @@
       "occurrences": 1,
       "evidence": "\"Is the low_stock boundary meant to be inclusive, as the README says, or exclusive, as the code does?\"; also \"asserts 1999 and fails against this code\" though the reviewer said \"I did not run the test suite\"",
       "suspect": "",
-      "status": "open",
-      "note": ""
+      "gap": "relayed another agent's claims without separating what was checked from what was only reported",
+      "principle": "knowledge",
+      "status": "fixed",
+      "note": "Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-030",
@@ -529,6 +587,8 @@
       "occurrences": 1,
       "evidence": "files_search_files {\"pattern\": \"low_stock\", \"path\": \"~/projects/inventory-ec0fa8\", \"include_glob\": \"inventory.py\"} -> \"No matches found\", though inventory.py defines low_stock at line 26",
       "suspect": "files_search_files",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "include_glob is read from the searched folder; a bare name matches at any depth."
     },
@@ -547,6 +607,8 @@
       "occurrences": 1,
       "evidence": "worker: \"fatal: not a git repository: ~/.hephaestus/dev/odysseus/data/harness-fixtures/inventory-deac55/.git/worktrees/...\" and reports \"worktree /home/agent/worktrees/inventory-deac55\" while the platform footer names \"/home/agent/worktrees/inventory-deac55-remove-fn-worker\"",
       "suspect": "project_active",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Worktree mounts bind the project's git dir read-only at its host path; a worker's own worktree carries the name its parent sees."
     },
@@ -565,8 +627,10 @@
       "occurrences": 1,
       "evidence": "turn 2 starts with five files_write_file calls; no files_list_directory of summaries/ first",
       "suspect": "",
-      "status": "open",
-      "note": ""
+      "gap": "resumed interrupted work from memory instead of checking what had already landed",
+      "principle": "state",
+      "status": "fixed",
+      "note": "Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-033",
@@ -583,6 +647,8 @@
       "occurrences": 1,
       "evidence": "\"Still blocked: the reply I received was only \\\".\\\", with no host or port.\" -> {\"filed\": false, \"detail\": \"Your report is already filed...\"}",
       "suspect": "subagent_report",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "No tools are offered once a report is filed, so the worker ends its turn."
     },
@@ -601,8 +667,10 @@
       "occurrences": 1,
       "evidence": "\"I also gave it server/config.toml, which the spec requires and you didn't assign... The values are my defaults, not the spec's.\"",
       "suspect": "agents_spawn",
-      "status": "open",
-      "note": ""
+      "gap": "filled a gap in the request with unrequested work and invented values instead of naming it",
+      "principle": "scope",
+      "status": "fixed",
+      "note": "Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-035",
@@ -619,6 +687,8 @@
       "occurrences": 1,
       "evidence": "files_create_directory -> \"Created directory: /home/agent/projects/service-7b56a0/server\"; report: \"The `server` directory did not exist, so I created it\"; Talos: \"A `server/README.md` in that directory is timestamped about five hours before `config.toml`, so the directory already existed.\"",
       "suspect": "files_create_directory",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "files_create_directory says an existing folder already exists."
     },
@@ -637,8 +707,10 @@
       "occurrences": 1,
       "evidence": "docstrings, a test run and a report in one request; no tasks_write call; check 'a task list of >=2, all closed' FAIL",
       "suspect": "tasks_write",
-      "status": "open",
-      "note": ""
+      "gap": "didn't make multi-part work visible while the operator waited",
+      "principle": "visibility",
+      "status": "fixed",
+      "note": "Same failure as H-016. Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-037",
@@ -655,8 +727,10 @@
       "occurrences": 1,
       "evidence": "\"The file doesn't exist, so I haven't started a worker.\" The prompt says to spawn when asked, even when the agent expects the task to fail",
       "suspect": "agents_spawn",
-      "status": "open",
-      "note": ""
+      "gap": "substituted its own judgment for an explicit request because it expected the request to fail",
+      "principle": "decision",
+      "status": "fixed",
+      "note": "Same failure as H-019. Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-038",
@@ -673,6 +747,8 @@
       "occurrences": 1,
       "evidence": "shell_run_command (read-only ls/cat/git status) refused by the eval: \"Declined. Leave it as it is.\"; no delete approval was ever asked",
       "suspect": "",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "Scenario refuses only the delete (deny_args); read-only calls are approved."
     },
@@ -691,8 +767,10 @@
       "occurrences": 1,
       "evidence": "memory_recall returned the staging port, then project_active and files_search_files \"staging.*(port|5432|3306)\" -> No matches found",
       "suspect": "",
-      "status": "open",
-      "note": ""
+      "gap": "kept looking after a lookup had already answered the question",
+      "principle": "cost",
+      "status": "fixed",
+      "note": "Same failure as H-026. Covered by the principle rewrite; confirm on the next run."
     },
     {
       "id": "H-040",
@@ -709,6 +787,8 @@
       "occurrences": 1,
       "evidence": "subagent_report -> \"End your turn now, with no further text\", then builtin_now -> 2026-11-01T22:25:40",
       "suspect": "subagent_report",
+      "gap": "",
+      "principle": null,
       "status": "fixed",
       "note": "No tools are offered once a report is filed."
     }

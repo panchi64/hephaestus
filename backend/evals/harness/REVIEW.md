@@ -20,7 +20,9 @@ Correct a grade when you can point to the rule it breaks and the transcript word
   - an issue the transcript doesn't support;
   - a wrong `kind` (a platform fault filed as behavior, an eval fault filed as either, or the reverse);
   - a severity two levels off;
-  - a clear problem left unfiled, above all a failed check the grader didn't explain.
+  - a clear problem left unfiled, above all a failed check the grader didn't explain;
+  - a behavior issue whose `gap` restates the instance instead of the class, or names the wrong `principle`;
+  - a recurrence of an `ISSUES.md` entry filed as new, or a `recurs` that names an entry with a different gap.
 
 ## What doesn't
 

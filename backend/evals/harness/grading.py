@@ -40,6 +40,18 @@ type IssueKind = Literal["platform", "behavior", "ux", "eval"]
 type Severity = Literal["blocker", "major", "minor", "polish"]
 SEVERITIES: tuple[Severity, ...] = ("blocker", "major", "minor", "polish")
 
+#: The ``prompts/agent.py`` principles, by the need each names: whose decision, what is
+#: known, the current state, the scope, what the operator sees, and the cost.
+type Principle = Literal["decision", "knowledge", "state", "scope", "visibility", "cost"]
+PRINCIPLES: tuple[Principle, ...] = (
+    "decision",
+    "knowledge",
+    "state",
+    "scope",
+    "visibility",
+    "cost",
+)
+
 GRADES_FILE = "grades.json"
 
 
@@ -86,6 +98,12 @@ class Issue(_Strict):
     evidence: str = Field(min_length=1)
     #: The file or component it likely lives in, when the transcript points at one.
     suspect: str = ""
+    #: For ``behavior``: the reasoning the agent skipped, stated as a class, not the instance.
+    gap: str = ""
+    #: For ``behavior``: the principle that reasoning belongs to.
+    principle: Principle | None = None
+    #: The backlog entry this is the same failure as, whatever its wording.
+    recurs: str | None = Field(default=None, pattern=r"^H-\d{3,}$")
 
 
 class Grades(_Strict):

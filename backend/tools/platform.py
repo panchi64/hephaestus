@@ -312,7 +312,8 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         it. An agent hit returns the agent's description and instructions.
 
         A `Locked chat` hit is a private conversation. Opening one needs `purpose`, and the
-        operator approves every read; if they decline, don't try to reach it another way.
+        operator approves every read. A decline is their decision about that conversation,
+        so it stays closed to you by any route.
 
         Args:
             ref: The `ref` exactly as the search hit gave it.
