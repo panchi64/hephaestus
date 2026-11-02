@@ -13,18 +13,25 @@ A variant file (``variants/<name>.toml``) names its edits by register id
 
 Each op resolves to the rewrites the backend applies (``agent/variant.py``) and to the probes
 :mod:`evals.harness.compare` checks in the recorded requests: a probe that should be absent
-from an arm and present in another is what shows the trial tested anything.
+from an arm and present in another is what shows the trial tested anything. Probes are
+matched in the system prompt, the instructions and the tool definitions only, so an edit to
+a skill's text can't be shown to have landed.
+
+Each letter's arm and probes are kept in the group's ``key.json`` beside its model, out of
+the run directory a blind grader reads.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from pathlib import Path
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
 
+from evals.drive.spec import KEY_FILE
 from prompts.boundaries import register
 
 VARIANTS_DIR = Path(__file__).with_name("variants")
@@ -104,4 +111,30 @@ def load_variant(name: str, directory: Path = VARIANTS_DIR) -> Variant:
 def write_arm(path: Path, variant: Variant | None) -> None:
     """Point the backend at ``variant``'s rewrites, or at none for the base arm."""
     rewrites = variant.rewrites() if variant else []
-    _ = path.write_text(json.dumps({"rewrite": rewrites}, indent=2) + "\n")
+    staged = path.with_name(f"{path.name}.tmp")
+    _ = staged.write_text(json.dumps({"rewrite": rewrites}, indent=2) + "\n")
+    # The backend reads the file on every request, so it must never see half of one.
+    os.replace(staged, path)
+
+
+class ArmKey(_Strict):
+    """One letter of a group's ``key.json``."""
+
+    model: str | None = None
+    arm: str = BASE
+    #: What the arm's requests must show (:class:`Probe`).
+    probes: tuple[Probe, ...] = ()
+
+
+_KEY = TypeAdapter(dict[str, ArmKey | str | None])
+
+
+def load_key(group_dir: Path) -> dict[str, ArmKey]:
+    """A group's letters; a letter keyed to a bare model name is a base arm."""
+    path = group_dir / KEY_FILE
+    if not path.is_file():
+        return {}
+    return {
+        letter: value if isinstance(value, ArmKey) else ArmKey(model=value)
+        for letter, value in _KEY.validate_json(path.read_text()).items()
+    }

@@ -18,7 +18,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from agent.variant import VARIANT_ENV, PromptVariant, prompt_variant_capability
+from agent.variant import VARIANT_ENV, PromptVariant, apply, prompt_variant_capability
 
 RULE = "Three or more steps always gets a list."
 
@@ -96,6 +96,14 @@ async def test_a_replacement_is_applied_where_the_sentence_was(tmp_path: Path):
     _ = await _agent(seen, PromptVariant(path)).run("go")
 
     assert "Work carefully.\nFour steps or more get a list. Report" in seen.instructions[0]
+
+
+def test_removing_a_list_item_takes_its_whole_line(tmp_path: Path):
+    path = tmp_path / "variant.json"
+    _write(path, ("- When you pick work back up, check first.", ""))
+    rewrites = PromptVariant(path).rewrites()
+    text = "Head.\n- One.\n- When you pick work\n  back up, check first.\n- Two."
+    assert apply(text, rewrites) == "Head.\n- One.\n- Two."
 
 
 @pytest.mark.parametrize("content", [None, ""], ids=["missing", "empty"])

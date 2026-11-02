@@ -16,25 +16,29 @@ from statistics import fmean
 from .grading import GRADES_FILE, Grades, load_grades
 from .record import RUN_FILE, Run, load_run
 from .spec import RUNS_DIR
-from .variants import BASE
+from .variants import BASE, ArmKey, load_key
 
 
 @dataclass(frozen=True, slots=True)
 class Arm:
     letter: str
+    key: ArmKey
     run: Run
     grades: Grades | None
 
     @property
     def label(self) -> str:
-        return f"{self.run.arm} ({self.letter})"
+        return f"{self.key.arm} ({self.letter})"
 
 
 def load_arms(group_dir: Path) -> list[Arm]:
+    key = load_key(group_dir)
     arms: list[Arm] = []
     for run_dir in sorted(p for p in group_dir.iterdir() if (p / RUN_FILE).is_file()):
         graded = (run_dir / GRADES_FILE).is_file()
-        arms.append(Arm(run_dir.name, load_run(run_dir), load_grades(run_dir) if graded else None))
+        grades = load_grades(run_dir) if graded else None
+        letter = key.get(run_dir.name, ArmKey())
+        arms.append(Arm(run_dir.name, letter, load_run(run_dir), grades))
     return arms
 
 
@@ -45,13 +49,13 @@ def _seen(run: Run, text: str) -> int:
 
 def landing(arms: list[Arm]) -> dict[str, list[str]]:
     """Per variant arm, why its edit didn't land; an empty list means it did."""
-    bases = [arm.run for arm in arms if arm.run.arm == BASE]
+    bases = [arm.run for arm in arms if arm.key.arm == BASE]
     problems: dict[str, list[str]] = {}
     for arm in arms:
-        if arm.run.arm == BASE:
+        if arm.key.arm == BASE:
             continue
         found: list[str] = []
-        for probe in arm.run.probes:
+        for probe in arm.key.probes:
             short = probe.text if len(probe.text) <= 60 else f"{probe.text[:57]}…"
             if probe.present and not _seen(arm.run, probe.text):
                 found.append(f"added text never sent: {short!r}")

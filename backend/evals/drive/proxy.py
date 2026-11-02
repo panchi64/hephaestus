@@ -50,20 +50,30 @@ def _free_port() -> int:
         return cast(tuple[str, int], sock.getsockname())[1]
 
 
-class _Request(BaseModel):
+#: The roles whose messages carry the system prompt and instructions (OpenAI-style bodies).
+_PROMPT_ROLES = frozenset({"system", "developer"})
+
+
+class RequestBody(BaseModel):
+    """The parts of a model request the proxy reads; the rest is forwarded untouched."""
+
     tools: list[object] = Field(default_factory=list)
     model: str = ""
+    #: The system prompt and instructions, wherever the provider's format puts them.
+    system: object = None
+    instructions: object = None
+    messages: list[object] = Field(default_factory=list)
 
 
-def _read(body: bytes) -> _Request:
+def parse_request(body: bytes) -> RequestBody:
     try:
-        return _Request.model_validate_json(body)
+        return RequestBody.model_validate_json(body)
     except ValidationError:
-        return _Request()
+        return RequestBody()
 
 
 def carries_tools(body: bytes) -> bool:
-    return bool(_read(body).tools)
+    return bool(parse_request(body).tools)
 
 
 def _strings(value: object) -> list[str]:
@@ -76,16 +86,21 @@ def _strings(value: object) -> list[str]:
     return []
 
 
-def watched_in(body: bytes, texts: tuple[str, ...]) -> tuple[str, ...]:
-    """Which of ``texts`` appear anywhere in the request, compared with whitespace collapsed."""
+def watched_in(request: RequestBody, texts: tuple[str, ...]) -> tuple[str, ...]:
+    """Which of ``texts`` the request's prompt or tool definitions carry, compared with
+    whitespace collapsed. History and tool results are left out: a file the agent read can
+    quote a sentence the prompt no longer holds."""
     if not texts:
         return ()
-    try:
-        decoded = cast(object, json.loads(body))
-    except ValueError:
-        return ()
-    blob = " ".join(" ".join(_strings(decoded)).split())
-    return tuple(text for text in texts if " ".join(text.split()) in blob)
+    prompt = [request.system, request.instructions, request.tools]
+    prompt += [
+        message
+        for message in request.messages
+        if isinstance(message, dict)
+        and cast(dict[str, object], message).get("role") in _PROMPT_ROLES
+    ]
+    blobs = [" ".join(s.split()) for s in _strings(prompt)]
+    return tuple(text for text in texts if any(" ".join(text.split()) in b for b in blobs))
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,10 +182,10 @@ class RecordingProxy:
 
     async def _forward(self, request: Request) -> StreamingResponse:
         body = await request.body()
-        parsed = _read(body)
+        parsed = parse_request(body)
         tools = bool(parsed.tools)
         entry = Proxied(
-            self._bucket, self._tag, parsed.model, tools, watched_in(body, self._watched)
+            self._bucket, self._tag, parsed.model, tools, watched_in(parsed, self._watched)
         )
         self._log.setdefault(self._bucket, []).append(entry)
         if self._armed is not None and tools:

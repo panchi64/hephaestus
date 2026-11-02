@@ -388,4 +388,4 @@ Every prohibition in model-facing text has an entry in `backend/prompts/register
 | `preference` | It is the operator's taste, which no principle implies. |
 | `earned` | The behavior recurred after a principle-only fix; `evidence` names the backlog ids. |
 
-Anything else is a patch, and it goes. `tests/test_prompt_boundaries.py` fails when a prohibition has no entry, when an entry's sentence is gone from its source, and when an `earned` entry names no evidence. `uv run python -m devkit.prompts corpus` lists the sources it scans.
+Anything else is a patch, and it goes. `tests/test_prompt_boundaries.py` fails when a prohibition has no entry, when a registered sentence is copied into a source its entry doesn't cover, when an entry's sentence is gone from its source, and when an `earned` entry names no evidence. `uv run python -m devkit.prompts corpus` lists the sources it scans.

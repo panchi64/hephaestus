@@ -690,3 +690,154 @@ id = "B-512"
 text = "Use it for anything current, public or outside what you know for certain, and check rather than answer from memory when a fact may have changed."
 source = "tool.web_search"
 kind = "fact"
+
+[[boundary]]
+id = "B-513"
+text = "If it does not, read what you need with web_fetch or web_search, or ask them how they want to go on."
+source = "tools.browse._CLOSED"
+kind = "fact"
+
+[[boundary]]
+id = "B-514"
+text = "If the work still needs a browser, say what you were in the middle of and call navigate to start again — the saved logins carry over, the page you were on does not."
+source = "tools.browse._CLOSED"
+kind = "fact"
+
+[[boundary]]
+id = "B-515"
+text = "This is something they did, not a failure to retry: they may well be finished with it."
+source = "tools.browse._CLOSED"
+kind = "fact"
+
+[[boundary]]
+id = "B-516"
+text = "The browser is not available right now — the services VM's browser is not running."
+source = "tools.browse._UNAVAILABLE"
+kind = "fact"
+
+[[boundary]]
+id = "B-517"
+text = "Use web_fetch or web_search to read a page instead, or try again later."
+source = "tools.browse._UNAVAILABLE"
+kind = "fact"
+
+[[boundary]]
+id = "B-518"
+text = "No operator is available to answer in this run (it is running unattended)."
+source = "tools.builtin.NO_OPERATOR"
+kind = "fact"
+
+[[boundary]]
+id = "B-519"
+text = "This command was not run: the conversation's VM changed after Auto cleared it (it became unavailable, gained hosts beyond its defaults, or mounted a writable checkout)."
+source = "tools.home_workspace.ENV_CHANGED"
+kind = "fact"
+
+[[boundary]]
+id = "B-520"
+text = "This conversation is now in plan mode: nothing you call can change anything."
+source = "tools.plan.ENTERED"
+kind = "fact"
+
+[[boundary]]
+id = "B-521"
+text = "No operator is available to approve a plan in this run (it is running unattended)."
+source = "tools.plan.NO_OPERATOR"
+kind = "fact"
+
+[[boundary]]
+id = "B-522"
+text = "This plan could not be stored, so it cannot be put to the operator (the vault is locked)."
+source = "tools.plan.NO_RECORD"
+kind = "fact"
+
+[[boundary]]
+id = "B-523"
+text = "Plan mode is not available in this run — it belongs to a conversation, and this one has none."
+source = "tools.plan.NO_THREAD"
+kind = "fact"
+
+[[boundary]]
+id = "B-524"
+text = "The full result was not saved because it may hold personal data.]"
+source = "tools.spill._NOT_SAVED_NOTE"
+kind = "fact"
+
+[[boundary]]
+id = "B-525"
+text = "A group's tools are in your list only once you have loaded it, which is what keeps this conversation small:"
+source = "tools.tool_search._INDEX"
+kind = "fact"
+
+[[boundary]]
+id = "B-526"
+text = "Load a group when the work needs it, instead of telling the operator there is no way to do something."
+source = "tools.tool_search._INDEX"
+kind = "fact"
+
+[[boundary]]
+id = "B-527"
+text = "When you do not know which group holds what you need, describe the work instead and the closest tools are loaded."
+source = "tools.tool_search._QUERIES_DESCRIPTION"
+kind = "fact"
+
+[[boundary]]
+id = "B-528"
+text = "Loads tools that are not in your list yet, and returns the ones it loaded."
+source = "tools.tool_search._TOOL_DESCRIPTION"
+kind = "fact"
+
+[[boundary]]
+id = "B-529"
+text = "Only the operator can unlock it — ask them to open it before trying again."
+source = "tools.vault._LOCKED"
+kind = "fact"
+
+[[boundary]]
+id = "B-530"
+text = "The password vault is not available in this session, so stored credentials cannot be read."
+source = "tools.vault._UNAVAILABLE"
+kind = "fact"
+
+[[boundary]]
+id = "B-531"
+text = "This conversation has no project workspace: its project is missing or its folder or git worktree could not be opened."
+source = "tools.workspace.NO_PROJECT"
+kind = "fact"
+
+[[boundary]]
+id = "B-532"
+text = "Files cannot be read or written, and nothing will run on the operator's host."
+source = "tools.workspace.NO_WORKSPACE"
+kind = "safety"
+why = "VM-backed work never falls back to the host; the model must not route around a missing runtime."
+
+[[boundary]]
+id = "B-533"
+text = "Your computer is unavailable right now: no runtime is configured."
+source = "tools.workspace.NO_WORKSPACE"
+kind = "fact"
+
+[[boundary]]
+id = "B-534"
+text = "List a directory before concluding a file is missing, and do not rebuild something that is already listed."
+source = "tools.workspace_context._PREAMBLE_PARTIAL"
+kind = "earned"
+principle = "state"
+why = "Redoing work that already landed recurred under the principle alone; this is the point of use, beside the listing that shows what landed."
+evidence = ["H-032"]
+
+[[boundary]]
+id = "B-535"
+text = "This is a sample, not the whole of it — work you did earlier in this conversation is here, including work from before anything you can still see in the history above."
+source = "tools.workspace_context._PREAMBLE_PARTIAL"
+kind = "fact"
+
+[[boundary]]
+id = "B-536"
+text = "Read a file before assuming what is in it, and do not rebuild something that is already listed."
+source = "tools.workspace_context._PREAMBLE_WHOLE"
+kind = "earned"
+principle = "state"
+why = "Redoing work that already landed recurred under the principle alone; this is the point of use, beside the listing that shows what landed."
+evidence = ["H-032"]

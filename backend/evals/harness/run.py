@@ -30,11 +30,13 @@ import json
 import random
 import string
 import sys
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+from pydantic import ValidationError
 
 from devkit.instance import DevInstance, resolve
 from devkit.prompts import render as render_prompt
@@ -60,7 +62,7 @@ from .record import CONTEXT_DIR, RUN_FILE, TRANSCRIPT_FILE, Routing, Run
 from .routing import RefError, Router, split_ref
 from .sample import Context, Harness, score
 from .spec import HOSTED_TOKEN, KEY_FILE, LOCAL_TOKEN, RUNS_DIR, Choice, Scenario, load_scenarios
-from .variants import BASE, VARIANTS_DIR, Variant, load_variant, write_arm
+from .variants import BASE, VARIANTS_DIR, ArmKey, Variant, load_variant, write_arm
 
 #: The stub endpoint a stub run adds so routing scenarios have a second model to pick.
 STUB_LOCAL = "stub-local"
@@ -108,14 +110,19 @@ def _parser() -> argparse.ArgumentParser:
 
 def _arms(names: list[str] | None) -> dict[str, Variant | None] | str:
     """Each arm's variant (``None`` for the base), or why one can't be loaded."""
+    names = names or [BASE]
+    if len(set(names)) < len(names):
+        return f"--arms names an arm twice: {' '.join(names)}"
     arms: dict[str, Variant | None] = {}
-    for name in names or [BASE]:
+    for name in names:
         try:
             arms[name] = None if name == BASE else load_variant(name)
         except FileNotFoundError:
             return f"no variant {name!r} in {VARIANTS_DIR}"
         except KeyError as exc:
             return f"variant {name!r} names {exc}, which the register doesn't hold"
+        except (tomllib.TOMLDecodeError, ValidationError) as exc:
+            return f"variant {name!r} is malformed: {exc}"
     return arms
 
 
@@ -242,6 +249,9 @@ async def main(argv: list[str]) -> int:
     )
     models: list[str | None] = list(args.models) if args.models else [None]
     passes = [(model, arm) for model in models for arm in arms]
+    if len(passes) > len(string.ascii_uppercase):
+        print(f"{len(passes)} model and arm pairs, but only 26 letters to run them under.")
+        return 2
     random.shuffle(passes)
     letters = dict(zip(string.ascii_uppercase, passes, strict=False))
 
@@ -283,8 +293,12 @@ async def main(argv: list[str]) -> int:
             router.endpoints = {e.name: e for e in await driver.endpoints()}
             group_dir.mkdir(parents=True)
             _ = (group_dir / "prompt.md").write_text(f"`{fingerprint}`\n\n{prompt}\n")
-            key = {letter: {"model": m, "arm": a} for letter, (m, a) in letters.items()}
-            _ = (group_dir / KEY_FILE).write_text(json.dumps(key, indent=2) + "\n")
+            key = {
+                letter: ArmKey(model=m, arm=a, probes=tuple(v.probes()) if (v := arms[a]) else ())
+                for letter, (m, a) in letters.items()
+            }
+            body = {letter: entry.model_dump() for letter, entry in key.items()}
+            _ = (group_dir / KEY_FILE).write_text(json.dumps(body, indent=2) + "\n")
             live.watch(watched)
             for letter, (model, arm) in letters.items():
                 print(f"→ run {letter}", flush=True)
@@ -310,9 +324,10 @@ async def main(argv: list[str]) -> int:
                     group=label,
                     name=letter,
                     started_at=f"{datetime.now(UTC):%Y-%m-%d %H:%M} UTC",
-                    prompt_fingerprint=fingerprint,
-                    arm=arm,
-                    probes=variant.probes() if variant else [],
+                    # A variant arm ships different text, so it gets a fingerprint of its own.
+                    prompt_fingerprint=fingerprint
+                    if variant is None
+                    else prompt_fingerprint(prompt + json.dumps(variant.rewrites())),
                     stub=live.stub,
                     provider=live.endpoint.provider,
                     routing=Routing(

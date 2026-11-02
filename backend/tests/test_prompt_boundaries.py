@@ -36,14 +36,36 @@ def _entries() -> tuple[Boundary, ...]:
     return register().boundary
 
 
+def _covers(entry: Boundary, source: str) -> bool:
+    """An entry covers its own source and any source composed with it (``INSTRUCTIONS``
+    holds ``_COST``; a tool's description holds its docstring constant), but not an
+    independent copy of its sentence elsewhere."""
+    own, other = _sources().get(entry.source), _sources()[source]
+    return entry.source == source or (own is not None and (own in other or other in own))
+
+
 def test_every_prohibition_is_registered():
-    registered = {entry.text for entry in _entries()}
-    found = {sentence for source in _corpus() for sentence in prohibitions(source.text)}
-    missing = sorted(found - registered)
+    by_text: dict[str, list[Boundary]] = {}
+    for entry in _entries():
+        by_text.setdefault(entry.text, []).append(entry)
+    missing: set[str] = set()
+    copied: set[str] = set()
+    for source in _corpus():
+        for sentence in prohibitions(source.text):
+            entries = by_text.get(sentence, [])
+            if not entries:
+                missing.add(f"  [{_home(sentence)}] {sentence}")
+            elif not any(_covers(entry, source.name) for entry in entries):
+                copied.add(f"  [{source.name}] {sentence} (registered as {entries[0].id})")
     assert not missing, (
         "Unregistered prohibitions. Add each to prompts/register/ with its kind and why, "
         + "or rewrite it as a fact or a principle:\n"
-        + "\n".join(f"  [{_home(sentence)}] {sentence}" for sentence in missing)
+        + "\n".join(sorted(missing))
+    )
+    assert not copied, (
+        "Registered prohibitions copied into another source. Keep each in the source that "
+        + "owns it, or register the copy with its own reason:\n"
+        + "\n".join(sorted(copied))
     )
 
 
@@ -59,10 +81,10 @@ def test_every_entry_is_still_in_its_source():
     )
 
 
-def test_ids_and_texts_are_unique():
+def test_ids_and_placements_are_unique():
     for field, values in (
         ("id", [entry.id for entry in _entries()]),
-        ("text", [entry.text for entry in _entries()]),
+        ("text in one source", [(entry.text, entry.source) for entry in _entries()]),
     ):
         repeated = [value for value, n in Counter(values).items() if n > 1]
         assert not repeated, f"duplicate {field}: {repeated}"

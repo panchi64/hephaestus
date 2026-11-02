@@ -9,16 +9,20 @@ string in ``prompts/`` (``utility.TITLE_INSTRUCTIONS``). ``list`` prints the tar
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib
+import pkgutil
 import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import cast, get_args
 
 from pydantic_ai.toolsets import AbstractToolset
 
+import tools
 from prompts.agent import (
     INSTRUCTIONS,
     SPAWNED_INSTRUCTIONS,
@@ -96,7 +100,7 @@ _EXTRA_STRINGS: Mapping[str, tuple[str, ...]] = {
         "FINDINGS_INSTRUCTION",
     ),
     "harness.manifests._subagent_wake": ("OPERATOR_STOPPED", "RESPAWN_HINT", "GRACE_NOTE"),
-    "services.commands.expand": ("SKILL_INVOKED", "AGENT_INVOKED"),
+    "services.commands.expand": ("_NO_ARGUMENT", "SKILL_INVOKED", "AGENT_INVOKED"),
     "core.untrusted": ("_INSTRUCTION",),
     "plugins.mail.services.style": ("_LEARN_INSTRUCTIONS", "_DRAFT_INSTRUCTIONS"),
     "plugins.mail.services.triage": ("_INSTRUCTIONS",),
@@ -104,11 +108,39 @@ _EXTRA_STRINGS: Mapping[str, tuple[str, ...]] = {
 }
 
 
-def _defines(module: str, name: str) -> bool:
-    """Whether ``prompts.<module>`` assigns ``name`` itself rather than importing it."""
-    path = importlib.import_module(f"prompts.{module}").__file__
+#: Two words in a row: a sentence, as opposed to a tool name or a path.
+_PROSE = re.compile(r"[a-z]{2,} [a-z]{2,}")
+#: Templates rendered into a tool's description, which the corpus already holds as `tool.*`.
+_DESCRIPTION_TEMPLATES = frozenset({"tools.delegation._SPAWN_DOC"})
+
+
+@cache
+def _assigned(dotted: str) -> frozenset[str]:
+    """The names module ``dotted`` assigns at its top level, as opposed to imports."""
+    path = importlib.import_module(dotted).__file__
     assert path is not None
-    return re.search(rf"^{name}\s*[:=]", Path(path).read_text(), re.MULTILINE) is not None
+    names: set[str] = set()
+    for node in ast.parse(Path(path).read_text()).body:
+        if isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return frozenset(names)
+
+
+def _tool_strings() -> list[Source]:
+    """What a tool hands back as prose: every sentence-shaped constant a ``tools`` module
+    assigns (a refusal, a notice, a result message)."""
+    sources: list[Source] = []
+    for info in pkgutil.walk_packages(tools.__path__, "tools."):
+        namespace: dict[str, object] = vars(importlib.import_module(info.name))
+        for name in sorted(_assigned(info.name)):
+            dotted, value = f"{info.name}.{name}", namespace.get(name)
+            if dotted in _DESCRIPTION_TEMPLATES or not name.isupper():
+                continue
+            if isinstance(value, str) and _PROSE.search(value):
+                sources.append(Source(dotted, value))
+    return sources
 
 
 def full_tool_categories() -> dict[str, AbstractToolset[RunDeps]]:
@@ -133,7 +165,7 @@ def corpus() -> list[Source]:
         Source(f"prompts.{module}.{name}", text)
         for module in _PROMPT_MODULES
         for name, text in _module_strings(module).items()
-        if _defines(module, name)
+        if name in _assigned(f"prompts.{module}")
     ]
     for dotted, names in _EXTRA_STRINGS.items():
         namespace: dict[str, object] = vars(importlib.import_module(dotted))
@@ -157,7 +189,7 @@ def corpus() -> list[Source]:
         Source(f"tool.{info.name}", info.description)
         for info in tool_catalog(full_tool_categories())
     ]
-    return sources
+    return sources + _tool_strings()
 
 
 class _Args(argparse.Namespace):

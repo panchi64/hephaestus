@@ -84,6 +84,15 @@ NO_RECORD = (
 )
 
 
+ENTERED = (
+    "This conversation is now in plan mode: nothing you call can change anything. "
+    "Investigate by reading, and ask the operator with `builtin_ask_user` wherever "
+    "the request is open to more than one reading or a choice is theirs to make — "
+    "planning on a guess is what makes a plan need rewriting. Then submit with "
+    "`plan_submit`."
+)
+
+
 def _unattended(ctx: RunContext[RunDeps]) -> bool:
     """Whether this run has nobody in front of it to answer a plan. See :data:`NO_OPERATOR`."""
     return not is_attended(ctx.deps.run.kind)
@@ -141,13 +150,7 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
             return NO_OPERATOR
         _ = await plans.enter(conversation_id, reason=reason, run=ctx.deps.run)
         retarget(ctx, PLANNING_LEVEL)
-        return (
-            "This conversation is now in plan mode: nothing you call can change anything. "
-            "Investigate by reading, and ask the operator with `builtin_ask_user` wherever "
-            "the request is open to more than one reading or a choice is theirs to make — "
-            "planning on a guess is what makes a plan need rewriting. Then submit with "
-            "`plan_submit`."
-        )
+        return ENTERED
 
     @toolset.tool(name="read")
     async def read(ctx: RunContext[RunDeps]) -> str:

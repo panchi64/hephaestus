@@ -1,5 +1,9 @@
-# Whether the three-step floor works better at the point of use, in `tasks_write` (H-036).
-# Scenarios: main-multi-step, flow-task-list.
+# Whether the three-step floor works at the point of use, in `tasks_write`, instead of in the
+# visibility principle (H-036). Scenarios: main-multi-step, flow-task-list.
+
+[[op]]
+boundary = "B-083"
+action = "remove"
 
 [[op]]
 add = "Three or more steps always gets a list, however small each one looks."

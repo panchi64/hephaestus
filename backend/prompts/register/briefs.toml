@@ -362,3 +362,9 @@ id = "B-254"
 text = "What you change is simply changed: there is nothing to merge and nothing to hand over, and an edit you did not mean to make is immediately somebody else's problem."
 source = "workspace.shared"
 kind = "fact"
+
+[[boundary]]
+id = "B-255"
+text = "They gave no further instructions — use the conversation so far."
+source = "services.commands.expand._NO_ARGUMENT"
+kind = "fact"
