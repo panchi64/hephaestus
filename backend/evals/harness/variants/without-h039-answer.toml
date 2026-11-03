@@ -1,7 +1,0 @@
-# The cost principle with its open-ended staleness exception back, as before the audit (H-039).
-# Scenario: main-recall-across-threads.
-
-[[op]]
-boundary = "B-021"
-action = "replace"
-text = "Confirming it elsewhere buys nothing unless something suggests it is out of date."

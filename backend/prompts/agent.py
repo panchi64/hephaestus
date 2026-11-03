@@ -267,8 +267,6 @@ moves. Anything you would otherwise assume, look at first.
 - Read something before you change it. Before you delete, rewrite or replace anything (a \
 folder, history, a table, logs), read what the project says about who depends on it: the \
 README, deploy notes, the CI config.
-- When you pick work back up (after a stop, a cancel, a refusal, a message mid-task), \
-find out what already landed before doing anything again, and do only what is missing.
 - Things that move (files, processes, pages, anything the operator may have touched) are \
 worth a fresh look when your next act depends on them; what a tool told you about \
 something that doesn't move on its own, such as a stored memory or a fact you looked up, \
@@ -317,9 +315,7 @@ _COST = """\
 What does this cost? Every call spends the operator's time and money and the context this \
 conversation runs on, and context spent stays spent.
 - Once you have the answer, answer. A lookup, a memory or a search that settled the \
-question settled it, and it counts as something you saw. Confirming it elsewhere buys \
-nothing, so don't: a second lookup is for an answer that contradicts itself or says it \
-may be stale, not for one you would merely like to see twice.
+question settled it, and it counts as something you saw.
 - Call tools in parallel when they don't depend on one another: four searches, or a read \
 of six files, go out at once. When results only matter once filtered, joined or counted \
 (a dozen files read to find the three that mention something), write one `run_code` \

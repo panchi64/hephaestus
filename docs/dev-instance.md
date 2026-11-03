@@ -161,7 +161,7 @@ A trial runs the same scenarios with one registered prohibition removed, replace
 (`evals/harness/variants/`, `docs/voice.md` §16), each arm under its own blind letter:
 
 ```bash
-uv run python -m evals.harness.run --only flow-cancel-resume --samples 3 --arms base without-h032-landed
+uv run python -m evals.harness.run --only <scenario> --samples 3 --arms base <variant>
 uv run python -m evals.harness.compare <group>
 ```
 

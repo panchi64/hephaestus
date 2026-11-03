@@ -630,8 +630,8 @@
       "suspect": "",
       "gap": "resumed interrupted work from memory instead of checking what had already landed",
       "principle": "state",
-      "status": "open",
-      "note": "Boundary present and recurred (B-080); the next lever is a mechanism, not prose."
+      "status": "fixed",
+      "note": "Fixed by the stop mechanism (e9bb1b57): unfinished calls of a stopped turn say they may have landed, and a plain Stop sends the stop notice. Re-trial 2026-11-03-0039: all 9 resumed turns checked first in every arm, B-080 removed included; B-080 deleted."
     },
     {
       "id": "H-033",
@@ -766,14 +766,14 @@
         "main-recall-across-threads"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-02-2339-harness (2026-11-02)",
-      "occurrences": 3,
-      "evidence": "memory_recall -> \"listens on port 6544\", then project_active and platform_search before the reply (also samples 2 and 3: project_active, memory_open)",
+      "last_seen": "2026-11-03-0039-harness (2026-11-03)",
+      "occurrences": 6,
+      "evidence": "memory_recall -> \"listens on port 6544\", then project_active before the reply",
       "suspect": "",
       "gap": "kept looking after a lookup had already answered the question",
       "principle": "cost",
       "status": "regressed",
-      "note": "Recurred after a fix in 2026-11-02-2339-harness as 'Extra lookups after memory_recall already answered the port question'. The fix was: Earned boundary B-021: a second lookup only for an answer that contradicts itself or may be stale. Trial: without-h039-answer."
+      "note": "B-021 changed nothing in two trials and is deleted. Auto-recall (memory_recall_context) is in place but untested: the dev instance embeds with the stub. Next: a run with HEPH_DEV_EMBED_MODEL set."
     },
     {
       "id": "H-040",
@@ -901,6 +901,7 @@
     "2026-11-01-baseline",
     "2026-11-01-post-fixes",
     "2026-11-02-principles",
-    "2026-11-02-2339-harness"
+    "2026-11-02-2339-harness",
+    "2026-11-03-0039-harness"
   ]
 }

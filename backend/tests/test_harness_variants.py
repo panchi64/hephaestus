@@ -22,6 +22,7 @@ from evals.harness.variants import (
     ArmKey,
     Op,
     Probe,
+    Variant,
     load_key,
     load_variant,
     write_arm,
@@ -38,9 +39,14 @@ def test_every_shipped_variant_resolves_against_the_register(name: str):
     assert variant.probes()
 
 
-def test_a_removal_probes_for_the_registered_sentence():
-    variant = load_variant("without-h032-landed")
-    text = register().by_id("B-080").text
+def _removal(directory: Path) -> Variant:
+    _ = (directory / "drop.toml").write_text('[[op]]\nboundary = "B-495"\naction = "remove"\n')
+    return load_variant("drop", directory)
+
+
+def test_a_removal_probes_for_the_registered_sentence(tmp_path: Path):
+    variant = _removal(tmp_path)
+    text = register().by_id("B-495").text
     assert variant.rewrites() == [{"find": text, "replace": ""}]
     assert variant.probes() == [Probe(text=text, present=False)]
 
@@ -72,13 +78,14 @@ async def test_an_unknown_arm_stops_the_run(capsys: pytest.CaptureFixture[str]):
 
 
 async def test_the_arm_file_is_what_the_backend_reads(tmp_path: Path):
-    path = tmp_path / "variant.json"
+    path = tmp_path / "arm" / "variant.json"
+    path.parent.mkdir()
     variant = PromptVariant(path)
-    write_arm(path, load_variant("without-h032-landed"))
+    write_arm(path, _removal(tmp_path))
     assert len(variant.rewrites()) == 1
     write_arm(path, None)
     assert variant.rewrites() == ()
-    assert [p.name for p in tmp_path.iterdir()] == ["variant.json"]
+    assert [p.name for p in path.parent.iterdir()] == ["variant.json"]
 
 
 def test_an_unreadable_arm_file_applies_nothing(tmp_path: Path):
@@ -136,7 +143,7 @@ def test_the_backlog_merge_leaves_variant_arms_out(tmp_path: Path):
         sample=1,
         checks=[CheckResult(label="lists", passed=False, kind="behavior", detail="no list")],
     )
-    for letter, arm in (("A", BASE), ("B", "without-h032-landed")):
+    for letter, arm in (("A", BASE), ("B", "v")):
         run = _run(arm, sent=True)
         run.samples = [failing]
         (tmp_path / letter).mkdir()

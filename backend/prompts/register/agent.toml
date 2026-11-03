@@ -143,15 +143,6 @@ source = "prompts.agent._COST"
 kind = "fact"
 
 [[boundary]]
-id = "B-021"
-text = "Confirming it elsewhere buys nothing, so don't: a second lookup is for an answer that contradicts itself or says it may be stale, not for one you would merely like to see twice."
-source = "prompts.agent._COST"
-kind = "earned"
-principle = "cost"
-why = "Extra confirming lookups recurred under the cost principle alone, and its open-ended staleness exception gave every lookup a reason."
-evidence = ["H-026", "H-039"]
-
-[[boundary]]
 id = "B-022"
 text = "When results only matter once filtered, joined or counted (a dozen files read to find the three that mention something), write one `run_code` script that calls the tools as functions and returns just what you need."
 source = "prompts.agent._COST"
@@ -572,15 +563,6 @@ source = "prompts.agent._STATE"
 kind = "preference"
 principle = "state"
 why = "The state principle's own statement."
-
-[[boundary]]
-id = "B-080"
-text = "- When you pick work back up (after a stop, a cancel, a refusal, a message mid-task), find out what already landed before doing anything again, and do only what is missing."
-source = "prompts.agent._STATE"
-kind = "earned"
-principle = "state"
-why = "Redoing landed work after a cancel recurred with this line in place; the next lever is a mechanism, not more prose."
-evidence = ["H-032"]
 
 [[boundary]]
 id = "B-081"
