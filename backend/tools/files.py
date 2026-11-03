@@ -113,6 +113,18 @@ class _HomeFiles(WrapperToolset[RunDeps]):
         if name == "create_directory" and isinstance(path, str) and await _is_dir(home, path):
             # The harness answers "Created directory" here too, which models repeat as fact.
             return f"{path} already exists; nothing was created."
+        if name in _WALKS and isinstance(path, str) and await _is_missing(home, path):
+            # The harness reports a missing folder as "Not a directory", and a search of one as
+            # "No matches found", which models read as a folder that exists and is empty.
+            raise ModelRetry(
+                render_tool_error(
+                    f"no such folder: {path}",
+                    hints=[
+                        "it does not exist; list its parent to see what does, "
+                        + "or create it with files_create_directory"
+                    ],
+                )
+            )
         if name == "search_files" and isinstance(path, str):
             tool_args = _glob_from(path, tool_args)
         if name in WRITE_TOOLS and isinstance(path, str):
@@ -237,6 +249,16 @@ async def _is_dir(home: RunHome, path: str) -> bool:
         return (await home.backend.stat(path)).is_dir
     except OSError, ValueError:
         return False
+
+
+async def _is_missing(home: RunHome, path: str) -> bool:
+    try:
+        _ = await home.backend.stat(path)
+    except FileNotFoundError:
+        return True
+    except OSError, ValueError:
+        return False
+    return False
 
 
 def _glob_from(path: str, tool_args: dict[str, object]) -> dict[str, object]:
