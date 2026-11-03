@@ -274,14 +274,9 @@ def swap_tool_catalog(app: FastAPI, categories: Mapping[str, AbstractToolset[Run
 
 def full_tool_categories() -> dict[str, AbstractToolset[RunDeps]]:
     """The category mapping a real app assembles (core plus manifest `toolsets`), unbooted."""
-    from harness.discovery import discover_manifests
-    from tools.toolsets import core_categories
+    from devkit.prompts import full_tool_categories as assembled
 
-    categories = core_categories()
-    for manifest in discover_manifests():
-        for name, factory in manifest.toolsets:
-            categories[name] = factory()
-    return categories
+    return assembled()
 
 
 @asynccontextmanager

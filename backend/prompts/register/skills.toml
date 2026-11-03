@@ -1,0 +1,412 @@
+# The built-in skills (`backend/skills/`): procedure for one kind of work. A skill keeps what is
+# procedure for that work; conduct that holds everywhere lives in the principles.
+
+[[boundary]]
+id = "B-301"
+text = "- A secret's environment variable holds a placeholder that becomes the real value only in the URL or headers of HTTPS requests to its own host."
+source = "skill.build-a-plugin/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-302"
+text = "- List only the hosts the code calls under `egress`."
+source = "skill.build-a-plugin/SKILL.md"
+kind = "safety"
+why = "Egress is the plugin's network bound; an extra host widens it for nothing."
+
+[[boundary]]
+id = "B-303"
+text = "A test reaches only the declared hosts this conversation may also reach."
+source = "skill.build-a-plugin/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-304"
+text = "For a one-off, run code instead."
+source = "skill.build-a-plugin/SKILL.md"
+kind = "preference"
+principle = "cost"
+why = "When a plugin is worth building."
+
+[[boundary]]
+id = "B-305"
+text = "Never log it, and never send it anywhere else."
+source = "skill.build-a-plugin/SKILL.md"
+kind = "safety"
+why = "A leaked secret can't be taken back."
+
+[[boundary]]
+id = "B-306"
+text = "Only the operator publishes a plugin, after reading it in the Plugins area."
+source = "skill.build-a-plugin/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-307"
+text = "They run in the platform VM, in the plugin's own virtualenv, and reach only the hosts the plugin declares."
+source = "skill.build-a-plugin/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-308"
+text = "Use when a task needs a capability no existing tool provides. ---"
+source = "skill.build-a-plugin/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-309"
+text = "```yaml name: weather description: Forecasts from Open-Meteo. requirements: [httpx] # pip lines egress: [api.open-meteo.com] # the only hosts its code can reach secrets: # the operator sets the values OPEN_METEO_KEY: api.open-meteo.com tools:"
+source = "skill.build-a-plugin/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-310"
+text = "- `can_delegate`: only when the role genuinely fans out further."
+source = "skill.build-an-agent/SKILL.md"
+kind = "preference"
+why = "Agent design guidance."
+
+[[boundary]]
+id = "B-311"
+text = "For a one-off job, spawn an existing agent with a good brief instead."
+source = "skill.build-an-agent/SKILL.md"
+kind = "preference"
+principle = "cost"
+why = "When a new agent is worth defining."
+
+[[boundary]]
+id = "B-312"
+text = "If it went wrong, fix the brief, not just the task."
+source = "skill.build-an-agent/SKILL.md"
+kind = "preference"
+why = "Agent design guidance."
+
+[[boundary]]
+id = "B-313"
+text = "Leave it unset only for a generalist."
+source = "skill.build-an-agent/SKILL.md"
+kind = "preference"
+why = "Agent design guidance."
+
+[[boundary]]
+id = "B-314"
+text = "Leave out anything every task will state anyway."
+source = "skill.build-an-agent/SKILL.md"
+kind = "preference"
+why = "Agent design guidance."
+
+[[boundary]]
+id = "B-315"
+text = "Say how to approach the work, what good output looks like, what to report back, and the mistakes to avoid."
+source = "skill.build-an-agent/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-316"
+text = "Use read-only for anything that only investigates."
+source = "skill.build-an-agent/SKILL.md"
+kind = "safety"
+why = "An investigating agent with write access can change what it only had to read."
+
+[[boundary]]
+id = "B-317"
+text = "Use when recurring work deserves a specialist rather than a one-off brief. ---"
+source = "skill.build-an-agent/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-318"
+text = "- Spawning and messaging never ask the operator."
+source = "skill.delegation/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-319"
+text = "- When what you need from an agent changes, `agents_message` it with the amended brief rather than spawning a second one."
+source = "skill.delegation/SKILL.md"
+kind = "preference"
+principle = "cost"
+why = "Delegation procedure."
+
+[[boundary]]
+id = "B-320"
+text = "A merge that clashes changes nothing and names the files: bring its worktree in line with yours and merge again."
+source = "skill.delegation/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-321"
+text = "A question an agent needs answered goes in its `blocked` report instead."
+source = "skill.delegation/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-322"
+text = "A refactor across many files, a long test-and-fix loop, or a sweep through many files or results would fill your context with detail you only need the conclusion of."
+source = "skill.delegation/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-323"
+text = "Agents you spawn work for you and report back to you; the operator hears from you, not from them."
+source = "skill.delegation/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-324"
+text = "Any agent, read-only ones included, can message `parent` or `main` at any time to pass something on early."
+source = "skill.delegation/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-325"
+text = "Delegate when the work splits into parts that can go on at the same time, or when a part needs a lot of reading or trial and error whose detail you do not need to keep."
+source = "skill.delegation/SKILL.md"
+kind = "preference"
+principle = "cost"
+why = "Delegation procedure."
+
+[[boundary]]
+id = "B-326"
+text = "Give it to one agent: its churn stays in its context, and only its report enters yours."
+source = "skill.delegation/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-327"
+text = "Prefer a read-only agent for anything that does not need to write: an agent that can write makes changes at your permission level, and each one is gated like yours."
+source = "skill.delegation/SKILL.md"
+kind = "safety"
+why = "A writing agent acts at your permission level."
+
+[[boundary]]
+id = "B-328"
+text = "Read each report as a claim, not a fact."
+source = "skill.delegation/SKILL.md"
+kind = "preference"
+principle = "knowledge"
+why = "Delegation procedure: where checking a report starts."
+
+[[boundary]]
+id = "B-329"
+text = "Spawn as many as the work actually splits into, not more."
+source = "skill.delegation/SKILL.md"
+kind = "preference"
+principle = "cost"
+why = "Delegation procedure."
+
+[[boundary]]
+id = "B-330"
+text = "The agent never sees this conversation."
+source = "skill.delegation/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-331"
+text = "When none fits and the work will recur, draft one with the `build-an-agent` skill rather than stretching a general one."
+source = "skill.delegation/SKILL.md"
+kind = "preference"
+why = "Delegation procedure."
+
+[[boundary]]
+id = "B-332"
+text = "A delegation tree holds at most eight working agents unless the operator changed the limit, and a launch past it is refused."
+source = "skill.research/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-333"
+text = "A single factual question needs no plan: launch its one researcher straight away."
+source = "skill.research/SKILL.md"
+kind = "preference"
+why = "Research procedure."
+
+[[boundary]]
+id = "B-334"
+text = "Anything else the research settles, or the operator redirects when they see the plan, so an intake form would only delay the reading."
+source = "skill.research/SKILL.md"
+kind = "preference"
+principle = "decision"
+why = "Research procedure."
+
+[[boundary]]
+id = "B-335"
+text = "Ask only what changes the search"
+source = "skill.research/SKILL.md"
+kind = "preference"
+principle = "decision"
+why = "Research procedure."
+
+[[boundary]]
+id = "B-336"
+text = "For a larger set, group the items into clusters rather than giving each its own researcher."
+source = "skill.research/SKILL.md"
+kind = "preference"
+principle = "cost"
+why = "Research procedure."
+
+[[boundary]]
+id = "B-337"
+text = "If any researcher is still working, end your turn with nothing written, since its report will wake you when it lands."
+source = "skill.research/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-338"
+text = "If nothing distinguishes it, use the earlier title with the next number (\"EU AI Act startup obligations 2\")."
+source = "skill.research/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-339"
+text = "If what you need from a researcher changes while it works, use `agents_message` to send it the amended brief rather than letting it finish the wrong thing."
+source = "skill.research/SKILL.md"
+kind = "preference"
+why = "Research procedure."
+
+[[boundary]]
+id = "B-340"
+text = "If you are extending earlier research (step 5), plan only what this request adds or needs re-checked."
+source = "skill.research/SKILL.md"
+kind = "preference"
+principle = "cost"
+why = "Research procedure."
+
+[[boundary]]
+id = "B-341"
+text = "It becomes the file name, so it is 3–6 words and under 50 characters, made of letters, numbers and single spaces only (accented and non-Latin letters count as letters; hyphens, apostrophes and other punctuation are out)."
+source = "skill.research/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-342"
+text = "Only a few researchers run at once and the rest queue, so going wider mostly adds wall-clock time."
+source = "skill.research/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-343"
+text = "Read something yourself only when a researcher isn't worth the round trip: a gap you notice while writing, or a quick check of your own along the way."
+source = "skill.research/SKILL.md"
+kind = "earned"
+principle = "cost"
+why = "Answering a research request without researchers was a baseline issue."
+evidence = ["H-018"]
+
+[[boundary]]
+id = "B-344"
+text = "Reports wake you as they land, so there is nothing to wait for."
+source = "skill.research/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-345"
+text = "Split the question into topics that don't overlap and together cover all of it."
+source = "skill.research/SKILL.md"
+kind = "preference"
+why = "Research procedure."
+
+[[boundary]]
+id = "B-346"
+text = "The new report stands on its own and never refers the reader back."
+source = "skill.research/SKILL.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-347"
+text = "The researcher never sees this conversation, so its brief has to carry everything."
+source = "skill.research/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-348"
+text = "Use when the operator wants something genuinely investigated rather than answered from memory, such as comparing options, tracing a trend or history, sizing up a market, or reviewing studies. ---"
+source = "skill.research/SKILL.md"
+kind = "fact"
+
+[[boundary]]
+id = "B-349"
+text = "You may run **one** more round of researchers to close them, and only for gaps that serious, because every round delays the report."
+source = "skill.research/SKILL.md"
+kind = "preference"
+principle = "cost"
+why = "A research budget no principle supplies."
+
+[[boundary]]
+id = "B-350"
+text = "- Consider other angles, and steelman the positions you don't take."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-351"
+text = "- Say plainly what the evidence supports, and keep \"may\" and \"possibly\" for what it doesn't."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-352"
+text = "Cite strategically, not every sentence:"
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-353"
+text = "Conclude what is true rather than surveying views."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-354"
+text = "Each section advances the argument rather than cataloguing information."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-355"
+text = "Headers are sentence case, not title case."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-356"
+text = "Interpret what the data means rather than listing it."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-357"
+text = "Leave out any major finding, figure or reference to published work that no researcher report gives a URL for."
+source = "skill.research/references/report-format.md"
+kind = "safety"
+principle = "knowledge"
+why = "An unsourced finding in a report reads as researched."
+
+[[boundary]]
+id = "B-358"
+text = "The reader has just read the body, so a summary tells them nothing: give the key takeaways and new insights, how the understanding has changed, or what it implies from here."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-359"
+text = "They are signposts: a reader who skims only the headers should understand the report."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."
+
+[[boundary]]
+id = "B-360"
+text = "Use a table or other markdown structure only where it clearly helps, such as a comparison across several options."
+source = "skill.research/references/report-format.md"
+kind = "preference"
+why = "Report format."

@@ -28,6 +28,12 @@ from .spec import CommandSpec
 #: where the model has to put it somewhere specific (a sub-agent's brief).
 _NO_ARGUMENT = "They gave no further instructions — use the conversation so far."
 
+SKILL_INVOKED = "Do not ask whether to use it — they have already said so."
+AGENT_INVOKED = (
+    "Write the task so it stands alone — the sub-agent starts from an empty history "
+    "and never sees this thread. Do not ask which sub-agent to use."
+)
+
 
 def expand(spec: CommandSpec, argument: str) -> str:
     """The tail block for one invoked command, or ``""`` when it needs none."""
@@ -52,8 +58,7 @@ def _skill_block(spec: CommandSpec) -> str:
     return (
         f"The operator invoked the `{spec.target}` skill by name.\n"
         f"Call `skills_open(name={spec.target!r})` before doing anything else in this "
-        "turn, then follow the instructions it returns. Do not ask whether to use it — "
-        "they have already said so."
+        f"turn, then follow the instructions it returns. {SKILL_INVOKED}"
     )
 
 
@@ -69,8 +74,7 @@ def _agent_block(spec: CommandSpec, argument: str) -> str:
     return (
         f"The operator invoked the `{spec.target}` sub-agent by name.\n"
         f"Launch it with `agents_spawn(name=…, agent_name={spec.target!r}, …)`. {brief}\n"
-        "Write the task so it stands alone — the sub-agent starts from an empty history "
-        "and never sees this thread. Do not ask which sub-agent to use."
+        f"{AGENT_INVOKED}"
     )
 
 

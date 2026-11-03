@@ -34,6 +34,7 @@ from pydantic_ai.settings import ModelSettings
 from core.config import Settings
 from core.container import ServiceContainer
 from runs import STOP_NOTICE, Run
+from runs.lanes import is_attended
 from services.chassis_tail import prompt_index
 from services.commands.spec import Invocation
 from services.conversation_view import estimate_tokens
@@ -323,6 +324,8 @@ async def prepare_turn(
         # The same derivation the file tools use, for the reason `default_workspace_key`
         # exists: a delegated run must be described its own fork, not its parent's files.
         workspace_key=workspace_key or default_workspace_key(conversation_id, run),
+        prompt_text=prompt or "",
+        attended=is_attended(run.kind),
     )
     context_texts: list[str] = []
     # The caller's own block for *this* invocation goes first, ahead of the standing

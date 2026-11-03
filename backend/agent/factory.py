@@ -62,6 +62,7 @@ from .code_mode import CodeModeLimits, code_mode_capability
 from .injections import AnnounceInjections, contributor_id
 from .overhead import MeasureOverhead
 from .prefix_watch import WatchPrefix, watch_prefix_enabled
+from .variant import prompt_variant_capability
 
 # The default for a turn composed without the app's dormant declarations — a stateless
 # eval or a test that passes no catalog either. Read-only, so a shared default cannot
@@ -139,6 +140,9 @@ def build_agent(
         # above still read the request as it ships, with the deferred schemas already gone.
         capabilities=[
             ReinjectSystemPrompt(replace_existing=True),
+            # A trial's rewrites (dev instance only), after the system prompt is reasserted
+            # and before the observers, so they measure and announce what actually ships.
+            *prompt_variant_capability(),
             MeasureOverhead(),
             AnnounceInjections(),
             tool_search_capability(names_by_category, dormant),

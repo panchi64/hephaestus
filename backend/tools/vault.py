@@ -69,9 +69,7 @@ def vault_toolset() -> FunctionToolset[RunDeps]:
 
         Use it only when the task needs the secret itself, such as signing in or
         configuring a service, and never to show the operator a password they can open
-        themselves. Once you have it, use it where the task needs it and nowhere else:
-        don't repeat it in your reply, write it into a file the task did not ask for, or
-        pass it to a host it does not belong to.
+        themselves.
 
         Args:
             entry_id: The entry's `id`, from `vault_list_entries`.

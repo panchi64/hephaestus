@@ -98,7 +98,7 @@ _RESEARCHER_BRIEF = (
         "takeaway, then the cited findings, then any inferences you drew from them (marked as "
         "yours), then the gaps. Every finding carries a link to the page you actually read it "
         "on, inline, where the claim is made: the agent that spawned you cannot check a claim "
-        "it cannot trace. A claim you cannot "
+        "it cannot trace. Never invent a figure, a quote or a source. A claim you cannot "
         "source goes under gaps, and 'I found no reliable source on X' is a finding worth "
         "reporting.\n\n"
     )

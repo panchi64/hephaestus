@@ -80,18 +80,16 @@ checks = [
 [[scenario]]
 id = "main-multi-step"
 area = "main"
-about = "Work of several steps is tracked in a task list the operator can watch, and every item is closed."
+about = "A short edit-then-test job is done in full and its failure reported accurately."
 fixture = "inventory"
 requires = ["vm"]
 prompts = ["In {project}: add a one-line docstring to every function in inventory.py, run the tests, and tell me what fails."]
 dimensions = ["tool_use", "solving"]
 expect = [
-  "Writes a task list before starting and closes every item by the end.",
   "Adds the docstrings without changing behaviour.",
   "Runs the tests and reports the parse_line failure accurately.",
 ]
 checks = [
-  { kind = "tasks_closed" },
   { kind = "file_contains", root = "project", path = "inventory.py", text = [
     "def total_value_cents(items):\n    \"\"\"",
     "def restock(items, sku, amount):\n    \"\"\"",

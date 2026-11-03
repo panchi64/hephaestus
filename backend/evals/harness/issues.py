@@ -9,7 +9,8 @@ The first form writes ``runs/<group>/issues.md`` and merges the group into
 reviewed in full, writes its ``issues.md`` only: until a reviewer has classified them, a
 failed scenario check may be the suite's fault rather than the product's. An issue already
 in the backlog, matched by the grader's ``recurs`` or else by its title, counts another
-occurrence, and one marked ``fixed`` that recurs is reopened as ``regressed``.
+occurrence, and one marked ``fixed`` that recurs is reopened as ``regressed``. A trial's
+variant arms are left out: their failures were provoked on purpose.
 
 ``set`` also takes ``--gap TEXT`` and ``--principle NAME`` for a behavior issue's class.
 """
@@ -33,6 +34,7 @@ from .grading import PRINCIPLES, SEVERITIES, Issue, IssueKind, Principle, Severi
 from .record import RUN_FILE, load_run
 from .review import REPORT_FILE
 from .spec import load_scenarios, run_path
+from .variants import BASE, load_key
 
 ISSUES_PATH = Path(__file__).with_name("ISSUES.md")
 GROUP_FILE = "issues.md"
@@ -116,7 +118,10 @@ def collect(group_dir: Path) -> Collected:
     stub = False
     reviewed = True
     started: list[str] = []
+    key = load_key(group_dir)
     for run_dir in sorted(p for p in group_dir.iterdir() if (p / RUN_FILE).is_file()):
+        if (letter := key.get(run_dir.name)) is not None and letter.arm != BASE:
+            continue
         run = load_run(run_dir)
         stub = stub or run.stub
         if day := _DAY.match(run.started_at):

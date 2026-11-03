@@ -31,8 +31,9 @@ from dataclasses import dataclass
 from pydantic_ai import ModelMessage
 
 from runs import Run
+from runs.events.tools import ToolCompleted, ToolFailed
 
-from .history import TurnStart
+from .history import TurnStart, close_tool_calls
 
 # Persistent stop markers for the cancel/unhandled-error flush paths (mirrors the
 # bound-hit details the registry builds — a plain sentence, not internal jargon — stamped
@@ -119,5 +120,18 @@ class TurnFlush:
             return  # nothing to persist yet — a stop this early has no turn to record
         if block:
             self.run.block(detail)
-        self.record(messages, detail, self.context())
+        closed = close_tool_calls(messages, tool_outcomes(self.run))
+        self.record(closed, detail, self.context())
         self.done = True
+
+
+def tool_outcomes(run: Run) -> dict[str, object]:
+    """What each direct call of ``run`` returned or failed with, by ``tool_call_id``."""
+    outcomes: dict[str, object] = {}
+    for event in run.stream.replay():
+        body = event.body
+        if isinstance(body, ToolCompleted) and body.parent_tool_call_id is None:
+            outcomes[body.tool_call_id] = body.result
+        elif isinstance(body, ToolFailed) and body.parent_tool_call_id is None:
+            outcomes[body.tool_call_id] = body.error
+    return outcomes

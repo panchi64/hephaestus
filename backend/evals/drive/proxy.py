@@ -50,30 +50,69 @@ def _free_port() -> int:
         return cast(tuple[str, int], sock.getsockname())[1]
 
 
-class _Request(BaseModel):
+#: The roles whose messages carry the system prompt and instructions (OpenAI-style bodies).
+_PROMPT_ROLES = frozenset({"system", "developer"})
+
+
+class RequestBody(BaseModel):
+    """The parts of a model request the proxy reads; the rest is forwarded untouched."""
+
     tools: list[object] = Field(default_factory=list)
     model: str = ""
+    #: The system prompt and instructions, wherever the provider's format puts them.
+    system: object = None
+    instructions: object = None
+    messages: list[object] = Field(default_factory=list)
 
 
-def _read(body: bytes) -> _Request:
+def parse_request(body: bytes) -> RequestBody:
     try:
-        return _Request.model_validate_json(body)
+        return RequestBody.model_validate_json(body)
     except ValidationError:
-        return _Request()
+        return RequestBody()
 
 
 def carries_tools(body: bytes) -> bool:
-    return bool(_read(body).tools)
+    return bool(parse_request(body).tools)
+
+
+def _strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for item in cast(dict[str, object], value).values() for s in _strings(item)]
+    if isinstance(value, list):
+        return [s for item in cast(list[object], value) for s in _strings(item)]
+    return []
+
+
+def watched_in(request: RequestBody, texts: tuple[str, ...]) -> tuple[str, ...]:
+    """Which of ``texts`` the request's prompt or tool definitions carry, compared with
+    whitespace collapsed. History and tool results are left out: a file the agent read can
+    quote a sentence the prompt no longer holds."""
+    if not texts:
+        return ()
+    prompt = [request.system, request.instructions, request.tools]
+    prompt += [
+        message
+        for message in request.messages
+        if isinstance(message, dict)
+        and cast(dict[str, object], message).get("role") in _PROMPT_ROLES
+    ]
+    blobs = [" ".join(s.split()) for s in _strings(prompt)]
+    return tuple(text for text in texts if any(" ".join(text.split()) in b for b in blobs))
 
 
 @dataclass(frozen=True, slots=True)
 class Proxied:
-    """One request the proxy forwarded: which bucket, endpoint and model it went to."""
+    """One request the proxy forwarded: which bucket, endpoint and model it went to, and
+    which watched sentences it carried."""
 
     bucket: str
     endpoint: str
     model: str
     tools: bool
+    seen: tuple[str, ...] = ()
 
 
 class RecordingProxy:
@@ -95,6 +134,7 @@ class RecordingProxy:
         self._usage: dict[str, dict[Kind, Usage]] = {}
         self._tag: str = tag
         self._log: dict[str, list[Proxied]] = {}
+        self._watched: tuple[str, ...] = ()
         self.window: TokenWindow = window or TokenWindow(tokens_per_minute or sys.maxsize)
         self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=None)
         self._port: int = _free_port()
@@ -114,6 +154,10 @@ class RecordingProxy:
     def attribute(self, bucket: str) -> None:
         """Tally the usage of requests from now on under ``bucket``."""
         self._bucket = bucket
+
+    def watch(self, texts: tuple[str, ...]) -> None:
+        """Note which of ``texts`` each request from now on carries (``Proxied.seen``)."""
+        self._watched = texts
 
     def take(self, bucket: str) -> dict[Kind, Usage]:
         """``bucket``'s tally so far, removed from the proxy."""
@@ -138,9 +182,11 @@ class RecordingProxy:
 
     async def _forward(self, request: Request) -> StreamingResponse:
         body = await request.body()
-        parsed = _read(body)
+        parsed = parse_request(body)
         tools = bool(parsed.tools)
-        entry = Proxied(self._bucket, self._tag, parsed.model, tools)
+        entry = Proxied(
+            self._bucket, self._tag, parsed.model, tools, watched_in(parsed, self._watched)
+        )
         self._log.setdefault(self._bucket, []).append(entry)
         if self._armed is not None and tools:
             self._armed.parent.mkdir(parents=True, exist_ok=True)

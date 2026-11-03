@@ -11,7 +11,12 @@ from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from routes import memory as memory_routes
 from services.embeddings import RegistryEmbedder
 from services.memory import MemoryStore
-from tools.memory import GATED_TOOLS, memory_catalog_instructions, memory_toolset
+from tools.memory import (
+    GATED_TOOLS,
+    memory_catalog_instructions,
+    memory_recall_context,
+    memory_toolset,
+)
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
@@ -27,5 +32,7 @@ MANIFEST = FeatureManifest(
     gated_tools=GATED_TOOLS,
     # Every turn lists the pinned memories (ids + descriptions only).
     instructions=(memory_catalog_instructions,),
+    # What the operator's message recalls rides the tail of their prompt.
+    prompt_context=(memory_recall_context,),
     build=_build,
 )

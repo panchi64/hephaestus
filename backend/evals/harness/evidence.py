@@ -21,6 +21,8 @@ class ProxiedRequest(BaseModel):
     endpoint: str
     model: str
     tools: bool
+    #: The trial probes this request carried (`evals/harness/variants.py`).
+    seen: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

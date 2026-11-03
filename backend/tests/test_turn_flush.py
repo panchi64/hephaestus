@@ -1,8 +1,8 @@
 """``TurnFlush`` — the shared "persist a turn that was stopped from outside" machinery.
 
 The three paths it drives (a bound, a cancel, an unhandled exception) are covered
-end-to-end in ``test_persistence.py`` against real orchestrators. What's here is the two
-properties the class itself now owns, which both orchestrators depend on and neither can
+end-to-end in ``test_persistence.py`` against real orchestrators. What's here is the
+properties the class itself owns, which both orchestrators depend on and neither can
 express alone.
 """
 
@@ -10,11 +10,24 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from pydantic_ai import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 from agent.flush import CANCELLED_DETAIL, ERRORED_DETAIL, PersistContext, TurnFlush
-from agent.history import TurnStart
+from agent.history import (
+    UNFINISHED_CALL,
+    TurnStart,
+    close_tool_calls,
+    drop_dangling_tool_calls,
+)
 from runs import Run, RunStatus, RunStream
+from runs.events.tools import ToolCompleted, ToolFailed
 
 
 def _run() -> Run:
@@ -153,6 +166,62 @@ def test_a_bound_blocks_the_run_but_a_cancel_does_not():
     _cancel(cancelled)
     assert cancelled.status is not RunStatus.blocked
     assert recorded2[0][1] == CANCELLED_DETAIL
+
+
+async def test_a_stop_mid_batch_keeps_what_each_call_did():
+    # A stop can save the history ending on the calls alone; the next turn must still
+    # learn that the first write landed and the second may not have.
+    run = _run()
+    calls = ModelResponse(
+        parts=[
+            ToolCallPart("files_write_file", {"path": "a.md"}, tool_call_id="a"),
+            ToolCallPart("files_write_file", {"path": "b.md"}, tool_call_id="b"),
+            ToolCallPart("shell_run_command", {"command": "x"}, tool_call_id="c"),
+        ]
+    )
+    _ = run.emit(ToolCompleted(tool_call_id="a", name="files_write_file", result="Wrote a.md."))
+    _ = run.emit(ToolFailed(tool_call_id="c", name="shell_run_command", error="exit 1"))
+    _ = run.emit(
+        ToolCompleted(tool_call_id="n", name="files_read_file", parent_tool_call_id="b")
+    )
+    recorded: Recorded = []
+    _flush(
+        run,
+        lambda: [_message("q"), calls],
+        lambda: PersistContext(conversation_id="c", start=TurnStart()),
+        recorded,
+    ).arm()
+
+    _cancel(run)
+
+    closing = recorded[0][0][-1]
+    assert isinstance(closing, ModelRequest)
+    returns = {p.tool_call_id: p.content for p in closing.parts if isinstance(p, ToolReturnPart)}
+    assert returns == {"a": "Wrote a.md.", "b": UNFINISHED_CALL, "c": "exit 1"}
+    assert drop_dangling_tool_calls(recorded[0][0]) == recorded[0][0]
+
+
+def test_the_librarys_partial_request_gets_the_unfinished_calls_added():
+    # The library may already have closed the batch with the calls that finished; the
+    # open ones must still say they may have landed, not that nothing happened.
+    calls = ModelResponse(
+        parts=[
+            ToolCallPart("files_write_file", {"path": "a.md"}, tool_call_id="a"),
+            ToolCallPart("files_write_file", {"path": "b.md"}, tool_call_id="b"),
+        ]
+    )
+    partial = ModelRequest(
+        parts=[ToolReturnPart("files_write_file", "Wrote a.md.", tool_call_id="a")],
+        state="interrupted",
+    )
+
+    closed = close_tool_calls([_message("q"), calls, partial], {})
+
+    last = closed[-1]
+    assert isinstance(last, ModelRequest) and last.state == "interrupted"
+    returns = {p.tool_call_id: p.content for p in last.parts if isinstance(p, ToolReturnPart)}
+    assert returns == {"a": "Wrote a.md.", "b": UNFINISHED_CALL}
+    assert close_tool_calls(closed, {}) == closed
 
 
 def test_the_error_path_marks_the_turn_with_its_own_sentence():

@@ -427,6 +427,26 @@ async def test_resume_releases_the_inbox_without_a_message(monkeypatch: pytest.M
         assert texts[texts.index("queued") + 1] == STOP_NOTICE
 
 
+async def test_a_plain_stop_tells_the_next_turn_without_holding(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    seen: list[list[str]] = []
+    gate = asyncio.Event()
+    started = _recording_model(monkeypatch, seen, gate)
+    async with client_app() as (client, app):
+        first = json_body(await client.post("/chat", json={"prompt": "hello"}))
+        conversation_id = s(first["conversation_id"])
+        _ = await started.wait()
+        stopped = await client.post(f"/runs/{s(first['run_id'])}/cancel")
+        await settle(app)
+
+        assert stopped.status_code == 202
+        inbox = app_state(app).runs.inbox(conversation_id, OPERATOR_ID)
+        assert not inbox.waiting_for_operator
+        assert inbox.take_stop_notice() == STOP_NOTICE
+        assert inbox.take_stop_notice() is None
+
+
 async def test_a_stop_after_the_run_ended_holds_nothing(monkeypatch: pytest.MonkeyPatch):
     seen: list[list[str]] = []
     gate = asyncio.Event()
