@@ -279,6 +279,58 @@ async def test_a_search_glob_is_read_from_the_searched_folder(tmp_path: Path, gl
     assert "No matches" not in str(result)
 
 
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("find_files", {"pattern": "**/*", "path": "~/scratch/summaries"}),
+        ("list_directory", {"path": "~/scratch/summaries"}),
+        ("search_files", {"pattern": "x", "path": "~/scratch/summaries"}),
+        ("find_files", {"pattern": "*", "path": "summaries"}),
+    ],
+)
+async def test_a_folder_that_does_not_exist_is_said_not_to_exist(
+    tmp_path: Path, tool: str, args: dict[str, object]
+):
+    manager = ScratchDirs(tmp_path)
+    manager.path("conv-1").mkdir(exist_ok=True)
+
+    with pytest.raises(ModelRetry) as caught:
+        _ = await _call(tool, args, manager=manager)
+
+    message = str(caught.value)
+    assert "no such folder" in message and "summaries" in message
+    assert "Not a directory" not in message
+
+
+@pytest.mark.parametrize("tool", ["find_files", "list_directory"])
+async def test_a_file_named_as_the_folder_is_said_not_to_be_a_directory(tmp_path: Path, tool: str):
+    manager = ScratchDirs(tmp_path)
+    work = manager.path("conv-1")
+    work.mkdir(exist_ok=True)
+    _ = (work / "notes.txt").write_text("hello")
+    args: dict[str, object] = {"path": "~/scratch/notes.txt"}
+    if tool == "find_files":
+        args["pattern"] = "*"
+
+    with pytest.raises(ModelRetry, match="Not a directory") as caught:
+        _ = await _call(tool, args, manager=manager)
+
+    assert "no such folder" not in str(caught.value)
+
+
+async def test_searching_a_file_named_as_the_folder_searches_that_file(tmp_path: Path):
+    manager = ScratchDirs(tmp_path)
+    work = manager.path("conv-1")
+    work.mkdir(exist_ok=True)
+    _ = (work / "notes.txt").write_text("hello world\n")
+
+    found = await _call(
+        "search_files", {"pattern": "hello", "path": "~/scratch/notes.txt"}, manager=manager
+    )
+
+    assert "notes.txt" in str(found) and "no such folder" not in str(found)
+
+
 async def test_paths_outside_the_workspace_are_refused(tmp_path: Path):
     manager = ScratchDirs(tmp_path)
     secret = tmp_path / "secret.txt"
