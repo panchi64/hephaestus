@@ -24,12 +24,19 @@ from pydantic_ai.exceptions import ApprovalRequired
 from core.diagnostics import render_tool_error
 from core.exceptions import NotFoundError
 from core.vault import VaultLocked
-from prompts.memory import MEMORY_CATALOG, MEMORY_OTHERS, MEMORY_PINNED_LIMIT
+from prompts.memory import (
+    MEMORY_CATALOG,
+    MEMORY_OTHERS,
+    MEMORY_PINNED_LIMIT,
+    MEMORY_RECALLED,
+    MEMORY_RECALLED_LIMIT,
+    MEMORY_RECALLED_SIMILARITY,
+)
 from services.memory import MemoryCatalog, MemoryStore, MemoryView
 from services.permissions.guards import GUARD_KEY
 from services.private_area import PrivateArea
 
-from .deps import RunDeps
+from .deps import PromptContextRequest, RunDeps
 
 #: Grantable gates only; a write from a private chat parks as a guard, which no grant answers.
 GATED_TOOLS: frozenset[str] = frozenset({"memory_forget", "memory_consolidate"})
@@ -297,3 +304,28 @@ async def memory_catalog_instructions(ctx: RunContext[RunDeps]) -> str:
     except VaultLocked, InvalidTag:
         return ""
     return memory_catalog_block(catalog)
+
+
+async def memory_recall_context(request: PromptContextRequest) -> str:
+    """The memories the operator's message recalls, for the tail of an attended turn.
+
+    Put in front of the model before its first request because it plans its calls up
+    front: a recall it makes itself goes out beside the lookups the answer would have made
+    unnecessary. Only close matches by meaning are carried, so a weak one costs nothing and
+    a degraded embedder carries none."""
+    store = request.caps.get_optional(MemoryStore)
+    if store is None or not request.attended or not request.prompt_text.strip():
+        return ""
+    try:
+        hits = await store.recall(request.owner_id, request.prompt_text)
+    except VaultLocked, InvalidTag:
+        return ""
+    strong = [
+        h.memory
+        for h in hits
+        if h.similarity is not None and h.similarity >= MEMORY_RECALLED_SIMILARITY
+    ][:MEMORY_RECALLED_LIMIT]
+    if not strong:
+        return ""
+    entries = "\n".join(f"- {m.description}: {m.content}" for m in strong)
+    return MEMORY_RECALLED.format(entries=entries)

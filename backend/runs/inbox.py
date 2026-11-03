@@ -342,6 +342,11 @@ class ConversationInbox:
         self._apply(waiting=True, stopped=True)
         return mark
 
+    def note_stop(self) -> None:
+        """Tell the turn that follows a Stop about it, without holding deliveries."""
+        if not self._stopped:
+            self._apply(waiting=self._waiting, stopped=True)
+
     def undo_stop(self, mark: StopMark) -> None:
         """Put the stop state back as it was before the :meth:`stop` that returned ``mark``,
         for a Stop that turned out to have nothing to stop."""

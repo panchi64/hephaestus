@@ -14,7 +14,7 @@ reference, so mutating one in place would corrupt the durable history of every l
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from pydantic_ai import (
@@ -67,6 +67,52 @@ def drop_dangling_tool_calls(messages: list[ModelMessage]) -> list[ModelMessage]
     if kept:
         return [*messages[:-1], replace(last, parts=kept)]
     return messages[:-1]
+
+
+#: What a stopped turn's call that never reported back returns, so the next turn checks
+#: before redoing it.
+UNFINISHED_CALL = (
+    "Stopped by the operator before this call reported back. It may or may not have taken "
+    "effect, so look before doing it again."
+)
+
+
+def close_tool_calls(
+    messages: list[ModelMessage], outcomes: Mapping[str, object]
+) -> list[ModelMessage]:
+    """Answer the last response's open tool calls from ``outcomes`` (by ``tool_call_id``),
+    with :data:`UNFINISHED_CALL` for any it lacks, for a turn stopped mid-batch.
+
+    The history may end on the response itself, or on the library's interrupted request
+    holding only the calls that finished. Either way a call left open would otherwise be
+    answered on replay with the library's "interrupted before a result was produced",
+    which a model reads as "nothing happened" and redoes, even when the write landed."""
+    if messages and isinstance(messages[-1], ModelResponse):
+        response, answered = messages[-1], None
+    elif (
+        len(messages) >= 2
+        and isinstance(messages[-1], ModelRequest)
+        and isinstance(messages[-2], ModelResponse)
+    ):
+        response, answered = messages[-2], messages[-1]
+    else:
+        return messages
+    parts: Sequence[ModelRequestPart] = answered.parts if answered is not None else ()
+    done = {p.tool_call_id for p in parts if isinstance(p, ToolReturnPart)}
+    returns: list[ModelRequestPart] = [
+        ToolReturnPart(
+            tool_name=call.tool_name,
+            content=outcomes.get(call.tool_call_id, UNFINISHED_CALL),
+            tool_call_id=call.tool_call_id,
+        )
+        for call in response.parts
+        if isinstance(call, ToolCallPart) and call.tool_call_id not in done
+    ]
+    if not returns:
+        return messages
+    if answered is None:
+        return [*messages, ModelRequest(parts=returns)]
+    return [*messages[:-1], replace(answered, parts=[*answered.parts, *returns])]
 
 
 def with_tail_context(messages: list[ModelMessage], texts: list[str]) -> list[ModelMessage]:

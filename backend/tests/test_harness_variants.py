@@ -39,19 +39,18 @@ def test_every_shipped_variant_resolves_against_the_register(name: str):
 
 
 def test_a_removal_probes_for_the_registered_sentence():
-    variant = load_variant("without-h036-floor")
-    text = register().by_id("B-083").text
+    variant = load_variant("without-h032-landed")
+    text = register().by_id("B-080").text
     assert variant.rewrites() == [{"find": text, "replace": ""}]
     assert variant.probes() == [Probe(text=text, present=False)]
 
 
-def test_an_addition_lands_after_its_anchor():
-    variant = load_variant("h036-in-tool")
+def test_an_addition_lands_after_its_anchor(tmp_path: Path):
+    _ = (tmp_path / "add.toml").write_text('[[op]]\nadd = "A new line."\nafter = "B-495"\n')
+    variant = load_variant("add", tmp_path)
     anchor = register().by_id("B-495").text
-    removal, edit = variant.rewrites()
-    assert removal == {"find": register().by_id("B-083").text, "replace": ""}
-    assert edit["find"] == anchor
-    assert edit["replace"].startswith(f"{anchor} ")
+    assert variant.rewrites() == [{"find": anchor, "replace": f"{anchor} A new line."}]
+    assert variant.probes() == [Probe(text="A new line.", present=True)]
 
 
 def test_an_op_is_one_shape_or_the_other():
@@ -75,7 +74,7 @@ async def test_an_unknown_arm_stops_the_run(capsys: pytest.CaptureFixture[str]):
 async def test_the_arm_file_is_what_the_backend_reads(tmp_path: Path):
     path = tmp_path / "variant.json"
     variant = PromptVariant(path)
-    write_arm(path, load_variant("without-h036-floor"))
+    write_arm(path, load_variant("without-h032-landed"))
     assert len(variant.rewrites()) == 1
     write_arm(path, None)
     assert variant.rewrites() == ()
@@ -137,7 +136,7 @@ def test_the_backlog_merge_leaves_variant_arms_out(tmp_path: Path):
         sample=1,
         checks=[CheckResult(label="lists", passed=False, kind="behavior", detail="no list")],
     )
-    for letter, arm in (("A", BASE), ("B", "without-h036-floor")):
+    for letter, arm in (("A", BASE), ("B", "without-h032-landed")):
         run = _run(arm, sent=True)
         run.samples = [failing]
         (tmp_path / letter).mkdir()

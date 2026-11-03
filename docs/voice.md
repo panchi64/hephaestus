@@ -375,7 +375,7 @@ An eval or the operator shows a model doing the wrong thing. A sentence that for
 5. **Check recurrence.** A behavior issue that comes back after a fix is filed against the original entry (`recurs`), which reopens as `regressed`. What the regression earns depends on what the fix was:
    - After a principle-only fix, it earns a boundary: a hard line in the principle's own block, with its reason, registered as `earned` with the backlog ids as `evidence`. The principle pulled the right way and the model still crossed; a threshold it can't argue past is the next lever.
    - After a boundary, prose is the wrong lever. The next fix is a mechanism: a tool's affordance, a judge, a check. More emphasis on the same sentence is not a fix.
-6. **Settle a contested boundary by trial, not argument.** Write a variant that removes or adds it (`backend/evals/harness/variants/`) and run the scenarios that exercise it with `--arms base <variant>`; `evals.harness.compare` reads the arms side by side.
+6. **Settle a contested boundary by trial, not argument.** Write a variant that removes or adds it (`backend/evals/harness/variants/`) and run the scenarios that exercise it with `--arms base <variant>`; `evals.harness.compare` reads the arms side by side. A boundary that changes nothing goes, and the fix moves to a mechanism. Wording can't reach a decision the model makes before any result arrives (calls issued in parallel), or a fact the platform withholds (a stopped turn's calls): the 2026-11-02 trial found all three restored boundaries inert for those reasons.
 
 ### The register
 

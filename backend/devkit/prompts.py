@@ -92,6 +92,8 @@ class Source:
 
 #: Prompt strings that live beside the code that sends them rather than in ``prompts/``.
 _EXTRA_STRINGS: Mapping[str, tuple[str, ...]] = {
+    "agent.history": ("UNFINISHED_CALL",),
+    "runs.inbox": ("STOP_NOTICE",),
     "services.subagents.briefing": ("_CONTRACT",),
     "services.subagents.report": (
         "_REPORT_PREAMBLE",

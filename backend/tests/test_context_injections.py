@@ -245,6 +245,34 @@ async def test_a_live_turn_announces_both_seams_before_it_answers():
     assert all(e.seq < first_answer for e in events if e.body.type == "context.injected")
 
 
+async def test_providers_see_the_operators_words_and_whether_anyone_is_watching():
+    from pydantic_ai.models.test import TestModel
+
+    from agent import build_chat_orchestrator
+    from runs import RunRegistry
+
+    seen: list[PromptContextRequest] = []
+
+    async def recorder(request: PromptContextRequest) -> str:
+        seen.append(request)
+        return ""
+
+    for kind in ("chat", "linked"):
+        orch = build_chat_orchestrator(
+            "what port does staging use",
+            model=TestModel(custom_output_text="ok", call_tools=[]),
+            categories={},
+            prompt_context_providers=[recorder],
+            context_window=100_000,
+        )
+        await RunRegistry().submit(kind=kind, owner_id="operator", orchestrator=orch).wait()
+
+    assert [(r.prompt_text, r.attended) for r in seen] == [
+        ("what port does staging use", True),
+        ("what port does staging use", False),
+    ]
+
+
 # ── The request beside the split ─────────────────────────────────────────────────
 
 

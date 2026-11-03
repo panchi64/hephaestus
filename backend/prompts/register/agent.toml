@@ -597,21 +597,12 @@ principle = "visibility"
 why = "The operator's chosen beat style."
 
 [[boundary]]
-id = "B-083"
-text = "Three or more steps is always such work, however small each one looks, so it always gets a list."
-source = "prompts.agent._VISIBILITY"
-kind = "earned"
-principle = "visibility"
-why = "Multi-step work without a task list recurred under the need-based principle alone; the floor gives it a threshold it can't argue past."
-evidence = ["H-016", "H-036"]
-
-[[boundary]]
-id = "B-084"
-text = "A single action or a quick answer has nothing to follow and needs no list."
+id = "B-088"
+text = "Quick work needs none, since your beats and each call's `narration` already show it."
 source = "prompts.agent._VISIBILITY"
 kind = "preference"
 principle = "visibility"
-why = "Bounds the task-list rule from the other side."
+why = "The operator retired the task list for quick work after the 2339 trial showed the three-step floor did nothing; a list is for long work."
 
 [[boundary]]
 id = "B-085"

@@ -309,8 +309,8 @@
       "suspect": "tasks_write",
       "gap": "didn't make multi-part work visible while the operator waited",
       "principle": "visibility",
-      "status": "fixed",
-      "note": "Recurred as H-036 after an instruction-only fix. Covered by the principle rewrite; confirm on the next run."
+      "status": "wontfix",
+      "note": "Expectation retired with H-036: a task list is for long work such as an approved plan."
     },
     {
       "id": "H-017",
@@ -624,9 +624,9 @@
         "flow-cancel-resume"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-02-principles (2026-11-02)",
-      "occurrences": 2,
-      "evidence": "turn 2 begins with five files_write_file calls; no files_list_directory of summaries/ first",
+      "last_seen": "2026-11-02-2339-harness (2026-11-02)",
+      "occurrences": 3,
+      "evidence": "turn 2 begins with five files_write_file calls; no files_list_directory of summaries/ first (also samples 2 and 3)",
       "suspect": "",
       "gap": "resumed interrupted work from memory instead of checking what had already landed",
       "principle": "state",
@@ -702,17 +702,18 @@
       "severity": "minor",
       "area": "main",
       "scenarios": [
+        "flow-cancel-resume",
         "main-multi-step"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-02-principles (2026-11-02)",
-      "occurrences": 2,
-      "evidence": "docstrings edit, test run, diagnosis and report with no tasks_write call; check 'a task list of >=2, all closed' FAIL",
+      "last_seen": "2026-11-02-2339-harness (2026-11-02)",
+      "occurrences": 4,
+      "evidence": "files_edit_file, shell_run_command, diagnosis and report with no tasks_write call; check 'a task list of >=2, all closed' FAIL (also samples 2 and 3)",
       "suspect": "tasks_write",
       "gap": "didn't make multi-part work visible while the operator waited",
       "principle": "visibility",
-      "status": "fixed",
-      "note": "Earned boundary B-083: three or more steps always gets a task list. Trial: without-h036-floor."
+      "status": "wontfix",
+      "note": "Expectation retired: a task list is for long work such as an approved plan, not ~10s of batched steps. The 2339 trial showed the three-step floor changed nothing."
     },
     {
       "id": "H-037",
@@ -765,14 +766,14 @@
         "main-recall-across-threads"
       ],
       "first_seen": "2026-11-01-post-fixes (2026-11-02)",
-      "last_seen": "2026-11-02-principles (2026-11-02)",
-      "occurrences": 2,
-      "evidence": "platform_search -> memory hit \"listens on port 6544\", then project_active: \"Seeing whether a project is attached that would hold the staging config.\"",
+      "last_seen": "2026-11-02-2339-harness (2026-11-02)",
+      "occurrences": 3,
+      "evidence": "memory_recall -> \"listens on port 6544\", then project_active and platform_search before the reply (also samples 2 and 3: project_active, memory_open)",
       "suspect": "",
       "gap": "kept looking after a lookup had already answered the question",
       "principle": "cost",
-      "status": "fixed",
-      "note": "Earned boundary B-021: a second lookup only for an answer that contradicts itself or may be stale. Trial: without-h039-answer."
+      "status": "regressed",
+      "note": "Recurred after a fix in 2026-11-02-2339-harness as 'Extra lookups after memory_recall already answered the port question'. The fix was: Earned boundary B-021: a second lookup only for an answer that contradicts itself or may be stale. Trial: without-h039-answer."
     },
     {
       "id": "H-040",
@@ -899,6 +900,7 @@
   "groups": [
     "2026-11-01-baseline",
     "2026-11-01-post-fixes",
-    "2026-11-02-principles"
+    "2026-11-02-principles",
+    "2026-11-02-2339-harness"
   ]
 }

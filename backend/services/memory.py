@@ -71,6 +71,8 @@ class RecallHit:
     score: float
     # How it surfaced: semantic (dense only), keyword (sparse only), or both.
     matched_by: str
+    #: Cosine similarity to the query, or None when it had no comparable embedding.
+    similarity: float | None = None
 
 
 @dataclass(frozen=True)
@@ -319,7 +321,12 @@ class MemoryStore:
             ).all()
             views = {row.id: self._view(row) for row in rows}
             return [
-                RecallHit(memory=views[hit.doc.id], score=hit.score, matched_by=hit.matched_by)
+                RecallHit(
+                    memory=views[hit.doc.id],
+                    score=hit.score,
+                    matched_by=hit.matched_by,
+                    similarity=hit.dense,
+                )
                 for hit in ranked
                 if hit.doc.id in views
             ]

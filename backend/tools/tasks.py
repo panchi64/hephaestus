@@ -78,9 +78,10 @@ LOCAL = {upstream: local for local, upstream in UPSTREAM.items()}
 DESCRIPTIONS = {
     "write_plan": (
         "Creates or replaces your task list for this conversation: the checklist the "
-        "operator watches beside the chat while you work. When they will wait while you do "
-        "several things, call it before you start the first one, so they see the shape of "
-        "the work up front and where you are in it.\n\n"
+        "operator watches beside the chat while you work. It is for long work, which keeps "
+        "them waiting minutes across many steps: call it before you start the first one, "
+        "so they see the shape of the work up front and where you are in it. An approved "
+        "plan already has one, made from its steps.\n\n"
         "Pass the whole list on every call, unchanged and finished tasks included, because "
         "the call replaces what was there. Keep exactly one task `in_progress`: the one "
         "you are doing now. Give each task a short `id` of your own (`migrate`, "

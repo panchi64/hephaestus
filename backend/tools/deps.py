@@ -137,6 +137,10 @@ class PromptContextRequest:
     #: This run's workspace key — a delegation's own, where it has one, so a sub-agent
     #: is described its fork rather than its parent's files.
     workspace_key: str
+    #: The operator's own words this turn; empty on a regenerate.
+    prompt_text: str = ""
+    #: Whether someone is in front of this run (`runs.lanes.is_attended`).
+    attended: bool = False
 
 
 # A manifest's `prompt_context` export. Delivered at the tail of the turn's user prompt, not

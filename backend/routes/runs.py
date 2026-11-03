@@ -197,6 +197,9 @@ async def cancel_run(
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
         raise HTTPException(status_code=409, detail=f"run already {run.status.value}")
+    if run is not None and run.conversation_id:
+        # The saved turn's calls say what landed; this says the turn was cut short.
+        registry.inbox(run.conversation_id, run.owner_id).note_stop()
     stopper = deps.capabilities(request).get_optional(SubtreeStopper)
     if run is not None and run.conversation_id and stopper is not None:
         # The stopped agents' reports must not start a turn on the thread just stopped.
